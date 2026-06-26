@@ -1,0 +1,21 @@
+# deps & build
+node_modules/
+dist/
+*.tsbuildinfo
+
+# runtime state (A 阶段暂未用)
+data/
+*.db
+*.db-*
+
+# secrets — 永不入库
+.env
+.env.*
+*.key
+*.pem
+
+# os / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
