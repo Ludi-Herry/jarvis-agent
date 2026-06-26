@@ -2,7 +2,8 @@
 
 > 依据蓝图 §12 的 A 阶段 + §10 技术栈 + §11 目录 + §2/§3/§7/§8 模块设计。
 > 蓝图原文：`H:\LLM本地知识库\采集\external\agent-harness-调研\agent-harness-Part2-架构蓝图.md`。
-> 状态：方案待陆凌华绿灯 → 绿灯后按「构建顺序」逐里程碑写，每个里程碑交付可验证产物再继续。
+> **首要代码参照：kimi-code**（Moonshot 官方 TS/Node coding agent，与本骨架最同构；深挖见知识库 Part8）——`kosong/src/provider.ts`（ModelProvider 形状）、`agent-core/src/loop/`（无状态 loop + host 持状态）、`agent-core/src/agent/compaction/strategy.ts`（canSplitAfter + 工具输出落盘）。次要参照 Claude Code 还原源码 / codex。
+> 状态：方案待陆凌华绿灯 → 绿灯后按「构建顺序」逐里程碑写，每个里程碑交付可验证产物再继续。kimi-code 精修已并入 §3.1/§3.3/§3.5（2026-06-27）。
 
 ---
 
@@ -19,7 +20,7 @@
 | # | 决策 | 选了什么 | 为什么 |
 |---|---|---|---|
 | 1 | 代码位置 | 独立仓库 `H:\agent-harness`（已 git init，branch main） | 与知识库 vault 分离，harness 是产品不是笔记 |
-| 2 | 首个 model provider | **只接 Anthropic 一家**，走 Messages API + 流式 | 你用 Claude；多 provider 抽象保持薄但 A 阶段不实装（YAGNI） |
+| 2 | 首个 model provider | **首发 Doubao-Seed-2.1-pro**（火山方舟 OpenAI 兼容端点 + 流式）；ModelProvider 抽象留好切换，A 阶段只实装这一家 | 三家国产对比后选它：工具调用最省心（可关思考、消息拼接最简单、无 reasoning_content 回传硬坑）、正式版，A 阶段第一目标是稳跑通工具循环而非省钱。DeepSeek（最便宜 + 1M 上下文，但 preview 期工具调用不稳）/ Kimi K2.7 Code（agent 原生、GA，但强制思考 + 输出仅 32K）将来按需切。原定「只接 Anthropic」因改用国产模型作废 |
 | 3 | 首个工具集 | **Read + Write + Grep** | 够演示对话+副作用+检索；**Bash 推迟到 B 阶段**——A 阶段没上 PermissionGate，放 Bash = 裸奔 |
 | 4 | 首个 skill | **git-commit**（写符合规范的 commit message） | 最小、贴你工作流、零额外依赖，正好演示三级渐进披露 |
 | 5 | A 阶段验收方式 | **客观确定性测试**（脚本化清单 + 单测） | Part7 那套独立 LLM 裁判是 D 阶段 GoalLoop 才上，A 阶段杀鸡用牛刀 |
@@ -31,7 +32,7 @@
 | 关注点 | 选型 | A 阶段是否用 |
 |---|---|---|
 | 语言/运行时 | TypeScript（strict）+ Node ≥20，ES modules | ✅ |
-| 模型 SDK | 自封 `ModelProvider`，内部包 `@anthropic-ai/sdk` | ✅（仅 Anthropic）|
+| 模型 SDK | 自封 `ModelProvider`，内部包 `openai`（指向火山方舟 OpenAI 兼容端点） | ✅（首发 Doubao）|
 | 异步流 | async generator + EventEmitter | ✅ |
 | Schema 校验 | `zod`（工具入参 + 配置） | ✅ |
 | CLI/TUI | `commander`（命令） + `ink`（React for CLI，渲染流式） | ✅ |
@@ -44,24 +45,32 @@
 
 ## 3. 模块设计（7 个，每个：职责 / 最小形态 / 接口草案 / 验证）
 
-### 3.1 ModelProvider（core）— 跟模型说话的统一插座
-- **职责**：把"调一次模型、拿流式回复+工具调用+用量"封在统一接口后，provider 可换。
-- **最小形态**：只实现 `AnthropicProvider`，支持 streaming，返回 token 用量（用 API 真实 `usage`，为 §3.3 压缩判定服务）。
+### 3.1 ModelProvider（core）— 跟模型说话的统一插座〔按 kimi-code `kosong` 形升级〕
+- **职责**：把"调一次模型、拿流式回复+工具调用+用量"封在统一接口后，provider 可换（改配置不改代码）。
+- **最小形态**：实现 `DoubaoProvider`（火山方舟 OpenAI 兼容端点，`openai` 包改 baseURL），支持 streaming，返回 API 真实 `usage`（流式下传 `stream_options.include_usage`；**usage 兜底也读 `choices[0].usage`**——某些兼容端点放私有位）。**抽象形状照 kimi-code `kosong` 的 `ChatProvider`**：provider **immutable**，`withThinking(effort)` / `withMaxCompletionTokens(n)` 返回**浅拷贝克隆**（共享 HTTP transport、只换 kwargs）；`createProvider(判别联合 config)` 工厂分发，Doubao 现做、Kimi/Anthropic 日后 drop-in。
 - **接口草案**：
   ```ts
+  // 归一枚举 + 逃生舱（借 kosong）
+  export type FinishReason = 'completed' | 'tool_calls' | 'truncated' | 'filtered' | 'paused' | 'other';
+  export type ThinkingEffort = 'off' | 'low' | 'medium' | 'high';  // 各 provider 自钳位
   export interface ModelResult {
     text: string;
     toolCalls: ToolCall[];
     usage: { inputTokens: number; outputTokens: number; cachedInputTokens?: number };
-    stopReason: 'end_turn' | 'tool_use' | 'max_tokens';
+    finishReason: FinishReason;
+    rawFinishReason: string;        // 逃生舱：保留 provider 原值，别被归一吃掉信息
+    reasoning?: string;             // 思考模型回传（Doubao reasoning_content 等，需能 round-trip）
   }
   export interface ModelProvider {
-    // 流式：yield 增量事件；最终 resolve 出聚合结果
     call(messages: Message[], tools: ToolSchema[], signal?: AbortSignal):
       AsyncGenerator<ModelDelta, ModelResult>;
+    withThinking(effort: ThinkingEffort): ModelProvider;          // 返回克隆
+    withMaxCompletionTokens(n: number): ModelProvider;            // 返回克隆
+    readonly capability: ModelCapability;  // {max_context, max_output, thinking, tool_use, image_in, video_in}
   }
   ```
-- **验证**：喂一句话拿到流式增量 + 聚合 `ModelResult` + 非零 usage；断网/坏 key 报可读错误。
+- **OpenAI 兼容 gotchas（写进 A1 验收，来自 kimi-code 趟坑）**：① reasoning 字段三选一识别（`reasoning_content`/`reasoning_details`/`reasoning`）+ 可配 `reasoningKey` 覆盖非标名；② **`max_tokens` 第三方常有硬上限**、超了被拒——provider 内置 clamp（默认不发 cap，要发就钳到上限）；③ 思考模型的 reasoning 内容多轮要能 round-trip（A 阶段单 provider 先留好字段，别丢）。
+- **验证**：喂一句话拿到流式增量 + 聚合 `ModelResult` + 非零 usage + 正确 `finishReason`；断网/坏 key 报可读错误；`withThinking('off')` 返回的是新实例、原实例不变（克隆语义单测）。
 
 ### 3.2 EventBus（runtime）— 内部广播站（GUI 解耦的根，day-1）
 - **职责**：所有"发生了什么"以 client-agnostic 事件发出，前端只订阅，不直连 core。
@@ -86,6 +95,7 @@
 ### 3.3 ToolRegistry（core）— 工具登记处 + 入参校验
 - **职责**：登记工具（name/description/zod schema/run），校验入参，执行，返回结果。
 - **最小形态**：登记 **Read / Write / Grep** 三个内置工具；zod 校验入参；执行抛错归一成 `ToolResult.error`。
+- **⚠️ Zod→JSON-Schema 必须归一（kimi-code gotcha）**：把 zod 转成发给模型的 tool schema 时，**deref `$ref`/`$defs` 并补 `type`**——严格端点（含 Moonshot，火山方舟大概率同款）不吃 `$defs`；这是 `schemasForModel()` 的核心活，不是直接 `zodToJsonSchema` 丢出去。另：回灌工具结果时 **tool_call_id 截到 ≤64 字符**（兼容端点约束）。
 - **接口草案**：
   ```ts
   export interface ToolDefinition<I = unknown> {
@@ -97,11 +107,12 @@
   }
   export interface ToolRegistry {
     register(t: ToolDefinition): void;
-    schemasForModel(): ToolSchema[];          // 转 Anthropic tools 格式
+    schemasForModel(): ToolSchema[];          // 转 OpenAI 兼容 tools 格式 + deref $defs + 补 type
     run(call: ToolCall): Promise<ToolResult>; // 内部先 zod 校验
   }
   ```
-- **验证**：合法调用执行成功；非法入参被 zod 拦截、返回结构化错误；Read 读到文件内容、Write 落盘、Grep 命中。
+- **验证**：合法调用执行成功；非法入参被 zod 拦截、返回结构化错误；Read 读到文件内容、Write 落盘、Grep 命中；**`schemasForModel()` 产物无 `$defs`/`$ref` 残留、每个 schema 有 `type`（单测，防 Doubao 拒收）**。
+- 〔后续，非 A〕kimi-code 的 `ToolAccesses` 资源冲突模型（声明 read/write/路径，不冲突即并发、冲突在 provider-order 边界串行）值得抄进 ToolRegistry——但那是 C 阶段多工具并发才需要，A 阶段单线程执行先不做。
 
 ### 3.4 AgentLoop（core）— 心脏：有状态生成器 + 纯函数决策点
 - **职责**：调模型 → 流式发事件 → 有工具调用就执行回灌、没有就收尾 → 超阈值压缩 → 预算兜底。蓝图 §2 的 `runAgent()`。
@@ -133,15 +144,19 @@
 
 ### 3.5 ContextManager（core）— 上下文管家：满了就压缩
 - **职责**：按 API 真实 token 数判断、80-85% 触发结构化摘要、尾部保护、边界对齐。
-- **最小形态**：基于"有效输入预算 = 窗口 − max_output"，超 ~83% 触发；调便宜模型按结构化模板摘要（目标/已完成/阻塞/决策/待办/相关文件）；保护末 ~20 条；边界对齐到 assistant 父消息保 tool_call/result 组完整。
+- **最小形态**：基于"有效输入预算 = 窗口 − max_output"，超 ~83% 触发（kimi-code 用 0.85 触发 + 预留 50K + 保留最近 4 条，与蓝图 80-85% 对齐）；调便宜模型按结构化模板摘要（目标/已完成/阻塞/决策/待办/相关文件）；保护末 ~20 条；**边界对齐照抄 kimi-code 的 `canSplitAfter()` 安全切点**——不在 user 消息后、不在带 tool_call 的 assistant 后切，绝不把 tool_call 和它的 result 切散。
+- **🆕 工具输出落盘预算（kimi-code `budgetToolResultForModel`）**：单个工具结果超 ~50K 字符就**截断 + 落盘到 `data/tool-results/` 留路径指针**，而非整段塞进上下文（比纯占位符可回读，且压不爆窗口）。
 - **接口草案**：
   ```ts
   export interface ContextManager {
     shouldCompact(usage: Usage): boolean;        // = decideCompact 包一层
     compact(messages: Message[]): Promise<void>; // 原地替换为 摘要 + 尾部保护
+    budgetToolResult(out: ToolResult): ToolResult; // 超 50K 截断落盘留指针
   }
+  // 纯函数：安全切点（可单测，借 kimi-code）
+  export function canSplitAfter(messages: Message[], i: number): boolean;
   ```
-- **验证**：灌长对话 → 压缩真触发（断言 `state: 'compacting'` 事件）；摘要进了上下文、尾部保护生效、tool 组没被截断；压缩后还能继续对话。
+- **验证**：灌长对话 → 压缩真触发（断言 `state: 'compacting'` 事件）；摘要进了上下文、尾部保护生效、**tool_call/result 组没被切散（`canSplitAfter` 单测覆盖：在 tool_call 后返回 false）**；大工具输出被截断落盘、上下文里只剩指针 + 预览；压缩后还能继续对话。
 
 ### 3.6 CLI（surfaces/cli）— 终端界面：订阅 EventBus 渲染
 - **职责**：REPL，读用户输入 → 跑 `runAgent` → 订阅 EventBus 流式渲染到终端。
@@ -161,7 +176,7 @@
 | 里程碑 | 内容 | 走到这能验证什么 |
 |---|---|---|
 | **A0 脚手架** | package.json / tsconfig(strict) / vitest / eslint + 目录骨架 + .gitignore；首个 commit | `npm run typecheck` / `npm test`（空跑）通过 |
-| **A1 能说话** | ModelProvider(Anthropic 流式) + EventBus | 脚本调一句话，事件流里看到流式增量 + usage |
+| **A1 能说话** | ModelProvider(Doubao 流式) + EventBus | 脚本调一句话，事件流里看到流式增量 + usage |
 | **A2 能调工具** | ToolRegistry(Read/Write/Grep) + AgentLoop 骨架（决策点纯函数 + 单测） | 一轮对话里 agent 自己决定读个文件、结果回灌、无工具调用收尾 |
 | **A3 能压缩** | ContextManager（83% 触发 + 结构化摘要 + 尾部保护） | 灌长上下文，压缩事件触发、对话能续 |
 | **A4 能在终端跑** | CLI（commander + ink，订阅 EventBus 渲染） | 终端 REPL 打字、流式看输出 + 工具 + 用量、Ctrl-C 中断 |
@@ -202,9 +217,9 @@
 
 | 项 | 处置 |
 |---|---|
-| Anthropic SDK 流式 + 工具调用的具体事件形态需对着当时官方文档落 | A1 先打通最小流式 demo 再封 ModelProvider |
+| Doubao/OpenAI 兼容的流式 + 工具调用事件形态需对着火山方舟官方文档落（流式 tool_calls 按 index 拼 arguments、usage 要 `stream_options.include_usage`） | A1 先打通最小流式 demo 再封 ModelProvider |
 | ink 在 Windows 终端的渲染/重绘表现 | A4 先做最小渲染验证，不行退回纯 stdout 流式 |
-| 压缩用的"便宜模型"选型 + 结构化摘要质量 | A3 先用同家小模型（如 Haiku）跑通，摘要模板对齐蓝图 §3 |
+| 压缩用的"便宜模型"选型 + 结构化摘要质量 | A3 先用同家小模型（如 Doubao-Seed-2.1-turbo）跑通，摘要模板对齐蓝图 §3 |
 | git-commit skill 读 diff 在 A 阶段无 Bash 的取舍 | 先支持"手动喂 diff"或加一个受限只读 `git diff` 命令；完整 shell 到 B |
 | 非程序员独自维护 | 决策点纯函数 + 单测 + 小而清晰模块；复杂度沉到可读的 skill |
 
