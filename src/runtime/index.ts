@@ -1,6 +1,12 @@
 /**
  * runtime layer — EventBus (A phase); SessionStore · PermissionGate · Persistence (later).
  *
- * A0 scaffold placeholder. Real modules land in A1+ (see docs/phase-A-plan.md).
+ * A1 lands the EventBus (see docs/phase-A-plan.md §3.2).
  */
-export const RUNTIME_PLACEHOLDER = true;
+export {
+  InMemoryEventBus,
+  type EventBus,
+  type Event,
+  type AnyEvent,
+  type Subscriber,
+} from './event-bus.js';

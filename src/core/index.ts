@@ -1,6 +1,8 @@
 /**
  * core layer — AgentLoop · ToolRegistry · ContextManager · ModelProvider.
  *
- * A0 scaffold placeholder. Real modules land in A1+ (see docs/phase-A-plan.md).
+ * A1 lands ModelProvider (model/) + the shared domain vocabulary (types.ts).
+ * The rest arrive in A2+ (see docs/phase-A-plan.md).
  */
-export const CORE_PLACEHOLDER = true;
+export type { Message, ToolCall, ToolResult, ToolSchema } from './types.js';
+export * from './model/index.js';
