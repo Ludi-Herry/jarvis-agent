@@ -1,0 +1,1 @@
+# Keeps data/ under version control; runtime state inside is gitignored. Unused until B phase.

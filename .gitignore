@@ -4,7 +4,8 @@ dist/
 *.tsbuildinfo
 
 # runtime state (A 阶段暂未用)
-data/
+data/*
+!data/.gitkeep
 *.db
 *.db-*
 
