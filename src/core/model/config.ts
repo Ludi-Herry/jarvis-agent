@@ -21,8 +21,11 @@ export function loadDoubaoConfig(env: NodeJS.ProcessEnv = process.env): DoubaoCo
   return {
     provider: 'doubao',
     apiKey,
-    baseURL: env.ARK_BASE_URL ?? DEFAULT_ARK_BASE_URL,
-    model: env.ARK_MODEL ?? DEFAULT_ARK_MODEL,
+    // `||` not `??`: a present-but-blank `ARK_BASE_URL=` / `ARK_MODEL=` should fall
+    // back to the default (matching how `if (!apiKey)` above treats blank as unset),
+    // otherwise an empty string would silently override the endpoint/model.
+    baseURL: env.ARK_BASE_URL || DEFAULT_ARK_BASE_URL,
+    model: env.ARK_MODEL || DEFAULT_ARK_MODEL,
     ...(env.ARK_REASONING_KEY ? { reasoningKey: env.ARK_REASONING_KEY } : {}),
   };
 }

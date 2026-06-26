@@ -64,6 +64,13 @@ export interface ModelResult {
  *  return clones, the original is untouched. */
 export interface ModelProvider {
   readonly capability: ModelCapability;
+  /**
+   * Stream the model's reply. The aggregated {@link ModelResult} (text, usage,
+   * finishReason, toolCalls) is the generator's RETURN value, so consume it with
+   * `yield*` (inside an async generator, as the AgentLoop will) or a manual
+   * `.next()`-until-`done` loop. A plain `for await (...)` iterates the deltas but
+   * SILENTLY DISCARDS the result.
+   */
   call(
     messages: Message[],
     tools: ToolSchema[],

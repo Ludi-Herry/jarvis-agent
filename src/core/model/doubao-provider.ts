@@ -97,6 +97,8 @@ export class DoubaoProvider implements ModelProvider {
         }
       }
     } catch (err) {
+      // A deliberate cancel is not a failure — let the caller see the abort as-is.
+      if (signal?.aborted) throw err;
       throw describeModelError(err, this.model);
     }
     return finalizeResult(state);

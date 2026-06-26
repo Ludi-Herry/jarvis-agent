@@ -223,7 +223,7 @@
 
 | 项 | 处置 |
 |---|---|
-| ⚠️ A0 装错 SDK：deps 里是 `@anthropic-ai/sdk`、不是 Doubao 要的 `openai` | **A1 第一步** `npm rm @anthropic-ai/sdk && npm i openai` |
+| ~~A0 装错 SDK：deps 里是 `@anthropic-ai/sdk`、不是 Doubao 要的 `openai`~~ | ✅ A1 已完成（c416eba）：`npm rm @anthropic-ai/sdk && npm i openai`，deps 现为 `openai`。 |
 | `dev` 脚本指向不存在的 `src/surfaces/cli/index.ts` | A4 建 CLI 时补；A1 可先放空占位让 `npm run dev` 不报错 |
 | Doubao/OpenAI 兼容的流式 + 工具调用事件形态需对着火山方舟官方文档落（流式 tool_calls 按 index 拼 arguments、usage 要 `stream_options.include_usage`） | A1 先打通最小流式 demo 再封 ModelProvider |
 | ink 在 Windows 终端的渲染/重绘表现 | A4 先做最小渲染验证，不行退回纯 stdout 流式 |

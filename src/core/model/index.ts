@@ -1,6 +1,10 @@
 /**
- * ModelProvider barrel — the unified socket for talking to a model.
- * See docs/phase-A-plan.md §3.1.
+ * ModelProvider barrel — the unified socket for talking to a model (plan §3.1).
+ *
+ * Public surface only: the provider API + config + capability. The internal pure
+ * helpers (request building, stream folding, finish-reason / reasoning / clamp,
+ * error mapping) stay module-private — their unit tests deep-import the concrete
+ * files directly, so nothing needs them re-exported here.
  */
 export type {
   FinishReason,
@@ -20,15 +24,3 @@ export {
   DOUBAO_SEED_PRO_CAPABILITY,
 } from './doubao-provider.js';
 export { loadDoubaoConfig, DEFAULT_ARK_MODEL } from './config.js';
-export { normalizeFinishReason } from './finish-reason.js';
-export { extractReasoning } from './reasoning.js';
-export { clampMaxTokens } from './clamp.js';
-export { buildChatParams, sanitizeToolCallId, type DoubaoChatParams } from './request.js';
-export {
-  foldChunk,
-  finalizeResult,
-  emptyStreamState,
-  type StreamChunk,
-  type StreamState,
-} from './stream.js';
-export { describeModelError } from './errors.js';

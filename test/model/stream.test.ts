@@ -60,6 +60,19 @@ describe('foldChunk + finalizeResult', () => {
     expect(res.rawFinishReason).toBe('stop');
   });
 
+  it('captures usage from the terminal empty-choices chunk (the real ARK include_usage shape)', () => {
+    const state = emptyStreamState();
+    foldChunk(state, textChunk('hi'));
+    foldChunk(state, { choices: [{ delta: {}, finish_reason: 'stop' }] });
+    // Final chunk: choices:[] + top-level usage — must be captured even though there is no choice.
+    const deltas = foldChunk(state, { choices: [], usage: { prompt_tokens: 9, completion_tokens: 4 } });
+    expect(deltas).toEqual([]);
+    const res = finalizeResult(state);
+    expect(res.text).toBe('hi');
+    expect(res.usage).toEqual({ inputTokens: 9, outputTokens: 4 });
+    expect(res.finishReason).toBe('completed');
+  });
+
   it('falls back to usage stashed inside choices[0].usage', () => {
     const state = emptyStreamState();
     foldChunk(state, {

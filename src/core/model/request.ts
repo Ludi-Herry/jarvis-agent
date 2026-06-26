@@ -18,9 +18,10 @@ import { clampMaxTokens } from './clamp.js';
 /** ARK / OpenAI-compatible tool-call id limit. */
 const TOOL_CALL_ID_MAX = 64;
 
-/** Truncate a tool_call_id to the endpoint's limit. */
+/** Truncate a tool_call_id to the endpoint's limit. (`slice` returns the whole
+ *  string unchanged when it's already short, so no length guard is needed.) */
 export function sanitizeToolCallId(id: string): string {
-  return id.length > TOOL_CALL_ID_MAX ? id.slice(0, TOOL_CALL_ID_MAX) : id;
+  return id.slice(0, TOOL_CALL_ID_MAX);
 }
 
 interface WireToolCall {

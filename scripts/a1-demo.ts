@@ -8,8 +8,13 @@
  *
  * Run:  npm run demo:a1   (needs ARK_API_KEY in the environment)
  */
+import { existsSync } from 'node:fs';
 import { createProvider, loadDoubaoConfig } from '../src/core/index.js';
-import { InMemoryEventBus, type AnyEvent } from '../src/runtime/index.js';
+import { InMemoryEventBus, type Event } from '../src/runtime/index.js';
+
+// Make the documented setup path real: if a .env file exists, load it before reading
+// config. `npm run demo:a1` runs via tsx, which does NOT auto-load .env. (Node >=20.12)
+if (existsSync('.env')) process.loadEnvFile('.env');
 
 async function main(): Promise<void> {
   const config = loadDoubaoConfig();
@@ -17,18 +22,16 @@ async function main(): Promise<void> {
   const provider = createProvider(config).withThinking('off');
 
   const bus = new InMemoryEventBus();
-  bus.subscribe((e: AnyEvent) => {
+  bus.subscribe((e: Event) => {
     switch (e.type) {
       case 'message_delta':
-        process.stdout.write(String(e.text));
+        process.stdout.write(e.text);
         break;
       case 'usage':
-        process.stdout.write(
-          `\n\n[usage] input=${e.inputTokens} output=${e.outputTokens}\n`,
-        );
+        process.stdout.write(`\n\n[usage] input=${e.inputTokens} output=${e.outputTokens}\n`);
         break;
       case 'final':
-        process.stdout.write(`[final] ${String(e.text).length} chars\n`);
+        process.stdout.write(`[final] ${e.text.length} chars\n`);
         break;
       default:
         break;

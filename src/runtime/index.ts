@@ -3,10 +3,4 @@
  *
  * A1 lands the EventBus (see docs/phase-A-plan.md §3.2).
  */
-export {
-  InMemoryEventBus,
-  type EventBus,
-  type Event,
-  type AnyEvent,
-  type Subscriber,
-} from './event-bus.js';
+export { InMemoryEventBus, type EventBus, type Event, type Subscriber } from './event-bus.js';

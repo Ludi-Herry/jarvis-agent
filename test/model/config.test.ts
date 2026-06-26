@@ -17,6 +17,12 @@ describe('loadDoubaoConfig', () => {
     });
   });
 
+  it('treats a present-but-blank baseURL/model as unset and uses the defaults', () => {
+    const cfg = loadDoubaoConfig({ ARK_API_KEY: 'k', ARK_BASE_URL: '', ARK_MODEL: '' });
+    expect(cfg.baseURL).toBe(DEFAULT_ARK_BASE_URL);
+    expect(cfg.model).toBe(DEFAULT_ARK_MODEL);
+  });
+
   it('honors overrides from the environment', () => {
     const cfg = loadDoubaoConfig({
       ARK_API_KEY: 'k',

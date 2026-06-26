@@ -15,9 +15,13 @@ describe('describeModelError', () => {
     expect(describeModelError({ status: 429 }, 'm').message).toContain('rate limited');
   });
 
-  it('handles plain errors and non-error throws', () => {
-    expect(describeModelError(new Error('socket hang up'), 'm').message).toContain('socket hang up');
+  it('handles plain errors and non-error throws via the generic (non-HTTP) branch', () => {
+    const plain = describeModelError(new Error('socket hang up'), 'm').message;
+    expect(plain).toContain('socket hang up');
+    expect(plain).not.toContain('HTTP'); // no numeric status => not treated as an API error
     expect(describeModelError('boom', 'm').message).toContain('boom');
+    // an object with a message but no numeric status is NOT an API error
+    expect(describeModelError({ message: 'weird' }, 'm').message).not.toContain('HTTP');
   });
 
   it('includes the model id', () => {
