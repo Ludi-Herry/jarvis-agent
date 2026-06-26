@@ -25,6 +25,12 @@
 | 4 | 首个 skill | **git-commit**（写符合规范的 commit message） | 最小、贴你工作流、零额外依赖，正好演示三级渐进披露 |
 | 5 | A 阶段验收方式 | **客观确定性测试**（脚本化清单 + 单测） | Part7 那套独立 LLM 裁判是 D 阶段 GoalLoop 才上，A 阶段杀鸡用牛刀 |
 
+**模型接入配置（已落 `.env.example`；key 是密钥永不入库，代码从 `process.env` 读）**
+- baseURL（OpenAI 兼容）：`https://ark.cn-beijing.volces.com/api/v3`（env `ARK_BASE_URL`）
+- 模型 id：`doubao-seed-2-1-pro-260628`（env `ARK_MODEL`）
+- 鉴权：`process.env.ARK_API_KEY`，已配成环境变量、实测调通；**不硬编码、不进 commit/日志**。
+- ⚠️ **豆包默认开思考模式**（实测「回一个词」却花 37 token = 隐藏 reasoning）——A1 封 ModelProvider 时 `withThinking('off')` 要发 `thinking:{type:'disabled'}`，工具调用才最干净、不付隐藏 token。**这正是选 Doubao（能关思考）而非 Kimi K2.7-code（强制思考）的核心理由。**
+
 ---
 
 ## 2. 技术栈（蓝图 §10，A 阶段实际用到的）
@@ -69,7 +75,7 @@
     readonly capability: ModelCapability;  // {max_context, max_output, thinking, tool_use, image_in, video_in}
   }
   ```
-- **OpenAI 兼容 gotchas（写进 A1 验收，来自 kimi-code 趟坑）**：① reasoning 字段三选一识别（`reasoning_content`/`reasoning_details`/`reasoning`）+ 可配 `reasoningKey` 覆盖非标名；② **`max_tokens` 第三方常有硬上限**、超了被拒——provider 内置 clamp（默认不发 cap，要发就钳到上限）；③ 思考模型的 reasoning 内容多轮要能 round-trip（A 阶段单 provider 先留好字段，别丢）。
+- **OpenAI 兼容 gotchas（写进 A1 验收，来自 kimi-code 趟坑）**：① reasoning 字段三选一识别（`reasoning_content`/`reasoning_details`/`reasoning`）+ 可配 `reasoningKey` 覆盖非标名；② **`max_tokens` 第三方常有硬上限**、超了被拒——provider 内置 clamp（默认不发 cap，要发就钳到上限）；③ 思考模型的 reasoning 内容多轮要能 round-trip（A 阶段单 provider 先留好字段，别丢）；④ **豆包默认开思考**，`withThinking('off')` 发 `thinking:{type:'disabled'}`（实测回一个词花 37 token，关掉工具调用最干净、省隐藏 reasoning token）。
 - **验证**：喂一句话拿到流式增量 + 聚合 `ModelResult` + 非零 usage + 正确 `finishReason`；断网/坏 key 报可读错误；`withThinking('off')` 返回的是新实例、原实例不变（克隆语义单测）。
 
 ### 3.2 EventBus（runtime）— 内部广播站（GUI 解耦的根，day-1）
@@ -217,6 +223,8 @@
 
 | 项 | 处置 |
 |---|---|
+| ⚠️ A0 装错 SDK：deps 里是 `@anthropic-ai/sdk`、不是 Doubao 要的 `openai` | **A1 第一步** `npm rm @anthropic-ai/sdk && npm i openai` |
+| `dev` 脚本指向不存在的 `src/surfaces/cli/index.ts` | A4 建 CLI 时补；A1 可先放空占位让 `npm run dev` 不报错 |
 | Doubao/OpenAI 兼容的流式 + 工具调用事件形态需对着火山方舟官方文档落（流式 tool_calls 按 index 拼 arguments、usage 要 `stream_options.include_usage`） | A1 先打通最小流式 demo 再封 ModelProvider |
 | ink 在 Windows 终端的渲染/重绘表现 | A4 先做最小渲染验证，不行退回纯 stdout 流式 |
 | 压缩用的"便宜模型"选型 + 结构化摘要质量 | A3 先用同家小模型（如 Doubao-Seed-2.1-turbo）跑通，摘要模板对齐蓝图 §3 |
