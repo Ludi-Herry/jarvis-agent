@@ -3,7 +3,7 @@
 > 依据蓝图 §12 的 A 阶段 + §10 技术栈 + §11 目录 + §2/§3/§7/§8 模块设计。
 > 蓝图原文：`H:\LLM本地知识库\采集\external\agent-harness-调研\agent-harness-Part2-架构蓝图.md`。
 > **首要代码参照：kimi-code**（Moonshot 官方 TS/Node coding agent，与本骨架最同构；深挖见知识库 Part8）——`kosong/src/provider.ts`（ModelProvider 形状）、`agent-core/src/loop/`（无状态 loop + host 持状态）、`agent-core/src/agent/compaction/strategy.ts`（canSplitAfter + 工具输出落盘）。次要参照 Claude Code 还原源码 / codex。
-> 状态（2026-06-27）：方案已绿灯并开工。**A0 脚手架 ✅（commit 9b608a9）、A1 能说话 ✅（ModelProvider + EventBus，commits c416eba 实现 / d58b612 审查硬化）已完成并验收**；下一步 **A2 能调工具**（ToolRegistry + AgentLoop 骨架）。交接见 `docs/handoff-A1.md`，A2 接手 prompt 见 `docs/next-session-A2-prompt.md`。kimi-code 精修已并入 §3.1/§3.3/§3.5。
+> 状态（2026-06-28）：**Phase A 全部完成（A0–A6 ✅）**。A0 脚手架（9b608a9）、A1 能说话（c416eba/d58b612）、A2 能调工具（e0fb3dc）、A3 能压缩（7be255a）、A4 能在终端跑（ec47c4e）、A5 能用 skill（8860960）、A6 验收收口。117 单测全绿、§5 验收六条逐条覆盖、各里程碑有真连 Doubao 的 demo。收尾交接见 `docs/handoff-A.md`。下一步为 Phase B（权限闸门 + Bash 等，未开工）。kimi-code 精修已并入 §3.1/§3.3/§3.5。
 
 ---
 
