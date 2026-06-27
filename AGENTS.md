@@ -1,6 +1,6 @@
-# agent-harness · 项目规范
+# Jarvis-Agent · 项目规范
 
-陆凌华（UX 设计师，非程序员）自研的 TypeScript/Node **agent-code CLI + agent harness**，未来叠加自定义 GUI。本文件是这个仓库的规则层；跨工具个人默认见 `~/.codex/AGENTS.md`，不在此重复。
+陆凌华（UX 设计师，非程序员）自研的 TypeScript/Node 编码 agent —— **Jarvis-Agent**（CLI + agent harness），未来叠加自定义 GUI。本文件是这个仓库的规则层；跨工具个人默认见 `~/.codex/AGENTS.md`，不在此重复。
 
 ## 这是什么 / 不是什么
 - **是**：一个有状态宿主 + 纯函数决策点的 agent loop，事件流 day-1 解耦前端，渐进披露 skill，确定性交脚本、判断交模型。

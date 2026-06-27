@@ -78,7 +78,7 @@ async function main(): Promise<void> {
   // what gets summarized away; the question + tool turn stay in the verbatim tail.
   const messages: Message[] = [
     { role: 'system', content: '你是一个能调用文件工具（read/write/grep）的助手，回答需要文件内容时先调用工具。' },
-    { role: 'user', content: '我们在做一个 agent-harness 项目。' },
+    { role: 'user', content: '我们在做一个 Jarvis-Agent 项目。' },
     { role: 'assistant', content: '好的，我了解了。' },
     { role: 'user', content: 'A1 阶段做了 ModelProvider，A2 做了工具循环。' },
     { role: 'assistant', content: '明白，进度已记下。' },

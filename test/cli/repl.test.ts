@@ -102,7 +102,7 @@ describe('startRepl', () => {
     });
 
     const text = out.text();
-    expect(text).toContain('agent-harness · fake-model');
+    expect(text).toContain('Jarvis-Agent · fake-model');
     expect(text).toContain('hi there');
     expect(text).toContain('› '); // prompt was shown
   });

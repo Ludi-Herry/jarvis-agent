@@ -35,8 +35,8 @@ const SYSTEM_PROMPT = [
 const program = new Command();
 
 program
-  .name('agent-harness')
-  .description('A minimal coding agent — terminal REPL (phase A).')
+  .name('jarvis-agent')
+  .description('Jarvis-Agent — a minimal coding agent in the terminal (Phase A).')
   .version('0.0.0')
   .option('--cwd <dir>', 'base directory tool paths resolve against', process.cwd())
   .option('--max-turns <n>', 'max model turns per message', (v) => Number.parseInt(v, 10), 24)

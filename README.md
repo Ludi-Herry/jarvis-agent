@@ -1,6 +1,6 @@
-# agent-harness
+# Jarvis-Agent
 
-自研的 TypeScript/Node **agent-code CLI + agent harness**（陆凌华 / Luis）。核心架构：**有状态宿主 + 纯函数决策点**的 agent loop，事件流 day-1 解耦前端，渐进披露 skill，确定性交脚本、判断交模型。
+**Jarvis-Agent** —— 自研的 TypeScript/Node 编码 agent（CLI + agent harness，陆凌华 / Luis）。核心架构：**有状态宿主 + 纯函数决策点**的 agent loop，事件流 day-1 解耦前端，渐进披露 skill，确定性交脚本、判断交模型。
 
 > 设计依据不在本仓库重写，以知识库蓝图为准（见 `AGENTS.md`「唯一设计依据」）。**Phase A 已完成**：单 agent 能在终端跑起来——说话、调工具、压上下文、用 skill。
 

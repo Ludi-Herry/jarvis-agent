@@ -66,7 +66,7 @@ export async function startRepl(deps: ReplDeps): Promise<void> {
     }
   });
 
-  out.write(`agent-harness · ${deps.modelName}\n输入消息,Ctrl-C 退出(/exit 也可)\n\n`);
+  out.write(`Jarvis-Agent · ${deps.modelName}\n输入消息,Ctrl-C 退出(/exit 也可)\n\n`);
   prompt();
 
   for await (const line of rl) {
