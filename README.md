@@ -16,7 +16,9 @@
 | A5 能用 skill（SkillRegistry + git-commit） | ✅ |
 | A6 验收收口（§5 清单全绿 + 文档 + 清理） | ✅ |
 
-验收契约 §5 六条逐条有自动化测试覆盖（117 测试全绿），每个里程碑另有真连 Doubao 的实跑 demo。里程碑全貌与设计见 `docs/phase-A-plan.md`；Phase A 收尾交接见 `docs/handoff-A.md`。下一步为 **Phase B**（权限闸门 + Bash 工具等，尚未开工）。
+验收契约 §5 六条逐条有自动化测试覆盖（117 测试全绿），每个里程碑另有真连 Doubao 的实跑 demo。里程碑全貌与设计见 `docs/phase-A-plan.md`；Phase A 收尾交接见 `docs/handoff-A.md`。
+
+**Phase B 已设计待开工**（`docs/phase-B-plan.md`）：让 agent 能**安全地执行命令**——PermissionGate（deny→ask→allow）+ 确定性命令解析（拦危险命令、永不读 .env/密钥）+ Bash 工具 + 交互审批 + RuleResolver。已定调：范围=安全执行核心（持久化推迟）、沙箱=务实档（解析+受限 cwd+审批，不上内核沙箱）。里程碑 B1–B6。
 
 ## 这是什么
 
@@ -76,6 +78,7 @@ docs/            # phase-A-plan.md · handoff-A1.md · handoff-A.md · next-sess
 
 - `AGENTS.md` — 项目规则层（命名 / 风格 / 工程纪律 / 命令 / 设计依据）。**动手前先读。**
 - `docs/phase-A-plan.md` — Phase A 完整方案（7 模块设计 + A0–A6 里程碑 + 验收契约 + 不做边界 + D 阶段多模态备忘）。
+- `docs/phase-B-plan.md` — **Phase B 完整方案**（PermissionGate + 命令解析 + Bash + 审批 + RuleResolver；B1–B6 里程碑 + 验收契约 + 边界；安全执行核心，待开工）。
 - `docs/handoff-A.md` — **Phase A 收尾交接**：A0–A6 已建内容、关键决策、gotcha、§5 验收→测试映射、如何运行、Phase B 起点。
 - `docs/handoff-A1.md` — A0+A1 当时的交接（早期细节，已被 handoff-A.md 覆盖）。
 - `docs/next-session-A2-prompt.md` — A2 接手 prompt（历史留存）。
