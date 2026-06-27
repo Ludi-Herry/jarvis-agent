@@ -6,10 +6,12 @@ import { z } from 'zod';
 import { runAgent } from '../../src/core/loop/run-agent.js';
 import { InMemoryToolRegistry } from '../../src/core/tools/registry.js';
 import { readTool } from '../../src/core/tools/builtins.js';
+import { DefaultContextManager } from '../../src/core/context/context-manager.js';
 import { InMemoryEventBus, type Event } from '../../src/runtime/event-bus.js';
-import type { Message, ToolCall } from '../../src/core/types.js';
+import type { Message, ToolCall, ToolResult } from '../../src/core/types.js';
 import type { ModelDelta, ModelProvider, ModelResult } from '../../src/core/model/types.js';
 import type { ToolDefinition } from '../../src/core/tools/types.js';
+import type { ContextManager } from '../../src/core/context/context-manager.js';
 
 /** A model whose turns are scripted. Each step's text is streamed in two chunks (to exercise
  *  delta aggregation); the last step repeats forever (so an always-tool step loops). */
@@ -189,5 +191,82 @@ describe('runAgent — guardrail', () => {
     expect(outcome).toEqual({ halted: 'maxTurns', turns: 3 });
     expect(events.some((e) => e.type === 'halt' && e.reason === 'maxTurns')).toBe(true);
     expect(events.some((e) => e.type === 'final')).toBe(false);
+  });
+});
+
+describe('runAgent — compaction (A3)', () => {
+  it('compacts in-loop when the window fills, keeps system + tail, then continues', async () => {
+    // Tiny effective budget (12 − 2 = 10) so the scripted usage (inputTokens 10) trips it.
+    const cm = new DefaultContextManager({
+      summarizer: scriptedModel([{ text: 'COMPACTED' }]).provider,
+      maxContextTokens: 12,
+      maxOutputTokens: 2,
+      keepRecent: 2,
+    });
+    const tools = new InMemoryToolRegistry();
+    tools.register(okTool);
+    const { provider } = scriptedModel([
+      { text: 'working', toolCalls: [{ id: 'c1', name: 'ok', arguments: '{}' }] },
+      { text: 'final answer' },
+    ]);
+    const bus = new InMemoryEventBus();
+    const events = record(bus);
+    const messages: Message[] = [
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: 'old q1' },
+      { role: 'assistant', content: 'old a1' },
+      { role: 'user', content: 'recent q' },
+    ];
+
+    const outcome = await runAgent({
+      model: provider,
+      tools,
+      bus,
+      messages,
+      toolCtx: { cwd: dir },
+      budget: { maxTurns: 5 },
+      context: cm,
+    });
+
+    // the loop announced and performed compaction
+    expect(events.some((e) => e.type === 'state' && e.phase === 'compacting')).toBe(true);
+    // the summary replaced the old prefix, the system prompt survived as the prefix
+    expect(messages[0]).toEqual({ role: 'system', content: 'sys' });
+    expect(messages.some((m) => m.role === 'user' && m.content.includes('COMPACTED'))).toBe(true);
+    expect(messages.some((m) => m.content === 'old q1')).toBe(false); // old prefix gone
+    // and the conversation continued to a natural finish AFTER compacting
+    expect(outcome.finalText).toBe('final answer');
+  });
+
+  it('budgets each tool result through the context manager before it enters the conversation', async () => {
+    // A spy manager: never compacts, but rewrites every tool result so we can see it applied.
+    const spy: ContextManager = {
+      shouldCompact: () => false,
+      compact: async () => {},
+      budgetToolResult: async (out: ToolResult) => ({ ...out, content: `BUDGETED:${out.content}` }),
+    };
+    const tools = new InMemoryToolRegistry();
+    tools.register(okTool);
+    const { provider } = scriptedModel([
+      { toolCalls: [{ id: 'c1', name: 'ok', arguments: '{}' }] },
+      { text: 'done' },
+    ]);
+    const bus = new InMemoryEventBus();
+    const events = record(bus);
+    const messages: Message[] = [{ role: 'user', content: 'go' }];
+
+    await runAgent({
+      model: provider,
+      tools,
+      bus,
+      messages,
+      toolCtx: { cwd: dir },
+      budget: { maxTurns: 5 },
+      context: spy,
+    });
+
+    const toolResult = events.find((e) => e.type === 'tool_result');
+    expect(toolResult).toMatchObject({ out: { content: 'BUDGETED:ok' } });
+    expect(messages.some((m) => m.role === 'tool' && m.content === 'BUDGETED:ok')).toBe(true);
   });
 });

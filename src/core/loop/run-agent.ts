@@ -16,6 +16,7 @@
 import type { Message, ToolResult } from '../types.js';
 import type { ModelProvider, ModelResult } from '../model/types.js';
 import type { ToolRegistry, ToolRunCtx } from '../tools/types.js';
+import type { ContextManager } from '../context/context-manager.js';
 import type { EventBus } from '../../runtime/event-bus.js';
 import { type Budget, decideStop, withinBudget } from './decisions.js';
 
@@ -30,6 +31,9 @@ export interface AgentContext {
   /** Base directory relative tool paths resolve against. */
   toolCtx: ToolRunCtx;
   budget: Budget;
+  /** Optional context manager (A3). When present, the loop budgets oversized tool results
+   *  and compacts the conversation once it nears the window. Absent → neither happens. */
+  context?: ContextManager;
   signal?: AbortSignal;
 }
 
@@ -65,12 +69,19 @@ export async function runAgent(ctx: AgentContext): Promise<RunOutcome> {
 
     for (const call of res.toolCalls) {
       ctx.bus.emit({ type: 'tool_call', call });
-      const out = await ctx.tools.run(call, ctx.toolCtx);
+      const ran = await ctx.tools.run(call, ctx.toolCtx);
+      // Budget oversized output to disk BEFORE it enters the context (A3); a no-op without
+      // a context manager or for small results.
+      const out = ctx.context ? await ctx.context.budgetToolResult(ran) : ran;
       ctx.messages.push({ role: 'tool', toolCallId: out.callId, content: toolMessageContent(out) });
       ctx.bus.emit({ type: 'tool_result', out });
     }
 
-    // ── A3 seam: if (decideCompact(res.usage, window)) await contextManager.compact(messages)
+    // Compact once the prompt nears the window, so the NEXT turn fits (A3).
+    if (ctx.context?.shouldCompact(res.usage)) {
+      ctx.bus.emit({ type: 'state', phase: 'compacting' });
+      await ctx.context.compact(ctx.messages);
+    }
 
     turn++;
   }

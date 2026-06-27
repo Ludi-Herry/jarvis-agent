@@ -11,6 +11,7 @@
     "dev": "tsx src/surfaces/cli/index.ts",
     "demo:a1": "tsx scripts/a1-demo.ts",
     "demo:a2": "tsx scripts/a2-demo.ts",
+    "demo:a3": "tsx scripts/a3-demo.ts",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
