@@ -1,6 +1,9 @@
 /**
- * capabilities layer — SkillRegistry (A phase); SubagentManager · Hooks · RuleResolver (later).
+ * capabilities layer — SkillRegistry (A5); SubagentManager · Hooks · RuleResolver (later).
  *
- * A0 scaffold placeholder. Real modules land in A1+ (see docs/phase-A-plan.md).
+ * A5 lands the SkillRegistry (skills/) — three-level progressive disclosure (plan §3.7).
  */
-export const CAPABILITIES_PLACEHOLDER = true;
+export { SkillRegistry, loadSkills } from './skills/skill-registry.js';
+export type { Skill } from './skills/skill-registry.js';
+export { parseFrontmatter } from './skills/frontmatter.js';
+export type { ParsedDocument } from './skills/frontmatter.js';

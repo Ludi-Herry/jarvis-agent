@@ -15,6 +15,7 @@ import type { Message } from '../../core/types.js';
 import type { ModelProvider } from '../../core/model/types.js';
 import type { ToolRegistry } from '../../core/tools/types.js';
 import type { ContextManager } from '../../core/context/context-manager.js';
+import type { SkillRegistry } from '../../capabilities/skills/skill-registry.js';
 import { runAgent } from '../../core/loop/run-agent.js';
 import { InMemoryEventBus } from '../../runtime/event-bus.js';
 import { initialRenderState, renderEvent } from './render.js';
@@ -23,6 +24,9 @@ export interface ReplDeps {
   model: ModelProvider;
   tools: ToolRegistry;
   context?: ContextManager;
+  /** Optional skills (A5). Each user turn, the catalog + any activated skill bodies are
+   *  folded into the model's system message for that run. */
+  skills?: SkillRegistry;
   /** Base directory tool paths resolve against. */
   cwd: string;
   /** Shown in the banner. */
@@ -93,6 +97,8 @@ export async function startRepl(deps: ReplDeps): Promise<void> {
         toolCtx: { cwd: deps.cwd },
         budget: { maxTurns: deps.maxTurns },
         context: deps.context,
+        // Progressive disclosure: only this turn's message decides which skill bodies load.
+        systemAddendum: deps.skills?.systemAddendum(text),
         signal: activeRun.signal,
       });
     } catch (err) {

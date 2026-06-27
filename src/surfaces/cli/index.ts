@@ -14,6 +14,7 @@ import {
   createProvider,
   loadDoubaoConfig,
 } from '../../core/index.js';
+import { SkillRegistry } from '../../capabilities/index.js';
 import { startRepl } from './repl.js';
 
 // tsx does not auto-load .env; mirror the demos so `npm run dev` works from a .env too.
@@ -57,11 +58,13 @@ program
       maxContextTokens: provider.capability.maxContextTokens,
       maxOutputTokens: OUTPUT_RESERVE_TOKENS,
     });
+    const skills = await SkillRegistry.load('skills');
 
     await startRepl({
       model: provider,
       tools,
       context,
+      skills,
       cwd: opts.cwd,
       modelName: config.model,
       systemPrompt: SYSTEM_PROMPT,

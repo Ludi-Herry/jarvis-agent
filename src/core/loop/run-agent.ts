@@ -34,6 +34,10 @@ export interface AgentContext {
   /** Optional context manager (A3). When present, the loop budgets oversized tool results
    *  and compacts the conversation once it nears the window. Absent → neither happens. */
   context?: ContextManager;
+  /** Optional per-run system addendum (A5): skill catalog + any activated skill bodies,
+   *  folded into the system message at send time only — never stored in `messages`, so it
+   *  refreshes each run and is never compacted. */
+  systemAddendum?: string;
   signal?: AbortSignal;
 }
 
@@ -94,7 +98,8 @@ export async function runAgent(ctx: AgentContext): Promise<RunOutcome> {
  *  return the aggregated result. Tool-call deltas are partial, so the assembled tool calls
  *  are emitted by the caller AFTER the stream; reasoning has no A-phase event yet. */
 async function streamTurn(ctx: AgentContext): Promise<ModelResult> {
-  const stream = ctx.model.call(ctx.messages, ctx.tools.schemasForModel(), ctx.signal);
+  const sent = withSystemAddendum(ctx.messages, ctx.systemAddendum);
+  const stream = ctx.model.call(sent, ctx.tools.schemasForModel(), ctx.signal);
   let next = await stream.next();
   while (!next.done) {
     const delta = next.value;
@@ -119,4 +124,16 @@ function assistantMessage(res: ModelResult): Message {
 /** A tool's failure is surfaced to the model as text (so it can recover), not hidden. */
 function toolMessageContent(out: ToolResult): string {
   return out.error !== undefined ? `ERROR: ${out.error}` : out.content;
+}
+
+/** Fold the per-run system addendum into the leading system message for THIS send only,
+ *  returning a new array so `ctx.messages` is never mutated (the addendum must not persist
+ *  or be compacted). No addendum → the original array, untouched. */
+function withSystemAddendum(messages: Message[], addendum?: string): Message[] {
+  if (!addendum) return messages;
+  const [first, ...rest] = messages;
+  if (first && first.role === 'system') {
+    return [{ role: 'system', content: `${first.content}\n\n${addendum}` }, ...rest];
+  }
+  return [{ role: 'system', content: addendum }, ...messages];
 }

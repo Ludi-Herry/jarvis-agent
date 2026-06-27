@@ -270,3 +270,68 @@ describe('runAgent — compaction (A3)', () => {
     expect(messages.some((m) => m.role === 'tool' && m.content === 'BUDGETED:ok')).toBe(true);
   });
 });
+
+describe('runAgent — system addendum (A5)', () => {
+  /** Captures the system message content the model received on its first call. */
+  function capturingModel(): { provider: ModelProvider; systemSeen: () => string } {
+    let seen = '';
+    const provider: ModelProvider = {
+      capability: {
+        maxContextTokens: 1000,
+        maxOutputTokens: 100,
+        thinking: false,
+        toolUse: false,
+        imageIn: false,
+        videoIn: false,
+      },
+      // eslint-disable-next-line require-yield
+      async *call(messages: Message[]): AsyncGenerator<ModelDelta, ModelResult> {
+        const first = messages[0];
+        seen = first && first.role === 'system' ? first.content : '';
+        return {
+          text: 'ok',
+          toolCalls: [],
+          usage: { inputTokens: 1, outputTokens: 1 },
+          finishReason: 'completed',
+          rawFinishReason: 'stop',
+        };
+      },
+      withThinking: () => provider,
+      withMaxCompletionTokens: () => provider,
+    };
+    return { provider, systemSeen: () => seen };
+  }
+
+  it('folds the addendum into the system message at send time without persisting it', async () => {
+    const { provider, systemSeen } = capturingModel();
+    const messages: Message[] = [{ role: 'system', content: 'BASE' }, { role: 'user', content: 'hi' }];
+
+    await runAgent({
+      model: provider,
+      tools: new InMemoryToolRegistry(),
+      bus: new InMemoryEventBus(),
+      messages,
+      toolCtx: { cwd: dir },
+      budget: { maxTurns: 5 },
+      systemAddendum: 'SKILL-CATALOG',
+    });
+
+    // the model saw base + addendum…
+    expect(systemSeen()).toBe('BASE\n\nSKILL-CATALOG');
+    // …but the stored conversation's system message is untouched (no persistence/compaction)
+    expect(messages[0]).toEqual({ role: 'system', content: 'BASE' });
+  });
+
+  it('leaves messages exactly as-is when no addendum is given', async () => {
+    const { provider, systemSeen } = capturingModel();
+    await runAgent({
+      model: provider,
+      tools: new InMemoryToolRegistry(),
+      bus: new InMemoryEventBus(),
+      messages: [{ role: 'system', content: 'BASE' }, { role: 'user', content: 'hi' }],
+      toolCtx: { cwd: dir },
+      budget: { maxTurns: 5 },
+    });
+    expect(systemSeen()).toBe('BASE');
+  });
+});
