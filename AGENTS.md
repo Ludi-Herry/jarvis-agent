@@ -41,7 +41,8 @@ data/          # 运行期状态（gitignore 大件；A 阶段暂未用）
 - 构建：`npm run build`（tsc）
 - 测试：`npm test`（vitest）
 - 类型检查：`npm run typecheck`
-- 跑 CLI：`npm run dev`
+- 跑 CLI：`npm run dev`（A0 占位，真 CLI 到 A4）
+- A1 调用 demo：`npm run demo:a1`（调 Doubao 一句话→流式 + 聚合 ModelResult；需 `ARK_API_KEY` 在环境变量或 `.env`）
 > 写代码声明完成前，先把 test / typecheck / build 端到端跑通，有证据再说"完成"。
 
 ## Git

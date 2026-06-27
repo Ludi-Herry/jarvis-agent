@@ -3,7 +3,7 @@
 > 依据蓝图 §12 的 A 阶段 + §10 技术栈 + §11 目录 + §2/§3/§7/§8 模块设计。
 > 蓝图原文：`H:\LLM本地知识库\采集\external\agent-harness-调研\agent-harness-Part2-架构蓝图.md`。
 > **首要代码参照：kimi-code**（Moonshot 官方 TS/Node coding agent，与本骨架最同构；深挖见知识库 Part8）——`kosong/src/provider.ts`（ModelProvider 形状）、`agent-core/src/loop/`（无状态 loop + host 持状态）、`agent-core/src/agent/compaction/strategy.ts`（canSplitAfter + 工具输出落盘）。次要参照 Claude Code 还原源码 / codex。
-> 状态：方案待陆凌华绿灯 → 绿灯后按「构建顺序」逐里程碑写，每个里程碑交付可验证产物再继续。kimi-code 精修已并入 §3.1/§3.3/§3.5（2026-06-27）。
+> 状态（2026-06-27）：方案已绿灯并开工。**A0 脚手架 ✅（commit 9b608a9）、A1 能说话 ✅（ModelProvider + EventBus，commits c416eba 实现 / d58b612 审查硬化）已完成并验收**；下一步 **A2 能调工具**（ToolRegistry + AgentLoop 骨架）。交接见 `docs/handoff-A1.md`，A2 接手 prompt 见 `docs/next-session-A2-prompt.md`。kimi-code 精修已并入 §3.1/§3.3/§3.5。
 
 ---
 
@@ -181,9 +181,9 @@
 
 | 里程碑 | 内容 | 走到这能验证什么 |
 |---|---|---|
-| **A0 脚手架** | package.json / tsconfig(strict) / vitest / eslint + 目录骨架 + .gitignore；首个 commit | `npm run typecheck` / `npm test`（空跑）通过 |
-| **A1 能说话** | ModelProvider(Doubao 流式) + EventBus | 脚本调一句话，事件流里看到流式增量 + usage |
-| **A2 能调工具** | ToolRegistry(Read/Write/Grep) + AgentLoop 骨架（决策点纯函数 + 单测） | 一轮对话里 agent 自己决定读个文件、结果回灌、无工具调用收尾 |
+| **A0 脚手架** ✅ | package.json / tsconfig(strict) / vitest / eslint + 目录骨架 + .gitignore；首个 commit | `npm run typecheck` / `npm test`（空跑）通过 |
+| **A1 能说话** ✅ | ModelProvider(Doubao 流式) + EventBus | 脚本调一句话，事件流里看到流式增量 + usage（demo `npm run demo:a1` 实跑通） |
+| **A2 能调工具** ◀ 下一步 | ToolRegistry(Read/Write/Grep) + AgentLoop 骨架（决策点纯函数 + 单测） | 一轮对话里 agent 自己决定读个文件、结果回灌、无工具调用收尾 |
 | **A3 能压缩** | ContextManager（83% 触发 + 结构化摘要 + 尾部保护） | 灌长上下文，压缩事件触发、对话能续 |
 | **A4 能在终端跑** | CLI（commander + ink，订阅 EventBus 渲染） | 终端 REPL 打字、流式看输出 + 工具 + 用量、Ctrl-C 中断 |
 | **A5 能用 skill** | SkillRegistry 三级披露 + git-commit skill | 说写 commit → skill 触发、产出规范 message |
@@ -217,6 +217,15 @@
 - ❌ 多 provider 实装、缓存对齐高级策略、虚拟文件系统底座 → 出现真实需求才建
 - ❌ `policies/ evals/ observability/ mcp/` 等目录 → 按需才建
 
+### D 阶段备忘 · 多模态识别（记录用，A 不做；调研已沉淀）
+
+多模态走**异构委派 skill**：主 agent / 主模型不持有视觉，把「看图 / 看视频」封成脚本，委派给视觉模型的**单次无状态调用**（蓝图既定）。两条已调研的设计锚：
+
+- **图像（空间维）= 外置视觉 + 坐标锚点**〔OpenHanako 华子〕：轻量 VLM 当眼睛解析图，**输出物体名 + 精确 Bounding Box 坐标，而非「左边/偏上」散文**，主模型对数字坐标做几何推理——降幻觉、强空间感，破「看图 vs 聪明二选一」。同族技术 = Set-of-Mark / visual grounding。
+- **视频（时间维）= 时间是一等公民**〔kimi-code k2.6〕：别当图片集合，低频抽帧丢动作/转场/节奏/因果。API gotcha：图 base64 或 file_id（URL 直链常不支持）、视频小文件 base64 大文件上传（请求体上限）、按关键帧计费先预估、分辨率上限。
+- **harness 钩子已留**：A1 `ModelCapability.imageIn/videoIn` 即为此预留；D 阶段落地 = 一个外置视觉/视频 skill，VLM 输出**结构化（坐标/时间锚点）**、主模型推理。
+- 详见：知识库 `AI与工具/外置视觉与坐标锚点.md`、`实体/OpenHanako.md` 与 `…agent-harness-调研/Part8 §8`；项目 memory `openhanako-outer-vision-multimodal`。
+
 ---
 
 ## 7. 风险 / 待核实
@@ -225,7 +234,7 @@
 |---|---|
 | ~~A0 装错 SDK：deps 里是 `@anthropic-ai/sdk`、不是 Doubao 要的 `openai`~~ | ✅ A1 已完成（c416eba）：`npm rm @anthropic-ai/sdk && npm i openai`，deps 现为 `openai`。 |
 | `dev` 脚本指向不存在的 `src/surfaces/cli/index.ts` | A4 建 CLI 时补；A1 可先放空占位让 `npm run dev` 不报错 |
-| Doubao/OpenAI 兼容的流式 + 工具调用事件形态需对着火山方舟官方文档落（流式 tool_calls 按 index 拼 arguments、usage 要 `stream_options.include_usage`） | A1 先打通最小流式 demo 再封 ModelProvider |
+| ~~Doubao/OpenAI 兼容的流式 + 工具调用事件形态~~ | ✅ A1 已落（c416eba/d58b612）：流式增量 + 真实 usage（`stream_options.include_usage` + `choices[0].usage` 兜底，含终端空 choices 块单测）已通；tool_calls 按 index 缓冲拼 arguments 的通道留好（执行是 A2）。 |
 | ink 在 Windows 终端的渲染/重绘表现 | A4 先做最小渲染验证，不行退回纯 stdout 流式 |
 | 压缩用的"便宜模型"选型 + 结构化摘要质量 | A3 先用同家小模型（如 Doubao-Seed-2.1-turbo）跑通，摘要模板对齐蓝图 §3 |
 | git-commit skill 读 diff 在 A 阶段无 Bash 的取舍 | 先支持"手动喂 diff"或加一个受限只读 `git diff` 命令；完整 shell 到 B |
