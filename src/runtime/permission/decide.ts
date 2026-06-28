@@ -43,14 +43,26 @@ export interface PermissionRequest {
   args: Record<string, unknown>;
 }
 
-/** The risk matrix `decide` applies. A built-in {@link defaultPolicy} covers B1; the B5
- *  RuleResolver will produce richer policies (per-path allow/deny) that merge over this. */
+/** A configured allow/deny rule (B5). `tool` is a tool name or `*` (any); `pattern` is a glob
+ *  (`*` wildcard) matched against the call's subject — the command for executes-code, else the
+ *  file path. Rules can downgrade an `ask` to `allow` or add a `deny`, but they are applied AFTER
+ *  the built-in hard checks, so a rule can NEVER unlock a secret path or a dangerous command. */
+export interface PermissionRule {
+  action: 'allow' | 'deny';
+  tool: string;
+  pattern: string;
+}
+
+/** The risk matrix `decide` applies. {@link defaultPolicy} covers the built-ins; the B5
+ *  RuleResolver produces `rules` (nearest-first) that merge over this. */
 export interface PermissionPolicy {
   /** Path patterns whose READ or WRITE is always denied — tested against a normalized
    *  (forward-slashed, lower-cased) path. Secrets, never to be read or written. */
   sensitivePaths: RegExp[];
   /** The default action per capability when no sensitive path or rule matches. */
   capabilityDefault: Record<ToolCapability, PermissionAction>;
+  /** Configured allow/deny rules, NEAREST-FIRST (first match wins). Applied after hard checks. */
+  rules: PermissionRule[];
 }
 
 /** Argument keys that name a filesystem path — the only keys scanned for secrets. Scanning by
@@ -83,6 +95,7 @@ export function defaultPolicy(): PermissionPolicy {
       'executes-code': 'ask', // B1: no command parser yet → ask; B2 replaces this with a parse
       network: 'ask',
     },
+    rules: [],
   };
 }
 
@@ -113,11 +126,52 @@ export function decide(req: PermissionRequest, policy: PermissionPolicy): Decisi
     if (analysis.sensitive) {
       return { action: 'deny', reason: analysis.reason ?? 'command touches a secret path', source: 'command' };
     }
+    // Hard checks passed — now configured rules may downgrade to allow or add a deny.
+    const ruled = applyRules(policy.rules, req.toolName, command);
+    if (ruled !== undefined) return ruleDecision(ruled);
     return { action: 'ask', reason: 'runs a shell command — approve to execute', source: 'command' };
   }
 
+  // Rules can allow/deny file & network tools too (applied after the hard secret-path check).
+  const ruled = applyRules(policy.rules, req.toolName, subjectOf(req));
+  if (ruled !== undefined) return ruleDecision(ruled);
   const action = policy.capabilityDefault[req.capability];
   return { action, reason: capabilityReason(req.capability, action), source: 'capability' };
+}
+
+/** First matching rule's action (rules are nearest-first), or undefined. A rule matches when its
+ *  tool is `*` or equals the call's tool AND its glob matches the subject. */
+export function applyRules(rules: PermissionRule[], toolName: string, subject: string): 'allow' | 'deny' | undefined {
+  for (const rule of rules) {
+    if ((rule.tool === '*' || rule.tool === toolName) && globMatch(rule.pattern, subject)) {
+      return rule.action;
+    }
+  }
+  return undefined;
+}
+
+function ruleDecision(action: 'allow' | 'deny'): Decision {
+  return { action, reason: `matches a configured ${action} rule`, source: 'rule' };
+}
+
+/** The string a rule's glob is matched against: a shell command, else the first path-like arg. */
+function subjectOf(req: PermissionRequest): string {
+  if (typeof req.args.command === 'string') return req.args.command;
+  for (const [key, value] of Object.entries(req.args)) {
+    if (PATH_KEY.test(key) && typeof value === 'string') return value;
+  }
+  return '';
+}
+
+/** Anchored glob match — `*` is the only wildcard; everything else is literal. */
+function globMatch(pattern: string, value: string): boolean {
+  if (pattern === '*') return true;
+  const re = new RegExp(`^${pattern.split('*').map(escapeRegExp).join('.*')}$`);
+  return re.test(value);
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /** The first path-like argument value that matches a sensitive pattern, or `undefined`. Array

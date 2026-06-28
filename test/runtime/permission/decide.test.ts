@@ -36,6 +36,55 @@ describe('decide — capability defaults', () => {
   });
 });
 
+describe('decide — configured rules (B5)', () => {
+  const withRules = (rules: Parameters<typeof decide>[1]['rules']) => ({ ...defaultPolicy(), rules });
+
+  it('an allow rule downgrades a safe command from ask to allow', () => {
+    const p = withRules([{ action: 'allow', tool: 'bash', pattern: 'npm test*' }]);
+    expect(decide({ toolName: 'bash', capability: 'executes-code', args: { command: 'npm test' } }, p)).toMatchObject({
+      action: 'allow',
+      source: 'rule',
+    });
+  });
+
+  it('a deny rule blocks a tool that would otherwise ask', () => {
+    const p = withRules([{ action: 'deny', tool: 'write', pattern: '*' }]);
+    expect(decide({ toolName: 'write', capability: 'writes-files', args: { path: 'a.ts' } }, p)).toMatchObject({
+      action: 'deny',
+      source: 'rule',
+    });
+  });
+
+  it('nearest-first: the first matching rule wins (deny listed before allow)', () => {
+    const p = withRules([
+      { action: 'deny', tool: 'bash', pattern: 'npm *' },
+      { action: 'allow', tool: 'bash', pattern: 'npm test' },
+    ]);
+    expect(decide({ toolName: 'bash', capability: 'executes-code', args: { command: 'npm test' } }, p).action).toBe('deny');
+  });
+
+  it('a rule allow CANNOT override the hard secret-path deny (.env)', () => {
+    const p = withRules([{ action: 'allow', tool: 'read', pattern: '*' }]);
+    expect(decide({ toolName: 'read', capability: 'read-only', args: { path: '.env' } }, p)).toMatchObject({
+      action: 'deny',
+      source: 'sensitive-path',
+    });
+  });
+
+  it('a rule allow CANNOT override a dangerous-command deny', () => {
+    const p = withRules([{ action: 'allow', tool: 'bash', pattern: '*' }]);
+    expect(decide({ toolName: 'bash', capability: 'executes-code', args: { command: 'git push --force' } }, p)).toMatchObject({
+      action: 'deny',
+      source: 'command',
+    });
+  });
+
+  it('a rule allow CANNOT override a secret read via bash', () => {
+    const p = withRules([{ action: 'allow', tool: 'bash', pattern: '*' }]);
+    expect(decide({ toolName: 'bash', capability: 'executes-code', args: { command: 'cat .env' } }, p).action).toBe('deny');
+  });
+});
+
 describe('decide — sensitive paths deny READ as well as write (deepcode hole)', () => {
   it('denies READING .env even though read is otherwise allow', () => {
     const d = decide(req('read-only', { path: '.env' }), policy);

@@ -18,10 +18,12 @@ export {
 export {
   decide,
   defaultPolicy,
+  applyRules,
   type Decision,
   type DecisionSource,
   type PermissionAction,
   type PermissionPolicy,
   type PermissionRequest,
+  type PermissionRule,
 } from './decide.js';
 export { analyzeCommand, type CommandAnalysis, type SimpleCommand } from './command.js';

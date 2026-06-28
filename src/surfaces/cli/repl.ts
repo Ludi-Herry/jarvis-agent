@@ -22,7 +22,7 @@ import type { ContextManager } from '../../core/context/context-manager.js';
 import type { SkillRegistry } from '../../capabilities/skills/skill-registry.js';
 import { runAgent } from '../../core/loop/run-agent.js';
 import { InMemoryEventBus } from '../../runtime/event-bus.js';
-import { DefaultPermissionGate, type Approver } from '../../runtime/permission/index.js';
+import { DefaultPermissionGate, type Approver, type PermissionPolicy } from '../../runtime/permission/index.js';
 import { initialRenderState, renderEvent } from './render.js';
 import { renderApprovalRequest, parseApprovalChoice } from './approval.js';
 
@@ -40,6 +40,8 @@ export interface ReplDeps {
   maxTurns: number;
   /** Override the approver (tests). Default builds the interactive readline approver below. */
   approver?: Approver;
+  /** Gate policy (B5): the merged rule layers. Defaults to the built-in policy (no extra rules). */
+  policy?: PermissionPolicy;
   input?: NodeJS.ReadableStream;
   output?: NodeJS.WritableStream;
 }
@@ -112,7 +114,7 @@ export async function startRepl(deps: ReplDeps): Promise<void> {
     return 'deny';
   };
 
-  const gate = new DefaultPermissionGate({ approver: deps.approver ?? interactiveApprover });
+  const gate = new DefaultPermissionGate({ approver: deps.approver ?? interactiveApprover, policy: deps.policy });
 
   out.write(`Jarvis-Agent · ${deps.modelName}\n输入消息,Ctrl-C 退出(/exit 也可)\n\n`);
 

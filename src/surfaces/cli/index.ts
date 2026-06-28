@@ -7,6 +7,8 @@
  * renders the stream — exactly the "add a surface = add a subscriber" path A1 wired.
  */
 import { existsSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { Command } from 'commander';
 import {
   DefaultContextManager,
@@ -15,7 +17,8 @@ import {
   createProvider,
   loadDoubaoConfig,
 } from '../../core/index.js';
-import { SkillRegistry } from '../../capabilities/index.js';
+import { SkillRegistry, loadRuleLayers, type ReadText } from '../../capabilities/index.js';
+import { defaultPolicy } from '../../runtime/index.js';
 import { startRepl } from './repl.js';
 
 // tsx does not auto-load .env; mirror the demos so `npm run dev` works from a .env too.
@@ -64,6 +67,22 @@ program
     });
     const skills = await SkillRegistry.load('skills');
 
+    // B5: merge project-level rule layers into the gate policy. The global ~/AGENTS.md layer is
+    // intentionally NOT auto-loaded — pulling private cross-tool config into enforcement should be
+    // explicit. With no allow/deny frontmatter present, rules are empty and the gate is unchanged.
+    const readText: ReadText = async (p) => {
+      try {
+        return await readFile(p, 'utf8');
+      } catch {
+        return null;
+      }
+    };
+    const resolved = await loadRuleLayers(
+      [join(opts.cwd, 'AGENTS.md'), join(opts.cwd, '.rules', 'AGENTS.md')],
+      readText,
+    );
+    const policy = { ...defaultPolicy(), rules: resolved.rules };
+
     await startRepl({
       model: provider,
       tools,
@@ -73,6 +92,7 @@ program
       modelName: config.model,
       systemPrompt: SYSTEM_PROMPT,
       maxTurns: opts.maxTurns,
+      policy,
     });
   });
 
