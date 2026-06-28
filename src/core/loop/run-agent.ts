@@ -51,11 +51,13 @@ export interface AgentContext {
   signal?: AbortSignal;
 }
 
-/** How the loop ended. Exactly one of `finalText` (natural stop) / `halted` (guardrail) is
- *  set; `turns` is the number of model turns executed. */
+/** How the loop ended. Exactly one of `finalText` (natural stop) / `halted` (abnormal stop) is
+ *  set; `turns` is the number of model turns executed. `halted` says why: the `maxTurns` guardrail,
+ *  or a final turn that was `truncated` (hit max output tokens) / `filtered` (content filter) and
+ *  so wasn't a trustworthy answer. */
 export interface RunOutcome {
   finalText?: string;
-  halted?: 'maxTurns';
+  halted?: 'maxTurns' | 'truncated' | 'filtered';
   turns: number;
 }
 
@@ -76,8 +78,14 @@ export async function runAgent(ctx: AgentContext): Promise<RunOutcome> {
     // (assistant-with-tool_calls, then the matching tool messages).
     ctx.messages.push(assistantMessage(res));
 
-    if (decideStop(res).done) {
-      await ctx.store?.sync(ctx.messages); // persist the final assistant turn before stopping
+    const stop = decideStop(res);
+    if (stop.done) {
+      await ctx.store?.sync(ctx.messages); // persist the (final or truncated) assistant turn before stopping
+      if (stop.reason === 'halt') {
+        // truncated/filtered: the turn produced no trustworthy answer — halt, don't pass it off as final.
+        ctx.bus.emit({ type: 'halt', reason: stop.cause });
+        return { halted: stop.cause, turns: turn + 1 };
+      }
       ctx.bus.emit({ type: 'final', text: res.text });
       return { finalText: res.text, turns: turn + 1 };
     }

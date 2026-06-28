@@ -22,7 +22,7 @@ export type Event =
   | { type: 'state'; phase: string }
   | { type: 'usage'; inputTokens: number; outputTokens: number }
   | { type: 'final'; text: string }
-  | { type: 'halt'; reason: 'maxTurns' | 'budget' | 'error' };
+  | { type: 'halt'; reason: 'maxTurns' | 'budget' | 'error' | 'truncated' | 'filtered' };
 
 export type Subscriber = (event: Event) => void;
 

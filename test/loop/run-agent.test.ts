@@ -12,7 +12,7 @@ import { InMemoryEventBus, type Event } from '../../src/runtime/event-bus.js';
 import { DefaultPermissionGate, type Approver } from '../../src/runtime/permission/permission-gate.js';
 import { FileSessionStore, loadSession, parseSessionLog } from '../../src/runtime/session/session-store.js';
 import type { Message, ToolCall, ToolResult } from '../../src/core/types.js';
-import type { ModelDelta, ModelProvider, ModelResult } from '../../src/core/model/types.js';
+import type { FinishReason, ModelDelta, ModelProvider, ModelResult } from '../../src/core/model/types.js';
 import type { ToolDefinition } from '../../src/core/tools/types.js';
 import type { ContextManager } from '../../src/core/context/context-manager.js';
 
@@ -21,6 +21,8 @@ import type { ContextManager } from '../../src/core/context/context-manager.js';
 interface Step {
   text?: string;
   toolCalls?: ToolCall[];
+  /** Override the finishReason (default: derived from whether the step has tool calls). */
+  finishReason?: FinishReason;
 }
 function scriptedModel(steps: Step[]): { provider: ModelProvider; calls: () => number } {
   let count = 0;
@@ -48,7 +50,7 @@ function scriptedModel(steps: Step[]): { provider: ModelProvider; calls: () => n
         text,
         toolCalls,
         usage: { inputTokens: 10, outputTokens: 5 },
-        finishReason: toolCalls.length > 0 ? 'tool_calls' : 'completed',
+        finishReason: step.finishReason ?? (toolCalls.length > 0 ? 'tool_calls' : 'completed'),
         rawFinishReason: toolCalls.length > 0 ? 'tool_calls' : 'stop',
       };
     },
@@ -194,6 +196,49 @@ describe('runAgent — guardrail', () => {
     expect(outcome).toEqual({ halted: 'maxTurns', turns: 3 });
     expect(events.some((e) => e.type === 'halt' && e.reason === 'maxTurns')).toBe(true);
     expect(events.some((e) => e.type === 'final')).toBe(false);
+  });
+});
+
+describe('runAgent — abnormal final turn (truncated / filtered)', () => {
+  it('halts instead of passing off a truncated no-tool reply as the final answer', async () => {
+    const tools = new InMemoryToolRegistry();
+    // No tools, finishReason = truncated (hit max output tokens): the half reply must NOT win.
+    const { provider } = scriptedModel([{ text: 'the answer is hal', finishReason: 'truncated' }]);
+    const bus = new InMemoryEventBus();
+    const events = record(bus);
+
+    const outcome = await runAgent({
+      model: provider,
+      tools,
+      bus,
+      messages: [{ role: 'user', content: 'go' }],
+      toolCtx: { cwd: dir },
+      budget: { maxTurns: 5 },
+    });
+
+    expect(outcome).toEqual({ halted: 'truncated', turns: 1 });
+    expect(outcome.finalText).toBeUndefined(); // the truncated text is never surfaced as the answer
+    expect(events.some((e) => e.type === 'halt' && e.reason === 'truncated')).toBe(true);
+    expect(events.some((e) => e.type === 'final')).toBe(false);
+  });
+
+  it('halts on a content-filtered no-tool reply', async () => {
+    const tools = new InMemoryToolRegistry();
+    const { provider } = scriptedModel([{ text: '', finishReason: 'filtered' }]);
+    const bus = new InMemoryEventBus();
+    const events = record(bus);
+
+    const outcome = await runAgent({
+      model: provider,
+      tools,
+      bus,
+      messages: [{ role: 'user', content: 'go' }],
+      toolCtx: { cwd: dir },
+      budget: { maxTurns: 5 },
+    });
+
+    expect(outcome).toEqual({ halted: 'filtered', turns: 1 });
+    expect(events.some((e) => e.type === 'halt' && e.reason === 'filtered')).toBe(true);
   });
 });
 

@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { decideStop, decideCompact, withinBudget } from '../../src/core/loop/decisions.js';
-import type { ModelResult, Usage } from '../../src/core/model/types.js';
+import type { FinishReason, ModelResult, Usage } from '../../src/core/model/types.js';
 import type { ToolCall } from '../../src/core/types.js';
 
-function result(toolCalls: ToolCall[]): ModelResult {
+function result(toolCalls: ToolCall[], finishReason?: FinishReason): ModelResult {
   return {
     text: 'x',
     toolCalls,
     usage: { inputTokens: 0, outputTokens: 0 },
-    finishReason: toolCalls.length > 0 ? 'tool_calls' : 'completed',
+    finishReason: finishReason ?? (toolCalls.length > 0 ? 'tool_calls' : 'completed'),
     rawFinishReason: 'stop',
   };
 }
@@ -23,6 +23,18 @@ describe('decideStop', () => {
 
   it('continues when the model requested at least one tool', () => {
     expect(decideStop(result([aCall])).done).toBe(false);
+  });
+
+  it('halts (NOT final) on a truncated no-tool turn — a half reply is not the answer', () => {
+    expect(decideStop(result([], 'truncated'))).toEqual({ done: true, reason: 'halt', cause: 'truncated' });
+  });
+
+  it('halts (NOT final) on a content-filtered no-tool turn', () => {
+    expect(decideStop(result([], 'filtered'))).toEqual({ done: true, reason: 'halt', cause: 'filtered' });
+  });
+
+  it('still continues a truncated turn that carries tool calls (torn args fail downstream, not here)', () => {
+    expect(decideStop(result([aCall], 'truncated')).done).toBe(false);
   });
 });
 

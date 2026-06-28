@@ -20,13 +20,30 @@ export interface Budget {
 export const COMPACT_THRESHOLD = 0.83;
 
 /**
- * Stop the loop when the model asked for no tools — that turn's text is the final answer.
- * The presence of tool calls (not the finishReason string) is the operational signal:
- * if there's nothing to execute, there's nothing to feed back, so the turn is terminal.
+ * Decide whether the loop stops after a model turn — and, if so, whether it stopped on a
+ * natural answer or an abnormal halt.
+ *
+ * A turn WITH tool calls always continues: there's something to execute and feed back. A turn
+ * with NO tool calls is terminal, but the finishReason decides the meaning. A clean stop is the
+ * `final` answer; a `truncated` turn (hit the max-output-token ceiling) or a `filtered` turn
+ * (content filter) produced an incomplete or void reply that must NOT be mistaken for the answer
+ * — it `halt`s so the caller surfaces "no proper answer" instead of trusting a half-formed string.
+ *
+ * Scope note: a truncated turn that STILL carries tool calls keeps going (the path above), because
+ * a torn tool-call argument is caught downstream by schema validation — a recoverable tool error,
+ * not a silent bad answer. So the finishReason check only governs the no-tool terminal path.
  */
-export function decideStop(res: ModelResult): { done: boolean; reason?: 'final' } {
-  if (res.toolCalls.length === 0) return { done: true, reason: 'final' };
-  return { done: false };
+export type StopDecision =
+  | { done: false }
+  | { done: true; reason: 'final' }
+  | { done: true; reason: 'halt'; cause: 'truncated' | 'filtered' };
+
+export function decideStop(res: ModelResult): StopDecision {
+  if (res.toolCalls.length > 0) return { done: false };
+  if (res.finishReason === 'truncated' || res.finishReason === 'filtered') {
+    return { done: true, reason: 'halt', cause: res.finishReason };
+  }
+  return { done: true, reason: 'final' };
 }
 
 /** True while the loop may run another turn. `turn` is 0-based, so with `maxTurns: 3` it
