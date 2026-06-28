@@ -100,6 +100,16 @@ function analyzeSegment(
     if (tok.kind === 'subst') sub = combine(sub, walk(tok.inner, policy, depth + 1, out));
   }
 
+  // An assignment VALUE can carry a secret path a later `$var` expands to (`X=.env cat $X`,
+  // `f=.env; cat $f`). Static analysis can't follow the expansion, but it can see the literal value.
+  for (const tok of segment) {
+    if (tok.kind !== 'word' || !ASSIGNMENT.test(tok.value)) continue;
+    const value = tok.value.slice(tok.value.indexOf('=') + 1);
+    if (policy.sensitivePaths.some((re) => re.test(normalize(value)))) {
+      sub = combine(sub, { danger: false, sensitive: true, reason: `assignment exposes a secret path: '${value}'` });
+    }
+  }
+
   const cmd = toSimpleCommand(segment);
   if (cmd === undefined) return sub; // no program (e.g. a bare assignment or empty) — nothing to run
   out.push(cmd);

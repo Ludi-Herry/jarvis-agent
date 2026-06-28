@@ -11,6 +11,7 @@ import type { ToolRegistry } from './types.js';
 
 export { InMemoryToolRegistry } from './registry.js';
 export { readTool, writeTool, grepTool } from './builtins.js';
+export { createBashTool, defaultShellPath, type BashToolOptions } from './bash.js';
 export { zodToParameters, normalizeJsonSchema } from './json-schema.js';
 export type {
   ToolDefinition,
@@ -20,7 +21,9 @@ export type {
   ToolCapability,
 } from './types.js';
 
-/** A registry with the three A-phase built-ins (read/write/grep) registered. */
+/** A registry with the file built-ins (read/write/grep). The `bash` tool is deliberately NOT here:
+ *  it executes code and must only be registered alongside a PermissionGate (see createBashTool),
+ *  which the B4 REPL and the b3-demo do — never the bare default. */
 export function buildDefaultRegistry(): ToolRegistry {
   const registry = new InMemoryToolRegistry();
   registry.register(readTool);

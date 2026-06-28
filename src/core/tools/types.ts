@@ -19,11 +19,12 @@ import type { ToolCall, ToolResult, ToolSchema } from '../types.js';
  *  the gate takes the strictest — not pre-built now. */
 export type ToolCapability = 'read-only' | 'writes-files' | 'executes-code' | 'network';
 
-/** Ambient context every tool run receives. Minimal in A phase: just the base
- *  directory that relative paths resolve against — the anchor every file tool needs,
- *  not a permission boundary (the sandbox/PermissionGate is phase B). */
+/** Ambient context every tool run receives. `cwd` is the base directory relative paths resolve
+ *  against (the anchor every file tool needs, not a permission boundary). `signal` lets a
+ *  long-running tool (bash, B3) be cancelled when the turn is aborted (Ctrl-C). */
 export interface ToolRunCtx {
   cwd: string;
+  signal?: AbortSignal;
 }
 
 /** A tool's own output. The registry stamps the originating call id on to form a

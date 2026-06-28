@@ -322,6 +322,12 @@ describe('analyzeCommand — third-round red-team regressions', () => {
 });
 
 describe('analyzeCommand — fourth-round red-team regressions (final ship gate)', () => {
+  it('P2-1: a secret path in an assignment value is flagged (despite $var expansion)', () => {
+    expect(analyze('X=.env cat $X').sensitive).toBe(true); // same-segment expansion
+    expect(analyze('f=.env; cat $f').sensitive).toBe(true); // cross-; expansion
+    expect(analyze('NODE_ENV=production cat README.md').sensitive).toBe(false); // benign value
+  });
+
   it('catches git -c pager./gpg./diff.*.command injection (not just core.pager)', () => {
     expect(analyze("git -c pager.log='rm -rf /' log").danger).toBe(true);
     expect(analyze("git -c gpg.program='rm -rf /' tag -s v1").danger).toBe(true);

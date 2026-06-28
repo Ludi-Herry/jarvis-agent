@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { runAgent } from '../../src/core/loop/run-agent.js';
 import { InMemoryToolRegistry } from '../../src/core/tools/registry.js';
 import { readTool, writeTool } from '../../src/core/tools/builtins.js';
+import { createBashTool, defaultShellPath } from '../../src/core/tools/bash.js';
 import { DefaultContextManager } from '../../src/core/context/context-manager.js';
 import { InMemoryEventBus, type Event } from '../../src/runtime/event-bus.js';
 import { DefaultPermissionGate, type Approver } from '../../src/runtime/permission/permission-gate.js';
@@ -356,6 +357,62 @@ describe('runAgent — permission gate (B1)', () => {
     });
 
     await expect(readFile(join(dir, 'blocked.txt'), 'utf8')).rejects.toThrow(); // never created
+    const toolResult = events.find((e) => e.type === 'tool_result');
+    expect(toolResult?.type === 'tool_result' && toolResult.out.error).toMatch(/Permission denied/);
+  });
+});
+
+describe('runAgent — bash through the gate (B3, full closed loop)', () => {
+  const bash = createBashTool({ shellPath: defaultShellPath(), defaultTimeoutMs: 10_000 });
+
+  it('runs a SAFE bash command end-to-end: gate → parser → execute → result fed back', async () => {
+    const tools = new InMemoryToolRegistry();
+    tools.register(bash);
+    const approver: Approver = async () => 'allow-once';
+    const { provider } = scriptedModel([
+      { toolCalls: [{ id: 'c1', name: 'bash', arguments: '{"command":"echo loop-bash-ok"}' }] },
+      { text: 'done' },
+    ]);
+    const bus = new InMemoryEventBus();
+    const events = record(bus);
+
+    await runAgent({
+      model: provider,
+      tools,
+      bus,
+      messages: [{ role: 'user', content: 'run echo' }],
+      toolCtx: { cwd: dir },
+      budget: { maxTurns: 5 },
+      gate: new DefaultPermissionGate({ approver }),
+    });
+
+    const toolResult = events.find((e) => e.type === 'tool_result');
+    expect(toolResult?.type === 'tool_result' && toolResult.out.error).toBeUndefined();
+    expect(toolResult?.type === 'tool_result' && toolResult.out.content).toContain('loop-bash-ok');
+  });
+
+  it('DENIES a dangerous bash command via the parser — it never executes', async () => {
+    const tools = new InMemoryToolRegistry();
+    tools.register(bash);
+    // An approver that would say yes — proving the hard deny never even consults it.
+    const approver: Approver = async () => 'allow-session';
+    const { provider } = scriptedModel([
+      { toolCalls: [{ id: 'c1', name: 'bash', arguments: '{"command":"rm -rf /"}' }] },
+      { text: 'understood' },
+    ]);
+    const bus = new InMemoryEventBus();
+    const events = record(bus);
+
+    await runAgent({
+      model: provider,
+      tools,
+      bus,
+      messages: [{ role: 'user', content: 'delete everything' }],
+      toolCtx: { cwd: dir },
+      budget: { maxTurns: 5 },
+      gate: new DefaultPermissionGate({ approver }),
+    });
+
     const toolResult = events.find((e) => e.type === 'tool_result');
     expect(toolResult?.type === 'tool_result' && toolResult.out.error).toMatch(/Permission denied/);
   });

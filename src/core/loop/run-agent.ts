@@ -134,9 +134,11 @@ function assistantMessage(res: ModelResult): Message {
  *  the existing tool_result path renders it). The synthetic result reuses the call id; the wire
  *  layer normalizes ids at send time, so it pairs with its assistant tool_call. */
 async function gatedRun(ctx: AgentContext, call: ToolCall): Promise<ToolResult> {
-  if (!ctx.gate) return ctx.tools.run(call, ctx.toolCtx);
+  // Pass the turn's abort signal so a long-running tool (bash) can be cancelled on Ctrl-C.
+  const runCtx = ctx.signal ? { ...ctx.toolCtx, signal: ctx.signal } : ctx.toolCtx;
+  if (!ctx.gate) return ctx.tools.run(call, runCtx);
   const verdict = await ctx.gate.check(call, ctx.tools.capabilityOf(call.name));
-  if (verdict.allowed) return ctx.tools.run(call, ctx.toolCtx);
+  if (verdict.allowed) return ctx.tools.run(call, runCtx);
   return { callId: call.id, content: '', error: `Permission denied: ${verdict.reason}` };
 }
 
