@@ -1,14 +1,18 @@
 /**
  * The terminal REPL shell — the thin imperative layer over the agent loop.
  *
- * Read a line → append it as a user turn → run the agent, streaming events through the pure
- * {@link renderEvent} formatter to the output → re-prompt. The conversation (`messages`) and
- * the context manager persist across turns, so it's one continuous session. Streams are
- * injected (default stdin/stdout) so the whole REPL runs against fake streams in a test, no
- * TTY required.
+ * Read a line → append it as a user turn → run the agent (streaming events through the pure
+ * {@link renderEvent} formatter) → re-prompt. The conversation and context manager persist across
+ * turns, so it's one continuous session. Streams are injected (default stdin/stdout) so the whole
+ * REPL runs against fake streams in a test, no TTY required.
  *
- * Ctrl-C aborts an in-flight run via AbortSignal (the provider passes it to the wire);
- * pressing it while idle exits. An aborted run is caught and the session continues.
+ * Input is served from a single on-demand line queue (not readline's async iterator): the main
+ * prompt AND the B4 approval prompt both pull from it serially, so an approval answer is never
+ * also swallowed as the next user message (which a second 'line' listener would do).
+ *
+ * Permissions (B4): every tool call passes a {@link DefaultPermissionGate}; an `ask` pauses and
+ * prompts the user (allow once / session / deny). Ctrl-C denies a pending approval AND aborts the
+ * run; mid-run it aborts; idle it exits. No interactive answer (piped/EOF) fails closed to deny.
  */
 import { createInterface } from 'node:readline';
 import type { Message } from '../../core/types.js';
@@ -18,14 +22,15 @@ import type { ContextManager } from '../../core/context/context-manager.js';
 import type { SkillRegistry } from '../../capabilities/skills/skill-registry.js';
 import { runAgent } from '../../core/loop/run-agent.js';
 import { InMemoryEventBus } from '../../runtime/event-bus.js';
+import { DefaultPermissionGate, type Approver } from '../../runtime/permission/index.js';
 import { initialRenderState, renderEvent } from './render.js';
+import { renderApprovalRequest, parseApprovalChoice } from './approval.js';
 
 export interface ReplDeps {
   model: ModelProvider;
   tools: ToolRegistry;
   context?: ContextManager;
-  /** Optional skills (A5). Each user turn, the catalog + any activated skill bodies are
-   *  folded into the model's system message for that run. */
+  /** Optional skills (A5): each turn the catalog + activated skill bodies fold into the system msg. */
   skills?: SkillRegistry;
   /** Base directory tool paths resolve against. */
   cwd: string;
@@ -33,48 +38,90 @@ export interface ReplDeps {
   modelName: string;
   systemPrompt: string;
   maxTurns: number;
+  /** Override the approver (tests). Default builds the interactive readline approver below. */
+  approver?: Approver;
   input?: NodeJS.ReadableStream;
   output?: NodeJS.WritableStream;
 }
 
+/** How many unrecognized approval answers to tolerate before failing closed (deny). */
+const MAX_APPROVAL_RETRIES = 3;
+
 export async function startRepl(deps: ReplDeps): Promise<void> {
   const out = deps.output ?? process.stdout;
-  const rl = createInterface({
-    input: deps.input ?? process.stdin,
-    output: out,
-    prompt: '› ',
-  });
+  const rl = createInterface({ input: deps.input ?? process.stdin, output: out });
 
   const messages: Message[] = [{ role: 'system', content: deps.systemPrompt }];
   let activeRun: AbortController | null = null;
+  let inApproval = false;
 
-  // With piped/test input, the stream EOFs and readline closes mid-loop; calling prompt()
-  // on a closed interface throws. Track closure and make prompt() a no-op once closed.
+  // --- single on-demand line queue (shared by the main prompt and the approval prompt) ---
+  const queue: string[] = [];
+  let waiter: ((line: string | null) => void) | null = null;
   let closed = false;
+  const deliver = (line: string | null): void => {
+    if (waiter) {
+      const w = waiter;
+      waiter = null;
+      w(line);
+    } else if (line !== null) {
+      queue.push(line);
+    }
+  };
+  rl.on('line', (line) => deliver(line));
   rl.on('close', () => {
     closed = true;
+    deliver(null);
   });
-  const prompt = (): void => {
-    if (!closed) rl.prompt();
+  const nextLine = (): Promise<string | null> => {
+    if (queue.length > 0) return Promise.resolve(queue.shift() ?? null);
+    if (closed) return Promise.resolve(null);
+    return new Promise((resolve) => {
+      waiter = resolve;
+    });
   };
 
   rl.on('SIGINT', () => {
-    if (activeRun) {
-      activeRun.abort(); // interrupt the in-flight run; the catch below resumes the REPL
+    if (inApproval) {
+      out.write('\n');
+      activeRun?.abort(); // deny the approval (via the null below) AND stop the run
+      deliver(null);
+    } else if (activeRun) {
+      activeRun.abort();
     } else {
+      closed = true;
+      deliver(null);
       rl.close();
     }
   });
 
-  out.write(`Jarvis-Agent · ${deps.modelName}\n输入消息,Ctrl-C 退出(/exit 也可)\n\n`);
-  prompt();
-
-  for await (const line of rl) {
-    const text = line.trim();
-    if (text === '') {
-      prompt();
-      continue;
+  // The interactive approver: show the request, read one line, map it. EOF/Ctrl-C → deny
+  // (fail-closed); too many unrecognized answers → deny.
+  const interactiveApprover: Approver = async (req) => {
+    out.write(renderApprovalRequest(req));
+    for (let attempt = 0; attempt < MAX_APPROVAL_RETRIES; attempt++) {
+      out.write('    › ');
+      inApproval = true;
+      const line = await nextLine();
+      inApproval = false;
+      if (line === null) return 'deny';
+      const choice = parseApprovalChoice(line);
+      if (choice) return choice;
+      out.write('    请输入 a(本次) / s(本会话) / d(拒绝)\n');
     }
+    return 'deny';
+  };
+
+  const gate = new DefaultPermissionGate({ approver: deps.approver ?? interactiveApprover });
+
+  out.write(`Jarvis-Agent · ${deps.modelName}\n输入消息,Ctrl-C 退出(/exit 也可)\n\n`);
+
+  for (;;) {
+    out.write('› ');
+    const line = await nextLine();
+    if (line === null) break;
+    const text = line.trim();
+    if (text === '') continue;
     if (text === '/exit' || text === '/quit') break;
 
     messages.push({ role: 'user', content: text });
@@ -97,7 +144,7 @@ export async function startRepl(deps: ReplDeps): Promise<void> {
         toolCtx: { cwd: deps.cwd },
         budget: { maxTurns: deps.maxTurns },
         context: deps.context,
-        // Progressive disclosure: only this turn's message decides which skill bodies load.
+        gate,
         systemAddendum: deps.skills?.systemAddendum(text),
         signal: activeRun.signal,
       });
@@ -113,7 +160,6 @@ export async function startRepl(deps: ReplDeps): Promise<void> {
     }
 
     out.write('\n');
-    prompt();
   }
 
   rl.close();

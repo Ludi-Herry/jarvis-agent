@@ -6,7 +6,8 @@ import { join } from 'node:path';
 import { z } from 'zod';
 import { startRepl } from '../../src/surfaces/cli/repl.js';
 import { InMemoryToolRegistry } from '../../src/core/tools/registry.js';
-import { readTool } from '../../src/core/tools/builtins.js';
+import { readTool, writeTool } from '../../src/core/tools/builtins.js';
+import { readFile } from 'node:fs/promises';
 import type { Message, ToolCall } from '../../src/core/types.js';
 import type { ModelDelta, ModelProvider, ModelResult } from '../../src/core/model/types.js';
 import type { ToolDefinition } from '../../src/core/tools/types.js';
@@ -154,6 +155,79 @@ describe('startRepl', () => {
     expect(seen).toEqual([2, 4]);
     expect(out.text()).toContain('a1');
     expect(out.text()).toContain('a2');
+  });
+
+  it('prompts for approval on a write and runs it when the user allows (B4)', async () => {
+    const tools = new InMemoryToolRegistry();
+    tools.register(writeTool);
+    const { provider } = fakeModel([
+      { toolCalls: [{ id: 'c1', name: 'write', arguments: '{"path":"note.txt","content":"approved"}' }] },
+      { text: 'wrote it' },
+    ]);
+    const out = sink();
+
+    // second input line "a" answers the approval prompt the write triggers
+    await startRepl({
+      model: provider,
+      tools,
+      cwd: dir,
+      modelName: 'fake-model',
+      systemPrompt: 'sys',
+      maxTurns: 5,
+      input: inputOf(['write the note', 'a']),
+      output: out.stream,
+    });
+
+    expect(out.text()).toContain('需要批准'); // the approval prompt was shown
+    expect(await readFile(join(dir, 'note.txt'), 'utf8')).toBe('approved'); // and the write ran
+  });
+
+  it('denies the write when the user says no — the file is never written (B4)', async () => {
+    const tools = new InMemoryToolRegistry();
+    tools.register(writeTool);
+    const { provider } = fakeModel([
+      { toolCalls: [{ id: 'c1', name: 'write', arguments: '{"path":"blocked.txt","content":"x"}' }] },
+      { text: 'ok, skipped' },
+    ]);
+    const out = sink();
+
+    await startRepl({
+      model: provider,
+      tools,
+      cwd: dir,
+      modelName: 'fake-model',
+      systemPrompt: 'sys',
+      maxTurns: 5,
+      input: inputOf(['write the file', 'd']),
+      output: out.stream,
+    });
+
+    expect(out.text()).toContain('Permission denied');
+    await expect(readFile(join(dir, 'blocked.txt'), 'utf8')).rejects.toThrow(); // never created
+  });
+
+  it('fails closed (deny) when no approval answer is given before input ends (B4)', async () => {
+    const tools = new InMemoryToolRegistry();
+    tools.register(writeTool);
+    const { provider } = fakeModel([
+      { toolCalls: [{ id: 'c1', name: 'write', arguments: '{"path":"eof.txt","content":"x"}' }] },
+      { text: 'understood' },
+    ]);
+    const out = sink();
+
+    await startRepl({
+      model: provider,
+      tools,
+      cwd: dir,
+      modelName: 'fake-model',
+      systemPrompt: 'sys',
+      maxTurns: 5,
+      input: inputOf(['write a file']), // no approval answer → EOF → fail-closed deny
+      output: out.stream,
+    });
+
+    expect(out.text()).toContain('Permission denied');
+    await expect(readFile(join(dir, 'eof.txt'), 'utf8')).rejects.toThrow();
   });
 
   it('ignores blank lines and exits on /exit', async () => {
