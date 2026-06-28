@@ -18,6 +18,8 @@ export {
 export {
   decide,
   defaultPolicy,
+  isSensitivePath,
+  SENSITIVE_PATHS,
   applyRules,
   type Decision,
   type DecisionSource,

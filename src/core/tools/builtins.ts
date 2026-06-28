@@ -14,6 +14,7 @@
 import { readFile, writeFile, mkdir, readdir, stat } from 'node:fs/promises';
 import { dirname, resolve, relative, join } from 'node:path';
 import { z } from 'zod';
+import { isSensitivePath } from '../../runtime/permission/index.js';
 import type { ToolDefinition } from './types.js';
 
 /** Cap grep output so a broad pattern over a big tree can't blow up the context window. */
@@ -121,16 +122,21 @@ export const grepTool: ToolDefinition<{ pattern: string; path?: string }> = {
  *  `root` is itself a file, return just it. */
 async function collectFiles(root: string): Promise<string[]> {
   const info = await stat(root);
-  if (info.isFile()) return [root];
+  // grep is read-only and recurses on its own, so the PermissionGate (which only sees the call's
+  // path arg) can't protect a secret reached by traversal — grep must skip secrets itself, reusing
+  // the same policy as the gate. Otherwise `grep {pattern:"KEY"}` with no path would leak .env.
+  if (info.isFile()) return isSensitivePath(root) ? [] : [root];
 
   const out: string[] = [];
   const entries = await readdir(root, { withFileTypes: true });
   for (const entry of entries) {
+    const full = join(root, entry.name);
+    if (isSensitivePath(full)) continue; // never read a secret file or descend into a secret dir
     if (entry.isDirectory()) {
       if (GREP_SKIP_DIRS.has(entry.name)) continue;
-      out.push(...(await collectFiles(join(root, entry.name))));
+      out.push(...(await collectFiles(full)));
     } else if (entry.isFile()) {
-      out.push(join(root, entry.name));
+      out.push(full);
     }
   }
   return out;

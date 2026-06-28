@@ -57,6 +57,21 @@ describe('grepTool', () => {
     expect(out.content).toBe('src/x.ts:1:const needle = 1;');
   });
 
+  it('NEVER reads secrets during recursive traversal (codex P0: grep was a secret side-door)', async () => {
+    // grep with no `path` recurses from root with read-only allow — it must skip secret files
+    // itself, or it leaks .env / .ssh content with zero approval.
+    await writeFile(join(dir, '.env'), 'API_KEY=SECRET-DO-NOT-LEAK', 'utf8');
+    await mkdir(join(dir, '.ssh'), { recursive: true });
+    await writeFile(join(dir, '.ssh', 'id_rsa'), 'PRIVATE-KEY-DO-NOT-LEAK', 'utf8');
+    await writeFile(join(dir, 'note.txt'), 'API_KEY mentioned safely here', 'utf8');
+
+    const out = await grepTool.run({ pattern: 'DO-NOT-LEAK|API_KEY' }, ctx);
+    expect(out.content).not.toContain('DO-NOT-LEAK'); // no secret value leaked
+    expect(out.content).not.toContain('.env');
+    expect(out.content).not.toContain('id_rsa');
+    expect(out.content).toContain('note.txt'); // normal files are still searched
+  });
+
   it('reports no matches without erroring', async () => {
     await writeFile(join(dir, 'a.txt'), 'nothing here', 'utf8');
     const out = await grepTool.run({ pattern: 'absent' }, ctx);

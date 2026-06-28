@@ -336,6 +336,55 @@ describe('analyzeCommand — fourth-round red-team regressions (final ship gate)
   });
 });
 
+describe('analyzeCommand — codex-review P0 hardening (fail-closed on un-modeled grammar)', () => {
+  it.each([
+    'if true; then git push --force; fi', // reserved word demotes the real command
+    '{ rm -rf /tmp/x; }',
+    '! rm -rf /tmp/x',
+    'for f in *; do rm -rf $f; done',
+    'while true; do rm -rf x; done',
+  ])('fails closed on shell control construct: %s', (cmd) => {
+    expect(analyze(cmd).danger).toBe(true);
+  });
+
+  it.each([
+    'bash -lc "git push --force"', // combined -c bundle not caught before
+    'bash -euxc "rm -rf /"',
+    "bash -c $'git push --force'", // ANSI-C quote made program $git before
+    'bash -c $"git push --force"', // locale quote
+  ])('penetrates combined-flag / ANSI-C / locale shell strings: %s', (cmd) => {
+    expect(analyze(cmd).danger).toBe(true);
+  });
+
+  it('fails closed on ANSI-C escapes it will not decode', () => {
+    expect(analyze("bash -c $'\\x72\\x6d -rf /'").danger).toBe(true); // encoded rm -rf
+  });
+
+  it.each([
+    'cmd=rm; flags=-rf; $cmd $flags /tmp/x', // program from a variable
+    'rm $flags /tmp/x', // dangerous mutator with a $-arg (hidden -rf)
+    'chmod $mode -R /etc',
+    '$(echo rm) -rf /tmp/x', // program from a command substitution
+  ])('fails closed on $expansion / substitution in program or mutator flags: %s', (cmd) => {
+    expect(analyze(cmd).danger).toBe(true);
+  });
+
+  it.each(['python -ic "import os"', 'node -pe "process.exit(1)"'])(
+    'refuses combined inline-code bundles: %s',
+    (cmd) => {
+      expect(analyze(cmd).danger).toBe(true);
+    },
+  );
+
+  it('does NOT over-block legit $ usage outside dangerous-mutator flags', () => {
+    expect(analyze('echo $HOME').danger).toBe(false);
+    expect(analyze('git commit -m "fix $HOME handling"').danger).toBe(false); // $ in a message
+    expect(analyze('npm run $script').danger).toBe(false); // downgrades to ask, not danger
+    expect(analyze('[ -f package.json ]').danger).toBe(false); // the test builtin, not a keyword
+    expect(analyze('cat $file').danger).toBe(false);
+  });
+});
+
 describe('decide — executes-code routes through the parser (B1↔B2 integration)', () => {
   const req = (command: string) => ({ toolName: 'shell', capability: 'executes-code' as const, args: { command } });
 

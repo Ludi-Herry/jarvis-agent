@@ -110,6 +110,17 @@ function analyzeSegment(
     }
   }
 
+  // A command whose PROGRAM comes from a substitution (`$(echo rm) -rf x`) runs whatever the
+  // substitution prints — unverifiable, so fail closed. (The inner is still penetrated above.)
+  for (const tok of segment) {
+    if (tok.kind === 'redirect') continue;
+    if (tok.kind === 'word' && ASSIGNMENT.test(tok.value)) continue; // leading VAR=VAL
+    if (tok.kind === 'subst') {
+      sub = combine(sub, danger('program produced by command substitution — cannot verify'));
+    }
+    break; // first head token reached
+  }
+
   const cmd = toSimpleCommand(segment);
   if (cmd === undefined) return sub; // no program (e.g. a bare assignment or empty) — nothing to run
   out.push(cmd);
@@ -136,6 +147,21 @@ function classify(cmd: SimpleCommand, policy: PermissionPolicy, depth: number, o
   }
 
   const prog = basename(cmd.program);
+
+  // 0. Fail-closed on shell grammar we don't fully model — better to deny than mis-classify a
+  //    dangerous command as safe (the bypass class found in review):
+  //    - a control keyword as the program (`if … then git push --force; fi`, `{ rm -rf; }`, `! rm`);
+  //    - a program built from an unresolved $expansion (`cmd=rm; $cmd -rf x`);
+  //    - a danger-capable program with a $expansion in its args (`rm $flags`, `git $sub`).
+  if (SHELL_KEYWORDS.has(prog)) {
+    return danger(`shell control construct '${prog}' — too complex to verify; put the logic in a script file`);
+  }
+  if (cmd.program.includes('$')) {
+    return danger('program name built from an unresolved variable expansion');
+  }
+  if (DANGER_CAPABLE.has(prog) && cmd.args.some((a) => a.includes('$'))) {
+    return danger(`'${prog}' with an unresolved $expansion in its arguments — cannot verify the flags/target`);
+  }
 
   // 1. Code interpreters (python/node/ruby/…). Inline code (`-c`/`-e`) is opaque → refuse. A BARE
   //    interpreter reads its program from stdin (`curl … | python`, heredoc) → also refuse. Running
@@ -312,6 +338,22 @@ const DANGEROUS: DangerRule[] = [
 // Interpreter / wrapper tables.
 // ----------------------------------------------------------------------------------------------
 
+/** Shell reserved words / control constructs. When one of these is the PROGRAM of a simple command,
+ *  the real command is hidden inside a compound structure we don't fully parse — fail closed (a
+ *  visible script file is the supported way to run shell logic). */
+const SHELL_KEYWORDS = new Set([
+  'if', 'then', 'else', 'elif', 'fi', 'for', 'while', 'until', 'do', 'done', 'case', 'esac',
+  'select', 'function', 'in', '{', '}', '!', '[[', ']]', 'coproc',
+]);
+
+/** Pure destructive mutators whose danger hinges on a flag (`rm -r`, `chmod -R`). If one of these
+ *  carries a `$`expansion in its args, that flag is unverifiable → fail closed. Deliberately SMALL:
+ *  git/npm/find/awk/vim are excluded because `$` is common in their legit args (commit messages,
+ *  `npm run $x`, awk `$1`, vim `+$`); a `$`-synthesized dangerous flag there downgrades deny→ask
+ *  (human-visible) — a documented residual, not a silent bypass. The program-position `$` check
+ *  (e.g. `$cmd -rf`) covers the synthesized-program case for everything. */
+const DANGER_CAPABLE = new Set(['rm', 'rmdir', 'chmod', 'chown', 'chgrp']);
+
 /** Shells whose `-c "<string>"` we penetrate, and whose bare invocation is dangerous. */
 const SHELL_INTERPRETERS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'ash', 'fish', 'csh', 'tcsh']);
 
@@ -343,9 +385,19 @@ const PYTHON_FAMILY = new Set(['python', 'python2', 'python3', 'py']);
 /** A `VAR=VAL` assignment word (leading env in a command, e.g. `FOO=bar cmd`). */
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 
-/** True when a non-shell interpreter is asked to run inline code (`-c`, `-e`, `--eval`, `-p`). */
+/** True when a non-shell interpreter is asked to run inline code (`-c`, `-e`, `--eval`, `-p`), or a
+ *  COMBINED short bundle that contains an eval letter (`-ic`, `-pe`): the code is opaque, refuse. */
 function hasInlineCodeFlag(args: string[]): boolean {
-  return args.some((a) => a === '-c' || a === '-e' || a === '--eval' || a === '-p' || a === '--print' || a === '--eval-file');
+  return args.some(
+    (a) =>
+      a === '-c' ||
+      a === '-e' ||
+      a === '--eval' ||
+      a === '-p' ||
+      a === '--print' ||
+      a === '--eval-file' ||
+      (/^-[a-z]+$/.test(a) && (a.includes('c') || a.includes('e'))),
+  );
 }
 
 /** True when an interpreter is invoked only to print version/help and exit, so it runs no program.
@@ -387,9 +439,10 @@ function commandOperand(prog: string, args: string[]): string {
   return rest.join(' ');
 }
 
-/** The string after a shell's `-c`, or undefined if it isn't a `-c` invocation. */
+/** The string after a shell's `-c` — including a COMBINED short bundle that contains `c`
+ *  (`-lc`, `-ec`, `-euxc`): the next operand is the command string. Returns undefined otherwise. */
 function inlineShellString(args: string[]): string | undefined {
-  const i = args.indexOf('-c');
+  const i = args.findIndex((a) => a === '-c' || /^-[A-Za-z]*c[A-Za-z]*$/.test(a));
   if (i >= 0 && i + 1 < args.length) return args[i + 1];
   return undefined;
 }
@@ -454,6 +507,24 @@ function tokenize(input: string): Token[] {
       const { inner, next } = readBalanced(input, i + 2, '(', ')');
       tokens.push({ kind: 'subst', inner });
       i = next;
+      continue;
+    }
+    // ANSI-C quoting $'...': the $ is consumed and the content is a literal string (NOT a `$word`).
+    // Without this, `bash -c $'git push --force'` parses program as `$git` and slips past. If the
+    // content has backslash escapes we don't decode (`$'\x72\x6d'`), fail closed by throwing.
+    if (ch === '$' && input[i + 1] === "'") {
+      const end = input.indexOf("'", i + 2);
+      if (end < 0) throw new Error("unterminated $'...' quote");
+      const content = input.slice(i + 2, end);
+      if (content.includes('\\')) throw new Error("$'...' with escape sequences — cannot verify");
+      word += content;
+      inWord = true;
+      i = end + 1;
+      continue;
+    }
+    // Locale quoting $"...": the $ is dropped; the rest is a normal double-quoted string.
+    if (ch === '$' && input[i + 1] === '"') {
+      i++; // consume the $, let the " be handled by the double-quote branch next iteration
       continue;
     }
     // Backtick substitution.
