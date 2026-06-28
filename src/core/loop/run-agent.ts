@@ -91,7 +91,12 @@ export async function runAgent(ctx: AgentContext): Promise<RunOutcome> {
     }
 
     let appendedToolChars = 0;
-    for (const call of res.toolCalls) {
+    for (const rawCall of res.toolCalls) {
+      // Freeze a snapshot so the EXACT call the gate approves is the one tools.run executes — a
+      // subscriber (or anything holding the emitted event across an async approver) cannot mutate
+      // `arguments` between approval and execution. This makes "the string parsed == the string
+      // executed" structural rather than a convention (closes the gatedRun TOCTOU).
+      const call = Object.freeze({ ...rawCall });
       ctx.bus.emit({ type: 'tool_call', call });
       // Gate the call BEFORE the side effect (B1) — the seam A2 deliberately left here. A denied
       // call never reaches the tool; its reason becomes the result so the model can change course.

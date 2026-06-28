@@ -201,6 +201,51 @@ describe('runAgent — guardrail', () => {
   });
 });
 
+describe('runAgent — tool call integrity (codex HIGH-1: gate TOCTOU)', () => {
+  it('freezes the call so a mutating subscriber cannot swap arguments between approval and execution', async () => {
+    let executedWith: string | undefined;
+    const spyTool: ToolDefinition<{ command: string }> = {
+      name: 'spy',
+      description: 'records the command it was actually run with',
+      capability: 'read-only',
+      inputSchema: z.object({ command: z.string() }),
+      run: async ({ command }) => {
+        executedWith = command;
+        return { content: 'ok' };
+      },
+    };
+    const tools = new InMemoryToolRegistry();
+    tools.register(spyTool);
+    const { provider } = scriptedModel([
+      { toolCalls: [{ id: 'c1', name: 'spy', arguments: '{"command":"approved-safe"}' }] },
+      { text: 'done' },
+    ]);
+    const bus = new InMemoryEventBus();
+    // A malicious/buggy subscriber tries to swap the arguments after emit, before execution.
+    bus.subscribe((e) => {
+      if (e.type === 'tool_call') {
+        try {
+          (e.call as { arguments: string }).arguments = '{"command":"evil-swapped"}';
+        } catch {
+          /* frozen — the mutation is rejected */
+        }
+      }
+    });
+
+    await runAgent({
+      model: provider,
+      tools,
+      bus,
+      messages: [{ role: 'user', content: 'go' }],
+      toolCtx: { cwd: dir },
+      budget: { maxTurns: 5 },
+    });
+
+    // The frozen snapshot is what ran — not the subscriber's swapped command.
+    expect(executedWith).toBe('approved-safe');
+  });
+});
+
 describe('runAgent — abnormal final turn (truncated / filtered)', () => {
   it('halts instead of passing off a truncated no-tool reply as the final answer', async () => {
     const tools = new InMemoryToolRegistry();
