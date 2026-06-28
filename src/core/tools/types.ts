@@ -11,9 +11,13 @@
 import type { ZodType } from 'zod';
 import type { ToolCall, ToolResult, ToolSchema } from '../types.js';
 
-/** Coarse capability tag. A phase only ANNOTATES with this — no permission is derived
- *  from it. The PermissionGate that reads these tags lands with Bash in phase B. */
-export type ToolCapability = 'read-only' | 'writes-files';
+/** A tool's effect class — the orthogonal capability the PermissionGate derives a default
+ *  action from (plan §3.1, decision 4). Four distinct categories, NOT 11 flat booleans:
+ *  `read-only` → allow, `writes-files` → ask, `executes-code` → command-tree parsing (B2),
+ *  `network` → ask. A tool declares ONE today (none of read/write/grep/Bash spans two); if a
+ *  future tool genuinely combines effects (e.g. fetch-and-save) this widens to an array and
+ *  the gate takes the strictest — not pre-built now. */
+export type ToolCapability = 'read-only' | 'writes-files' | 'executes-code' | 'network';
 
 /** Ambient context every tool run receives. Minimal in A phase: just the base
  *  directory that relative paths resolve against — the anchor every file tool needs,
@@ -40,6 +44,10 @@ export interface ToolDefinition<I = unknown> {
 /** Registers tools, advertises them to the model, and runs a model's tool call. */
 export interface ToolRegistry {
   register<I>(tool: ToolDefinition<I>): void;
+  /** The declared effect class of a registered tool, or `undefined` if the name is unknown.
+   *  The PermissionGate reads this to derive a default action; an unknown tool (undefined)
+   *  has no classifiable effect, so the gate fails closed (B1, plan §3.2). */
+  capabilityOf(name: string): ToolCapability | undefined;
   /** OpenAI-compatible tool schemas, normalized: `$defs`/`$ref` deref'd (inlined) and
    *  `type` filled — strict endpoints (Doubao/ARK) reject `$defs`. See json-schema.ts. */
   schemasForModel(): ToolSchema[];

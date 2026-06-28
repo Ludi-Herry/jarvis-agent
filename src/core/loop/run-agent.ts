@@ -13,11 +13,12 @@
  * awaits this for the lifecycle. Compaction (decideCompact + ContextManager) is A3; the seam
  * is marked below.
  */
-import type { Message, ToolResult } from '../types.js';
+import type { Message, ToolCall, ToolResult } from '../types.js';
 import type { ModelProvider, ModelResult } from '../model/types.js';
 import type { ToolRegistry, ToolRunCtx } from '../tools/types.js';
 import type { ContextManager } from '../context/context-manager.js';
 import type { EventBus } from '../../runtime/event-bus.js';
+import type { PermissionGate } from '../../runtime/permission/permission-gate.js';
 import { type Budget, decideStop, withinBudget } from './decisions.js';
 
 /** Everything the loop needs, injected so the loop owns no globals and stays testable. */
@@ -34,6 +35,10 @@ export interface AgentContext {
   /** Optional context manager (A3). When present, the loop budgets oversized tool results
    *  and compacts the conversation once it nears the window. Absent → neither happens. */
   context?: ContextManager;
+  /** Optional permission gate (B1). When present, every tool call is judged before it runs; a
+   *  denied call is NOT executed — its reason is fed back to the model as the tool result so it
+   *  can change course. Absent → tools run ungated (the A-phase behavior). */
+  gate?: PermissionGate;
   /** Optional per-run system addendum (A5): skill catalog + any activated skill bodies,
    *  folded into the system message at send time only — never stored in `messages`, so it
    *  refreshes each run and is never compacted. */
@@ -73,7 +78,9 @@ export async function runAgent(ctx: AgentContext): Promise<RunOutcome> {
 
     for (const call of res.toolCalls) {
       ctx.bus.emit({ type: 'tool_call', call });
-      const ran = await ctx.tools.run(call, ctx.toolCtx);
+      // Gate the call BEFORE the side effect (B1) — the seam A2 deliberately left here. A denied
+      // call never reaches the tool; its reason becomes the result so the model can change course.
+      const ran = await gatedRun(ctx, call);
       // Budget oversized output to disk BEFORE it enters the context (A3); a no-op without
       // a context manager or for small results.
       const out = ctx.context ? await ctx.context.budgetToolResult(ran) : ran;
@@ -119,6 +126,18 @@ function assistantMessage(res: ModelResult): Message {
   if (res.reasoning) msg.reasoning = res.reasoning;
   if (res.toolCalls.length > 0) msg.toolCalls = res.toolCalls;
   return msg;
+}
+
+/** Run one tool call through the gate (B1). With no gate the call runs as in A2. With a gate, a
+ *  denied call is never executed: it comes back as a {@link ToolResult} with the denial reason in
+ *  `error`, so the loop feeds "denied + why" to the model (identical shape to a tool failure, so
+ *  the existing tool_result path renders it). The synthetic result reuses the call id; the wire
+ *  layer normalizes ids at send time, so it pairs with its assistant tool_call. */
+async function gatedRun(ctx: AgentContext, call: ToolCall): Promise<ToolResult> {
+  if (!ctx.gate) return ctx.tools.run(call, ctx.toolCtx);
+  const verdict = await ctx.gate.check(call, ctx.tools.capabilityOf(call.name));
+  if (verdict.allowed) return ctx.tools.run(call, ctx.toolCtx);
+  return { callId: call.id, content: '', error: `Permission denied: ${verdict.reason}` };
 }
 
 /** A tool's failure is surfaced to the model as text (so it can recover), not hidden. */

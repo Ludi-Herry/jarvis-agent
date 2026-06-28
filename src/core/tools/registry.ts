@@ -13,7 +13,7 @@
  */
 import type { ToolCall, ToolResult } from '../types.js';
 import { zodToParameters } from './json-schema.js';
-import type { ToolDefinition, ToolRegistry, ToolRunCtx } from './types.js';
+import type { ToolCapability, ToolDefinition, ToolRegistry, ToolRunCtx } from './types.js';
 
 /** ARK rejects tool_call_id longer than 64 chars; truncate defensively so a model that
  *  emits an over-long id can't poison the next request. */
@@ -27,6 +27,10 @@ export class InMemoryToolRegistry implements ToolRegistry {
       throw new Error(`Tool already registered: ${tool.name}`);
     }
     this.tools.set(tool.name, tool as ToolDefinition);
+  }
+
+  capabilityOf(name: string): ToolCapability | undefined {
+    return this.tools.get(name)?.capability;
   }
 
   schemasForModel(): ToolSchemaList {

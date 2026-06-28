@@ -1,13 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { runAgent } from '../../src/core/loop/run-agent.js';
 import { InMemoryToolRegistry } from '../../src/core/tools/registry.js';
-import { readTool } from '../../src/core/tools/builtins.js';
+import { readTool, writeTool } from '../../src/core/tools/builtins.js';
 import { DefaultContextManager } from '../../src/core/context/context-manager.js';
 import { InMemoryEventBus, type Event } from '../../src/runtime/event-bus.js';
+import { DefaultPermissionGate, type Approver } from '../../src/runtime/permission/permission-gate.js';
 import type { Message, ToolCall, ToolResult } from '../../src/core/types.js';
 import type { ModelDelta, ModelProvider, ModelResult } from '../../src/core/model/types.js';
 import type { ToolDefinition } from '../../src/core/tools/types.js';
@@ -268,6 +269,95 @@ describe('runAgent — compaction (A3)', () => {
     const toolResult = events.find((e) => e.type === 'tool_result');
     expect(toolResult).toMatchObject({ out: { content: 'BUDGETED:ok' } });
     expect(messages.some((m) => m.role === 'tool' && m.content === 'BUDGETED:ok')).toBe(true);
+  });
+});
+
+describe('runAgent — permission gate (B1)', () => {
+  it('denies a sensitive read: the tool never runs and the model gets the reason fed back', async () => {
+    // Plant a real secret. If the gate fails, the secret would leak into the tool result.
+    await writeFile(join(dir, '.env'), 'API_KEY=super-secret-value', 'utf8');
+    const tools = new InMemoryToolRegistry();
+    tools.register(readTool);
+    const { provider } = scriptedModel([
+      { text: 'reading config', toolCalls: [{ id: 'c1', name: 'read', arguments: '{"path":".env"}' }] },
+      { text: 'I cannot read that file.' },
+    ]);
+    const bus = new InMemoryEventBus();
+    const events = record(bus);
+    const messages: Message[] = [{ role: 'user', content: 'what is the api key?' }];
+
+    const outcome = await runAgent({
+      model: provider,
+      tools,
+      bus,
+      messages,
+      toolCtx: { cwd: dir },
+      budget: { maxTurns: 5 },
+      gate: new DefaultPermissionGate(), // no approver needed: a sensitive path is a hard deny
+    });
+
+    const toolResult = events.find((e) => e.type === 'tool_result');
+    // the result is a denial, and the SECRET never appears anywhere it reached
+    expect(toolResult).toMatchObject({ type: 'tool_result', out: { content: '' } });
+    expect(toolResult?.type === 'tool_result' && toolResult.out.error).toMatch(/Permission denied/);
+    expect(JSON.stringify(events)).not.toContain('super-secret-value');
+    expect(messages.some((m) => m.role === 'tool' && m.content.includes('Permission denied'))).toBe(true);
+    // and the loop still finished naturally on the model's recovery turn
+    expect(outcome.finalText).toBe('I cannot read that file.');
+  });
+
+  it('allows a write after the injected approver approves it (the ask lane runs the tool)', async () => {
+    const tools = new InMemoryToolRegistry();
+    tools.register(writeTool);
+    const approver: Approver = async () => 'allow-once';
+    const { provider } = scriptedModel([
+      {
+        toolCalls: [{ id: 'c1', name: 'write', arguments: '{"path":"note.txt","content":"hello"}' }],
+      },
+      { text: 'done' },
+    ]);
+    const bus = new InMemoryEventBus();
+    const events = record(bus);
+
+    await runAgent({
+      model: provider,
+      tools,
+      bus,
+      messages: [{ role: 'user', content: 'write note.txt' }],
+      toolCtx: { cwd: dir },
+      budget: { maxTurns: 5 },
+      gate: new DefaultPermissionGate({ approver }),
+    });
+
+    // the tool actually ran (file on disk) and reported success — not a denial
+    expect(await readFile(join(dir, 'note.txt'), 'utf8')).toBe('hello');
+    const toolResult = events.find((e) => e.type === 'tool_result');
+    expect(toolResult?.type === 'tool_result' && toolResult.out.error).toBeUndefined();
+  });
+
+  it('denies the write when no approver is available (fail-closed): the file is never written', async () => {
+    const tools = new InMemoryToolRegistry();
+    tools.register(writeTool);
+    const { provider } = scriptedModel([
+      { toolCalls: [{ id: 'c1', name: 'write', arguments: '{"path":"blocked.txt","content":"x"}' }] },
+      { text: 'understood' },
+    ]);
+    const bus = new InMemoryEventBus();
+    const events = record(bus);
+
+    await runAgent({
+      model: provider,
+      tools,
+      bus,
+      messages: [{ role: 'user', content: 'write a file' }],
+      toolCtx: { cwd: dir },
+      budget: { maxTurns: 5 },
+      gate: new DefaultPermissionGate(), // non-interactive → ask fails closed
+    });
+
+    await expect(readFile(join(dir, 'blocked.txt'), 'utf8')).rejects.toThrow(); // never created
+    const toolResult = events.find((e) => e.type === 'tool_result');
+    expect(toolResult?.type === 'tool_result' && toolResult.out.error).toMatch(/Permission denied/);
   });
 });
 
