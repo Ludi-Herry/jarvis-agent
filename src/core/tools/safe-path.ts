@@ -44,12 +44,23 @@ export async function safeResolve(cwd: string, path: string): Promise<SafePath> 
 
   // (2) Follow symlinks to the real target (even if the leaf doesn't exist yet) and re-check.
   const realRoot = await realpath(cwd).catch(() => cwd);
-  const real = await effectiveRealPath(abs);
+  let real: string;
+  try {
+    real = await effectiveRealPath(abs);
+  } catch {
+    // a symlink cycle or pathologically deep chain — fail closed rather than loop or guess.
+    return { ok: false, reason: `path could not be safely resolved (symlink loop?): ${path}` };
+  }
   if (!isWithin(realRoot, real)) return { ok: false, reason: `path resolves outside the project root: ${path}` };
   if (isSensitivePath(real)) return { ok: false, reason: `path resolves to a sensitive file: ${path}` };
 
   return { ok: true, abs };
 }
+
+/** Hard ceiling on resolution hops. A symlink cycle (a -> b -> a) or a pathologically deep chain
+ *  trips it; {@link safeResolve} turns the throw into a fail-closed refusal. Mirrors the kernel's
+ *  ELOOP bound. */
+const MAX_RESOLVE_HOPS = 40;
 
 /**
  * Where reading/writing `abs` would REALLY land, following symlinks, tolerant of a leaf (or
@@ -59,7 +70,8 @@ export async function safeResolve(cwd: string, path: string): Promise<SafePath> 
  * literal name on top of its parent's real path. Recursion terminates because the parent chain
  * reaches `cwd` (which exists) before the filesystem root.
  */
-async function effectiveRealPath(abs: string): Promise<string> {
+async function effectiveRealPath(abs: string, hops = 0): Promise<string> {
+  if (hops > MAX_RESOLVE_HOPS) throw new Error(`too many symlink hops resolving ${abs} (cycle?)`);
   try {
     return await realpath(abs); // fully resolvable: file/dir exists, symlinks followed
   } catch {
@@ -70,9 +82,12 @@ async function effectiveRealPath(abs: string): Promise<string> {
 
   const link = await readlink(abs).catch(() => null);
   if (link !== null) {
-    // an existing (possibly dangling) symlink: follow it to where a write would actually go
-    return resolve(await effectiveRealPath(parent), link);
+    // an existing (possibly dangling) symlink: resolve its target against the parent's real path,
+    // then KEEP resolving — the target may itself be another (multi-hop) or dangling symlink, which
+    // a single readlink would miss, letting a write punch through link1 -> link2 -> .env.
+    const target = resolve(await effectiveRealPath(parent, hops + 1), link);
+    return effectiveRealPath(target, hops + 1);
   }
   // a plain non-existent leaf: keep its literal name on top of the parent's resolved real path
-  return resolve(await effectiveRealPath(parent), basename(abs));
+  return resolve(await effectiveRealPath(parent, hops + 1), basename(abs));
 }
