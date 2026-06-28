@@ -115,7 +115,15 @@ function execute(
     let graceArmed = false;
     const timers: ReturnType<typeof setTimeout>[] = [];
 
-    const child = spawn(shellPath, ['-c', command], { cwd, windowsHide: true, env: shellEnv() });
+    // On POSIX, detach so the child LEADS its own process group — killTree then signals the whole
+    // group (negative pid), the analogue of Windows `taskkill /t`. On Windows we stay attached:
+    // taskkill /t already walks the child tree, and detaching there would spawn a stray console.
+    const child = spawn(shellPath, ['-c', command], {
+      cwd,
+      windowsHide: true,
+      env: shellEnv(),
+      detached: process.platform !== 'win32',
+    });
 
     const finish = (result: Pick<ExecResult, 'code' | 'spawnError'>): void => {
       if (settled) return;
@@ -175,7 +183,9 @@ function execute(
 }
 
 /** Kill a process AND its children. On Windows the child shell spawns its own subprocesses that a
- *  plain kill leaves orphaned, so use `taskkill /T`; elsewhere SIGKILL the process. */
+ *  plain kill leaves orphaned, so use `taskkill /T`; on POSIX the child leads its own process group
+ *  (spawned detached), so SIGKILL the whole GROUP via a negative pid — a plain kill(pid) would
+ *  orphan the shell's children. */
 function killTree(pid: number | undefined): void {
   if (pid === undefined) return;
   if (process.platform === 'win32') {
@@ -183,9 +193,14 @@ function killTree(pid: number | undefined): void {
     spawn('taskkill', ['/pid', String(pid), '/t', '/f'], { windowsHide: true }).on('error', () => {});
   } else {
     try {
-      process.kill(pid, 'SIGKILL');
+      process.kill(-pid, 'SIGKILL'); // negative pid → the whole process group
     } catch {
-      // already gone
+      // group send failed (grouping didn't take?) — fall back to the single pid
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch {
+        // already gone
+      }
     }
   }
 }
