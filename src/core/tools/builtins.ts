@@ -12,9 +12,10 @@
  * a stack trace. The registry separately catches anything UNexpected that throws.
  */
 import { readFile, writeFile, mkdir, readdir, stat } from 'node:fs/promises';
-import { dirname, resolve, relative, join } from 'node:path';
+import { dirname, relative, join } from 'node:path';
 import { z } from 'zod';
 import { isSensitivePath } from '../../runtime/permission/index.js';
+import { safeResolve } from './safe-path.js';
 import type { ToolDefinition } from './types.js';
 
 /** Cap grep output so a broad pattern over a big tree can't blow up the context window. */
@@ -30,9 +31,10 @@ export const readTool: ToolDefinition<{ path: string }> = {
     path: z.string().describe('File path to read, relative to the project root.'),
   }),
   run: async ({ path }, ctx) => {
-    const abs = resolve(ctx.cwd, path);
+    const safe = await safeResolve(ctx.cwd, path);
+    if (!safe.ok) return { content: '', error: `Cannot read ${path}: ${safe.reason}` };
     try {
-      const content = await readFile(abs, 'utf8');
+      const content = await readFile(safe.abs, 'utf8');
       return { content };
     } catch (err) {
       return { content: '', error: `Cannot read ${path}: ${message(err)}` };
@@ -50,10 +52,11 @@ export const writeTool: ToolDefinition<{ path: string; content: string }> = {
     content: z.string().describe('Full file contents to write.'),
   }),
   run: async ({ path, content }, ctx) => {
-    const abs = resolve(ctx.cwd, path);
+    const safe = await safeResolve(ctx.cwd, path);
+    if (!safe.ok) return { content: '', error: `Cannot write ${path}: ${safe.reason}` };
     try {
-      await mkdir(dirname(abs), { recursive: true });
-      await writeFile(abs, content, 'utf8');
+      await mkdir(dirname(safe.abs), { recursive: true });
+      await writeFile(safe.abs, content, 'utf8');
       return { content: `Wrote ${content.length} chars to ${path}` };
     } catch (err) {
       return { content: '', error: `Cannot write ${path}: ${message(err)}` };
@@ -81,7 +84,9 @@ export const grepTool: ToolDefinition<{ pattern: string; path?: string }> = {
       return { content: '', error: `Invalid regular expression: ${message(err)}` };
     }
 
-    const root = resolve(ctx.cwd, path ?? '.');
+    const safe = await safeResolve(ctx.cwd, path ?? '.');
+    if (!safe.ok) return { content: '', error: `Cannot search ${path ?? '.'}: ${safe.reason}` };
+    const root = safe.abs;
     const matches: string[] = [];
     let truncated = false;
 

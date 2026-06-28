@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtemp, rm, readFile, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, mkdir, writeFile, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readTool, writeTool, grepTool } from '../../src/core/tools/builtins.js';
@@ -83,5 +83,70 @@ describe('grepTool', () => {
     const out = await grepTool.run({ pattern: '[' }, ctx);
     expect(out.content).toBe('');
     expect(out.error).toMatch(/Invalid regular expression/);
+  });
+});
+
+describe('path confinement (codex P1: cwd escape + symlink can dodge the secret check)', () => {
+  it('read: refuses an absolute path outside cwd (never reads a file elsewhere on disk)', async () => {
+    // A real secret OUTSIDE the project root. Without confinement an absolute path reads it.
+    const outside = await mkdtemp(join(tmpdir(), 'harness-outside-'));
+    try {
+      const secret = join(outside, 'loot.txt');
+      await writeFile(secret, 'OUTSIDE-SECRET-DO-NOT-LEAK', 'utf8');
+      const out = await readTool.run({ path: secret }, ctx);
+      expect(out.content).toBe('');
+      expect(out.error).toMatch(/escapes the project root/);
+      expect(out.error).not.toContain('OUTSIDE-SECRET'); // and the value never surfaced
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('read: refuses a ../ traversal that climbs above cwd', async () => {
+    const out = await readTool.run({ path: '../../../../etc/passwd' }, ctx);
+    expect(out.content).toBe('');
+    expect(out.error).toMatch(/escapes the project root/);
+  });
+
+  // A directory junction (Windows, no elevation needed) / symlink (POSIX) stands in for the
+  // codex `safe.txt -> .env` case: realpath resolution is identical, but it needs no privilege.
+  // The secret hides behind a NON-sensitive literal name, so only the realpath check can catch it
+  // — a literal-only check (what the gate sees) would wave it through.
+  it('read: refuses a symlinked dir that resolves to a secret (realpath defeats the bypass)', async () => {
+    await mkdir(join(dir, '.ssh'), { recursive: true });
+    await writeFile(join(dir, '.ssh', 'config'), 'SSH-SECRET-DO-NOT-LEAK', 'utf8');
+    await symlink(join(dir, '.ssh'), join(dir, 'safe_dir'), 'junction');
+    const out = await readTool.run({ path: 'safe_dir/config' }, ctx); // literal name looks innocent
+    expect(out.content).toBe(''); // the secret behind the link is never read
+    expect(out.error).toMatch(/sensitive/);
+    expect(out.error).not.toContain('SSH-SECRET');
+  });
+
+  it('write: a symlinked dir cannot be used to write into a secret location', async () => {
+    await mkdir(join(dir, '.ssh'), { recursive: true });
+    await symlink(join(dir, '.ssh'), join(dir, 'safe_dir'), 'junction');
+    const out = await writeTool.run({ path: 'safe_dir/id_test', content: 'PWNED' }, ctx);
+    expect(out.error).toMatch(/sensitive/);
+    await expect(readFile(join(dir, '.ssh', 'id_test'), 'utf8')).rejects.toThrow(); // nothing written
+  });
+
+  it('read: refuses a symlink whose target escapes cwd entirely', async () => {
+    const outside = await mkdtemp(join(tmpdir(), 'harness-outside-'));
+    try {
+      await writeFile(join(outside, 'loot.txt'), 'OUTSIDE-SECRET-DO-NOT-LEAK', 'utf8');
+      await symlink(outside, join(dir, 'safe_dir'), 'junction');
+      const out = await readTool.run({ path: 'safe_dir/loot.txt' }, ctx);
+      expect(out.content).toBe('');
+      expect(out.error).toMatch(/resolves outside the project root/);
+      expect(out.error).not.toContain('OUTSIDE-SECRET');
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('grep: refuses a root that escapes cwd', async () => {
+    const out = await grepTool.run({ pattern: 'x', path: '../..' }, ctx);
+    expect(out.content).toBe('');
+    expect(out.error).toMatch(/escapes the project root/);
   });
 });
