@@ -49,9 +49,9 @@ export function redactSecrets(text: string): string {
     .replace(/\bsk-[A-Za-z0-9_-]{6,}/g, 'sk-***') // OpenAI-style keys (sk-, sk-proj-…)
     .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._=+/-]{6,}/gi, '$1 ***') // auth-scheme tokens
     .replace(
-      /\b(api[_-]?key|access[_-]?key|secret|token|password)("?\s*[=:]\s*"?)[A-Za-z0-9._-]{6,}/gi,
+      /\b(api[_-]?key|access[_-]?key|secret|token|password)(['"]?\s*[=:]\s*['"]?)[A-Za-z0-9._-]{6,}/gi,
       '$1$2***',
-    ); // labelled key=VALUE / "token": "VALUE" pairs
+    ); // labelled key=VALUE / key: 'VALUE' / "token": "VALUE" (single OR double quotes)
 }
 
 export function describeModelError(err: unknown, model: string): Error {

@@ -46,6 +46,17 @@ describe('redactSecrets', () => {
     expect(masked).not.toContain('abcdef123456');
   });
 
+  it('masks single-quoted and header-style labelled secrets (codex HIGH-2: quote bypass)', () => {
+    const sq = redactSecrets("bad request: api_key='ARKSECRET123456' rejected");
+    expect(sq).not.toContain('ARKSECRET123456');
+    expect(sq).toContain('***');
+    const tk = redactSecrets("token: 'abcdef123456'");
+    expect(tk).not.toContain('abcdef123456');
+    const hdr = redactSecrets("x-api-key: 'KEY1234567890'");
+    expect(hdr).not.toContain('KEY1234567890');
+    expect(hdr).toContain('***');
+  });
+
   it('leaves ordinary diagnostic text untouched', () => {
     expect(redactSecrets('rate limited or out of quota')).toBe('rate limited or out of quota');
     expect(redactSecrets('socket hang up')).toBe('socket hang up');
