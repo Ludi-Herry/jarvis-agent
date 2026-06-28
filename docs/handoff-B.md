@@ -6,6 +6,21 @@
 
 **Phase B 全部完成**：agent 能**安全地执行命令**——危险/敏感操作被运行时**确定性**拦截，改动级操作走**人在环审批**，权限由 gate 强制、绝不让模型自报。`npm run typecheck / lint / test / build` 全绿（**285 测试**），每个里程碑有真连 Doubao / 真跑 bash 的实跑 demo。命令解析器（安全根）经**四轮独立对抗核查**加固。下一步：持久化段（断点续跑），或 Phase C（多 agent）。
 
+## 当前状态更新（2026-06-29 · B 之后的 P1/P2 收尾）
+
+> 这是「当前安全态」的入口；原 B1–B6 内容保留为里程碑快照。B11 之后清掉了 codex 复核遗留的 P1/P2，并经**两轮新的独立 codex 核查**（覆盖 commit `7cdbd3e`、`9e6d27a`）抓出并修复 **4 个 HIGH**。测试 **285 → 370 全绿**。
+
+清掉 / 加固的：
+- **文件工具不再「裸做」**：read/write/grep 现经 `src/core/tools/safe-path.ts` 的 `safeResolve` 约束在 cwd 内 + realpath 软链检查——拒绝逃逸 cwd / 解析到敏感文件，含多跳悬空 symlink（40 跳 fail-closed）。文件工具版的「受限 cwd」。
+- **bash 纵深**：spawn 净化 env（删 `BASH_ENV`/`ENV`，堵非交互启动脚本执行）；POSIX 下 detached + 进程组 kill（对齐 Windows `taskkill /t`）。
+- **gate「解析==执行」结构化**：gatedRun 前 `Object.freeze` 一份 ToolCall 快照，消除 subscriber 可在审批后改 `arguments` 的 TOCTOU（当前无恶意 subscriber、本不可利用，但从约定变结构保证）。
+- **loop 韧性**：decideStop 读 finishReason（截断/过滤 → halt，不当最终答案）；abort 接进 grep 遍历 + compact（卡住的 summarizer 可 Ctrl-C）；压缩判断用投影 usage（大工具结果当轮触发、不撑爆下轮）。
+- **错误脱敏**：describeModelError 对回显的 `sk-`/`Bearer`/`key=value`（单双引号）脱敏。
+
+命令安全根核心不变量（decide 对 executes-code 永不 allow、grep 跳密钥、解析器 fail-closed、gatedRun 先裁决、bash 不在无闸注册表）经**六轮 codex（B 阶段四轮 + 本批两轮）**确认未破。复核方法 / 严重度基线 / 历史见 `security-review-baseline.md`；逐项 commit 见 git log（`7cdbd3e`…`8d19c13`）。
+
+**新残留（务实档、已接受）**：realpath→I/O 的 TOCTOU、硬链接绕不过 realpath、inline `BASH_ENV=… bash -c …` 仍 ask 非 hard-deny——都需 bash 人审前置，符合「cwd 是锚点不是牢笼」。bash session-allow 仍按 memory `restore-bash-session-allow` 故意不恢复，留待 Phase D 白名单。
+
 ## 架构一句话
 
 A 阶段「裸做无权限护栏」，B 阶段补上那道闸门：**工具执行前先过 PermissionGate**（在 A2 刻意留的 `runAgent` 缝里）。决策是**纯函数** `decide(req, policy)`，从工具的能力标签 + 解析后的入参确定性推导，**绝不读模型自述的副作用**（堵 deepcode 漏洞）。`ask` 交注入式 approver（测试注入假的、REPL 注入真交互、非交互 fail-closed deny）。
