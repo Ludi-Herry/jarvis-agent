@@ -115,7 +115,7 @@ function execute(
     let graceArmed = false;
     const timers: ReturnType<typeof setTimeout>[] = [];
 
-    const child = spawn(shellPath, ['-c', command], { cwd, windowsHide: true });
+    const child = spawn(shellPath, ['-c', command], { cwd, windowsHide: true, env: shellEnv() });
 
     const finish = (result: Pick<ExecResult, 'code' | 'spawnError'>): void => {
       if (settled) return;
@@ -188,6 +188,19 @@ function killTree(pid: number | undefined): void {
       // already gone
     }
   }
+}
+
+/** The child shell's environment, with the startup-file hooks stripped. A non-interactive bash
+ *  sources `$BASH_ENV` (and a POSIX sh sources `$ENV`) BEFORE it runs `-c <command>` — code the
+ *  command analyzer never parsed and the user never approved, so "what we checked" wouldn't be
+ *  "what runs". Everything else (PATH, …) is inherited so commands still work; only these two
+ *  startup hooks are dropped. (The model can't set the parent process's env anyway, but dropping
+ *  them closes the door even when the operator's own environment carries one.) */
+function shellEnv(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  delete env.BASH_ENV;
+  delete env.ENV;
+  return env;
 }
 
 /** Resolve the bash executable. An explicit `JARVIS_BASH` wins; on Windows prefer the Git Bash

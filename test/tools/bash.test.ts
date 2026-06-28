@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createBashTool, defaultShellPath } from '../../src/core/tools/bash.js';
@@ -67,6 +67,29 @@ describe('bash tool — execution', () => {
     const broken = createBashTool({ shellPath: join(dir, 'no-such-bash.exe') });
     const out = await broken.run({ command: 'echo x' }, ctx);
     expect(out.error).toMatch(/Failed to start shell/);
+  });
+
+  it('strips BASH_ENV/ENV so the shell cannot source unparsed startup code (codex HIGH1)', async () => {
+    // BASH_ENV points at a real script. A non-interactive bash would source it BEFORE `-c`, running
+    // code the gate/parser never saw. The command we actually run only ever echoes ok.
+    const evil = join(dir, 'evil.sh');
+    await writeFile(evil, 'echo EVIL_STARTUP_RAN', 'utf8');
+    const evilForBash = evil.replace(/\\/g, '/'); // forward slashes so Git Bash could source it if env leaked
+    const prevBashEnv = process.env.BASH_ENV;
+    const prevEnv = process.env.ENV;
+    process.env.BASH_ENV = evilForBash;
+    process.env.ENV = evilForBash;
+    try {
+      const out = await bash.run({ command: 'echo "BE=[$BASH_ENV]"; echo ok' }, ctx);
+      expect(out.content).toContain('ok'); // the real command still runs (PATH etc. inherited)
+      expect(out.content).toContain('BE=[]'); // BASH_ENV is gone from the child env → it was stripped
+      expect(out.content).not.toContain('EVIL_STARTUP_RAN'); // and the startup file never ran
+    } finally {
+      if (prevBashEnv === undefined) delete process.env.BASH_ENV;
+      else process.env.BASH_ENV = prevBashEnv;
+      if (prevEnv === undefined) delete process.env.ENV;
+      else process.env.ENV = prevEnv;
+    }
   });
 
   it('aborts a running command via the signal and settles promptly', async () => {
