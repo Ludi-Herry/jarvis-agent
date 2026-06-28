@@ -20,6 +20,8 @@ import type { ToolDefinition } from './types.js';
 
 /** Cap grep output so a broad pattern over a big tree can't blow up the context window. */
 const GREP_MAX_MATCHES = 200;
+/** Skip files larger than this (bytes): one huge or binary blob shouldn't be slurped into memory. */
+const GREP_MAX_FILE_BYTES = 2_000_000;
 /** Directories never worth walking for a code grep. */
 const GREP_SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'coverage']);
 
@@ -86,77 +88,117 @@ export const grepTool: ToolDefinition<{ pattern: string; path?: string }> = {
 
     const safe = await safeResolve(ctx.cwd, path ?? '.');
     if (!safe.ok) return { content: '', error: `Cannot search ${path ?? '.'}: ${safe.reason}` };
-    const root = safe.abs;
-    const matches: string[] = [];
-    let truncated = false;
-    let aborted = false;
 
+    const state: GrepState = {
+      regex,
+      cwd: ctx.cwd,
+      signal: ctx.signal,
+      matches: [],
+      truncated: false,
+      aborted: false,
+      skippedLarge: 0,
+    };
     try {
-      const files = await collectFiles(root, ctx.signal);
-      for (const file of files) {
-        if (ctx.signal?.aborted) {
-          aborted = true;
-          break;
-        }
-        if (matches.length >= GREP_MAX_MATCHES) {
-          truncated = true;
-          break;
-        }
-        const text = await readFile(file, 'utf8').catch(() => null);
-        if (text === null) continue; // unreadable/binary — skip, don't fail the whole grep
-        const lines = text.split('\n');
-        for (let i = 0; i < lines.length; i++) {
-          if (regex.test(lines[i])) {
-            const rel = relative(ctx.cwd, file).replace(/\\/g, '/');
-            matches.push(`${rel}:${i + 1}:${lines[i]}`);
-            if (matches.length >= GREP_MAX_MATCHES) {
-              truncated = true;
-              break;
-            }
-          }
-        }
-      }
+      await searchPath(safe.abs, state);
     } catch (err) {
       return { content: '', error: `Cannot search ${path ?? '.'}: ${message(err)}` };
     }
+    if (ctx.signal?.aborted) state.aborted = true; // searchPath may have bailed before setting it
 
-    // collectFiles can bail on abort before the match loop runs, so reflect the final signal here too.
-    if (ctx.signal?.aborted) aborted = true;
-
-    if (matches.length === 0) {
-      return { content: aborted ? '[aborted]' : `No matches for /${pattern}/ under ${path ?? '.'}` };
-    }
     const notes: string[] = [];
-    if (aborted) notes.push('[aborted]');
-    if (truncated) notes.push(`(showing first ${GREP_MAX_MATCHES} matches)`);
+    if (state.aborted) notes.push('[aborted]');
+    if (state.truncated) notes.push(`(showing first ${GREP_MAX_MATCHES} matches)`);
+    if (state.skippedLarge > 0) {
+      notes.push(`[skipped ${state.skippedLarge} file(s) over ${GREP_MAX_FILE_BYTES} bytes]`);
+    }
+    if (state.matches.length === 0) {
+      return { content: notes.length > 0 ? notes.join(' ') : `No matches for /${pattern}/ under ${path ?? '.'}` };
+    }
     const header = notes.length > 0 ? `${notes.join(' ')}\n` : '';
-    return { content: header + matches.join('\n') };
+    return { content: header + state.matches.join('\n') };
   },
 };
 
-/** Recursively collect readable file paths under `root`, skipping noise directories. If
- *  `root` is itself a file, return just it. */
-async function collectFiles(root: string, signal?: AbortSignal): Promise<string[]> {
-  const info = await stat(root);
-  // grep is read-only and recurses on its own, so the PermissionGate (which only sees the call's
-  // path arg) can't protect a secret reached by traversal — grep must skip secrets itself, reusing
-  // the same policy as the gate. Otherwise `grep {pattern:"KEY"}` with no path would leak .env.
-  if (info.isFile()) return isSensitivePath(root) ? [] : [root];
+/** Mutable accumulator threaded through the streaming search, so traversal and matching share one
+ *  state without buffering a full file list first. */
+interface GrepState {
+  regex: RegExp;
+  cwd: string;
+  signal?: AbortSignal;
+  matches: string[];
+  truncated: boolean; // hit GREP_MAX_MATCHES — stop searching
+  aborted: boolean; // the turn's signal fired mid-search
+  skippedLarge: number; // files skipped for exceeding GREP_MAX_FILE_BYTES
+}
 
-  const out: string[] = [];
-  const entries = await readdir(root, { withFileTypes: true });
+/** Walk `target` (a file or a directory) matching AS WE GO — no full file list is collected first,
+ *  so a huge tree streams instead of buffering. Stops early on abort or once the match cap is hit.
+ *  grep is read-only and recurses on its own, so the PermissionGate (which only sees the call's path
+ *  arg) can't guard a secret reached by traversal — so we skip secret paths here, reusing the gate's
+ *  policy; otherwise `grep {pattern:"KEY"}` with no path would leak .env. */
+async function searchPath(target: string, state: GrepState): Promise<void> {
+  if (state.truncated || state.aborted) return;
+  if (state.signal?.aborted) {
+    state.aborted = true;
+    return;
+  }
+
+  const info = await stat(target);
+  if (info.isFile()) {
+    if (!isSensitivePath(target)) await searchFile(target, info.size, state);
+    return;
+  }
+
+  const entries = await readdir(target, { withFileTypes: true });
   for (const entry of entries) {
-    if (signal?.aborted) break; // stop walking a large tree once the turn is aborted (Ctrl-C)
-    const full = join(root, entry.name);
+    if (state.truncated || state.aborted) return;
+    if (state.signal?.aborted) {
+      state.aborted = true;
+      return;
+    }
+    const full = join(target, entry.name);
     if (isSensitivePath(full)) continue; // never read a secret file or descend into a secret dir
     if (entry.isDirectory()) {
       if (GREP_SKIP_DIRS.has(entry.name)) continue;
-      out.push(...(await collectFiles(full, signal)));
+      await searchPath(full, state);
     } else if (entry.isFile()) {
-      out.push(full);
+      await searchFile(full, undefined, state); // dir entries carry no size — searchFile stats it
     }
   }
-  return out;
+}
+
+/** Match one file's lines into `state`, skipping it if it's too big to slurp safely. `knownSize`
+ *  is the size the caller already stat'd (the root file); a directory entry passes undefined and we
+ *  stat here. Checks the abort signal mid-file so even one large file stays interruptible. */
+async function searchFile(file: string, knownSize: number | undefined, state: GrepState): Promise<void> {
+  let size = knownSize;
+  if (size === undefined) {
+    const st = await stat(file).catch(() => null);
+    if (st === null) return; // vanished/unreadable — skip, don't fail the whole grep
+    size = st.size;
+  }
+  if (size > GREP_MAX_FILE_BYTES) {
+    state.skippedLarge++; // too big to slurp into memory — skip and report the count
+    return;
+  }
+
+  const text = await readFile(file, 'utf8').catch(() => null);
+  if (text === null) return; // binary/unreadable — skip, don't fail the whole grep
+  const lines = text.split('\n');
+  const rel = relative(state.cwd, file).replace(/\\/g, '/');
+  for (let i = 0; i < lines.length; i++) {
+    if (state.signal?.aborted) {
+      state.aborted = true; // interruptible even partway through a single large file
+      return;
+    }
+    if (state.regex.test(lines[i])) {
+      state.matches.push(`${rel}:${i + 1}:${lines[i]}`);
+      if (state.matches.length >= GREP_MAX_MATCHES) {
+        state.truncated = true;
+        return;
+      }
+    }
+  }
 }
 
 function message(err: unknown): string {

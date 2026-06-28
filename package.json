@@ -23,7 +23,6 @@
   },
   "dependencies": {
     "commander": "^15.0.0",
-    "ink": "^7.1.0",
     "mvdan-sh": "^0.10.1",
     "openai": "^6.45.0",
     "zod": "^4.4.3"

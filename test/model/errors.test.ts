@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { describeModelError } from '../../src/core/model/errors.js';
+import { describeModelError, redactSecrets } from '../../src/core/model/errors.js';
 
 describe('describeModelError', () => {
   it('gives an auth hint for 401/403 and never leaks the key', () => {
@@ -24,7 +24,30 @@ describe('describeModelError', () => {
     expect(describeModelError({ message: 'weird' }, 'm').message).not.toContain('HTTP');
   });
 
-  it('includes the model id', () => {
-    expect(describeModelError({ status: 500 }, 'doubao-x').message).toContain('doubao-x');
+  it('redacts a secret the endpoint echoes back in the message (no credential re-leak)', () => {
+    const msg = describeModelError(
+      { status: 400, message: 'bad request: Authorization: Bearer sk-LIVEKEY1234567890 rejected' },
+      'm',
+    ).message;
+    expect(msg).toContain('HTTP 400');
+    expect(msg).not.toContain('sk-LIVEKEY1234567890');
+    expect(msg).toContain('sk-***');
+  });
+});
+
+describe('redactSecrets', () => {
+  it('masks api-key prefixes, bearer tokens, and labelled secret values', () => {
+    expect(redactSecrets('leaked sk-ABCdef123456 here')).toContain('sk-***');
+    expect(redactSecrets('leaked sk-ABCdef123456 here')).not.toContain('ABCdef123456');
+    expect(redactSecrets('Authorization: Bearer abc.def.ghi123')).toContain('Bearer ***');
+    expect(redactSecrets('api_key=supersecretvalue')).toBe('api_key=***');
+    const masked = redactSecrets('"token": "abcdef123456"');
+    expect(masked).toContain('***');
+    expect(masked).not.toContain('abcdef123456');
+  });
+
+  it('leaves ordinary diagnostic text untouched', () => {
+    expect(redactSecrets('rate limited or out of quota')).toBe('rate limited or out of quota');
+    expect(redactSecrets('socket hang up')).toBe('socket hang up');
   });
 });

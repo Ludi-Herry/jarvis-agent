@@ -38,14 +38,30 @@ function hint(status: number): string {
   }
 }
 
+/**
+ * Redact secret-looking fragments an OpenAI-compatible endpoint might echo back inside an error
+ * message — some reflect the request, which can carry an Authorization header or a key in a query
+ * string. Conservative: masks API-key prefixes, bearer tokens, and labelled key/secret/token values
+ * while leaving ordinary diagnostic text intact, so the surfaced error never re-leaks a credential.
+ */
+export function redactSecrets(text: string): string {
+  return text
+    .replace(/\bsk-[A-Za-z0-9_-]{6,}/g, 'sk-***') // OpenAI-style keys (sk-, sk-proj-…)
+    .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._=+/-]{6,}/gi, '$1 ***') // auth-scheme tokens
+    .replace(
+      /\b(api[_-]?key|access[_-]?key|secret|token|password)("?\s*[=:]\s*"?)[A-Za-z0-9._-]{6,}/gi,
+      '$1$2***',
+    ); // labelled key=VALUE / "token": "VALUE" pairs
+}
+
 export function describeModelError(err: unknown, model: string): Error {
   const api = asApiError(err);
   if (api) {
-    const detail = api.message ? `: ${api.message}` : '';
+    const detail = api.message ? `: ${redactSecrets(api.message)}` : '';
     return new Error(
       `Doubao request failed for model "${model}" (HTTP ${api.status}) — ${hint(api.status)}${detail}`,
     );
   }
   const message = err instanceof Error ? err.message : String(err);
-  return new Error(`Doubao request failed for model "${model}" — ${message}`);
+  return new Error(`Doubao request failed for model "${model}" — ${redactSecrets(message)}`);
 }

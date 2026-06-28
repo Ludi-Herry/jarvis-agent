@@ -84,6 +84,15 @@ describe('grepTool', () => {
     expect(out.content).toBe('');
     expect(out.error).toMatch(/Invalid regular expression/);
   });
+
+  it('skips a file over the size cap (does not slurp a huge blob) and reports the skip', async () => {
+    await writeFile(join(dir, 'small.txt'), 'find-me', 'utf8');
+    await writeFile(join(dir, 'huge.txt'), `find-me\n${'x'.repeat(2_000_001)}`, 'utf8'); // > 2MB cap
+    const out = await grepTool.run({ pattern: 'find-me' }, ctx);
+    expect(out.content).toContain('small.txt'); // the small file is still searched and matched
+    expect(out.content).not.toContain('huge.txt'); // the oversized file is skipped, not scanned
+    expect(out.content).toContain('skipped'); // and the skip is reported, not silent
+  });
 });
 
 describe('path confinement (codex P1: cwd escape + symlink can dodge the secret check)', () => {

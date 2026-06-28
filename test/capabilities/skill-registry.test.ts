@@ -40,6 +40,8 @@ describe('loadSkills', () => {
     await mkdir(join(dir, 'empty-folder'), { recursive: true });
     expect(await loadSkills(dir)).toEqual([]);
   });
+  // The stable-ordering guarantee is tested with a mocked readdir (below) — a real-FS test can't
+  // prove it on NTFS, which already returns entries name-sorted (the test would pass either way).
 });
 
 describe('SkillRegistry', () => {

@@ -12,7 +12,7 @@ import { InMemoryEventBus, type Event } from '../../src/runtime/event-bus.js';
 import { DefaultPermissionGate, type Approver } from '../../src/runtime/permission/permission-gate.js';
 import { FileSessionStore, loadSession, parseSessionLog } from '../../src/runtime/session/session-store.js';
 import type { Message, ToolCall, ToolResult } from '../../src/core/types.js';
-import type { FinishReason, ModelDelta, ModelProvider, ModelResult } from '../../src/core/model/types.js';
+import type { FinishReason, ModelDelta, ModelProvider, ModelResult, Usage } from '../../src/core/model/types.js';
 import type { ToolDefinition } from '../../src/core/tools/types.js';
 import type { ContextManager } from '../../src/core/context/context-manager.js';
 
@@ -23,6 +23,8 @@ interface Step {
   toolCalls?: ToolCall[];
   /** Override the finishReason (default: derived from whether the step has tool calls). */
   finishReason?: FinishReason;
+  /** Override the reported usage (default: { inputTokens: 10, outputTokens: 5 }). */
+  usage?: Usage;
 }
 function scriptedModel(steps: Step[]): { provider: ModelProvider; calls: () => number } {
   let count = 0;
@@ -49,7 +51,7 @@ function scriptedModel(steps: Step[]): { provider: ModelProvider; calls: () => n
       return {
         text,
         toolCalls,
-        usage: { inputTokens: 10, outputTokens: 5 },
+        usage: step.usage ?? { inputTokens: 10, outputTokens: 5 },
         finishReason: step.finishReason ?? (toolCalls.length > 0 ? 'tool_calls' : 'completed'),
         rawFinishReason: toolCalls.length > 0 ? 'tool_calls' : 'stop',
       };
@@ -284,6 +286,53 @@ describe('runAgent — compaction (A3)', () => {
     expect(messages.some((m) => m.content === 'old q1')).toBe(false); // old prefix gone
     // and the conversation continued to a natural finish AFTER compacting
     expect(outcome.finalText).toBe('final answer');
+  });
+
+  it('compacts when a big tool result will blow the NEXT turn, though THIS turn fit (projected usage)', async () => {
+    // effective budget = 100 − 20 = 80; threshold 0.83 → 66.4. This turn's input (50) is UNDER it,
+    // but the 400-char tool result it appends pushes the projected next-turn input (50+5+100=155)
+    // OVER, so compaction must fire now rather than overflowing next turn.
+    const cm = new DefaultContextManager({
+      summarizer: scriptedModel([{ text: 'COMPACTED' }]).provider,
+      maxContextTokens: 100,
+      maxOutputTokens: 20,
+      keepRecent: 2,
+      maxToolResultChars: 100_000, // don't truncate the big result, so its size actually counts
+    });
+    const bigTool: ToolDefinition<Record<string, never>> = {
+      name: 'big',
+      description: 'returns a lot of text',
+      capability: 'read-only',
+      inputSchema: z.object({}),
+      run: async () => ({ content: 'x'.repeat(400) }),
+    };
+    const tools = new InMemoryToolRegistry();
+    tools.register(bigTool);
+    const { provider } = scriptedModel([
+      { toolCalls: [{ id: 'c1', name: 'big', arguments: '{}' }], usage: { inputTokens: 50, outputTokens: 5 } },
+      { text: 'done' },
+    ]);
+    const bus = new InMemoryEventBus();
+    const events = record(bus);
+    const messages: Message[] = [
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: 'old q1' },
+      { role: 'assistant', content: 'old a1' },
+      { role: 'user', content: 'recent q' },
+    ];
+
+    await runAgent({
+      model: provider,
+      tools,
+      bus,
+      messages,
+      toolCtx: { cwd: dir },
+      budget: { maxTurns: 5 },
+      context: cm,
+    });
+
+    // 50/80 = 0.625 wouldn't trip the threshold; only the projected next input does.
+    expect(events.some((e) => e.type === 'state' && e.phase === 'compacting')).toBe(true);
   });
 
   it('budgets each tool result through the context manager before it enters the conversation', async () => {

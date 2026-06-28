@@ -32,6 +32,9 @@ export interface Skill {
 export async function loadSkills(dir: string): Promise<Skill[]> {
   const entries = await readdir(dir, { withFileTypes: true }).catch(() => null);
   if (entries === null) return []; // no skills dir → no skills, not an error
+  // Sort by folder name so the catalog/prompt order is stable. readdir order is filesystem-
+  // dependent, which would otherwise drift the skill list (and the injected prompt) between runs.
+  entries.sort((a, b) => a.name.localeCompare(b.name));
 
   const skills: Skill[] = [];
   for (const entry of entries) {

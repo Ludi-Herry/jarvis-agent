@@ -20,7 +20,7 @@ import type { ContextManager } from '../context/context-manager.js';
 import type { EventBus } from '../../runtime/event-bus.js';
 import type { PermissionGate } from '../../runtime/permission/permission-gate.js';
 import type { SessionStore } from '../../runtime/session/session-store.js';
-import { type Budget, decideStop, withinBudget } from './decisions.js';
+import { type Budget, decideStop, projectedNextInput, withinBudget } from './decisions.js';
 
 /** Everything the loop needs, injected so the loop owns no globals and stays testable. */
 export interface AgentContext {
@@ -90,6 +90,7 @@ export async function runAgent(ctx: AgentContext): Promise<RunOutcome> {
       return { finalText: res.text, turns: turn + 1 };
     }
 
+    let appendedToolChars = 0;
     for (const call of res.toolCalls) {
       ctx.bus.emit({ type: 'tool_call', call });
       // Gate the call BEFORE the side effect (B1) — the seam A2 deliberately left here. A denied
@@ -98,13 +99,21 @@ export async function runAgent(ctx: AgentContext): Promise<RunOutcome> {
       // Budget oversized output to disk BEFORE it enters the context (A3); a no-op without
       // a context manager or for small results.
       const out = ctx.context ? await ctx.context.budgetToolResult(ran) : ran;
-      ctx.messages.push({ role: 'tool', toolCallId: out.callId, content: toolMessageContent(out) });
+      const content = toolMessageContent(out);
+      ctx.messages.push({ role: 'tool', toolCallId: out.callId, content });
+      appendedToolChars += content.length;
       ctx.bus.emit({ type: 'tool_result', out });
     }
 
-    // Compact once the prompt nears the window, so the NEXT turn fits (A3). Persist after: a
-    // compaction rewrites the array (checkpoint a full snapshot), otherwise append the new tail.
-    if (ctx.context?.shouldCompact(res.usage)) {
+    // Compact once the prompt nears the window, so the NEXT turn fits (A3). Judge against the
+    // PROJECTED next-turn input, not this turn's usage — the latter predates the tool results just
+    // appended, so a big result would otherwise overflow before compaction ever fired. Persist
+    // after: a compaction rewrites the array (checkpoint a full snapshot), otherwise append the tail.
+    const projectedUsage = {
+      inputTokens: projectedNextInput(res.usage, appendedToolChars),
+      outputTokens: res.usage.outputTokens,
+    };
+    if (ctx.context?.shouldCompact(projectedUsage)) {
       ctx.bus.emit({ type: 'state', phase: 'compacting' });
       await ctx.context.compact(ctx.messages, ctx.signal);
       await ctx.store?.checkpoint(ctx.messages);

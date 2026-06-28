@@ -62,3 +62,15 @@ export function decideCompact(usage: Usage, window: number): boolean {
   if (window <= 0) return false;
   return usage.inputTokens / window >= COMPACT_THRESHOLD;
 }
+
+/**
+ * Estimate the input the NEXT turn will carry, so the compaction check fires BEFORE an oversized
+ * tool result overflows it. The bare turn usage reflects only what was already sent — not the tool
+ * output appended after the model replied — so a big result could sail under the threshold this
+ * turn and blow the window next turn. This adds the assistant output (which becomes input next
+ * turn) plus the freshly appended tool-result text at a rough ~4 chars/token. Deliberately an
+ * over-estimate (it errs toward compacting early), which is the safe direction.
+ */
+export function projectedNextInput(usage: Usage, appendedToolChars: number): number {
+  return usage.inputTokens + usage.outputTokens + Math.ceil(appendedToolChars / 4);
+}

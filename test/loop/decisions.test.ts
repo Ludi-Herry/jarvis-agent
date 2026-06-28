@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decideStop, decideCompact, withinBudget } from '../../src/core/loop/decisions.js';
+import { decideStop, decideCompact, projectedNextInput, withinBudget } from '../../src/core/loop/decisions.js';
 import type { FinishReason, ModelResult, Usage } from '../../src/core/model/types.js';
 import type { ToolCall } from '../../src/core/types.js';
 
@@ -67,5 +67,15 @@ describe('decideCompact', () => {
 
   it('never compacts when the window is unknown (non-positive)', () => {
     expect(decideCompact(usage(999), 0)).toBe(false);
+  });
+});
+
+describe('projectedNextInput', () => {
+  it('adds assistant output and appended tool chars (~4 chars/token) onto this turn input', () => {
+    expect(projectedNextInput({ inputTokens: 50, outputTokens: 5 }, 400)).toBe(155); // 50 + 5 + 100
+  });
+
+  it('is just input + output when nothing was appended', () => {
+    expect(projectedNextInput({ inputTokens: 50, outputTokens: 5 }, 0)).toBe(55);
   });
 });
