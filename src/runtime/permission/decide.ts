@@ -20,6 +20,7 @@
  */
 import type { ToolCapability } from '../../core/tools/types.js';
 import { analyzeCommand } from './command.js';
+import { SENSITIVE_PATHS } from './sensitive.js';
 
 /** The three verdicts. `review` (a deferred-to-a-reviewer lane) is intentionally out of B. */
 export type PermissionAction = 'allow' | 'ask' | 'deny';
@@ -70,32 +71,10 @@ export interface PermissionPolicy {
  *  merely mentions ".env" isn't denied; only an actual `.env` *target* is. */
 const PATH_KEY = /(^|_)(path|file|filename|dir|directory|target)s?$/i;
 
-/** Path patterns whose READ or WRITE is always denied — the obvious secret shapes. B2's command
- *  parser and the grep tool both reuse this list (via {@link isSensitivePath}) so "what counts as a
- *  secret" lives in exactly one place. It's a plain array so adding a pattern is a one-liner. */
-export const SENSITIVE_PATHS: RegExp[] = [
-  /(^|\/)\.env(\.|$|\*)/, //      .env, .env.local, .env.production, dir/.env, .env* (glob)
-  /\.(key|pem|p12|pfx|token|crt|cer)$/, // private keys / certs / tokens by extension
-  /(^|\/)auth\.json$/, //         service-account / auth blobs
-  /(^|\/)\.npmrc$/, //            holds registry auth tokens
-  /(^|\/)\.netrc$/, //            holds machine credentials
-  /(^|\/)\.git-credentials$/, //  git stored credentials
-  /(^|\/)\.ssh(\/|$)/, //         anything under an .ssh directory
-  /(^|\/)id_(rsa|dsa|ecdsa|ed25519)(\.|$)/, // ssh private keys (and .pub — conservative)
-  /(^|\/)credentials(\.|$)/, //   aws/gcloud credentials files
-  /(^|\/)\.\*$/, //               a bare dotfile glob (`.*`) expands to include secrets like .env
-];
-
-/** True when a path is secret-bearing (read OR write blocked). Matched against a normalized
- *  (forward-slashed, lower-cased) path so Windows separators/casing can't slip a secret past. */
-export function isSensitivePath(path: string): boolean {
-  const normalized = path.replace(/\\/g, '/').toLowerCase();
-  return SENSITIVE_PATHS.some((re) => re.test(normalized));
-}
-
 /**
- * The default risk matrix (plan §3.2 + §3.3 file-path subset). B2's command parser extends coverage
- * to paths buried inside shell commands.
+ * The default risk matrix (plan §3.2 + §3.3 file-path subset). The secret list + matchers live in
+ * sensitive.ts (shared with the command analyzer and grep); the command analyzer also extends
+ * coverage to paths buried inside shell commands.
  */
 export function defaultPolicy(): PermissionPolicy {
   return {
@@ -130,7 +109,7 @@ export function decide(req: PermissionRequest, policy: PermissionPolicy): Decisi
   // still needs approval — parsing decides "not dangerous", not "trusted".
   if (req.capability === 'executes-code') {
     const command = typeof req.args.command === 'string' ? req.args.command : '';
-    const analysis = analyzeCommand(command, policy);
+    const analysis = analyzeCommand(command);
     if (analysis.danger) {
       return { action: 'deny', reason: analysis.reason ?? 'dangerous command', source: 'command' };
     }

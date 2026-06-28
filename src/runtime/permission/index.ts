@@ -18,8 +18,6 @@ export {
 export {
   decide,
   defaultPolicy,
-  isSensitivePath,
-  SENSITIVE_PATHS,
   applyRules,
   type Decision,
   type DecisionSource,
@@ -28,4 +26,5 @@ export {
   type PermissionRequest,
   type PermissionRule,
 } from './decide.js';
-export { analyzeCommand, type CommandAnalysis, type SimpleCommand } from './command.js';
+export { isSensitivePath, SENSITIVE_PATHS, globMatchesSecret } from './sensitive.js';
+export { analyzeCommand, type CommandAnalysis } from './command.js';
