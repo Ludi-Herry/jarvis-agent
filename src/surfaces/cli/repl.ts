@@ -23,6 +23,7 @@ import type { SkillRegistry } from '../../capabilities/skills/skill-registry.js'
 import { runAgent } from '../../core/loop/run-agent.js';
 import { InMemoryEventBus } from '../../runtime/event-bus.js';
 import { DefaultPermissionGate, type Approver, type PermissionPolicy } from '../../runtime/permission/index.js';
+import type { SessionStore } from '../../runtime/session/index.js';
 import { initialRenderState, renderEvent } from './render.js';
 import { renderApprovalRequest, parseApprovalChoice } from './approval.js';
 
@@ -42,6 +43,10 @@ export interface ReplDeps {
   approver?: Approver;
   /** Gate policy (B5): the merged rule layers. Defaults to the built-in policy (no extra rules). */
   policy?: PermissionPolicy;
+  /** Session store (persistence): when present, turns are logged so the session can be resumed. */
+  store?: SessionStore;
+  /** Seed the conversation from a resumed session. When absent/empty, a fresh system prompt is used. */
+  initialMessages?: Message[];
   input?: NodeJS.ReadableStream;
   output?: NodeJS.WritableStream;
 }
@@ -53,7 +58,12 @@ export async function startRepl(deps: ReplDeps): Promise<void> {
   const out = deps.output ?? process.stdout;
   const rl = createInterface({ input: deps.input ?? process.stdin, output: out });
 
-  const messages: Message[] = [{ role: 'system', content: deps.systemPrompt }];
+  // Resume from a prior session if given (it already carries its own system message); otherwise
+  // start fresh with the system prompt.
+  const messages: Message[] =
+    deps.initialMessages && deps.initialMessages.length > 0
+      ? [...deps.initialMessages]
+      : [{ role: 'system', content: deps.systemPrompt }];
   let activeRun: AbortController | null = null;
   let inApproval = false;
 
@@ -127,6 +137,8 @@ export async function startRepl(deps: ReplDeps): Promise<void> {
     if (text === '/exit' || text === '/quit') break;
 
     messages.push({ role: 'user', content: text });
+    // Persist the user turn immediately so it survives even if the run errors before its own sync.
+    await deps.store?.sync(messages);
 
     const bus = new InMemoryEventBus();
     let rstate = initialRenderState();
@@ -147,6 +159,7 @@ export async function startRepl(deps: ReplDeps): Promise<void> {
         budget: { maxTurns: deps.maxTurns },
         context: deps.context,
         gate,
+        store: deps.store,
         systemAddendum: deps.skills?.systemAddendum(text),
         signal: activeRun.signal,
       });

@@ -16,9 +16,15 @@ import {
   createBashTool,
   createProvider,
   loadDoubaoConfig,
+  type Message,
 } from '../../core/index.js';
 import { SkillRegistry, loadRuleLayers, type ReadText } from '../../capabilities/index.js';
-import { defaultPolicy } from '../../runtime/index.js';
+import {
+  defaultPolicy,
+  FileSessionStore,
+  loadSession,
+  latestSessionPath,
+} from '../../runtime/index.js';
 import { startRepl } from './repl.js';
 
 // tsx does not auto-load .env; mirror the demos so `npm run dev` works from a .env too.
@@ -45,7 +51,8 @@ program
   .version('0.0.0')
   .option('--cwd <dir>', 'base directory tool paths resolve against', process.cwd())
   .option('--max-turns <n>', 'max model turns per message', (v) => Number.parseInt(v, 10), 24)
-  .action(async (opts: { cwd: string; maxTurns: number }) => {
+  .option('--resume [id]', 'resume the latest session (or a specific <id>) from data/sessions/')
+  .action(async (opts: { cwd: string; maxTurns: number; resume?: string | boolean }) => {
     let config;
     try {
       config = loadDoubaoConfig();
@@ -83,6 +90,30 @@ program
     );
     const policy = { ...defaultPolicy(), rules: resolved.rules };
 
+    // Persistence: resume a prior session, or start (and log) a new one.
+    const sessionsDir = join(opts.cwd, 'data', 'sessions');
+    let store: FileSessionStore;
+    let initialMessages: Message[] | undefined;
+    if (opts.resume) {
+      const path =
+        typeof opts.resume === 'string'
+          ? join(sessionsDir, `${opts.resume}.jsonl`)
+          : await latestSessionPath(sessionsDir);
+      if (path === null) {
+        console.error('没有可恢复的会话(data/sessions/ 为空)。');
+        process.exitCode = 1;
+        return;
+      }
+      const loaded = await loadSession(path);
+      initialMessages = loaded.messages;
+      store = new FileSessionStore(path, loaded.messages.length);
+      console.log(`已恢复会话 ${loaded.header?.id ?? path}(${loaded.messages.length} 条消息)\n`);
+    } else {
+      const id = new Date().toISOString().replace(/[:.]/g, '-');
+      store = new FileSessionStore(join(sessionsDir, `${id}.jsonl`));
+      await store.writeHeader({ id, model: config.model, cwd: opts.cwd, startedAt: new Date().toISOString() });
+    }
+
     await startRepl({
       model: provider,
       tools,
@@ -93,6 +124,8 @@ program
       systemPrompt: SYSTEM_PROMPT,
       maxTurns: opts.maxTurns,
       policy,
+      store,
+      initialMessages,
     });
   });
 

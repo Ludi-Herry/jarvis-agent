@@ -8,6 +8,7 @@ import { startRepl } from '../../src/surfaces/cli/repl.js';
 import { InMemoryToolRegistry } from '../../src/core/tools/registry.js';
 import { readTool, writeTool } from '../../src/core/tools/builtins.js';
 import { readFile } from 'node:fs/promises';
+import { FileSessionStore, loadSession } from '../../src/runtime/session/session-store.js';
 import type { Message, ToolCall } from '../../src/core/types.js';
 import type { ModelDelta, ModelProvider, ModelResult } from '../../src/core/model/types.js';
 import type { ToolDefinition } from '../../src/core/tools/types.js';
@@ -228,6 +229,49 @@ describe('startRepl', () => {
 
     expect(out.text()).toContain('Permission denied');
     await expect(readFile(join(dir, 'eof.txt'), 'utf8')).rejects.toThrow();
+  });
+
+  it('resumes a session: a fresh REPL replays history and the model sees the full context (persistence)', async () => {
+    const path = join(dir, 'sess.jsonl');
+
+    // --- session 1: ask q1, store it, then "crash" (input ends) ---
+    const m1 = fakeModel([{ text: 'a1' }]);
+    const store1 = new FileSessionStore(path);
+    await store1.writeHeader({ id: 'sess', model: 'fake', cwd: dir, startedAt: 'now' });
+    await startRepl({
+      model: m1.provider,
+      tools: new InMemoryToolRegistry(),
+      cwd: dir,
+      modelName: 'fake-model',
+      systemPrompt: 'SYS',
+      maxTurns: 5,
+      input: inputOf(['q1']),
+      output: sink().stream,
+      store: store1,
+    });
+
+    // --- session 2: resume from disk in a NEW store (simulating a fresh process) ---
+    const loaded = await loadSession(path);
+    const m2 = fakeModel([{ text: 'a2' }]);
+    const store2 = new FileSessionStore(path, loaded.messages.length);
+    await startRepl({
+      model: m2.provider,
+      tools: new InMemoryToolRegistry(),
+      cwd: dir,
+      modelName: 'fake-model',
+      systemPrompt: 'SYS',
+      maxTurns: 5,
+      input: inputOf(['q2']),
+      output: sink().stream,
+      store: store2,
+      initialMessages: loaded.messages,
+    });
+
+    // the resumed turn saw the FULL prior context: [system SYS, q1, a1, q2] = 4 messages
+    expect(m2.seen[0]).toBe(4);
+    // and the log now replays to the whole continuous conversation
+    const final = await loadSession(path);
+    expect(final.messages.map((m) => ('content' in m ? m.content : ''))).toEqual(['SYS', 'q1', 'a1', 'q2', 'a2']);
   });
 
   it('ignores blank lines and exits on /exit', async () => {

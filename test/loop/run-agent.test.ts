@@ -10,6 +10,7 @@ import { createBashTool, defaultShellPath } from '../../src/core/tools/bash.js';
 import { DefaultContextManager } from '../../src/core/context/context-manager.js';
 import { InMemoryEventBus, type Event } from '../../src/runtime/event-bus.js';
 import { DefaultPermissionGate, type Approver } from '../../src/runtime/permission/permission-gate.js';
+import { FileSessionStore, loadSession, parseSessionLog } from '../../src/runtime/session/session-store.js';
 import type { Message, ToolCall, ToolResult } from '../../src/core/types.js';
 import type { ModelDelta, ModelProvider, ModelResult } from '../../src/core/model/types.js';
 import type { ToolDefinition } from '../../src/core/tools/types.js';
@@ -415,6 +416,90 @@ describe('runAgent — bash through the gate (B3, full closed loop)', () => {
 
     const toolResult = events.find((e) => e.type === 'tool_result');
     expect(toolResult?.type === 'tool_result' && toolResult.out.error).toMatch(/Permission denied/);
+  });
+});
+
+describe('runAgent — session persistence (store)', () => {
+  it('persists every message the loop produces (user/assistant/tool) to the session log', async () => {
+    await writeFile(join(dir, 'fact.txt'), 'X', 'utf8');
+    const tools = new InMemoryToolRegistry();
+    tools.register(readTool);
+    const { provider } = scriptedModel([
+      { text: 'checking', toolCalls: [{ id: 'c1', name: 'read', arguments: '{"path":"fact.txt"}' }] },
+      { text: 'done' },
+    ]);
+    const path = join(dir, 's.jsonl');
+    const store = new FileSessionStore(path);
+    const messages: Message[] = [{ role: 'system', content: 'sys' }, { role: 'user', content: 'q' }];
+
+    await runAgent({
+      model: provider,
+      tools,
+      bus: new InMemoryEventBus(),
+      messages,
+      toolCtx: { cwd: dir },
+      budget: { maxTurns: 5 },
+      store,
+    });
+
+    const { messages: replayed } = await loadSession(path);
+    expect(replayed).toEqual(messages); // the on-disk log replays to exactly the in-memory state
+    expect(replayed.some((m) => m.role === 'tool')).toBe(true); // including the tool result
+  });
+
+  it('checkpoints a compaction so replay yields the compacted state, not the discarded prefix', async () => {
+    const cm = new DefaultContextManager({
+      summarizer: scriptedModel([{ text: 'COMPACTED' }]).provider,
+      maxContextTokens: 12,
+      maxOutputTokens: 2,
+      keepRecent: 2,
+    });
+    const tools = new InMemoryToolRegistry();
+    tools.register(okTool);
+    const { provider } = scriptedModel([
+      { text: 'working', toolCalls: [{ id: 'c1', name: 'ok', arguments: '{}' }] },
+      { text: 'final answer' },
+    ]);
+    const path = join(dir, 'c.jsonl');
+    const store = new FileSessionStore(path);
+    const messages: Message[] = [
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: 'old q1' },
+      { role: 'assistant', content: 'old a1' },
+      { role: 'user', content: 'recent q' },
+    ];
+
+    await runAgent({
+      model: provider,
+      tools,
+      bus: new InMemoryEventBus(),
+      messages,
+      toolCtx: { cwd: dir },
+      budget: { maxTurns: 5 },
+      context: cm,
+      store,
+    });
+
+    const raw = await readFile(path, 'utf8');
+    expect(parseSessionLog(raw).some((r) => r.t === 'compaction')).toBe(true); // a checkpoint was written
+    const { messages: replayed } = await loadSession(path);
+    expect(replayed).toEqual(messages); // replay matches the final (compacted) in-memory state
+    expect(replayed.some((m) => m.content === 'old q1')).toBe(false); // discarded prefix not resurrected
+  });
+
+  it('does not persist when no store is given (pre-persistence behavior)', async () => {
+    const tools = new InMemoryToolRegistry();
+    const { provider } = scriptedModel([{ text: 'hi' }]);
+    // Simply that runAgent completes without a store and never touches disk — no throw.
+    const outcome = await runAgent({
+      model: provider,
+      tools,
+      bus: new InMemoryEventBus(),
+      messages: [{ role: 'user', content: 'q' }],
+      toolCtx: { cwd: dir },
+      budget: { maxTurns: 5 },
+    });
+    expect(outcome.finalText).toBe('hi');
   });
 });
 

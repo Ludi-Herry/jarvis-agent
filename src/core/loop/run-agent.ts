@@ -19,6 +19,7 @@ import type { ToolRegistry, ToolRunCtx } from '../tools/types.js';
 import type { ContextManager } from '../context/context-manager.js';
 import type { EventBus } from '../../runtime/event-bus.js';
 import type { PermissionGate } from '../../runtime/permission/permission-gate.js';
+import type { SessionStore } from '../../runtime/session/session-store.js';
 import { type Budget, decideStop, withinBudget } from './decisions.js';
 
 /** Everything the loop needs, injected so the loop owns no globals and stays testable. */
@@ -39,6 +40,10 @@ export interface AgentContext {
    *  denied call is NOT executed — its reason is fed back to the model as the tool result so it
    *  can change course. Absent → tools run ungated (the A-phase behavior). */
   gate?: PermissionGate;
+  /** Optional session store (persistence segment). When present, each turn's new messages are
+   *  appended to an append-only log (and a compaction is checkpointed) so the session can be
+   *  resumed after a crash/exit. Absent → nothing is persisted (the pre-persistence behavior). */
+  store?: SessionStore;
   /** Optional per-run system addendum (A5): skill catalog + any activated skill bodies,
    *  folded into the system message at send time only — never stored in `messages`, so it
    *  refreshes each run and is never compacted. */
@@ -72,6 +77,7 @@ export async function runAgent(ctx: AgentContext): Promise<RunOutcome> {
     ctx.messages.push(assistantMessage(res));
 
     if (decideStop(res).done) {
+      await ctx.store?.sync(ctx.messages); // persist the final assistant turn before stopping
       ctx.bus.emit({ type: 'final', text: res.text });
       return { finalText: res.text, turns: turn + 1 };
     }
@@ -88,10 +94,14 @@ export async function runAgent(ctx: AgentContext): Promise<RunOutcome> {
       ctx.bus.emit({ type: 'tool_result', out });
     }
 
-    // Compact once the prompt nears the window, so the NEXT turn fits (A3).
+    // Compact once the prompt nears the window, so the NEXT turn fits (A3). Persist after: a
+    // compaction rewrites the array (checkpoint a full snapshot), otherwise append the new tail.
     if (ctx.context?.shouldCompact(res.usage)) {
       ctx.bus.emit({ type: 'state', phase: 'compacting' });
       await ctx.context.compact(ctx.messages);
+      await ctx.store?.checkpoint(ctx.messages);
+    } else {
+      await ctx.store?.sync(ctx.messages);
     }
 
     turn++;
