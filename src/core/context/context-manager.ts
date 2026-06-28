@@ -25,9 +25,10 @@ import { findSplitPoint } from './split.js';
 /** The contract the loop depends on (injected as optional `ctx.context`). */
 export interface ContextManager {
   shouldCompact(usage: Usage): boolean;
-  /** Replace the summarizable prefix in place with a single summary message. No-op when no
-   *  safe cut summarizes anything. */
-  compact(messages: Message[]): Promise<void>;
+  /** Replace the summarizable prefix in place with a single summary message. No-op when no safe
+   *  cut summarizes anything, or when `signal` is already aborted. An abort mid-summary rejects and
+   *  leaves `messages` untouched — the splice happens only after the summary returns. */
+  compact(messages: Message[], signal?: AbortSignal): Promise<void>;
   /** Truncate + offload an oversized tool result; pass small results through unchanged. */
   budgetToolResult(out: ToolResult): Promise<ToolResult>;
 }
@@ -81,13 +82,14 @@ export class DefaultContextManager implements ContextManager {
     return decideCompact(usage, this.effectiveBudget);
   }
 
-  async compact(messages: Message[]): Promise<void> {
+  async compact(messages: Message[], signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) return; // already aborted — don't spend a summarizer round-trip
     const headStart = messages[0]?.role === 'system' ? 1 : 0;
     const split = findSplitPoint(messages, this.keepRecent, headStart);
     if (split <= headStart) return; // no safe cut summarizes anything → leave as-is
 
     const toSummarize = messages.slice(headStart, split);
-    const summary = await this.summarize(toSummarize);
+    const summary = await this.summarize(toSummarize, signal);
     const summaryMsg: Message = { role: 'user', content: `${SUMMARY_MARKER}\n${summary}` };
     // Splice in place so the loop's `ctx.messages` reference observes the replacement.
     messages.splice(headStart, split - headStart, summaryMsg);
@@ -109,14 +111,16 @@ export class DefaultContextManager implements ContextManager {
     };
   }
 
-  /** Drive the summarizer to completion (no event streaming) and return its text. */
-  private async summarize(messages: Message[]): Promise<string> {
+  /** Drive the summarizer to completion (no event streaming) and return its text. The turn's
+   *  abort signal is passed through so a hung summarizer can be cancelled on Ctrl-C. */
+  private async summarize(messages: Message[], signal?: AbortSignal): Promise<string> {
     const stream = this.summarizer.call(
       [
         { role: 'system', content: SUMMARY_INSTRUCTION },
         { role: 'user', content: renderTranscript(messages) },
       ],
       [],
+      signal,
     );
     let next = await stream.next();
     while (!next.done) next = await stream.next();

@@ -106,7 +106,7 @@ export async function runAgent(ctx: AgentContext): Promise<RunOutcome> {
     // compaction rewrites the array (checkpoint a full snapshot), otherwise append the new tail.
     if (ctx.context?.shouldCompact(res.usage)) {
       ctx.bus.emit({ type: 'state', phase: 'compacting' });
-      await ctx.context.compact(ctx.messages);
+      await ctx.context.compact(ctx.messages, ctx.signal);
       await ctx.store?.checkpoint(ctx.messages);
     } else {
       await ctx.store?.sync(ctx.messages);

@@ -150,3 +150,23 @@ describe('path confinement (codex P1: cwd escape + symlink can dodge the secret 
     expect(out.error).toMatch(/escapes the project root/);
   });
 });
+
+describe('grep abort (ToolRunCtx.signal — Ctrl-C on a long search)', () => {
+  it('stops immediately and reports aborted when the signal is already aborted', async () => {
+    await writeFile(join(dir, 'a.txt'), 'match-me', 'utf8');
+    const ac = new AbortController();
+    ac.abort();
+    const out = await grepTool.run({ pattern: 'match-me' }, { cwd: dir, signal: ac.signal });
+    expect(out.content).toContain('aborted'); // bailed instead of returning the match
+  });
+
+  it('stops a running search after the signal fires', async () => {
+    // Enough files that the traversal/scan is interruptible; the pattern matches none.
+    for (let i = 0; i < 80; i++) await writeFile(join(dir, `f${i}.txt`), 'nothing-of-interest', 'utf8');
+    const ac = new AbortController();
+    const p = grepTool.run({ pattern: 'WILL-NOT-MATCH' }, { cwd: dir, signal: ac.signal });
+    ac.abort(); // fire while the run is in flight
+    const out = await p;
+    expect(out.content).toContain('aborted');
+  });
+});

@@ -89,10 +89,15 @@ export const grepTool: ToolDefinition<{ pattern: string; path?: string }> = {
     const root = safe.abs;
     const matches: string[] = [];
     let truncated = false;
+    let aborted = false;
 
     try {
-      const files = await collectFiles(root);
+      const files = await collectFiles(root, ctx.signal);
       for (const file of files) {
+        if (ctx.signal?.aborted) {
+          aborted = true;
+          break;
+        }
         if (matches.length >= GREP_MAX_MATCHES) {
           truncated = true;
           break;
@@ -115,17 +120,23 @@ export const grepTool: ToolDefinition<{ pattern: string; path?: string }> = {
       return { content: '', error: `Cannot search ${path ?? '.'}: ${message(err)}` };
     }
 
+    // collectFiles can bail on abort before the match loop runs, so reflect the final signal here too.
+    if (ctx.signal?.aborted) aborted = true;
+
     if (matches.length === 0) {
-      return { content: `No matches for /${pattern}/ under ${path ?? '.'}` };
+      return { content: aborted ? '[aborted]' : `No matches for /${pattern}/ under ${path ?? '.'}` };
     }
-    const header = truncated ? `(showing first ${GREP_MAX_MATCHES} matches)\n` : '';
+    const notes: string[] = [];
+    if (aborted) notes.push('[aborted]');
+    if (truncated) notes.push(`(showing first ${GREP_MAX_MATCHES} matches)`);
+    const header = notes.length > 0 ? `${notes.join(' ')}\n` : '';
     return { content: header + matches.join('\n') };
   },
 };
 
 /** Recursively collect readable file paths under `root`, skipping noise directories. If
  *  `root` is itself a file, return just it. */
-async function collectFiles(root: string): Promise<string[]> {
+async function collectFiles(root: string, signal?: AbortSignal): Promise<string[]> {
   const info = await stat(root);
   // grep is read-only and recurses on its own, so the PermissionGate (which only sees the call's
   // path arg) can't protect a secret reached by traversal — grep must skip secrets itself, reusing
@@ -135,11 +146,12 @@ async function collectFiles(root: string): Promise<string[]> {
   const out: string[] = [];
   const entries = await readdir(root, { withFileTypes: true });
   for (const entry of entries) {
+    if (signal?.aborted) break; // stop walking a large tree once the turn is aborted (Ctrl-C)
     const full = join(root, entry.name);
     if (isSensitivePath(full)) continue; // never read a secret file or descend into a secret dir
     if (entry.isDirectory()) {
       if (GREP_SKIP_DIRS.has(entry.name)) continue;
-      out.push(...(await collectFiles(full)));
+      out.push(...(await collectFiles(full, signal)));
     } else if (entry.isFile()) {
       out.push(full);
     }
