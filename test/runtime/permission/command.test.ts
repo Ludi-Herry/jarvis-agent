@@ -464,6 +464,43 @@ describe('analyzeCommand — codex round-3 (AST) fixes', () => {
   });
 });
 
+describe('analyzeCommand — codex round-4 (exec-carrier) fixes', () => {
+  it('trap with a `--` terminator still penetrates the action', () => {
+    expect(analyze("trap -- 'rm -rf x' EXIT").danger).toBe(true);
+    expect(analyze("trap 'git push --force' DEBUG").danger).toBe(true);
+  });
+
+  it('env -S / --split-string runs the string', () => {
+    expect(analyze("env -S 'rm -rf x'").danger).toBe(true);
+    expect(analyze("env --split-string='git push --force'").danger).toBe(true);
+    expect(analyze('env NODE_ENV=test node -v').danger).toBe(false); // no -S → normal env wrapper
+  });
+
+  it('callback builtins (mapfile/compgen -C, bind -x, complete -F) are penetrated/denied', () => {
+    expect(analyze("printf x | mapfile -C 'rm -rf x' -c 1").danger).toBe(true);
+    expect(analyze("compgen -C 'rm -rf x' foo").danger).toBe(true);
+    expect(analyze('bind -x \'"\\C-x":rm -rf x\'').danger).toBe(true);
+    expect(analyze("complete -F evilfunc foo").danger).toBe(true);
+  });
+
+  it('an interpreter fed stdin/heredoc (/dev/stdin, -) is not a "visible script"', () => {
+    expect(analyze('bash /dev/stdin').danger).toBe(true);
+    expect(analyze('python /dev/stdin').danger).toBe(true);
+    expect(analyze('bash -').danger).toBe(true);
+  });
+
+  it('command substitution nested inside a parameter expansion is caught', () => {
+    expect(analyze('echo ${x:$(rm -rf y):1}').danger).toBe(true);
+    expect(analyze('echo ${x:-$(rm -rf y)}').danger).toBe(true);
+  });
+
+  it('ssh with a remote command is refused; a bare ssh login is not', () => {
+    expect(analyze('ssh host rm -rf /').danger).toBe(true);
+    expect(analyze("ssh -p 2222 host sh -c 'rm -rf /'").danger).toBe(true);
+    expect(analyze('ssh user@host').danger).toBe(false);
+  });
+});
+
 describe('analyzeCommand — AST precision wins (control flow no longer blunt-denied)', () => {
   it('finds the dangerous command INSIDE control flow (precise, not keyword-blind)', () => {
     expect(analyze('if true; then git push --force; fi').danger).toBe(true);

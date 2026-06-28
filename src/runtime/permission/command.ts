@@ -76,18 +76,23 @@ function walkSource(src: string, depth: number): Verdict {
   }
 
   let v = clean;
-  syntax.Walk(file, (node) => {
-    if (node === null) return true;
-    const t = typeOf(node);
-    if (t === 'CallExpr') v = combine(v, classifyCall(node, depth));
-    else if (t === 'DeclClause') {
-      // declare/export/local/readonly/typeset — a `VAR=secret` value (`declare f=.env`).
-      for (const asn of arr(node.Args)) v = combine(v, secretOfWord(describeWord(obj(asn.Value))));
-    } else if (t === 'Redirect') {
-      v = combine(v, secretOfWord(describeWord(obj(node.Word))));
-    }
-    return true;
-  });
+  try {
+    syntax.Walk(file, (node) => {
+      if (node === null) return true;
+      const t = typeOf(node);
+      if (t === 'CallExpr') v = combine(v, classifyCall(node, depth, src));
+      else if (t === 'DeclClause') {
+        // declare/export/local/readonly/typeset — a `VAR=secret` value (`declare f=.env`).
+        for (const asn of arr(node.Args)) v = combine(v, secretOfWord(describeWord(obj(asn.Value), src)));
+      } else if (t === 'Redirect') {
+        v = combine(v, secretOfWord(describeWord(obj(node.Word), src)));
+      }
+      return true;
+    });
+  } catch (err) {
+    // Any analyzer error mid-walk → fail closed rather than letting it escape.
+    return danger(`could not verify command safely: ${err instanceof Error ? err.message : String(err)}`);
+  }
   return v;
 }
 
@@ -105,7 +110,7 @@ const BRACE_EXPANSION = /\{[^{}]*(,|\.\.)[^{}]*\}/;
 /** A glob is `*`/`?`, or a `[...]` char class — a LONE `[` (the `test` builtin) is not a glob. */
 const GLOB_META = /[*?]|\[.+?\]/;
 
-function describeWord(word: ShNode | undefined): WordDesc {
+function describeWord(word: ShNode | undefined, src: string): WordDesc {
   const d: WordDesc = { value: '', hasParam: false, hasSubst: false, hasBrace: false, hasGlob: false };
   if (!word) return d;
   for (const part of arr(word.Parts)) {
@@ -128,13 +133,13 @@ function describeWord(word: ShNode | undefined): WordDesc {
         for (const inner of arr(part.Parts)) {
           const it = typeOf(inner);
           if (it === 'Lit') d.value += str(inner.Value); // quoted → globs/braces inert
-          else if (it === 'ParamExp' || it === 'ArithmExp') d.hasParam = true;
+          else if (it === 'ParamExp' || it === 'ArithmExp') markExpansion(d, inner, src);
           else if (it === 'CmdSubst' || it === 'ProcSubst') d.hasSubst = true;
         }
         break;
       case 'ParamExp':
       case 'ArithmExp':
-        d.hasParam = true;
+        markExpansion(d, part, src);
         break;
       case 'CmdSubst':
       case 'ProcSubst':
@@ -145,6 +150,34 @@ function describeWord(word: ShNode | undefined): WordDesc {
     }
   }
   return d;
+}
+
+/** A `$var`/arithmetic expansion is a param unless its OWN source carries a command substitution
+ *  (`${x:-$(cmd)}`, `${x:$(cmd):1}`, `$(( $(cmd) ))`) — mvdan's Walk doesn't descend into arithmetic
+ *  sub-contexts, so we scan the node's source text (via Pos/End) instead. */
+function markExpansion(d: WordDesc, node: ShNode, src: string): void {
+  const text = sourceOf(node, src);
+  if (text.includes('$(') || text.includes('`')) d.hasSubst = true;
+  else d.hasParam = true;
+}
+
+/** The exact source substring of a node (via Pos/End offsets); the whole source on any failure, so
+ *  a substitution can't slip past a missing offset. */
+function sourceOf(node: ShNode, src: string): string {
+  const a = nodeOffset(node, 'Pos');
+  const b = nodeOffset(node, 'End');
+  return a >= 0 && b >= a && b <= src.length ? src.slice(a, b) : src;
+}
+
+function nodeOffset(node: ShNode, which: 'Pos' | 'End'): number {
+  const posFn = node[which];
+  if (typeof posFn !== 'function') return -1;
+  const pos = (posFn as () => unknown).call(node);
+  if (pos === null || typeof pos !== 'object') return -1;
+  const offFn = (pos as ShNode).Offset;
+  if (typeof offFn !== 'function') return -1;
+  const n = (offFn as () => unknown).call(pos);
+  return typeof n === 'number' ? n : -1;
 }
 
 const isStatic = (d: WordDesc): boolean => !d.hasParam && !d.hasSubst && !d.hasBrace && !d.hasGlob;
@@ -159,13 +192,13 @@ function secretOfWord(d: WordDesc): Verdict {
 }
 
 /** Classify one CallExpr: check its leading assignments for secrets, then its program + args. */
-function classifyCall(call: ShNode, depth: number): Verdict {
+function classifyCall(call: ShNode, depth: number, src: string): Verdict {
   let v = clean;
   for (const assign of arr(call.Assigns)) {
     // `X=.env cmd` — the value can carry a secret a later `$X` expands to.
-    v = combine(v, secretOfWord(describeWord(obj(assign.Value))));
+    v = combine(v, secretOfWord(describeWord(obj(assign.Value), src)));
   }
-  const descs = arr(call.Args).map((w) => describeWord(w));
+  const descs = arr(call.Args).map((w) => describeWord(w, src));
   return combine(v, classifyWords(descs, depth));
 }
 
@@ -209,13 +242,47 @@ function classifyWords(descs: WordDesc[], depth: number): Verdict {
 
 /** Program-specific classification: interpreters, wrappers, git -c, and the dangerous-pattern rules. */
 function classifyProgram(prog: string, args: string[], argDescs: WordDesc[], depth: number): Verdict {
-  // 0. `trap '<action>' SIG` installs a command that runs later — penetrate the action string.
-  //    Options (`-p`/`-l`), reset (`-`) and ignore (`''`) carry no command.
+  // 0. Builtins/commands that EXECUTE a carried string or callback — penetrate it (re-parse), or
+  //    fail closed if it's non-literal. Otherwise a dangerous command hides inside.
   if (prog === 'trap') {
-    const a0 = argDescs[0];
-    if (!a0 || a0.value === '' || a0.value.startsWith('-')) return clean;
-    if (!isStatic(a0)) return danger('trap installs a non-literal action — cannot verify');
-    return walkSource(a0.value, depth + 1);
+    // `trap <action> SIG…`; skip options (incl. a `--` terminator). Reset (`-`)/ignore (`''`) carry none.
+    let i = 0;
+    while (i < argDescs.length && argDescs[i].value.startsWith('-')) {
+      const wasTerminator = argDescs[i].value === '--';
+      i++;
+      if (wasTerminator) break;
+    }
+    const action = argDescs[i];
+    if (!action || action.value === '' || action.value === '-') return clean;
+    if (!isStatic(action)) return danger('trap installs a non-literal action — cannot verify');
+    return walkSource(action.value, depth + 1);
+  }
+  if (prog === 'env') {
+    const split = splitStringOperand(args, argDescs); // `env -S '<cmd>'` / `--split-string=<cmd>`
+    if (split !== undefined) {
+      return split.isLiteral ? walkSource(split.value, depth + 1) : danger('env -S with a non-literal string — cannot verify');
+    }
+    // no -S → fall through to the wrapper handling below (env VAR=VAL cmd)
+  }
+  if (prog === 'mapfile' || prog === 'readarray' || prog === 'compgen' || prog === 'complete') {
+    const i = args.indexOf('-C');
+    if (i >= 0 && i + 1 < argDescs.length) {
+      const cb = argDescs[i + 1];
+      return isStatic(cb) ? walkSource(cb.value, depth + 1) : danger(`${prog} -C runs a non-literal callback — cannot verify`);
+    }
+    if (prog === 'complete' && args.includes('-F')) return danger('complete -F runs a shell function on completion — cannot verify');
+  }
+  if (prog === 'bind' && args.some((a) => a === '-x' || a.startsWith('-x'))) {
+    return danger('bind -x binds a key to a shell command — cannot verify');
+  }
+  if (prog === 'ssh') {
+    let i = 0;
+    while (i < args.length && args[i].startsWith('-')) {
+      const opt = args[i];
+      i++;
+      if (SSH_VALUE_OPTS.has(opt)) i++; // skip the option's value
+    }
+    if (i + 1 < args.length) return danger('ssh runs a command on a remote host — cannot verify'); // host + remote cmd
   }
 
   // 1. Code interpreters: inline code (`-c`/`-e`/bundles) is opaque; a bare interpreter reads its
@@ -384,9 +451,29 @@ function isInfoOnly(prog: string, args: string[]): boolean {
   return false;
 }
 
+/** stdin-equivalent "file" operands — running these means executing stdin/heredoc, NOT a visible
+ *  file, so they must not count as a script file (`bash /dev/stdin <<EOF …`). */
+const STDIN_PATHS = new Set(['-', '/dev/stdin', '/dev/fd/0', '/proc/self/fd/0']);
+
 function runsAScriptFile(args: string[]): boolean {
-  return args.some((a) => !a.startsWith('-') && a !== '-c');
+  return args.some((a) => !a.startsWith('-') && a !== '-c' && !STDIN_PATHS.has(a) && !/^\/dev\/fd\/|^\/proc\/self\/fd\//.test(a));
 }
+
+/** ssh options that consume the following argument (so the host isn't mistaken for an option value). */
+const SSH_VALUE_OPTS = new Set(['-b', '-c', '-D', '-E', '-e', '-F', '-I', '-i', '-J', '-L', '-l', '-m', '-O', '-o', '-p', '-Q', '-R', '-S', '-W', '-w']);
+
+/** The command string carried by `env -S`/`--split-string`, or undefined. */
+function splitStringOperand(args: string[], argDescs: WordDesc[]): { value: string; isLiteral: boolean } | undefined {
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === '-S' && i + 1 < argDescs.length) return { value: args[i + 1], isLiteral: isStatic(argDescs[i + 1]) };
+    if (a.startsWith('-S') && a.length > 2) return { value: a.slice(2), isLiteral: isStatic(argDescs[i]) };
+    if (a.startsWith('--split-string=')) return { value: a.slice('--split-string='.length), isLiteral: isStatic(argDescs[i]) };
+    if (a === '--split-string' && i + 1 < argDescs.length) return { value: args[i + 1], isLiteral: isStatic(argDescs[i + 1]) };
+  }
+  return undefined;
+}
+
 
 /** The shell command string a `watch`/`parallel` runs: operands after the wrapper's own options. */
 function commandOperand(prog: string, args: string[]): string {
