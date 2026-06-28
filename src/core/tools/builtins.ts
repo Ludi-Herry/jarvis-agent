@@ -2,10 +2,11 @@
  * The three A-phase built-in tools: read / write / grep.
  *
  * Each is a plain {@link ToolDefinition} — a zod input schema plus a `run` side effect.
- * Relative paths resolve against `ctx.cwd` (the project root the loop injects); this is
- * the anchor every file tool needs, NOT a permission boundary. Per the green-lit A-phase
- * decision these run "bare" — no sandbox, no path confinement. The PermissionGate / sandbox
- * lands with Bash in phase B (tools/types.ts, plan §3.3).
+ * Paths resolve against `ctx.cwd` (the project root the loop injects) and are confined to it:
+ * read/write/grep go through {@link safeResolve}, which rejects paths that escape cwd or resolve
+ * (following symlinks) to a sensitive file — the file-tool analogue of bash's confined cwd. The
+ * PermissionGate still gates each call by capability (read=allow, write=ask); this confinement is
+ * the execution-layer backstop for what the gate, seeing only the literal path arg, can't catch.
  *
  * Expected, recoverable failures (missing file, unwritable path) come back as a
  * ToolRunResult with `error` set so the model gets a clean, actionable message instead of
