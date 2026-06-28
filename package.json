@@ -2,7 +2,7 @@
   "name": "jarvis-agent",
   "version": "0.0.0",
   "private": true,
-  "description": "Jarvis-Agent — a coding-agent CLI: stateful host + pure-function decision points. Phase A complete.",
+  "description": "Jarvis-Agent — a coding-agent CLI: stateful host + pure-function decision points. Phases A/B + persistence complete; Phase C (multi-agent) next.",
   "type": "module",
   "engines": {
     "node": ">=20"
