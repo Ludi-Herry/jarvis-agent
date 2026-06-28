@@ -42,7 +42,8 @@ data/          # 运行期状态（gitignore 大件；A 阶段暂未用）
 - 测试：`npm test`（vitest）
 - 类型检查：`npm run typecheck`
 - Lint：`npm run lint`（eslint）
-- 跑 CLI：`npm run dev`（终端 REPL；B 阶段起带权限闸门 + bash + 交互审批）
+- 跑 CLI：`npm run dev`（终端 REPL；带权限闸门 + bash + 交互审批 + 会话落盘）
+- 续跑：`npm run resume`（恢复 `data/sessions/` 最近一个会话；指定 id 用 `npx tsx src/surfaces/cli/index.ts --resume <id>`。注：PowerShell 下 `npm run dev -- --resume` 会被 npm 吞掉 `--resume`，故用专用脚本）
 - 活体 demo（需 `ARK_API_KEY`）：`demo:a1/a2/a3/a5`（A 各里程碑）、`demo:b1`（权限闸门：读 allow / 改源码 ask / 读 .env deny）、`demo:b3`（bash 安全闭环 + 危险/密钥拦截）
 > 写代码声明完成前，先把 typecheck / lint / test / build 端到端跑通，有证据再说"完成"。
 
