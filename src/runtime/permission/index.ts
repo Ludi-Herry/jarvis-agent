@@ -24,3 +24,4 @@ export {
   type PermissionPolicy,
   type PermissionRequest,
 } from './decide.js';
+export { analyzeCommand, type CommandAnalysis, type SimpleCommand } from './command.js';

@@ -19,13 +19,14 @@
  * just defaults to `ask`.
  */
 import type { ToolCapability } from '../../core/tools/types.js';
+import { analyzeCommand } from './command.js';
 
 /** The three verdicts. `review` (a deferred-to-a-reviewer lane) is intentionally out of B. */
 export type PermissionAction = 'allow' | 'ask' | 'deny';
 
-/** Where a verdict came from, so the reason is explainable (plan §3.2). `rule` is produced by
- *  the B5 RuleResolver; B1 emits only `capability` and `sensitive-path`. */
-export type DecisionSource = 'capability' | 'sensitive-path' | 'rule';
+/** Where a verdict came from, so the reason is explainable (plan §3.2). `command` is the B2
+ *  command-tree analyzer; `rule` is the B5 RuleResolver (not emitted yet). */
+export type DecisionSource = 'capability' | 'sensitive-path' | 'command' | 'rule';
 
 export interface Decision {
   action: PermissionAction;
@@ -65,7 +66,7 @@ const PATH_KEY = /(^|_)(path|file|filename|dir|directory|target)s?$/i;
 export function defaultPolicy(): PermissionPolicy {
   return {
     sensitivePaths: [
-      /(^|\/)\.env(\.|$)/, //         .env, .env.local, .env.production, dir/.env
+      /(^|\/)\.env(\.|$|\*)/, //      .env, .env.local, .env.production, dir/.env, .env* (glob)
       /\.(key|pem|p12|pfx|token|crt|cer)$/, // private keys / certs / tokens by extension
       /(^|\/)auth\.json$/, //         service-account / auth blobs
       /(^|\/)\.npmrc$/, //            holds registry auth tokens
@@ -74,6 +75,7 @@ export function defaultPolicy(): PermissionPolicy {
       /(^|\/)\.ssh(\/|$)/, //         anything under an .ssh directory
       /(^|\/)id_(rsa|dsa|ecdsa|ed25519)(\.|$)/, // ssh private keys (and .pub — conservative)
       /(^|\/)credentials(\.|$)/, //   aws/gcloud credentials files
+      /(^|\/)\.\*$/, //               a bare dotfile glob (`.*`) expands to include secrets like .env
     ],
     capabilityDefault: {
       'read-only': 'allow',
@@ -97,6 +99,21 @@ export function decide(req: PermissionRequest, policy: PermissionPolicy): Decisi
       reason: `'${hit}' is a secret-bearing path; reading or writing it is blocked`,
       source: 'sensitive-path',
     };
+  }
+
+  // executes-code is the one capability whose verdict is NOT a static default: parse the command
+  // tree deterministically (B2) and deny anything dangerous or secret-touching. A clean command
+  // still needs approval — parsing decides "not dangerous", not "trusted".
+  if (req.capability === 'executes-code') {
+    const command = typeof req.args.command === 'string' ? req.args.command : '';
+    const analysis = analyzeCommand(command, policy);
+    if (analysis.danger) {
+      return { action: 'deny', reason: analysis.reason ?? 'dangerous command', source: 'command' };
+    }
+    if (analysis.sensitive) {
+      return { action: 'deny', reason: analysis.reason ?? 'command touches a secret path', source: 'command' };
+    }
+    return { action: 'ask', reason: 'runs a shell command — approve to execute', source: 'command' };
   }
 
   const action = policy.capabilityDefault[req.capability];

@@ -22,10 +22,12 @@ describe('decide — capability defaults', () => {
     expect(d.reason).toMatch(/writes files/);
   });
 
-  it('asks for an executes-code call (the B2 parser is not here yet)', () => {
+  it('routes an executes-code call through the command parser (asks for a safe command)', () => {
+    // B2: executes-code is parsed, not statically defaulted — a safe command resolves to ask
+    // with source "command". Dangerous/secret commands are covered in command.test.ts.
     expect(decide(req('executes-code', { command: 'npm test' }), policy)).toMatchObject({
       action: 'ask',
-      source: 'capability',
+      source: 'command',
     });
   });
 
