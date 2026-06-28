@@ -36,14 +36,15 @@ data/          # 运行期状态（gitignore 大件；A 阶段暂未用）
 - 只改与当前目标相关的文件；自己产生的死代码要清理，原有死代码只报告。
 - 不为「跑起来」注释报错 / 跳过测试 / 降规则。
 
-## 命令（A 阶段建立后填实）
+## 命令
 - 安装：`npm install`
 - 构建：`npm run build`（tsc）
 - 测试：`npm test`（vitest）
 - 类型检查：`npm run typecheck`
-- 跑 CLI：`npm run dev`（A0 占位，真 CLI 到 A4）
-- A1 调用 demo：`npm run demo:a1`（调 Doubao 一句话→流式 + 聚合 ModelResult；需 `ARK_API_KEY` 在环境变量或 `.env`）
-> 写代码声明完成前，先把 test / typecheck / build 端到端跑通，有证据再说"完成"。
+- Lint：`npm run lint`（eslint）
+- 跑 CLI：`npm run dev`（终端 REPL；B 阶段起带权限闸门 + bash + 交互审批）
+- 活体 demo（需 `ARK_API_KEY`）：`demo:a1/a2/a3/a5`（A 各里程碑）、`demo:b1`（权限闸门：读 allow / 改源码 ask / 读 .env deny）、`demo:b3`（bash 安全闭环 + 危险/密钥拦截）
+> 写代码声明完成前，先把 typecheck / lint / test / build 端到端跑通，有证据再说"完成"。
 
 ## Git
 - commit message 用英文，简洁说明意图。
