@@ -417,6 +417,53 @@ describe('analyzeCommand — AST parser (mvdan-sh): codex round-2 P0/P1 closed',
   });
 });
 
+describe('analyzeCommand — codex round-3 (AST) fixes', () => {
+  it('penetrates a trap action string', () => {
+    expect(analyze("trap 'rm -rf x' EXIT").danger).toBe(true);
+    expect(analyze("trap 'git push --force' EXIT").danger).toBe(true);
+    expect(analyze('trap - EXIT').danger).toBe(false); // reset
+    expect(analyze('trap -p').danger).toBe(false); // list
+  });
+
+  it('refuses alias definitions and alias expansion (they can hide a command)', () => {
+    expect(analyze("alias nuke='rm -rf x'").danger).toBe(true);
+    expect(analyze('shopt -s expand_aliases').danger).toBe(true);
+    expect(analyze('alias').danger).toBe(false); // listing aliases
+    expect(analyze('unalias nuke').danger).toBe(false);
+  });
+
+  it('flags secret globs behind a directory prefix or as ssh keys', () => {
+    expect(analyze('cat dir/*.pem').sensitive).toBe(true);
+    expect(analyze('cat config/.env*').sensitive).toBe(true);
+    expect(analyze('cat ./.e*').sensitive).toBe(true);
+    expect(analyze('cat id_*').sensitive).toBe(true);
+  });
+
+  it('flags a secret read whose path has a $var prefix (literal suffix is a secret)', () => {
+    expect(analyze('cat $HOME/.ssh/id_rsa').sensitive).toBe(true);
+    expect(analyze('cat ${PWD}/.env').sensitive).toBe(true);
+  });
+
+  it('flags an assignment builtin carrying a secret value', () => {
+    expect(analyze('declare f=.env').sensitive).toBe(true);
+    expect(analyze('export TOKENS=secrets/app.pem').sensitive).toBe(true);
+  });
+
+  it('does NOT over-block text/pattern args that merely look like a secret (false-positive fix)', () => {
+    expect(analyze('echo .env').sensitive).toBe(false);
+    expect(analyze('echo .env').danger).toBe(false);
+    expect(analyze('grep .env README.md').sensitive).toBe(false);
+    expect(analyze('git commit -m ".env"').sensitive).toBe(false);
+    expect(analyze('printf .env').sensitive).toBe(false);
+    expect(analyze('cat README.md').sensitive).toBe(false); // a real file-reader on a non-secret
+  });
+
+  it('still flags a real file-reader on a literal secret', () => {
+    expect(analyze('cat .env').sensitive).toBe(true);
+    expect(analyze('cp .env /tmp/x').sensitive).toBe(true);
+  });
+});
+
 describe('analyzeCommand — AST precision wins (control flow no longer blunt-denied)', () => {
   it('finds the dangerous command INSIDE control flow (precise, not keyword-blind)', () => {
     expect(analyze('if true; then git push --force; fi').danger).toBe(true);

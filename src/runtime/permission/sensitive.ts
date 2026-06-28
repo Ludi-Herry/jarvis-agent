@@ -30,29 +30,30 @@ export function isSensitivePath(path: string): boolean {
   return SENSITIVE_PATHS.some((re) => re.test(n));
 }
 
-/** Representative secret filenames a glob could expand to. Split by whether bash's globbing would
- *  reach them: dotfiles only match a glob that itself starts with `.` (dotglob off by default);
- *  extension secrets match any glob. */
-const DOT_SECRETS = ['.env', '.env.local', '.env.production', '.npmrc', '.netrc', '.git-credentials', 'id_rsa', 'id_ed25519'];
-const EXT_SECRETS = ['x.pem', 'x.key', 'x.p12', 'x.pfx', 'x.token', 'x.crt', 'x.cer'];
+/** Representative secret BASENAMES a glob could expand to. dot-secrets only match a glob whose own
+ *  basename starts with `.` (bash globbing skips dotfiles by default); the rest (ssh keys, secret
+ *  extensions) match any glob basename regardless of a leading dot or directory prefix. */
+const DOT_SECRETS = ['.env', '.env.local', '.env.production', '.npmrc', '.netrc', '.git-credentials'];
+const ANY_SECRETS = ['x.pem', 'x.key', 'x.p12', 'x.pfx', 'x.token', 'x.crt', 'x.cer', 'id_rsa', 'id_dsa', 'id_ecdsa', 'id_ed25519', 'credentials', 'auth.json'];
 
 /**
- * True when a shell glob pattern could expand to a secret file (`cat .e*`, `cat .??v`, `cat *.pem`).
- * Requires the glob to carry at least one literal character (so a bare `*` — which bash won't even
- * expand to dotfiles — isn't flagged), and respects the dotglob rule for dot-secrets.
+ * True when a shell glob could expand to a secret file (`cat .e*`, `cat dir/*.pem`, `cat id_*`).
+ * Matches the glob's BASENAME (last path segment) against secret basenames so a directory prefix
+ * (`dir/*.pem`, `config/.env*`, `./.e*`) doesn't hide it. Requires at least one literal character
+ * (a bare `*` — which bash won't expand to dotfiles — isn't flagged).
  */
 export function globMatchesSecret(pattern: string): boolean {
-  const literal = pattern.replace(/[*?[\]]/g, '');
-  if (literal === '') return false; // bare `*`/`?` — too broad to treat as a secret grab
+  const norm = normalize(pattern);
+  const base = norm.slice(norm.lastIndexOf('/') + 1);
+  if (base.replace(/[*?[\]]/g, '') === '') return false; // bare `*`/`?` — too broad
   let re: RegExp;
   try {
-    re = globToRegExp(normalize(pattern));
+    re = globToRegExp(base);
   } catch {
     return true; // an un-parseable glob next to a path is suspicious → fail closed
   }
-  const dotGlob = pattern.startsWith('.') || pattern.includes('/.');
-  if (dotGlob && DOT_SECRETS.some((s) => re.test(s))) return true;
-  return EXT_SECRETS.some((s) => re.test(s));
+  if (ANY_SECRETS.some((s) => re.test(s))) return true;
+  return base.startsWith('.') && DOT_SECRETS.some((s) => re.test(s));
 }
 
 /** Convert a shell glob to an anchored RegExp (`*`→`.*`, `?`→`.`, `[...]` kept as a char class). */

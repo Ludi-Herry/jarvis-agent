@@ -80,9 +80,11 @@ function walkSource(src: string, depth: number): Verdict {
     if (node === null) return true;
     const t = typeOf(node);
     if (t === 'CallExpr') v = combine(v, classifyCall(node, depth));
-    else if (t === 'Redirect') {
-      const target = describeWord(obj(node.Word));
-      v = combine(v, secretOfWord(target));
+    else if (t === 'DeclClause') {
+      // declare/export/local/readonly/typeset — a `VAR=secret` value (`declare f=.env`).
+      for (const asn of arr(node.Args)) v = combine(v, secretOfWord(describeWord(obj(asn.Value))));
+    } else if (t === 'Redirect') {
+      v = combine(v, secretOfWord(describeWord(obj(node.Word))));
     }
     return true;
   });
@@ -147,12 +149,12 @@ function describeWord(word: ShNode | undefined): WordDesc {
 
 const isStatic = (d: WordDesc): boolean => !d.hasParam && !d.hasSubst && !d.hasBrace && !d.hasGlob;
 
-/** A literal/glob word that names a secret path → sensitive. */
+/** A word that names a secret path → sensitive. Catches a literal path, a secret-matching glob, and
+ *  the literal SUFFIX of a `$var` word (`$HOME/.ssh/id_rsa`, `${PWD}/.env`). */
 function secretOfWord(d: WordDesc): Verdict {
-  if (d.hasGlob && !d.hasParam && !d.hasSubst && globMatchesSecret(d.value)) {
-    return sensitive(`a glob that can expand to a secret: '${d.value}'`);
-  }
-  if (isStatic(d) && isSensitivePath(d.value)) return sensitive(`touches a secret path: '${d.value}'`);
+  if (d.hasSubst) return clean; // output unknowable here (the command is flagged danger globally)
+  if (d.hasGlob && globMatchesSecret(d.value)) return sensitive(`a glob that can expand to a secret: '${d.value}'`);
+  if (d.value !== '' && isSensitivePath(d.value)) return sensitive(`touches a secret path: '${d.value}'`);
   return clean;
 }
 
@@ -189,9 +191,13 @@ function classifyWords(descs: WordDesc[], depth: number): Verdict {
   const argDescs = descs.slice(1);
   const args = argDescs.map((d) => d.value);
 
-  // Secret paths anywhere (program, args). Redirect targets are handled in walkSource.
   let v: Verdict = clean;
-  for (const d of descs) v = combine(v, secretOfWord(d));
+  // Secret paths: program-aware so `echo .env` / `grep .env` (text/pattern, not a path read) aren't
+  // over-blocked, while a file-path program reading/writing a secret is caught. Redirect WRITE
+  // targets and declaration builtins (`declare f=.env`) are handled in walkSource.
+  if (FILE_PATH_PROGS.has(prog)) {
+    for (const d of argDescs) v = combine(v, secretOfWord(d));
+  }
 
   // A destructive mutator with an unresolved $arg hides its flag/target → fail closed.
   if (DANGER_CAPABLE.has(prog) && argDescs.some((d) => d.hasParam)) {
@@ -203,6 +209,15 @@ function classifyWords(descs: WordDesc[], depth: number): Verdict {
 
 /** Program-specific classification: interpreters, wrappers, git -c, and the dangerous-pattern rules. */
 function classifyProgram(prog: string, args: string[], argDescs: WordDesc[], depth: number): Verdict {
+  // 0. `trap '<action>' SIG` installs a command that runs later — penetrate the action string.
+  //    Options (`-p`/`-l`), reset (`-`) and ignore (`''`) carry no command.
+  if (prog === 'trap') {
+    const a0 = argDescs[0];
+    if (!a0 || a0.value === '' || a0.value.startsWith('-')) return clean;
+    if (!isStatic(a0)) return danger('trap installs a non-literal action — cannot verify');
+    return walkSource(a0.value, depth + 1);
+  }
+
   // 1. Code interpreters: inline code (`-c`/`-e`/bundles) is opaque; a bare interpreter reads its
   //    program from stdin (curl | python). A script file or info flag is fine.
   if (CODE_INTERPRETERS.has(prog)) {
@@ -316,6 +331,8 @@ const DANGEROUS: DangerRule[] = [
   { test: (p, a) => (p === 'npm' || p === 'yarn' || p === 'pnpm' || p === 'bun') && a.includes('publish'), reason: 'package publish is an outward release' },
   { test: (p) => p === 'eval', reason: 'eval executes a dynamically built command' },
   { test: (p) => p === 'source' || p === '.', reason: 'source/. executes another script in-place' },
+  { test: (p, a) => p === 'alias' && a.some((w) => w.includes('=')), reason: 'alias definition can hide a command' },
+  { test: (p, a) => p === 'shopt' && a.includes('expand_aliases'), reason: 'enabling alias expansion can hide commands' },
   { test: (p) => p === 'shutdown' || p === 'reboot' || p === 'halt' || p === 'poweroff', reason: 'system power control' },
   { test: (p) => p === 'mkfs' || p.startsWith('mkfs.') || p === 'dd' || p === 'fdisk', reason: 'raw disk / filesystem write' },
   { test: (p) => p === 'shred', reason: 'shred irrecoverably destroys files' },
@@ -335,6 +352,16 @@ const VIM_FAMILY = new Set(['vim', 'vi', 'view', 'nvim', 'ex', 'gvim', 'rvim', '
  *  their args hides that flag → fail closed. Deliberately small (git/npm/find/awk/vim excluded —
  *  `$` is common in their legit args; a `$`-synthesized flag there downgrades deny→ask). */
 const DANGER_CAPABLE = new Set(['rm', 'rmdir', 'chmod', 'chown', 'chgrp']);
+
+/** Programs whose non-flag args are file paths they read/write — only THESE get a secret-path scan,
+ *  so `echo .env` / `grep .env` (where `.env` is text/a pattern) aren't over-blocked. */
+const FILE_PATH_PROGS = new Set([
+  'cat', 'tac', 'nl', 'head', 'tail', 'less', 'more', 'most', 'od', 'xxd', 'hexdump', 'strings',
+  'base64', 'base32', 'cp', 'mv', 'install', 'ln', 'dd', 'tee', 'truncate', 'rm', 'rmdir', 'shred',
+  'sed', 'awk', 'gawk', 'mawk', 'nawk', 'diff', 'cmp', 'patch', 'tar', 'zip', 'unzip', 'gzip',
+  'gunzip', 'bzip2', 'xz', 'zcat', 'scp', 'rsync', 'sha1sum', 'sha256sum', 'sha512sum', 'md5sum',
+  'openssl', 'gpg', 'jq', 'yq', 'vim', 'vi', 'view', 'nvim', 'emacs', 'nano', 'code', 'wc',
+]);
 
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 
