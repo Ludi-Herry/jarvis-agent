@@ -1,7 +1,7 @@
 # 安全审查基线 · 独立 codex 复核怎么跑、按什么尺子
 
 > 复用文档(不是一次性交接):每次对权限系统(PermissionGate + 命令解析器 + bash 审批)做独立 codex 对抗复核,用本文件的**聚焦清单 + 严重度基线**,避免每轮重新推导、避免用错尺子把已定性的低危当高危重报。
-> 背景:命令安全根经四轮 codex(gpt-5.5 xhigh)对抗核查夯实;最后一轮「确认无 HIGH」被别的会话误杀、未跑完(非真失败),可按下方重跑确认,非阻塞。
+> 背景:命令安全根经四轮 codex(gpt-5.5 xhigh)对抗核查夯实。2026-06-29 补跑了被误杀的「确认无 HIGH」轮,并在 P1/P2 遗留清理后再跑一轮覆盖最终改动——两轮均确认命令安全根核心不变量未破,各自发现的 HIGH 都落在命令安全根「之外」(文件工具 / loop / 错误脱敏)且已修,详见下「历史」。
 
 ## 严重度基线(关键 —— B11 之后)
 
@@ -44,5 +44,13 @@ codex exec -s danger-full-access --skip-git-repo-check -m gpt-5.5 \
 ```
 
 ## 历史
+
+### 2026-06-29 · 两轮复核(P1/P2 遗留收尾)
+补跑被误杀的「确认无 HIGH」轮(commit 7cdbd3e)后,在清理文件工具 / loop 的 P1/P2 遗留过程中又跑一轮覆盖最终改动(commit 9e6d27a)。两轮命令安全根核心不变量(decide 对 executes-code 永不 allow、grep 跳密钥、解析器 fail-closed、gatedRun 先裁决、bash 不在无闸注册表)均未破。共发现 4 个 HIGH,**全部在命令安全根之外**且已修:
+- safeResolve 多跳悬空 symlink 写穿透(文件工具 cwd 约束)— effectiveRealPath 递归 + 40 跳 fail-closed。
+- bash 继承 BASH_ENV/ENV 致非交互启动脚本执行(解析串≠执行串的隐藏 vector)— spawn 净化 env。
+- gatedRun 共享 mutable ToolCall 致 TOCTOU(解析串==执行串仅靠约定,当前无恶意 subscriber 不可利用)— Object.freeze 快照。
+- redactSecrets 单引号绕过(错误信息回显密钥)— 正则支持单/双引号。
+印证结论:codex 的价值在抓「静默 / 崩溃 / 绕闸」类结构问题(尤其裁判核出运动员自己引入的 bug),而非黑名单枚举完整性。
 
 四轮 codex 在「黑名单枚举 exec-vector」上不收敛(每轮找出更冷门的:trap/alias/env -S/mapfile -C/bind -x/ssh/`${x:$(...)}`…),这是黑名单的固有性质,不是解析器缺陷。结论(见 memory `restore-bash-session-allow`):**让人审做墙**(B11)+ 黑名单做纵深;无人值守自治(Phase D)再上白名单。所以后续复核重点是「有没有静默/崩溃/绕闸」,而非「黑名单是否枚举全」。
