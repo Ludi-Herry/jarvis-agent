@@ -92,7 +92,12 @@ export class DefaultPermissionGate implements PermissionGate {
     }
 
     // action === 'ask'
-    if (this.sessionGrants.has(call.name)) {
+    // executes-code (bash) is NEVER session-grantable: a command analyzer can't be a complete
+    // oracle for "executes arbitrary code", so every command must be approved per-invocation —
+    // that human approval is the real boundary, with no silent path. (TODO: restore a scoped
+    // session-allow for bash when Phase D adds an allow-list for unattended autonomy.)
+    const sessionable = capability !== 'executes-code';
+    if (sessionable && this.sessionGrants.has(call.name)) {
       return { allowed: true, reason: `session-approved: ${call.name}`, source: 'user' };
     }
     if (this.approver === undefined) {
@@ -115,8 +120,8 @@ export class DefaultPermissionGate implements PermissionGate {
     if (verdict === 'deny') {
       return { allowed: false, reason: `denied by user — ${decision.reason}`, source: 'user' };
     }
-    if (verdict === 'allow-session') {
-      this.sessionGrants.add(call.name);
+    if (verdict === 'allow-session' && sessionable) {
+      this.sessionGrants.add(call.name); // executes-code is excluded above → allow-session = allow-once for bash
     }
     return { allowed: true, reason: `approved by user (${verdict})`, source: 'user' };
   }

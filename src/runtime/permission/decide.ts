@@ -116,9 +116,10 @@ export function decide(req: PermissionRequest, policy: PermissionPolicy): Decisi
     if (analysis.sensitive) {
       return { action: 'deny', reason: analysis.reason ?? 'command touches a secret path', source: 'command' };
     }
-    // Hard checks passed — now configured rules may downgrade to allow or add a deny.
-    const ruled = applyRules(policy.rules, req.toolName, command);
-    if (ruled !== undefined) return ruleDecision(ruled);
+    // Hard checks passed. A rule may still DENY a command, but it can NEVER auto-allow one: the
+    // analyzer is not a complete oracle for "executes arbitrary code", so every shell command needs
+    // per-invocation approval. (TODO: allow a scoped rule-allow for bash under the Phase D allow-list.)
+    if (applyRules(policy.rules, req.toolName, command) === 'deny') return ruleDecision('deny');
     return { action: 'ask', reason: 'runs a shell command — approve to execute', source: 'command' };
   }
 

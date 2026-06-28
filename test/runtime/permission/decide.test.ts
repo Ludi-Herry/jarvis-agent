@@ -39,10 +39,23 @@ describe('decide — capability defaults', () => {
 describe('decide — configured rules (B5)', () => {
   const withRules = (rules: Parameters<typeof decide>[1]['rules']) => ({ ...defaultPolicy(), rules });
 
-  it('an allow rule downgrades a safe command from ask to allow', () => {
-    const p = withRules([{ action: 'allow', tool: 'bash', pattern: 'npm test*' }]);
-    expect(decide({ toolName: 'bash', capability: 'executes-code', args: { command: 'npm test' } }, p)).toMatchObject({
+  it('an allow rule downgrades a non-exec tool from ask to allow', () => {
+    const p = withRules([{ action: 'allow', tool: 'write', pattern: 'src/*' }]);
+    expect(decide({ toolName: 'write', capability: 'writes-files', args: { path: 'src/a.ts' } }, p)).toMatchObject({
       action: 'allow',
+      source: 'rule',
+    });
+  });
+
+  it('a rule can NEVER auto-allow an executes-code command — it stays ask (must be approved)', () => {
+    const p = withRules([{ action: 'allow', tool: 'bash', pattern: 'npm test*' }]);
+    expect(decide({ toolName: 'bash', capability: 'executes-code', args: { command: 'npm test' } }, p).action).toBe('ask');
+  });
+
+  it('a rule CAN still deny an executes-code command', () => {
+    const p = withRules([{ action: 'deny', tool: 'bash', pattern: 'npm *' }]);
+    expect(decide({ toolName: 'bash', capability: 'executes-code', args: { command: 'npm run x' } }, p)).toMatchObject({
+      action: 'deny',
       source: 'rule',
     });
   });

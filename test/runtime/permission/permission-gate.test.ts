@@ -80,6 +80,14 @@ describe('PermissionGate — the ask lane', () => {
     await gate.check(call('shell', { command: 'ls' }), 'executes-code');
     expect(a.asks()).toBe(2); // grant is keyed per tool name
   });
+
+  it('executes-code is NEVER session-grantable — every command is approved per-invocation', async () => {
+    const a = fixedApprover('allow-session');
+    const gate = new DefaultPermissionGate({ approver: a.approver });
+    await gate.check(call('bash', { command: 'echo a' }), 'executes-code');
+    await gate.check(call('bash', { command: 'echo b' }), 'executes-code'); // allow-session did NOT stick
+    expect(a.asks()).toBe(2);
+  });
 });
 
 describe('PermissionGate — a session grant can never override a deny (the key safety property)', () => {
