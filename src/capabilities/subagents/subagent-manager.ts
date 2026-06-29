@@ -96,15 +96,24 @@ export class SubagentManager {
   }
 
   /**
-   * Run `roleName` on `task` to completion and return its condensed summary. Refuses (without
-   * running anything) when the role is unknown, the depth cap is hit (R4), or a side-effecting
-   * child would have no gate (R2).
+   * Spawn by role NAME (looked up in the roster), running it to completion and returning its
+   * condensed summary. Refuses an unknown role; otherwise delegates to {@link spawnRole}, which
+   * enforces the depth cap (R4) and the no-gate-for-side-effects guard (R2).
    */
   async spawn(roleName: string, task: string, signal?: AbortSignal): Promise<SpawnResult> {
     const role = findRole(this.deps.roster, roleName);
     if (!role) return fail(roleName, `unknown role '${roleName}'`);
+    return this.spawnRole(role, task, signal);
+  }
+
+  /**
+   * Spawn a given role OBJECT (rather than a roster name) — used by the review panel for preset
+   * perspectives (e.g. the six hats) that need not live in the roster. Same narrowing and guardrails
+   * as {@link spawn}.
+   */
+  async spawnRole(role: AgentRole, task: string, signal?: AbortSignal): Promise<SpawnResult> {
     if (this.deps.remainingDepth <= 0) {
-      return fail(roleName, `depth cap reached — cannot spawn a deeper subagent`);
+      return fail(role.name, `depth cap reached — cannot spawn a deeper subagent`);
     }
 
     const parentMeta = this.toolMetas();
@@ -114,7 +123,7 @@ export class SubagentManager {
 
     // R2: a child with any side-effecting tool MUST run behind a gate; refuse fail-closed otherwise.
     if (!this.deps.gate && hasSideEffect(parentMeta, derivedNames)) {
-      return fail(roleName, `refusing to spawn a side-effecting subagent without a permission gate`);
+      return fail(role.name, `refusing to spawn a side-effecting subagent without a permission gate`);
     }
 
     const childRegistry = this.buildChildRegistry(derivedNames, childDepth);
