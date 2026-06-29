@@ -122,6 +122,37 @@ describe('decideVerdict — leg 3 scoring (Part7 §3.2 / §4)', () => {
   });
 });
 
+describe('decideVerdict — held-out leg (secret hidden assertions)', () => {
+  it('rejected when held-out fails even though leg 1+2 are clean (faked feature + weak self-written tests)', () => {
+    const v = decideVerdict(checks({ heldOut: { passed: false, results: [] } }));
+    expect(v.outcome).toBe('rejected');
+    expect(v.rationale).toContain('held-out');
+  });
+
+  it('the held-out rejection rationale NEVER names the secret command or its output', () => {
+    const v = decideVerdict(
+      checks({ heldOut: { passed: false, results: [{ command: 'node secret-assert.js', code: 1, output: 'SECRET-DETAIL' }] } }),
+    );
+    expect(v.outcome).toBe('rejected');
+    expect(v.rationale).not.toContain('secret-assert');
+    expect(v.rationale).not.toContain('SECRET-DETAIL');
+  });
+
+  it('held-out passing proceeds to verified (the leg is satisfied, no report)', () => {
+    expect(decideVerdict(checks({ heldOut: { passed: true, results: [] } })).outcome).toBe('verified');
+  });
+
+  it('held-out absent leaves the batch-1 path unchanged (clean legs → verified)', () => {
+    expect(decideVerdict(checks()).outcome).toBe('verified'); // no heldOut field
+  });
+
+  it('held-out is decided before leg 3 (failing held-out + perfect report → rejected, judge not honored)', () => {
+    const v = decideVerdict(checks({ heldOut: { passed: false, results: [] } }), perfectReport(), PINNED);
+    expect(v.outcome).toBe('rejected');
+    expect(v.rationale).toContain('held-out');
+  });
+});
+
 describe('decideVerdict — fail-closed property (verified ⇒ a provable, clean state)', () => {
   it('with no report, verified ⇒ objective checks passed AND tests clean', () => {
     const tampers: DeterministicChecks['testTamper'][] = ['clean', 'weakened-or-deleted'];

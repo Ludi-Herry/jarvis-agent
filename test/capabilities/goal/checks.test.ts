@@ -122,3 +122,55 @@ describe('runDeterministicChecks — leg 1 trusts the real exit code', () => {
     expect(r.objectiveChecksPassed).toBe(false);
   });
 });
+
+describe('runDeterministicChecks — held-out leg (secret hidden assertions)', () => {
+  const shellPath = defaultShellPath();
+
+  it('runs the held-out commands when leg 1 is green and ANDs their real exit codes', async () => {
+    const r = await runDeterministicChecks({
+      shellPath,
+      cwd: process.cwd(),
+      checkCommands: ['exit 0'],
+      heldOutCommands: ['exit 0', 'exit 0'],
+    });
+    expect(r.heldOut?.passed).toBe(true);
+    expect(r.heldOut?.results).toHaveLength(2);
+  });
+
+  it('held-out fails on any non-zero hidden assertion, even though leg 1 is green (the anti-gaming catch)', async () => {
+    const r = await runDeterministicChecks({
+      shellPath,
+      cwd: process.cwd(),
+      checkCommands: ['exit 0'], // builder's own (weak) checks pass
+      heldOutCommands: ['exit 0', 'exit 1'], // a hidden assertion the builder never saw fails
+    });
+    expect(r.objectiveChecksPassed).toBe(true);
+    expect(r.heldOut?.passed).toBe(false);
+  });
+
+  it('does NOT run held-out when leg 1 is red (already rejecting; held-out stays absent)', async () => {
+    const r = await runDeterministicChecks({
+      shellPath,
+      cwd: process.cwd(),
+      checkCommands: ['exit 1'],
+      heldOutCommands: ['exit 0'],
+    });
+    expect(r.objectiveChecksPassed).toBe(false);
+    expect(r.heldOut).toBeUndefined();
+  });
+
+  it('held-out is absent when no held-out commands are configured (the leg is not run)', async () => {
+    const r = await runDeterministicChecks({ shellPath, cwd: process.cwd(), checkCommands: ['exit 0'] });
+    expect(r.heldOut).toBeUndefined();
+  });
+
+  it('an empty held-out list is treated as absent, not a vacuous pass', async () => {
+    const r = await runDeterministicChecks({
+      shellPath,
+      cwd: process.cwd(),
+      checkCommands: ['exit 0'],
+      heldOutCommands: [],
+    });
+    expect(r.heldOut).toBeUndefined();
+  });
+});

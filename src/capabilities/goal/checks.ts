@@ -1,19 +1,22 @@
 /**
- * checks — the deterministic two legs of goal verification (Phase D; Part7 §2 legs 1-2). These run
- * BEFORE any subjective judge and can't be bypassed by prompt injection — the cheapest, most
- * tamper-proof layer.
+ * checks — the deterministic legs of goal verification (Phase D; Part7 §2). These run BEFORE any
+ * subjective judge and can't be bypassed by prompt injection — the cheapest, most tamper-proof layer.
  *
  *  - **Leg 1**: the harness RE-RUNS the project's canonical check commands and trusts the REAL exit
  *    codes (`ExecResult.code`), never the builder's self-reported status. The command list comes from
  *    config, NEVER from the builder's claim, so a builder can't swap in a trivial command.
  *  - **Leg 2**: a deterministic git-diff scan of the test files vs the goal's creation-time baseline.
  *    Deleted / skipped / shrunk test files force a rejection — the most common reward-hacking shortcut.
+ *  - **Held-out leg**: SECRET hidden-assertion commands the builder never sees. Leg 1 re-runs the
+ *    checks the builder KNOWS (catches "suite red"); the held-out leg runs the goal-setter's hidden
+ *    assertions (catches "builder wrote weak self-passing tests" — it can't game what it can't see).
+ *    Only runs when leg 1 is green; absent when no held-out commands are configured.
  *
  * {@link classifyTestDiff} is PURE (unit-testable without a git repo); {@link runDeterministicChecks}
  * is the impure shell that runs the commands + git and feeds the pure classifier.
  */
 import { runCommand } from '../../core/tools/run-command.js';
-import type { DeterministicChecks, TestBaseline } from './goal.js';
+import type { DeterministicChecks, HeldOutResult, TestBaseline } from './goal.js';
 
 /** Slow enough for a real build/test. */
 const CHECK_TIMEOUT_MS = 300_000;
@@ -49,6 +52,10 @@ export interface CheckDeps {
   cwd: string;
   /** Fixed check commands — sourced from config, NEVER from the builder's claim. */
   checkCommands: string[];
+  /** Held-out leg: SECRET hidden-assertion commands the builder never sees — sourced from config, NEVER
+   *  the claim, and (unlike checkCommands) never surfaced back to the builder. Absent/empty → no
+   *  held-out leg (it stays `undefined` on the result; decideVerdict treats absence as "leg not run"). */
+  heldOutCommands?: string[];
   signal?: AbortSignal;
 }
 
@@ -82,7 +89,35 @@ export async function runDeterministicChecks(
     ? await scanTestTamper(deps, baseline)
     : { testTamper: 'clean' as const, tamperReason: '' };
 
-  return { objectiveChecksPassed, results, ...tamper };
+  // Held-out leg (the hidden-assertion leg). Run ONLY when leg 1 is green: a red leg 1 already rejects,
+  // and the held-out leg's whole point is the "weak self-written tests pass (leg 1 green) but the real
+  // requirement is unmet" case. Absent/empty held-out commands → no leg (heldOut stays undefined).
+  const heldOut =
+    objectiveChecksPassed && deps.heldOutCommands && deps.heldOutCommands.length > 0
+      ? await runHeldOut(deps, deps.heldOutCommands)
+      : undefined;
+
+  return { objectiveChecksPassed, results, ...tamper, ...(heldOut ? { heldOut } : {}) };
+}
+
+/** Run the secret held-out commands and AND their real exit codes. Same trust model as leg 1 (the real
+ *  exit code, never a self-report), but these commands are NEVER revealed to the builder. */
+async function runHeldOut(deps: CheckDeps, commands: string[]): Promise<HeldOutResult> {
+  const results: HeldOutResult['results'] = [];
+  let passed = true;
+  for (const command of commands) {
+    const res = await runCommand(
+      deps.shellPath,
+      command,
+      deps.cwd,
+      CHECK_TIMEOUT_MS,
+      CHECK_OUTPUT_CHARS,
+      deps.signal,
+    );
+    results.push({ command, code: res.code, output: res.output });
+    if (res.code !== 0) passed = false; // trust the REAL exit code
+  }
+  return { passed, results };
 }
 
 /** Diff the test tree vs the baseline commit and classify. A failed git invocation → inert (clean). */

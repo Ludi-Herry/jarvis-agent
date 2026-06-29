@@ -31,7 +31,20 @@ export interface GoalClaim {
   verification?: string;
 }
 
-/** The deterministic two legs' result (harness-produced; fed to the pure decideVerdict). */
+/** The held-out leg's result: secret hidden-assertion commands the builder NEVER sees. Leg 1 re-runs
+ *  the checks the builder KNOWS (catches "suite red"); the held-out leg runs the goal-setter's SECRET
+ *  assertions (catches "builder wrote weak self-passing tests" — it can't game what it can't see). A
+ *  held-out result that is `undefined` on {@link DeterministicChecks} means NO held-out leg was
+ *  configured: the leg is ABSENT (a known weaker-confidence state), neither a pass nor a fail. */
+export interface HeldOutResult {
+  /** AND of every held-out command's real exit code (harness ran them; trusts the codes). */
+  passed: boolean;
+  /** The commands + output — for the LOCAL audit log (goalStore) ONLY. NEVER fed back to the builder
+   *  or put on the EventBus, or the assertions would stop being held-out. */
+  results: Array<{ command: string; code: number | null; output: string }>;
+}
+
+/** The deterministic legs' result (harness-produced; fed to the pure decideVerdict). */
 export interface DeterministicChecks {
   /** Leg 1: the AND of every canonical check command's real exit code (harness re-ran them). */
   objectiveChecksPassed: boolean;
@@ -41,6 +54,9 @@ export interface DeterministicChecks {
   testTamper: 'clean' | 'weakened-or-deleted';
   /** Why leg 2 fired (for the continuation / verdict rationale), or '' when clean. */
   tamperReason: string;
+  /** Held-out leg: secret hidden assertions the builder never sees. `undefined` = leg not configured
+   *  (absent — a known weaker-confidence state, surfaced explicitly; NOT treated as a pass). */
+  heldOut?: HeldOutResult;
 }
 
 // ── Leg 3 vocabulary (the independent LLM judge — landed this batch) ──

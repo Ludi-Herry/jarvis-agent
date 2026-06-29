@@ -1,11 +1,18 @@
 import { describe, expect, it } from 'vitest';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   VerifierCircuitBreaker,
   runGoal,
   type GoalRunDeps,
   type GoalSpec,
 } from '../../../src/capabilities/goal/goal-loop.js';
-import { assertObjectiveUnchanged, hashObjective } from '../../../src/capabilities/goal/goal-store.js';
+import {
+  FileGoalStore,
+  assertObjectiveUnchanged,
+  hashObjective,
+} from '../../../src/capabilities/goal/goal-store.js';
 import { InMemoryToolRegistry } from '../../../src/core/tools/registry.js';
 import { InMemoryEventBus, type Event } from '../../../src/runtime/event-bus.js';
 import type { ModelDelta, ModelProvider, ModelResult } from '../../../src/core/model/types.js';
@@ -273,5 +280,88 @@ describe('runGoal — leg 3 (independent judge) wiring', () => {
     expect(spy.calls()).toBe(0); // no provider → judge never runs
     expect(result.state).toBe('complete');
     expect(result.finalVerdict?.outcome).toBe('verified');
+  });
+});
+
+// ── Held-out leg (secret hidden assertions; checklist #1) ──
+
+/** A check where leg 1 passes (builder's own weak tests are green) but the SECRET held-out leg fails. */
+const heldOutFailCheck: NonNullable<GoalRunDeps['check']> = async () => ({
+  objectiveChecksPassed: true,
+  results: [],
+  testTamper: 'clean',
+  tamperReason: '',
+  heldOut: { passed: false, results: [{ command: 'node hidden-assert.js', code: 1, output: 'HIDDEN-SECRET-OUTPUT' }] },
+});
+
+describe('runGoal — held-out leg gates completion', () => {
+  it('rejects when held-out fails even though leg 1 is green (faked feature + self-written weak tests)', async () => {
+    const { run } = claimingRun('complete');
+    const result = await runGoal(
+      spec({ budget: { maxRounds: 1 } }),
+      baseDeps({ run, check: heldOutFailCheck }),
+    );
+    expect(result.state).not.toBe('complete');
+    expect(result.finalVerdict?.outcome).toBe('rejected');
+  });
+
+  it('the held-out rejection continuation NEVER reveals the secret command or its output', async () => {
+    let seenUserText = '';
+    const captureRun: NonNullable<GoalRunDeps['run']> = async (ctx) => {
+      seenUserText = ctx.messages.filter((m) => m.role === 'user').map((m) => m.content).join('\n');
+      await ctx.tools.run(
+        { id: 'u', name: 'update_goal', arguments: JSON.stringify({ status: 'complete' }) },
+        ctx.toolCtx,
+      );
+      return { finalText: 'claimed', turns: 1 };
+    };
+    await runGoal(spec({ budget: { maxRounds: 2 } }), baseDeps({ run: captureRun, check: heldOutFailCheck }));
+    // round 2's messages include round 1's continuation — it must carry a generic note, not the secret.
+    expect(seenUserText).toContain('隐藏'); // a generic held-out note IS present
+    expect(seenUserText).not.toContain('hidden-assert'); // the command is NOT revealed
+    expect(seenUserText).not.toContain('HIDDEN-SECRET-OUTPUT'); // nor its output
+  });
+
+  it('a held-out failure short-circuits leg 3 (the judge is never spawned)', async () => {
+    const { run } = claimingRun('complete');
+    const spy = verifierSpy(perfectReport());
+    const result = await runGoal(
+      spec({ pinned: PINNED, budget: { maxRounds: 1 } }),
+      baseDeps({ run, check: heldOutFailCheck, verifierProvider: dummyProvider(), runVerifier: spy.fn }),
+    );
+    expect(spy.calls()).toBe(0); // held-out failed → judge never spawned (no wasted spend / injection surface)
+    expect(result.finalVerdict?.outcome).toBe('rejected');
+  });
+
+  it('held-out passing lets a clean goal verify (the leg is satisfied)', async () => {
+    const heldOutPassCheck: NonNullable<GoalRunDeps['check']> = async () => ({
+      objectiveChecksPassed: true,
+      results: [],
+      testTamper: 'clean',
+      tamperReason: '',
+      heldOut: { passed: true, results: [] },
+    });
+    const { run } = claimingRun('complete');
+    const result = await runGoal(spec(), baseDeps({ run, check: heldOutPassCheck }));
+    expect(result.state).toBe('complete');
+    expect(result.finalVerdict?.outcome).toBe('verified');
+  });
+
+  it('the persisted goalStore record NEVER contains the held-out secret command/output (it lives under cwd, builder-readable)', async () => {
+    // Two independent reviewers converged: goalStore is data/goals/*.jsonl UNDER cwd, which the builder
+    // can read/grep/bash — so persisting heldOut.results would leak the hidden assertions back. Only
+    // pass/fail must survive to disk.
+    const dir = await mkdtemp(join(tmpdir(), 'goal-heldout-'));
+    const storePath = join(dir, 'goal.jsonl');
+    const { run } = claimingRun('complete');
+    await runGoal(
+      spec({ budget: { maxRounds: 1 } }),
+      baseDeps({ run, check: heldOutFailCheck, goalStore: new FileGoalStore(storePath) }),
+    );
+    const persisted = await readFile(storePath, 'utf8');
+    await rm(dir, { recursive: true, force: true });
+    expect(persisted).not.toContain('hidden-assert'); // the secret command is not on disk
+    expect(persisted).not.toContain('HIDDEN-SECRET-OUTPUT'); // nor its output
+    expect(persisted).toContain('"passed":false'); // but the pass/fail WAS recorded (audit intact)
   });
 });

@@ -92,6 +92,10 @@ export interface GoalRunDeps {
   perRoundMaxTurns: number;
   /** Fixed check commands (leg 1). NEVER sourced from the builder's claim. Defaults to the four gates. */
   checkCommands?: string[];
+  /** Held-out leg: SECRET hidden-assertion commands the builder never sees (config, NEVER the claim).
+   *  Absent/empty → no held-out leg. The harness runs them and trusts the real exit codes, but never
+   *  surfaces them to the builder — see {@link continuationFromVerdict}. */
+  heldOutCommands?: string[];
   /** Leg 3: the SECOND (independent, different-model) provider. Present → leg 3 runs after the
    *  deterministic legs pass; absent → batch-1 deterministic-only (decideVerdict's no-report path). */
   verifierProvider?: ModelProvider;
@@ -216,6 +220,7 @@ export async function runGoal(spec: GoalSpec, deps: GoalRunDeps): Promise<GoalRu
           shellPath: deps.shellPath,
           cwd: deps.cwd,
           checkCommands: deps.checkCommands ?? DEFAULT_CHECK_COMMANDS, // from config, NEVER the claim
+          heldOutCommands: deps.heldOutCommands, // secret hidden assertions; from config, NEVER the claim
           signal: deps.signal,
         },
         goal.testBaseline,
@@ -228,7 +233,10 @@ export async function runGoal(spec: GoalSpec, deps: GoalRunDeps): Promise<GoalRu
       // runVerifier synthesizes couldNotVerify on every failure), so decideVerdict gets a report and can
       // never fall through to the report===undefined → verified batch-1 path.
       let report: VerifierReport | undefined;
-      const legsClean = checks.objectiveChecksPassed && checks.testTamper === 'clean';
+      // All deterministic legs clean (leg 1 + leg 2 + held-out) before spawning the judge. A held-out
+      // failure short-circuits leg 3 too (`heldOut?.passed ?? true` — absent held-out is not a failure).
+      const legsClean =
+        checks.objectiveChecksPassed && checks.testTamper === 'clean' && (checks.heldOut?.passed ?? true);
       if (legsClean && deps.verifierProvider) {
         deps.bus.emit({ type: 'state', phase: 'leg-3 verifier…' });
         report = await runVerifierFn(goal.objective, goal.pinned, {
@@ -256,7 +264,13 @@ export async function runGoal(spec: GoalSpec, deps: GoalRunDeps): Promise<GoalRu
       // EventBus stays small + secret-free: only goalId/outcome/rationale, rationale redacted. The FULL
       // report (evidence/observed) goes to the local goalStore only, never the (potentially remote) bus.
       deps.bus.emit({ type: 'verdict', goalId: goal.id, outcome: verdict.outcome, rationale: redactSecrets(verdict.rationale) });
-      await deps.goalStore?.recordRound({ round, claim, checks, verdict, at: stamp() });
+      // The goalStore lives UNDER cwd (data/goals/…), which the builder's read/grep/bash can read — so it
+      // is NOT a safe sink for the held-out leg's secret command+output. Persist only pass/fail; dropping
+      // `heldOut.results` keeps the hidden assertions hidden across rounds (replayGoal never reads them).
+      const persistedChecks: DeterministicChecks = checks.heldOut
+        ? { ...checks, heldOut: { passed: checks.heldOut.passed, results: [] } }
+        : checks;
+      await deps.goalStore?.recordRound({ round, claim, checks: persistedChecks, verdict, at: stamp() });
 
       if (verdict.outcome === 'rejected') {
         const action = breaker.recordReject(); // ← really read the breaker (no dead code)
@@ -323,9 +337,18 @@ function continuationFromVerdict(checks: DeterministicChecks, verdict: Verdict):
     parts.push(failed.map((r) => `$ ${r.command}\n[exit ${r.code ?? 'killed'}]\n${tail(r.output, 1500)}`).join('\n\n'));
   }
   if (checks.testTamper !== 'clean') parts.push(`[测试/验收脚本改动] ${checks.tamperReason}`);
+  // A held-out reject: SECRET hidden assertions failed. Feed back ONLY a generic message — NEVER the
+  // held-out command or its output, or the assertion stops being held-out (the builder could special-
+  // case it next round). The point is to push real work, not to reveal which check to target.
+  if (checks.heldOut && !checks.heldOut.passed) {
+    parts.push(
+      '[独立隐藏校验] 一项你看不到的隐藏验收检查未通过——实现并未真正满足需求。请做真正的修复，' +
+        '不要针对具体测试做特例或弱化断言（隐藏检查你无法逐一规避）。',
+    );
+  }
   // A leg-3 reject: deterministic legs were clean, so the rejection is the judge's. Surface its reason
   // + what it observed so the builder can make a real fix (not a workaround).
-  if (verdict.report && failed.length === 0 && checks.testTamper === 'clean') {
+  if (verdict.report && failed.length === 0 && checks.testTamper === 'clean' && (checks.heldOut?.passed ?? true)) {
     parts.push(`[独立裁判] ${verdict.rationale}`);
     if (verdict.report.observed) parts.push(`实际观察：${tail(verdict.report.observed, 1500)}`);
   }

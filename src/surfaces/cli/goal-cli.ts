@@ -8,7 +8,7 @@
  *
  * Run:  npm run goal -- "<objective>"   (needs ARK_API_KEY)
  */
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import {
@@ -123,9 +123,18 @@ async function main(): Promise<void> {
     }
   }
 
+  // Held-out leg: secret hidden-assertion commands from a FILE (kept off the command line / shell
+  // history). Absent → the leg is explicitly declared absent (a known weaker-confidence state).
+  const heldOutCommands = loadHeldOutCommands();
+
   console.log(`Jarvis-Agent · goal 模式 · ${config.model}`);
   console.log(`目标: ${objective}`);
   console.log(baseline ? `验收: 四关卡 + 测试篡改检测(baseline ${baseline.headSha.slice(0, 8)})` : '验收: 四关卡(非 git 仓,跳过篡改检测)');
+  console.log(
+    heldOutCommands.length > 0
+      ? `held-out: 已配置 ${heldOutCommands.length} 条隐藏校验(builder 看不到)`
+      : 'held-out: 未配置 —— 缺这条腿,verified 置信偏弱,建议加权人工抽查(设 JARVIS_HELDOUT_CHECKS_FILE 启用)',
+  );
   console.log(
     verifier.enabled
       ? `腿3: 独立裁判已启用(${verifier.config.model}),固定验收清单 ${pinned.length} 条\n`
@@ -147,6 +156,7 @@ async function main(): Promise<void> {
       builderSystemPrompt: BUILDER_PROMPT,
       perRoundMaxTurns: 16,
       checkCommands: DEFAULT_CHECK_COMMANDS,
+      heldOutCommands: heldOutCommands.length > 0 ? heldOutCommands : undefined,
       verifierProvider,
     },
   );
@@ -156,6 +166,30 @@ async function main(): Promise<void> {
     `\n=== goal ${result.state} (rounds=${result.rounds}, verdict=${result.finalVerdict?.outcome ?? '—'}) ===`,
   );
   if (result.state !== 'complete') process.exitCode = 1;
+}
+
+/**
+ * Load held-out commands from the file named by `JARVIS_HELDOUT_CHECKS_FILE` (one command per line; `#`
+ * comments and blanks skipped). A file keeps the commands off the command line / shell history. For the
+ * assertions to truly be held-out, the file AND any test files it references should live OUTSIDE the
+ * project directory — the builder's read/grep are confined to cwd, so it can't discover them there.
+ * Returns [] when unset/missing/unreadable (the leg is then explicitly declared absent).
+ */
+function loadHeldOutCommands(): string[] {
+  const path = process.env.JARVIS_HELDOUT_CHECKS_FILE?.trim();
+  // Scrub it from the environment immediately: the builder's bash tool inherits process.env (shellEnv
+  // copies it per exec), so leaving it set would let the builder `echo $JARVIS_HELDOUT_CHECKS_FILE` then
+  // `cat` the file — defeating the held-out secrecy. We read it once here, before runGoal, then delete.
+  delete process.env.JARVIS_HELDOUT_CHECKS_FILE;
+  if (!path || !existsSync(path)) return [];
+  try {
+    return readFileSync(path, 'utf8')
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line !== '' && !line.startsWith('#'));
+  } catch {
+    return [];
+  }
 }
 
 /** Snapshot the leg-2 baseline: the current HEAD sha. Undefined when not a git repo (leg 2 inert). */

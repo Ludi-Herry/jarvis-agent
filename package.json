@@ -21,6 +21,7 @@
     "demo:c2": "tsx scripts/c2-demo.ts",
     "demo:d1": "tsx scripts/d1-demo.ts",
     "demo:d2": "tsx scripts/d2-demo.ts",
+    "demo:d3": "tsx scripts/d3-demo.ts",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

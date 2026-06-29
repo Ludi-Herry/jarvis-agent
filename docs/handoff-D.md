@@ -4,7 +4,7 @@
 
 ## 一句话状态
 
-**Phase D 两批全部完成**：agent 能**自主跑 goal 到达标自停**——`update_goal(complete)` 不直接终态化，走**三条腿独立验收**：腿1 harness 重跑四关卡采信真退出码、腿2 git diff 测试/oracle 篡改检测、**腿3 独立只读 LLM 裁判**（第二个不同模型，对 harness 钉死的 pinned 需求清单逐条取证打分）。完成判定**由 `decideVerdict` 纯函数据证据算、不靠 builder 自评、不靠 LLM 自报 verdict**。`npm run typecheck / lint / test / build` 全绿（**492 测试**，较 batch-1 的 446 再 +46）。`demo:d1` 真连 Doubao 跑通确定性路径；`demo:d2` 真连**双 Doubao 模型**（builder=2.1-pro / verifier=2.0-pro，及跨家族 DeepSeek-V4-pro）跑通完整腿3 → verified。
+**Phase D 全部完成**：agent 能**自主跑 goal 到达标自停**——`update_goal(complete)` 不直接终态化，走**确定性三腿 + 独立 LLM 裁判**验收：① 腿1 harness 重跑 canonical check 采信真退出码（builder 知道的检查）、② 腿2 git diff 测试/oracle 篡改检测、③ **held-out 腿**（goal-setter 的**秘密**隐藏断言，builder 从不见到——堵「自写弱测试骗过套件」）、④ **腿3 独立只读 LLM 裁判**（第二个不同模型，对 pinned 清单逐条取证打分）。完成判定**由 `decideVerdict` 纯函数据证据算、不靠 builder 自评、不靠 LLM 自报 verdict**。`npm run typecheck / lint / test / build` 全绿（**509 测试**，较 batch-1 的 446 再 +63）。`demo:d1` 确定性路径；`demo:d2` 双 Doubao 模型腿3 → verified；`demo:d3` held-out（真活 verified / 伪造被秘密闸抓 rejected）。
 
 > **两批边界**：腿3 = **可选**（配 `ARK_VERIFIER_MODEL` 为不同模型才启用）。没配 → 退回第一批两腿（`decideVerdict(report===undefined)` 路径逐字不动）。所以第一批的「确定性两腿」仍是默认运行模式、未被替换。
 
@@ -25,7 +25,9 @@
 | D6 类型 + 纯函数 | （本批） | `Goal/GoalSpec/GoalCreatedRecord/replayGoal` 加 `pinned`（`?? []` 兜底，第一批不受影响）+ `decideVerdict(checks, report?, pinned?)` 完整三态（§3.2 八步，`report===undefined` 整支逐字不动）+ verdict 全分支触发测试 + 属性测试 |
 | D7 runVerifier + pinned 推导 | （本批） | `verifier.ts`（runVerifier 复用 runAgent：只读 registry+断言、第二 provider、独立 bus、无 store/无 gate、信号透传、VERIFIER_PROMPT；`parseVerifierReport` 三段+fail-closed；**永远返回 report，绝不 undefined**）+ `requirements.ts`（derivePinnedRequirements，builder model 推导，失败 `[]`） |
 | D8 接线 + monitor + CLI + demo | （本批） | runGoal 接腿3（短路 spawn + 最高优先级不变量 + verdict 事件 redact）+ `verifier-monitor.ts`（CNV 率滑窗）+ `resolveVerifierConfig`（config 层独立性断言）+ goal-cli（ARK_VERIFIER_MODEL + derive + 空 pinned 启动期 fail-closed）+ `demo:d2`（双模型，PASSED ×2 含跨家族） |
-| D9 收口 | （本提交） | 验收映射 + 本交接刷新 + 设计 vs 现实差异记进 leg3-checklist（KB Part7 是只读证据层、不改）+ 独立核查（两裁判，修超时/credential/边界 3 处）+ memory |
+| D9 收口 | ef2ac03→f2e6e15 | 验收映射 + 本交接刷新 + 设计 vs 现实差异记进 leg3-checklist（KB Part7 是只读证据层、不改）+ 独立核查（两裁判，修超时/credential/边界 3 处）+ memory |
+| **— held-out 腿（checklist #1）—** | | |
+| held-out 隐藏断言腿 | （本提交） | 真正的 held-out 腿：`HeldOutResult`/`checks.heldOut` + checks.ts 跑秘密命令（leg1 绿才跑、采信真退出码）+ verdict.ts held-out 闸（泛化 rationale 不泄露）+ goal-loop 接线（legsClean 含 held-out、短路 leg3、保密 continuation）+ goal-cli `JARVIS_HELDOUT_CHECKS_FILE` + 缺席显式声明 + `demo:d3`（活体+确定性双相）+14 测试 |
 
 ## §5 验收契约 → 测试映射（全绿）
 
@@ -68,13 +70,15 @@
 完成判定有**两种运行模式**，verified 的含义不同：
 
 - **腿3 启用（配了不同的 `ARK_VERIFIER_MODEL`）**：verified = 四关卡全绿 + 测试/oracle 未篡改 + **独立裁判逐条证明每条 pinned 需求 proves+matched、feature works、无 couldNotVerify**。这才是「真验收」——拦得住「写了通过 check 但没真做到 objective」。但仍有**已知边界**：① 裁判是**纯文件取证**（只有 read/grep），跑不了命令、驱不动 app——凡需执行/运行态的需求裁判必须列进 `couldNotVerify`（→ blocked 交人），它不会假装验过；② 单 Doubao 账号下「不同模型」多是同族变体，**独立性弱**（载重独立性靠腿1/腿2 完全无模型 + 上下文隔离 + 独立 prompt，「不同模型」是 nice-to-have，见 checklist #4）；跨家族（DeepSeek-V4-pro）独立性更强、已验证可跑通。
-- **腿3 未启用（默认）**：verified = **仅确定性两条腿**（同第一批）。`decideVerdict(checks, report?, pinned?)` 的 `report===undefined` 整支**逐字保留**第一批语义——这是默认、未被替换的运行模式。它拦不住「通过 check 但没真做到 objective」，要那层语义验收就配 `ARK_VERIFIER_MODEL`。
+- **腿3 未启用（默认）**：verified = **确定性腿**（腿1 + 腿2 + held-out，若配）。`decideVerdict(checks, report?, pinned?)` 的 `report===undefined` 整支**逐字保留**第一批语义（只是多被 held-out 闸 gate）——默认、未被替换。无 held-out 时拦不住「通过 check 但没真做到 objective」，要确定性兜那层就配 held-out，要语义兜就配 `ARK_VERIFIER_MODEL`。
 
-**最高优先级不变量（务必保住）**：腿3 启用且两腿干净时，`runVerifier` **永远返回一个 report**（spawn/parse/timeout/halted 全合成 couldNotVerify，返回类型非可选），所以 `decideVerdict` 永远拿到 report、永不回落到 `report===undefined → verified` 假阳性。改 goal-loop 接线时别破这条（回归测试 `NEVER falls through to verified when the verifier fails` 钉死）。
+- **held-out 腿（确定性、堵自写弱测试）**：goal-setter 的**秘密**隐藏断言，builder 从不见到（不进 context/continuation/EventBus），harness 跑它采信真退出码、只在 leg1 绿后跑、失败→rejected。它是 checklist #1 想要的「真 held-out」——leg1 重跑只证「既有套件过」，held-out 才防「builder 自写 trivial 测试骗过套件」。**缺席 = 显式弱置信**（CLI 声明、建议加权人工抽查），不当通过。**保密责任**：秘密文件 + 它引用的测试须放 cwd **外**（builder read/grep confined to cwd），否则 builder 能读到就能游戏——harness 只保证不把命令/输出放进 builder 上下文。
+
+**最高优先级不变量（务必保住）**：腿3 启用且确定性腿干净时，`runVerifier` **永远返回一个 report**（spawn/parse/timeout/halted 全合成 couldNotVerify，返回类型非可选），所以 `decideVerdict` 永远拿到 report、永不回落到 `report===undefined → verified` 假阳性。改 goal-loop 接线时别破这条（回归测试 `NEVER falls through to verified when the verifier fails` 钉死）。
 
 ## 安全（goal 验收不被绕）
 
-完成判定的防作弊靠三条结构保证，各有触发单测：① claim 不终态化、必跑确定性两条腿；② checkCommands 只从 config、腿1 采信真退出码；③ 熔断真接线 + objective 不可变 assert + fail-closed 兜底。
+完成判定的防作弊靠结构保证，各有触发单测：① claim 不终态化、必跑确定性腿；② checkCommands / heldOutCommands 只从 config、采信真退出码；③ **held-out 秘密断言 builder 看不到**（堵自写弱测试，泛化 continuation 不泄露）；④ 熔断真接线 + objective 不可变 assert + fail-closed 兜底 + 腿3 永返回 report。
 
 **独立核查**：D5 跑两个独立裁判（codex gpt-5.5 xhigh + 独立 Claude 子代理），聚焦「goal 验收有没有被绕 / 熔断是否死代码 / verified 是否悄悄可达 / builder 能否换 trivial check」。结论见下。
 
@@ -89,6 +93,12 @@
 > - **残留 LOW（接受/记缺口）**：同族「不同模型」独立性弱（降为 nice-to-have，已实测同族 2.0/2.1 + 跨家族 DeepSeek-V4 均跑通）；语义弱化判不了（裁判纯文件取证）；redactSecrets 盖不住裸高熵串（裁判读不到密钥文件、full report 只进本地 goalStore）。
 > - **印证**：两裁判独立同点收敛在「fail-closed 的 liveness 维度」——之前几轮收敛在「可信根可被改写」，这轮收敛在「挂死也是一种没 fail-closed」。结论：goal 验收的 fail-closed 不只是「判定方向对」，还得保证「在有限时间内一定给出判定」（超时也是 couldNotVerify）。`demo:d2` 真连双模型实测 verified 与 couldNotVerify→blocked 两种终态，后者印证裁判拒绝橡皮图章、harness 交人。
 
+> **独立核查结论（2026-06-30，held-out 腿落地后两个独立裁判）**：codex（gpt-5.5 xhigh）报 2 HIGH、独立 Claude 子代理报 1 HIGH，**两裁判收敛在同一个保密泄露**。两处全部已修 + 触发单测 + post-fix 四关卡复核（510 测试）：
+> - **HIGH（收敛）· held-out 秘密经 cwd 内 goalStore 泄露**：continuation / verdict 事件两条通道都干净（只发泛化文案），但 `recordRound({ checks })` 把完整 `checks.heldOut.results`（秘密命令原文 + 失败输出）写进 `data/goals/<id>.jsonl`，**该文件在 cwd 内**，builder 下一轮 `read`/`grep`/`bash cat` 就能读到、逐条规避——即使 goal-setter 把 held-out 文件正确放 cwd 外，harness 仍自己把秘密复制进 cwd（与代码注释「NEVER fed back to the builder」直接矛盾）。**已修**：持久化前把 `heldOut` 收缩为 `{ passed, results: [] }`、丢命令/输出（replayGoal 不回读 results，审计仍留 pass/fail）；触发单测「held-out 失败后落盘 JSONL 不含命令/输出」（用真实 FileGoalStore）。
+> - **HIGH（codex）· `JARVIS_HELDOUT_CHECKS_FILE` 留在 builder bash 环境**：`shellEnv()` 每次 exec 复制整个 `process.env`，builder 批准一次 bash 就能 `echo $JARVIS_HELDOUT_CHECKS_FILE` 拿路径 → `cat` 拿命令（`cat $var` 未解析变量分析器不判 sensitive）。**已修**：`loadHeldOutCommands` 读毕即 `delete process.env.JARVIS_HELDOUT_CHECKS_FILE`（在 runGoal 前、builder bash 跑之前），变量对 builder 不可见。
+> - **残留 LOW / follow-up**：① **model-facing bash 仍继承 `ARK_API_KEY` 等密钥**（`shellEnv` 复制 process.env，只删 BASH_ENV/ENV）——**pre-existing**、过 bash 审批门、非 held-out 引入，但值得单独硬化（给 builder bash 传脱敏 env）；② held-out 源文件/被引用测试须放 cwd 外（goal-setter 责任，文档已声明）；③ `loadHeldOutCommands` 不区分「未配置」与「路径坏了」（都按缺席处理）。
+> - **印证**：保密契约的泄露不在「显式回传通道」（continuation/事件都做对了），而在**审计 sink 的物理位置**——「本地 goalStore」当安全 sink 的前提是它不在 builder 可读范围，但它在 cwd 内就破了。两裁判独立同点收敛印证：保密不能只看「我没主动告诉它」，还要看「它能不能从我写的任何地方读到」。
+
 ## gotcha / 已知小账
 
 - **腿3 不靠 `role.model` seam**：没复用 SubagentManager（`providerFor` 永远回退父 provider、registry 是父∩交集非全新只读、child 继承父 ctx/gate 三处冲突）。`runVerifier` 是**独立函数**复用 runAgent：自建 messages + `buildDefaultRegistry().subset(['read','grep'])`（+ 只读断言）+ 注入第二 provider + 独立 bus + 无 store + 无 gate + 信号透传。第二模型靠 `resolveVerifierConfig` 读 `ARK_VERIFIER_MODEL` → `createProvider({...config, model})`；**verifier≠builder 断言只能在 config 字符串层**（`ModelProvider` 无 model id getter，两硬事实之一）。
@@ -96,7 +106,8 @@
 - **pinned 推导用 builder model**：`derivePinnedRequirements` 一次 LLM 调用拆 objective、落盘不可变。空清单 → goal-cli **启动期 fail-closed**（拒绝启动、不烧预算，因 decideVerdict 第7步 `pinned.length>0` 守门使空清单 verified 不可达）。
 - **最高优先级不变量**：腿3 启用 + 两腿干净 ⇒ runVerifier 永返回 report（失败合成 couldNotVerify、返回类型非可选）⇒ decideVerdict 永不回落 `report===undefined → verified`。改接线别破（回归测试 `NEVER falls through to verified when the verifier fails`）。
 - **腿2 检测范围**：全工作区 diff vs baseline，查 ① 测试文件（删/skip/focus 标记/数量骤降）② **check-oracle 文件**（package.json/lockfile/tsconfig/eslint/vitest/jest config 被改 → tamper，堵「把 `npm test` 改成 `exit 0`」中性化验收 oracle，H-1）。git diff 失败 → fail-closed。**判不了**：语义弱化（`toBe`→`toBeDefined`）——当前裁判纯文件取证对「跑出来才知道」的弱化也判不了，已知缺口。无 baseline（非 git 仓）→ 腿2 inert。
-- **腿3 残留 LOW**（接受/记缺口）：① 同族「不同模型」独立性弱（已降为 nice-to-have，载重靠腿1/腿2 无模型 + 上下文隔离 + 独立 prompt，checklist #4）；② 裸高熵明文密钥 redactSecrets 盖不住（只覆盖 sk-/Bearer/key=val），但裁判读不到密钥文件（工具层拦）且 full report 只进本地 goalStore；③ held-out 隐藏断言腿未做（checklist #1，下一步）。
+- **held-out 腿保密**：`heldOutCommands` 来自 config（CLI 经 `JARVIS_HELDOUT_CHECKS_FILE`），**绝不沾 claim、绝不进 builder 上下文**。leg1 绿才跑（红已拒、省一次跑）；失败的 continuation 只给**泛化**提示（不含命令/输出），否则 builder 能逐一规避。秘密文件 + 引用的测试须放 cwd 外（builder read/grep confined cwd）——harness 只保证不泄露，文件位置是 goal-setter 责任。缺席 = 显式弱置信（CLI 声明）。
+- **腿3 残留 LOW**（接受/记缺口）：① 同族「不同模型」独立性弱（已降为 nice-to-have，载重靠腿1/腿2 无模型 + 上下文隔离 + 独立 prompt，checklist #4）；② 裸高熵明文密钥 redactSecrets 盖不住（只覆盖 sk-/Bearer/key=val），但裁判读不到密钥文件（工具层拦）且 full report 只进本地 goalStore。
 - **腿1 不过 gate**：harness 自跑配置固定命令（非模型注入），过 gate 反而会在验收中弹审批/被拒。安全前提是 checkCommands 不可被 builder 影响（代码硬保证）。
 - **goal 模式的 builder write/bash 仍过 gate**：`npm run goal` 用交互 approver；自主性受 approval 约束（无人值守白名单是 Phase D 后续 + memory `restore-bash-session-allow`）。`demo:d1` 用自动 approver 演示。
 - **熔断本批只连续阈值**（无滑窗）：Part7 §6.1 的滑窗在本状态机可达性存疑，故只留连续 3 阈值。
@@ -107,8 +118,8 @@
 src/capabilities/goal/
   goal.ts            # Goal(+pinned)/状态机/budget/checks/VerifierReport(腿3) 类型
   state.ts           # advanceGoalState 纯函数（assertNever）
-  verdict.ts         # decideVerdict 纯函数（两腿 + report===undefined 回退逐字不动 + §3.2 八步三态 + fail-closed 兜底）
-  checks.ts          # runDeterministicChecks(腿1 真退出码) + 纯 classifyTestDiff(腿2)
+  verdict.ts         # decideVerdict 纯函数（腿1/2/held-out 确定性闸 + report===undefined 回退逐字不动 + §3.2 八步三态 + fail-closed 兜底）
+  checks.ts          # runDeterministicChecks(腿1 真退出码 + held-out 秘密命令) + 纯 classifyTestDiff(腿2)
   verifier.ts        # 腿3：runVerifier(复用 runAgent/只读/第二 provider/永返回 report) + parseVerifierReport + VERIFIER_PROMPT
   requirements.ts    # derivePinnedRequirements(builder model 拆 objective → pinned，失败 [])
   verifier-monitor.ts# VerifierMonitor(CNV 率滑窗 → degraded)
@@ -118,23 +129,24 @@ src/capabilities/goal/
 src/core/model/config.ts        # loadDoubaoConfig + resolveVerifierConfig(config 层独立性断言)
 src/core/tools/run-command.ts   # 从 bash.ts 抽的 spawn/超时树杀/结构化退出码 runner
 src/runtime/event-bus.ts        # +guardrail halt reason、+verdict/goal_state 事件
-src/surfaces/cli/goal-cli.ts    # npm run goal（交互 approver + baseline + ARK_VERIFIER_MODEL + derive + 空 pinned fail-closed）
+src/surfaces/cli/goal-cli.ts    # npm run goal（交互 approver + baseline + ARK_VERIFIER_MODEL + derive + 空 pinned fail-closed + JARVIS_HELDOUT_CHECKS_FILE）
 src/surfaces/cli/render.ts      # +verdict/goal_state 渲染
 scripts/d1-demo.ts              # 真连 Doubao 的确定性两腿活体验证
 scripts/d2-demo.ts              # 真连双 Doubao 模型的腿3 活体验证（需 ARK_VERIFIER_MODEL）
+scripts/d3-demo.ts              # held-out 腿活体（Phase A 真活 verified）+ 确定性抓假（Phase B faked → rejected）
 test/capabilities/goal/         # state/verdict/goal-store/checks/goal-loop/verifier/requirements/verifier-monitor
 ```
 
 ## 怎么运行
 
-- 四关卡：`npm run typecheck / lint / test / build`（492 测试）
-- goal 模式（两腿）：`npm run goal -- "<objective>"`（交互审批 + 自主验收，需 `ARK_API_KEY`）
-- goal 模式（三腿）：同上，另设 `ARK_VERIFIER_MODEL=<不同的 Doubao/DeepSeek 模型 id>` 启用独立裁判
-- 活体 demo：`npm run demo:d1`（确定性两腿）；`npm run demo:d2`（双模型腿3，需 `ARK_VERIFIER_MODEL`）
+- 四关卡：`npm run typecheck / lint / test / build`（509 测试）
+- goal 模式（确定性两腿）：`npm run goal -- "<objective>"`（交互审批 + 自主验收，需 `ARK_API_KEY`）
+- goal 模式（+ held-out）：另设 `JARVIS_HELDOUT_CHECKS_FILE=<文件，一行一条秘密校验命令；放 cwd 外>`
+- goal 模式（+ 腿3 裁判）：另设 `ARK_VERIFIER_MODEL=<不同的 Doubao/DeepSeek 模型 id>`
+- 活体 demo：`npm run demo:d1`（两腿）；`npm run demo:d2`（双模型腿3，需 `ARK_VERIFIER_MODEL`）；`npm run demo:d3`（held-out）
 
 ## 下一步（Phase D 后续 / 腿3 加固）
 
-- **held-out 隐藏断言腿**（checklist #1）：当前「三件套」实为腿1 重跑既有 check + 腿2 篡改 + 腿3 语义裁判；真正的 held-out（builder 没见过的隐藏断言）未做。可加一条 harness 侧 held-out，或显式标已知风险并据此加权人工抽查。
 - **腿3 能力扩展**（checklist #6）：要裁判驱动真实 app / 跑只读命令，加沙箱化只读 exec / BrowseReadOnly 工具并按 network-capable 收紧；当前纯文件取证、运行态需求恒列 couldNotVerify。
 - **主观/客观分流确定性化**（checklist #2）：当前 pinned 全交裁判逐条打分；可加 harness 钉死的「有可执行验收命令 → 客观、不 spawn」分流以省算力。
 - **Hooks**（把自动化挂到时刻）、**skill 自动沉淀**（人审 gate）、**Loop 调度**（cron 长跑）、**多模态**、**shadow-git**、**bash 白名单**（无人值守自主，配 memory `restore-bash-session-allow`）。

@@ -7,8 +7,10 @@
  * every path (including the guardrails) is unit-testable.
  *
  * Three contracts the tests pin:
- *  - **deterministic legs first**: leg 1/leg 2 decide rejection BEFORE anything subjective, so a
- *    prompt-injected report can never bypass them ("judge ≠ player" — the unbypassable layer).
+ *  - **deterministic legs first**: leg 1 / leg 2 / the held-out leg decide rejection BEFORE anything
+ *    subjective, so a prompt-injected report can never bypass them ("judge ≠ player" — the unbypassable
+ *    layer). The held-out leg is the secret hidden-assertion check: a builder that wrote weak tests to
+ *    pass leg 1 is caught here, by assertions it never saw.
  *  - **fail-closed default**: `verified` is only ever an EXPLICIT branch (deterministic legs clean
  *    AND — with a report — every requirement proves+matched, feature works, list non-empty, nothing
  *    could-not-verify). Any unrecognized combination falls to `couldNotVerify`; `verified` is never a
@@ -43,8 +45,19 @@ export function decideVerdict(
     };
   }
 
-  // Both deterministic legs clean. With NO leg-3 report (no verifier configured), that is the ONLY
-  // path to verified — an explicit branch, never a fallback. UNCHANGED from batch 1.
+  // Held-out leg — the goal-setter's SECRET hidden assertions (the builder never sees them) failed.
+  // This is the "feature faked + self-written weak tests pass leg 1" catch. The rationale is DELIBERATELY
+  // generic: it must not name the held-out command/assertion, or the builder could special-case it.
+  if (checks.heldOut && !checks.heldOut.passed) {
+    return {
+      outcome: 'rejected',
+      rationale: 'held-out hidden checks failed — the implementation does not actually satisfy the requirement',
+    };
+  }
+
+  // All deterministic legs clean (leg 1 + leg 2 + held-out). With NO leg-3 report (no verifier
+  // configured), that is the ONLY path to verified — an explicit branch, never a fallback. The no-report
+  // body is UNCHANGED from batch 1; it is simply now additionally gated by the held-out leg above.
   if (report === undefined) {
     return {
       outcome: 'verified',
