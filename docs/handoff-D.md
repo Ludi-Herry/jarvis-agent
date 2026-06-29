@@ -58,7 +58,7 @@
 
 ## gotcha / 已知小账
 
-- **腿3 LLM 裁判未做**：verifier 角色 spawn / prompt / policy / couldNotVerify 率监控 / pinned requirements 推导都 deferred。seam：`SubagentManager.providerFor` 的 `role.model` 只是 metadata、永远回退父 provider——腿3 用「另一个 Doubao 模型 ID」不能靠 role.model，要注入第二个 `createProvider(config2)` + 断言 verifier≠builder。
+- **腿3 LLM 裁判未做**：verifier 角色 spawn / prompt / policy / couldNotVerify 率监控 / pinned requirements 推导都 deferred。seam：`SubagentManager.providerFor` 的 `role.model` 只是 metadata、永远回退父 provider——腿3 用「另一个 Doubao 模型 ID」不能靠 role.model，要注入第二个 `createProvider(config2)` + 断言 verifier≠builder。**实现前逐条过 `docs/phase-D-leg3-checklist.md`**（Part7 审查 + D5 oracle-tamper 提炼的 5 个坑）。
 - **腿2 检测范围**：全工作区 diff vs baseline，查 ① 测试文件（删/skip/focus 标记/数量骤降）② **check-oracle 文件**（package.json/lockfile/tsconfig/eslint/vitest/jest config 被改 → tamper，堵「把 `npm test` 改成 `exit 0`」中性化验收 oracle，H-1）。git diff 失败 → fail-closed。**判不了**：语义弱化（`toBe`→`toBeDefined`）+ check scripts 间接引用的子脚本——已知缺口，腿3/后续补。无 baseline（非 git 仓）→ 腿2 inert。
 - **腿1 不过 gate**：harness 自跑配置固定命令（非模型注入），过 gate 反而会在验收中弹审批/被拒。安全前提是 checkCommands 不可被 builder 影响（代码硬保证）。
 - **goal 模式的 builder write/bash 仍过 gate**：`npm run goal` 用交互 approver；自主性受 approval 约束（无人值守白名单是 Phase D 后续 + memory `restore-bash-session-allow`）。`demo:d1` 用自动 approver 演示。
