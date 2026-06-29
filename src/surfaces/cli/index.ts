@@ -16,6 +16,7 @@ import {
   createBashTool,
   createProvider,
   loadDoubaoConfig,
+  scrubProviderKeyFromEnv,
   type Message,
 } from '../../core/index.js';
 import { SkillRegistry, loadRoster, loadRuleLayers, type ReadText } from '../../capabilities/index.js';
@@ -64,6 +65,9 @@ program
 
     // Thinking off keeps the tool loop clean and avoids hidden reasoning-token cost.
     const provider = createProvider(config).withThinking('off');
+    // The provider captured the key; remove it from the env so the model-facing bash can't read it back
+    // via /proc/<pid>/environ (Linux). Done before registering bash below.
+    scrubProviderKeyFromEnv();
     // bash is safe to register here because the REPL always runs it behind the PermissionGate (B4).
     const tools = buildDefaultRegistry();
     tools.register(createBashTool());

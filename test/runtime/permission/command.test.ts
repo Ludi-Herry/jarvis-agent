@@ -452,10 +452,26 @@ describe('analyzeCommand — codex round-3 (AST) fixes', () => {
   it('does NOT over-block text/pattern args that merely look like a secret (false-positive fix)', () => {
     expect(analyze('echo .env').sensitive).toBe(false);
     expect(analyze('echo .env').danger).toBe(false);
-    expect(analyze('grep .env README.md').sensitive).toBe(false);
+    expect(analyze('grep .env README.md').sensitive).toBe(false); // .env is the PATTERN, README.md the file
     expect(analyze('git commit -m ".env"').sensitive).toBe(false);
     expect(analyze('printf .env').sensitive).toBe(false);
     expect(analyze('cat README.md').sensitive).toBe(false); // a real file-reader on a non-secret
+  });
+
+  it('flags grep READING a secret file — the pattern operand is skipped, the file operands are scanned', () => {
+    // codex HIGH: `grep` was not a file-path program, so `grep -a . .env` read .env past the analyzer.
+    expect(analyze('grep -a . .env').sensitive).toBe(true);
+    expect(analyze("grep -a '^ARK_API_KEY=' .env").sensitive).toBe(true);
+    expect(analyze('grep pat config/.env').sensitive).toBe(true);
+    expect(analyze('rg secret .env').sensitive).toBe(true);
+    expect(analyze('grep TODO src/app.ts').sensitive).toBe(false); // a normal grep over a non-secret file
+  });
+
+  it('flags reading a process env block via /proc/<pid>/environ (the bash-env scrub bypass)', () => {
+    // Both reviewers' converged vector: read the parent node env (incl. ARK_API_KEY) on Linux.
+    expect(analyze('cat /proc/self/environ').sensitive).toBe(true);
+    expect(analyze('strings /proc/$PPID/environ').sensitive).toBe(true);
+    expect(analyze('grep ARK /proc/1234/environ').sensitive).toBe(true);
   });
 
   it('still flags a real file-reader on a literal secret', () => {

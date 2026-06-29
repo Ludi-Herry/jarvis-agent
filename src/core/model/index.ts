@@ -23,4 +23,10 @@ export {
   DEFAULT_ARK_BASE_URL,
   DOUBAO_SEED_PRO_CAPABILITY,
 } from './doubao-provider.js';
-export { loadDoubaoConfig, resolveVerifierConfig, DEFAULT_ARK_MODEL, type VerifierResolution } from './config.js';
+export {
+  loadDoubaoConfig,
+  resolveVerifierConfig,
+  scrubProviderKeyFromEnv,
+  DEFAULT_ARK_MODEL,
+  type VerifierResolution,
+} from './config.js';

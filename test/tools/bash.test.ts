@@ -92,6 +92,25 @@ describe('bash tool — execution', () => {
     }
   });
 
+  it('scrubs credential-shaped env vars from the model-facing shell (agent cannot echo a key)', async () => {
+    // The bash tool is model-facing: a credential in the harness env (ARK_API_KEY, *_TOKEN, …) must NOT
+    // be readable via `echo $X`. PATH must survive so the shell still works.
+    const prev = process.env.JARVIS_TEST_SECRET_TOKEN;
+    process.env.JARVIS_TEST_SECRET_TOKEN = 'LEAKME-DO-NOT-EXFIL';
+    try {
+      const out = await bash.run(
+        { command: 'echo "S=[$JARVIS_TEST_SECRET_TOKEN]"; echo "P=[${PATH:+set}]"' },
+        ctx,
+      );
+      expect(out.content).toContain('S=[]'); // the secret-shaped var is gone from the child env
+      expect(out.content).not.toContain('LEAKME-DO-NOT-EXFIL');
+      expect(out.content).toContain('P=[set]'); // PATH survives → the shell still works
+    } finally {
+      if (prev === undefined) delete process.env.JARVIS_TEST_SECRET_TOKEN;
+      else process.env.JARVIS_TEST_SECRET_TOKEN = prev;
+    }
+  });
+
   it('aborts a running command via the signal and settles promptly', async () => {
     const ac = new AbortController();
     const start = Date.now();

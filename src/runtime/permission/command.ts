@@ -225,11 +225,23 @@ function classifyWords(descs: WordDesc[], depth: number): Verdict {
   const args = argDescs.map((d) => d.value);
 
   let v: Verdict = clean;
-  // Secret paths: program-aware so `echo .env` / `grep .env` (text/pattern, not a path read) aren't
-  // over-blocked, while a file-path program reading/writing a secret is caught. Redirect WRITE
-  // targets and declaration builtins (`declare f=.env`) are handled in walkSource.
+  // Secret paths: program-aware so `echo .env` (text, not a path read) isn't over-blocked, while a
+  // file-path program reading/writing a secret is caught. Redirect WRITE targets and declaration
+  // builtins (`declare f=.env`) are handled in walkSource.
   if (FILE_PATH_PROGS.has(prog)) {
     for (const d of argDescs) v = combine(v, secretOfWord(d));
+  } else if (GREP_PROGS.has(prog)) {
+    // grep PATTERN FILE…: the FIRST non-flag operand is the search PATTERN (text, not a path); the rest
+    // are files grep READS. Scan only the files — so `grep .env README` (.env is the pattern) isn't
+    // over-blocked while `grep -a . .env` / `grep x /proc/$PPID/environ` (reads a secret) is caught.
+    let sawPattern = false;
+    for (const d of argDescs) {
+      if (!sawPattern) {
+        if (!d.value.startsWith('-')) sawPattern = true; // this operand is the pattern — skip it
+        continue;
+      }
+      v = combine(v, secretOfWord(d));
+    }
   }
 
   // A destructive mutator with an unresolved $arg hides its flag/target → fail closed.
@@ -429,6 +441,10 @@ const FILE_PATH_PROGS = new Set([
   'gunzip', 'bzip2', 'xz', 'zcat', 'scp', 'rsync', 'sha1sum', 'sha256sum', 'sha512sum', 'md5sum',
   'openssl', 'gpg', 'jq', 'yq', 'vim', 'vi', 'view', 'nvim', 'emacs', 'nano', 'code', 'wc',
 ]);
+
+/** grep family — like {@link FILE_PATH_PROGS} but the FIRST non-flag operand is the search PATTERN, not
+ *  a file; only the operands AFTER it are files read (handled specially in {@link classifyWords}). */
+const GREP_PROGS = new Set(['grep', 'egrep', 'fgrep', 'rg', 'ripgrep']);
 
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 

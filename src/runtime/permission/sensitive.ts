@@ -15,6 +15,7 @@ export const SENSITIVE_PATHS: RegExp[] = [
   /(^|\/)\.ssh(\/|$)/, //         anything under an .ssh directory
   /(^|\/)id_(rsa|dsa|ecdsa|ed25519)(\.|$)/, // ssh private keys (and .pub — conservative)
   /(^|\/)credentials?(\.|$)/, //  aws/gcloud credential(s) files (singular OR plural, e.g. credential.json)
+  /(^|\/)proc\/[^/]*\/(environ|cmdline)$/, // /proc/<pid>/environ — a process's env block (holds API keys)
   /(^|\/)\.\*$/, //               a bare dotfile glob (`.*`) expands to include secrets like .env
 ];
 

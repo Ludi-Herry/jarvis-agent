@@ -30,6 +30,18 @@ export function loadDoubaoConfig(env: NodeJS.ProcessEnv = process.env): DoubaoCo
   };
 }
 
+/**
+ * After the provider has been built (it captured the key into its HTTP client), delete the API key from
+ * the process environment. The child-env scrub only cleans a model-facing shell's COPY of the env; the
+ * long-lived PARENT (node) env still holds the key, so on Linux a model-facing bash could read it back
+ * via `/proc/<pid>/environ` or `ps e`. Removing it at the source closes that on every platform. Config
+ * ids (`ARK_MODEL`/`ARK_BASE_URL`/`ARK_VERIFIER_MODEL`) are NOT secrets and stay (resolveVerifierConfig
+ * still needs `ARK_VERIFIER_MODEL`). Call it right after `createProvider`, before any model-facing bash.
+ */
+export function scrubProviderKeyFromEnv(env: NodeJS.ProcessEnv = process.env): void {
+  delete env.ARK_API_KEY;
+}
+
 /** Whether leg 3 (the independent LLM judge) is enabled, and if so with what config. */
 export type VerifierResolution =
   | { enabled: true; config: DoubaoConfig }

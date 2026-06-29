@@ -9,7 +9,9 @@
  * Safety (unchanged from bash.ts B3): confined cwd, timeout + tree-kill (taskkill /T on Windows,
  * SIGKILL the process group on POSIX), bounded capture, NEVER rejects, and never depends on the kill
  * succeeding — force-resolve within {@link KILL_GRACE_MS} so a kill-resistant/detached process can't
- * wedge the caller. The non-interactive startup hooks (`BASH_ENV`/`ENV`) are stripped from the env.
+ * wedge the caller. The non-interactive startup hooks (`BASH_ENV`/`ENV`) are stripped from the env;
+ * and the MODEL-FACING bash tool additionally passes `scrubSecretEnv` so credential-shaped vars
+ * (`ARK_API_KEY`, `*_TOKEN`, …) are removed — the agent can't `echo` a key out of its own environment.
  */
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -29,6 +31,14 @@ export interface ExecResult {
   spawnError?: string;
 }
 
+export interface RunCommandOptions {
+  /** Scrub secret-shaped env vars (API keys, tokens, `ARK_*`) from the child shell. Set ONLY for the
+   *  MODEL-FACING bash tool, so the agent can't `echo $ARK_API_KEY` and exfil it. Harness-run commands
+   *  (leg-1/held-out checks, git baseline — config-sourced, not model-chosen) omit this and keep the
+   *  full env, since their commands are trusted and may legitimately need it. */
+  scrubSecretEnv?: boolean;
+}
+
 /** Spawn `shellPath -c command` in `cwd`, capture merged stdout+stderr (capped at `maxOutputChars`),
  *  and kill the whole tree if it outlives `timeoutMs` or `signal` aborts. Never rejects. */
 export function runCommand(
@@ -38,6 +48,7 @@ export function runCommand(
   timeoutMs: number,
   maxOutputChars: number,
   signal?: AbortSignal,
+  options?: RunCommandOptions,
 ): Promise<ExecResult> {
   return new Promise<ExecResult>((resolve) => {
     let output = '';
@@ -53,7 +64,7 @@ export function runCommand(
     const child = spawn(shellPath, ['-c', command], {
       cwd,
       windowsHide: true,
-      env: shellEnv(),
+      env: shellEnv(options?.scrubSecretEnv),
       detached: process.platform !== 'win32',
     });
 
@@ -132,12 +143,39 @@ function killTree(pid: number | undefined): void {
 }
 
 /** The child shell's env with the startup-file hooks stripped: a non-interactive bash sources
- *  `$BASH_ENV` (POSIX sh sources `$ENV`) BEFORE `-c <command>` — code never parsed/approved. */
-function shellEnv(): NodeJS.ProcessEnv {
+ *  `$BASH_ENV` (POSIX sh sources `$ENV`) BEFORE `-c <command>` — code never parsed/approved. When
+ *  `scrubSecrets` is set (the model-facing bash tool), credential-shaped vars are also removed so the
+ *  agent can't read a key out of its own environment. */
+function shellEnv(scrubSecrets = false): NodeJS.ProcessEnv {
   const env = { ...process.env };
   delete env.BASH_ENV;
   delete env.ENV;
+  if (scrubSecrets) {
+    for (const name of Object.keys(env)) {
+      if (isSecretEnvName(name)) delete env[name];
+    }
+  }
   return env;
+}
+
+/**
+ * Whether an env var NAME looks credential-bearing — scrubbed from the MODEL-FACING shell so the agent
+ * can't `echo $ARK_API_KEY` (or any token/secret) and exfil it. Conservative on purpose: over-scrubbing
+ * the model shell is safe (it's gated + cwd-confined and never needs these), under-scrubbing leaks a
+ * key. Keeps innocuous vars (PATH, HOME, LANG, TMP, SSH_AUTH_SOCK) since none match.
+ */
+export function isSecretEnvName(name: string): boolean {
+  const n = name.toUpperCase();
+  if (n.startsWith('ARK_')) return true; // this app's provider config + key — the model shell never needs it
+  // unambiguous credential substrings
+  if (/SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIAL|APIKEY|AUTHORIZATION|PRIVATE_KEY|ACCESS_KEY/.test(n)) return true;
+  // credential-shaped name COMPONENTS (avoids PATH, MONKEY, TURNKEY, CONNECTIONS_COUNT)
+  if (/(^|_)(KEY|PAT|DSN)($|_)/.test(n)) return true;
+  // connection strings carry inline credentials (e.g. postgres://user:pass@host)
+  if (/(^|_)(DATABASE|DB|MONGODB?|REDIS|POSTGRES(QL)?|MYSQL|MARIADB|AMQP|RABBITMQ|CLICKHOUSE|ELASTIC(SEARCH)?|CONNECTION)_(URL|URI|DSN|CONN|CONNECTION|STRING)/.test(n)) {
+    return true;
+  }
+  return false;
 }
 
 /** Resolve the bash executable. `JARVIS_BASH` wins; on Windows prefer the Git Bash install (the PATH

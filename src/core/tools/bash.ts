@@ -10,7 +10,10 @@
  *
  * The hardened spawn/timeout/tree-kill runner lives in {@link runCommand} (run-command.ts), shared
  * with the goal verifier's leg-1 checks. This tool wraps it model-facing: it surfaces the exit code
- * as a `[exit code: …]` text note (leg 1 reads the structured `code` from runCommand directly).
+ * as a `[exit code: …]` text note (leg 1 reads the structured `code` from runCommand directly), and it
+ * passes `scrubSecretEnv` so credential-shaped env vars (`ARK_API_KEY`, `*_TOKEN`, …) are removed from
+ * the child shell — the agent can't `echo $ARK_API_KEY` out of its own environment (the harness leg-1
+ * checks, being config-sourced and not model-chosen, keep the full env).
  *
  * Target shell is POSIX bash (Git Bash on Windows) — the same shell the B2 analyzer parses for.
  */
@@ -62,7 +65,11 @@ export function createBashTool(options: BashToolOptions = {}): ToolDefinition<{ 
     }),
     run: async ({ command, timeout_ms }, ctx) => {
       const timeout = clamp(timeout_ms ?? defaultTimeout, MIN_TIMEOUT_MS, MAX_TIMEOUT_MS);
-      const res = await runCommand(shellPath, command, ctx.cwd, timeout, maxOutputChars, ctx.signal);
+      // Model-facing: scrub credential-shaped env vars so the agent can't `echo $ARK_API_KEY` and exfil
+      // it. Harness-run checks (leg-1/held-out/git baseline) call runCommand WITHOUT this and keep full env.
+      const res = await runCommand(shellPath, command, ctx.cwd, timeout, maxOutputChars, ctx.signal, {
+        scrubSecretEnv: true,
+      });
 
       if (res.spawnError !== undefined) {
         return { content: '', error: `Failed to start shell (${shellPath}): ${res.spawnError}` };

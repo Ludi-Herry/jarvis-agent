@@ -20,6 +20,7 @@ import {
   loadDoubaoConfig,
   resolveVerifierConfig,
   runCommand,
+  scrubProviderKeyFromEnv,
 } from '../../core/index.js';
 import {
   DefaultPermissionGate,
@@ -68,6 +69,9 @@ async function main(): Promise<void> {
   }
 
   const provider = createProvider(config).withThinking('off');
+  // The provider captured the key; remove it from the env so the goal builder's bash can't read it back
+  // via /proc/<pid>/environ (Linux). Keeps ARK_VERIFIER_MODEL (read by resolveVerifierConfig below).
+  scrubProviderKeyFromEnv();
   const cwd = process.cwd();
   const shellPath = defaultShellPath();
 

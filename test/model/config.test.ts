@@ -3,6 +3,7 @@ import {
   DEFAULT_ARK_MODEL,
   loadDoubaoConfig,
   resolveVerifierConfig,
+  scrubProviderKeyFromEnv,
 } from '../../src/core/model/config.js';
 import { DEFAULT_ARK_BASE_URL } from '../../src/core/model/doubao-provider.js';
 import type { DoubaoConfig } from '../../src/core/model/types.js';
@@ -73,5 +74,21 @@ describe('resolveVerifierConfig — leg 3 enablement + config-layer independence
 
   it('treats a blank verifier model as unset', () => {
     expect(resolveVerifierConfig({ ARK_VERIFIER_MODEL: '   ' }, builder).enabled).toBe(false);
+  });
+});
+
+describe('scrubProviderKeyFromEnv — remove the captured key from the process env', () => {
+  it('deletes ARK_API_KEY but keeps the non-secret config ids (resolveVerifierConfig still needs them)', () => {
+    const env: NodeJS.ProcessEnv = {
+      ARK_API_KEY: 'sk-live-secret',
+      ARK_MODEL: 'doubao-builder',
+      ARK_BASE_URL: 'https://example.test/v1',
+      ARK_VERIFIER_MODEL: 'doubao-judge',
+    };
+    scrubProviderKeyFromEnv(env);
+    expect(env.ARK_API_KEY).toBeUndefined();
+    expect(env.ARK_MODEL).toBe('doubao-builder');
+    expect(env.ARK_BASE_URL).toBe('https://example.test/v1');
+    expect(env.ARK_VERIFIER_MODEL).toBe('doubao-judge');
   });
 });
