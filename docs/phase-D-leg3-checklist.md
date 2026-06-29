@@ -2,6 +2,14 @@
 
 > **来源**：2026-06-29 对调研 Part7（Guardian 验收设计）的对抗式审查 + D5 实战抓到的 oracle-tamper（HIGH）。下文 F 编号对应 2026-06-29 当时的 Part7 版本；Part7 后续若修订，需重新对位。
 > **用法**：腿3 当前 deferred。动工前/中逐条对照，每条配「怎么验证满足了」。目的是让腿3 一次做对，避开 Part7 设计稿里已暴露的漏洞，省掉「做完→审出问题→返工」。
+
+> **落地状态（2026-06-29 腿3 已实现，D6–D9）**：5 条全部对照执行，落地与偏差如下。
+> - **#1 held-out**：⚠️ **未做**（显式标已知风险）。当前三件套 = 腿1 重跑既有 check + 腿2 篡改 + 腿3 语义裁判；真正 held-out 隐藏断言留下一步。
+> - **#2 主客观分流**：◐ **部分**。当前所有 pinned 都交裁判逐条打分（裁判不可缩小清单——分流的「防作弊覆盖面」目的已达）；「有可执行验收命令→客观不 spawn」的省算力分流未做（下一步）。
+> - **#3 熔断 couldNotVerify 归属**：✅ 延续 D3 取舍——**只留连续 3 阈值、放弃滑窗**（couldNotVerify→blocked 已交人、不入窗）；腿3 reject 真触发熔断有 integration 单测。另加 `VerifierMonitor` 管 couldNotVerify **率**监控（与熔断正交）。
+> - **#4 不同模型**：✅ 降为 nice-to-have；载重独立性靠腿1/腿2（无模型）+ 上下文隔离（runVerifier 不喂 builder transcript）+ 独立 prompt；`resolveVerifierConfig` 同模型→不启用 + 告警。已实测同族(2.0 vs 2.1)与跨家族(DeepSeek-V4)均跑通。
+> - **#5 oracle 篡改检测**：✅ D5 已修并延续（腿2 含 check-oracle 文件）。policy.md 本实现未引入（裁判 prompt 内联固定，无外部可改 policy 文件），故「policy.md 放宽」攻击面不存在。
+> - **#6 能力边界**：✅ 裁判定死为**纯文件取证**（read/grep），prompt 与白名单一致、运行态需求恒列 couldNotVerify；健康监控降级为「告警事件 + park」（无自动换模型，删自动表述）。
 > **背景**：当前 verified = 确定性两条腿（腿1 四关卡真退出码 + 腿2 测试篡改检测）。腿3 = 对主观项 spawn 独立只读 LLM 裁判。下列 5 条是腿3 设计/实现的已知坑。
 
 ## 总原则
@@ -54,7 +62,7 @@
 
 ---
 
-## 腿3 落定后的收尾（别忘）
+## 腿3 落定后的收尾
 
-- 把腿3 的实际落地结论**回填调研 Part7**（标注实际选择 vs 设计稿差异）——这是之前规划里的「批3」。
-- 做 **①**：对验收/goal 子系统 + 已稳定模块的安全面做一轮（对抗式）重审。
+- ✅ **实际落地 vs Part7 设计差异**：已记在本文件顶部「落地状态」段（逐 F-item）+ `docs/handoff-D.md` 的 D9 独立核查结论。**没有回填知识库 Part7 原文**——它在 `H:\LLM本地知识库\采集\` 里，按知识库自身 AGENTS.md 是**只读证据层**（AI 不改）。要把腿3 落地消化成知识库 Wiki 页是一次 ingest 操作，需用户显式发起（「存进知识库」）。设计 vs 现实的权威记录在本仓库（本文件 + handoff）。
+- ✅ **做 ①**：D9 已对验收/goal 子系统做对抗式重审（codex gpt-5.5 xhigh + 独立 Claude 子代理两裁判），收敛在 runVerifier 超时缺口 + credential 单数漏拦，均已修，见 `docs/security-review-baseline.md` 的「Phase D 腿3 轮」。

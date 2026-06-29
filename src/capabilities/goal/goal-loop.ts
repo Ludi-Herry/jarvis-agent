@@ -20,18 +20,23 @@ import type { EventBus } from '../../runtime/event-bus.js';
 import type { SessionStore } from '../../runtime/session/session-store.js';
 import type { Message } from '../../core/types.js';
 import { type AgentContext, type RunOutcome, runAgent } from '../../core/loop/run-agent.js';
+import { redactSecrets } from '../../core/model/errors.js';
 import { decideVerdict } from './verdict.js';
 import { advanceGoalState } from './state.js';
 import { DEFAULT_CHECK_COMMANDS, runDeterministicChecks, type CheckDeps } from './checks.js';
 import { FileGoalStore, assertObjectiveUnchanged, hashObjective } from './goal-store.js';
 import { createUpdateGoalTool, takeClaim, type ClaimSlot } from './update-goal-tool.js';
+import { couldNotVerifyReport, runVerifier as defaultRunVerifier } from './verifier.js';
+import { VerifierMonitor } from './verifier-monitor.js';
 import type {
   DeterministicChecks,
   Goal,
   GoalBudget,
   GoalState,
+  PinnedRequirement,
   TestBaseline,
   Verdict,
+  VerifierReport,
 } from './goal.js';
 
 /** Consecutive rejects before the breaker halts the loop (borrowed A=3; Part7 §6.1). The sliding
@@ -63,6 +68,10 @@ export interface GoalSpec {
   budget: GoalBudget;
   /** Leg-2 baseline, snapshotted by the caller at creation (undefined → leg 2 inert). */
   baseline?: TestBaseline;
+  /** Harness-pinned requirement list (leg 3), derived by the caller at creation. Omitted/empty →
+   *  batch-1 deterministic-only (no verifier). The caller fail-closes on empty WHEN it configures a
+   *  verifier, since decideVerdict step 5 makes verified unreachable for an empty list. */
+  pinned?: PinnedRequirement[];
 }
 
 export interface GoalRunDeps {
@@ -83,11 +92,24 @@ export interface GoalRunDeps {
   perRoundMaxTurns: number;
   /** Fixed check commands (leg 1). NEVER sourced from the builder's claim. Defaults to the four gates. */
   checkCommands?: string[];
+  /** Leg 3: the SECOND (independent, different-model) provider. Present → leg 3 runs after the
+   *  deterministic legs pass; absent → batch-1 deterministic-only (decideVerdict's no-report path). */
+  verifierProvider?: ModelProvider;
+  /** The judge's per-run turn ceiling (read a few files, then report). Defaults to {@link DEFAULT_VERIFIER_MAX_TURNS}. */
+  verifierMaxTurns?: number;
   signal?: AbortSignal;
-  /** Injected for tests; default {@link runAgent} / {@link runDeterministicChecks}. */
+  /** Injected for tests; default {@link runAgent} / {@link runDeterministicChecks} / {@link defaultRunVerifier}. */
   run?: (ctx: AgentContext) => Promise<RunOutcome>;
   check?: (deps: CheckDeps, baseline?: TestBaseline) => Promise<DeterministicChecks>;
+  runVerifier?: (
+    objective: string,
+    pinned: PinnedRequirement[],
+    deps: { verifierProvider: ModelProvider; cwd: string; maxTurns: number; signal?: AbortSignal },
+  ) => Promise<VerifierReport>;
 }
+
+/** Default judge turn ceiling — it should read a handful of files and report, not loop. */
+const DEFAULT_VERIFIER_MAX_TURNS = 12;
 
 export interface GoalRunResult {
   goal: Goal;
@@ -99,9 +121,12 @@ export interface GoalRunResult {
 export async function runGoal(spec: GoalSpec, deps: GoalRunDeps): Promise<GoalRunResult> {
   const run = deps.run ?? runAgent;
   const check = deps.check ?? runDeterministicChecks;
+  const runVerifierFn = deps.runVerifier ?? defaultRunVerifier;
+  const monitor = new VerifierMonitor();
   const stamp = (): string => new Date().toISOString();
 
   const objectiveHash = hashObjective(spec.objective);
+  const pinned: PinnedRequirement[] = spec.pinned ?? [];
   let goal: Goal = {
     id: spec.id,
     objective: spec.objective,
@@ -109,6 +134,7 @@ export async function runGoal(spec: GoalSpec, deps: GoalRunDeps): Promise<GoalRu
     state: 'active',
     budget: spec.budget,
     testBaseline: spec.baseline,
+    pinned,
     sessionId: spec.sessionId,
     createdAt: stamp(),
   };
@@ -118,6 +144,7 @@ export async function runGoal(spec: GoalSpec, deps: GoalRunDeps): Promise<GoalRu
     objectiveHash,
     budget: goal.budget,
     testBaseline: goal.testBaseline,
+    pinned,
     sessionId: goal.sessionId,
     createdAt: goal.createdAt,
   });
@@ -193,9 +220,42 @@ export async function runGoal(spec: GoalSpec, deps: GoalRunDeps): Promise<GoalRu
         },
         goal.testBaseline,
       );
-      const verdict = decideVerdict(checks); // no leg-3 report this batch
+
+      // Leg 3 — the independent judge. Runs ONLY if (a) a verifier provider is configured AND (b) the
+      // deterministic legs are CLEAN. Short-circuit on a failed leg: don't spawn the judge (saves a
+      // round-trip and gives a prompt injection no surface). HARD INVARIANT: when leg 3 is enabled and
+      // legs are clean, runVerifierFn ALWAYS returns a report (its return type is non-optional;
+      // runVerifier synthesizes couldNotVerify on every failure), so decideVerdict gets a report and can
+      // never fall through to the report===undefined → verified batch-1 path.
+      let report: VerifierReport | undefined;
+      const legsClean = checks.objectiveChecksPassed && checks.testTamper === 'clean';
+      if (legsClean && deps.verifierProvider) {
+        deps.bus.emit({ type: 'state', phase: 'leg-3 verifier…' });
+        report = await runVerifierFn(goal.objective, goal.pinned, {
+          verifierProvider: deps.verifierProvider,
+          cwd: deps.cwd,
+          maxTurns: deps.verifierMaxTurns ?? DEFAULT_VERIFIER_MAX_TURNS,
+          signal: deps.signal,
+        });
+      }
+      // Defense in depth (separate statement so TS does not narrow `report` to non-undefined): leg 3 is
+      // enabled but the verifier returned no report — a misbehaving (mis-typed) injected runVerifier.
+      // Fail CLOSED rather than let decideVerdict take the report===undefined → verified path on clean
+      // legs. The default runVerifier never does this (it always synthesizes a report), so this only
+      // backstops a contract violation — the cardinal sin here is a false-positive verified.
+      if (legsClean && deps.verifierProvider && report === undefined) {
+        report = couldNotVerifyReport('leg 3 enabled but the verifier returned no report');
+      }
+      const verdict = decideVerdict(checks, report, goal.pinned);
       finalVerdict = verdict;
-      deps.bus.emit({ type: 'verdict', goalId: goal.id, outcome: verdict.outcome, rationale: verdict.rationale });
+      // Health monitor: feed ONLY rounds where the judge actually ran (a deterministic reject is not
+      // the verifier's verdict). A degraded couldNotVerify rate → a health warning, not silent escalation.
+      if (report !== undefined && monitor.record(verdict.outcome) === 'degraded') {
+        deps.bus.emit({ type: 'state', phase: 'verifier-health-degraded' });
+      }
+      // EventBus stays small + secret-free: only goalId/outcome/rationale, rationale redacted. The FULL
+      // report (evidence/observed) goes to the local goalStore only, never the (potentially remote) bus.
+      deps.bus.emit({ type: 'verdict', goalId: goal.id, outcome: verdict.outcome, rationale: redactSecrets(verdict.rationale) });
       await deps.goalStore?.recordRound({ round, claim, checks, verdict, at: stamp() });
 
       if (verdict.outcome === 'rejected') {
@@ -207,7 +267,7 @@ export async function runGoal(spec: GoalSpec, deps: GoalRunDeps): Promise<GoalRu
         }
         state = advanceGoalState('rejected'); // active — keep going with a continuation
         deps.bus.emit({ type: 'goal_state', goalId: goal.id, state });
-        messages.push({ role: 'user', content: continuationFromChecks(checks) });
+        messages.push({ role: 'user', content: continuationFromVerdict(checks, verdict) });
         continue;
       }
 
@@ -249,19 +309,28 @@ function overBudget(totalTurns: number, totalTokens: number, budget: GoalBudget)
   return false;
 }
 
-/** Build the rejection continuation from the REAL check output, so the builder sees what failed. */
-function continuationFromChecks(checks: DeterministicChecks): string {
-  const failed = checks.results.filter((r) => r.code !== 0);
-  const blocks = failed.map((r) => `$ ${r.command}\n[exit ${r.code ?? 'killed'}]\n${tail(r.output, 1500)}`);
-  const tamper = checks.testTamper !== 'clean' ? `\n[测试改动] ${checks.tamperReason}` : '';
-  return [
+/** Build the rejection continuation from the REAL evidence, so the builder sees what failed. Covers a
+ *  deterministic-leg reject (failed commands / tamper) AND a leg-3 reject (the judge's rationale +
+ *  observed) — the latter only when the deterministic legs were clean, i.e. the reject came from leg 3. */
+function continuationFromVerdict(checks: DeterministicChecks, verdict: Verdict): string {
+  const parts: string[] = [
     '<verification_feedback>',
-    '独立验收未通过。以下检查需要修复（harness 实跑、真实退出码）：',
-    blocks.join('\n\n'),
-    tamper,
-    '修复后再调用 update_goal(complete)。不要删改测试来凑绿——会被检测并拒绝。',
-    '</verification_feedback>',
-  ].join('\n');
+    '独立验收未通过。修复后再调用 update_goal(complete)。不要删改测试或验收脚本/配置来凑绿——会被检测并拒绝。',
+  ];
+  const failed = checks.results.filter((r) => r.code !== 0);
+  if (failed.length > 0) {
+    parts.push('以下检查需要修复（harness 实跑、真实退出码）：');
+    parts.push(failed.map((r) => `$ ${r.command}\n[exit ${r.code ?? 'killed'}]\n${tail(r.output, 1500)}`).join('\n\n'));
+  }
+  if (checks.testTamper !== 'clean') parts.push(`[测试/验收脚本改动] ${checks.tamperReason}`);
+  // A leg-3 reject: deterministic legs were clean, so the rejection is the judge's. Surface its reason
+  // + what it observed so the builder can make a real fix (not a workaround).
+  if (verdict.report && failed.length === 0 && checks.testTamper === 'clean') {
+    parts.push(`[独立裁判] ${verdict.rationale}`);
+    if (verdict.report.observed) parts.push(`实际观察：${tail(verdict.report.observed, 1500)}`);
+  }
+  parts.push('</verification_feedback>');
+  return parts.join('\n');
 }
 
 function tail(s: string, n: number): string {

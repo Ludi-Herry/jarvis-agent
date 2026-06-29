@@ -18,6 +18,7 @@ import {
   createProvider,
   defaultShellPath,
   loadDoubaoConfig,
+  resolveVerifierConfig,
   runCommand,
 } from '../../core/index.js';
 import {
@@ -30,9 +31,12 @@ import {
 import {
   DEFAULT_CHECK_COMMANDS,
   FileGoalStore,
+  derivePinnedRequirements,
   runGoal,
+  type PinnedRequirement,
   type TestBaseline,
 } from '../../capabilities/index.js';
+import type { ModelProvider } from '../../core/index.js';
 import { initialRenderState, renderEvent } from './render.js';
 
 if (existsSync('.env')) process.loadEnvFile('.env');
@@ -99,12 +103,37 @@ async function main(): Promise<void> {
   const sessionStore = new FileSessionStore(join(cwd, 'data', 'sessions', `${sessionId}.jsonl`));
   await sessionStore.writeHeader({ id: sessionId, model: config.model, cwd, startedAt: new Date().toISOString() });
 
+  // Leg 3 (independent LLM judge): enabled only when ARK_VERIFIER_MODEL names a DIFFERENT model. When
+  // enabled, derive the pinned requirement list once (builder model) and fail closed if it comes back
+  // empty — an empty list makes `verified` unreachable, so starting would only burn budget to a block.
+  let verifierProvider: ModelProvider | undefined;
+  let pinned: PinnedRequirement[] = [];
+  const verifier = resolveVerifierConfig(process.env, config);
+  if (verifier.enabled) {
+    verifierProvider = createProvider(verifier.config).withThinking('off');
+    pinned = await derivePinnedRequirements(objective, provider);
+    if (pinned.length === 0) {
+      console.error(
+        '[goal] 腿3 已启用但未能从目标推导出验收清单(pinned requirements 为空)。\n' +
+          '没有可逐条打分的清单,verified 不可达——拒绝启动,避免空烧预算。请把目标写得更具体后重试。',
+      );
+      rl.close();
+      process.exitCode = 1;
+      return;
+    }
+  }
+
   console.log(`Jarvis-Agent · goal 模式 · ${config.model}`);
   console.log(`目标: ${objective}`);
-  console.log(baseline ? `验收: 四关卡 + 测试篡改检测(baseline ${baseline.headSha.slice(0, 8)})\n` : '验收: 四关卡(非 git 仓,跳过篡改检测)\n');
+  console.log(baseline ? `验收: 四关卡 + 测试篡改检测(baseline ${baseline.headSha.slice(0, 8)})` : '验收: 四关卡(非 git 仓,跳过篡改检测)');
+  console.log(
+    verifier.enabled
+      ? `腿3: 独立裁判已启用(${verifier.config.model}),固定验收清单 ${pinned.length} 条\n`
+      : `腿3: 未启用(${verifier.reason})\n`,
+  );
 
   const result = await runGoal(
-    { id, objective, sessionId, budget: { maxRounds: 8 }, baseline },
+    { id, objective, sessionId, budget: { maxRounds: 8 }, baseline, pinned },
     {
       model: provider,
       tools,
@@ -118,6 +147,7 @@ async function main(): Promise<void> {
       builderSystemPrompt: BUILDER_PROMPT,
       perRoundMaxTurns: 16,
       checkCommands: DEFAULT_CHECK_COMMANDS,
+      verifierProvider,
     },
   );
 

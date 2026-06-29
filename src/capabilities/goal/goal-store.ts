@@ -26,6 +26,7 @@ import type {
   GoalBudget,
   GoalClaim,
   GoalState,
+  PinnedRequirement,
   TestBaseline,
   Verdict,
 } from './goal.js';
@@ -39,6 +40,8 @@ export type GoalRecord =
       objectiveHash: string;
       budget: GoalBudget;
       testBaseline?: TestBaseline;
+      /** Harness-pinned requirement list (leg 3), fixed at creation. Absent in pre-leg-3 logs. */
+      pinned?: PinnedRequirement[];
       sessionId: string;
       createdAt: string;
     }
@@ -97,6 +100,8 @@ export function replayGoal(records: GoalRecord[]): { goal?: Goal; rounds: GoalRo
           state: 'active',
           budget: record.budget,
           testBaseline: record.testBaseline,
+          // `?? []` so a pre-leg-3 log (no `pinned`) replays as the batch-1 deterministic-only goal.
+          pinned: record.pinned ?? [],
           sessionId: record.sessionId,
           createdAt: record.createdAt,
         };

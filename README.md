@@ -13,10 +13,10 @@
 | 持久化段（JSONL 落盘 + 断点续跑） | ✅ 完成 |
 | P1/P2 收尾 + 安全加固（cwd 约束 / finishReason / abort / 打包修 / 进程组 kill + 4 个 codex HIGH） | ✅ 完成 |
 | Phase C 多 agent（SubagentManager / roster / 视角评审面板） | ✅ 完成（C1–C5） |
-| Phase D 自主第一批（GoalLoop + 确定性两条腿验收） | ✅ 完成（D1–D5） |
-| **Phase D 后续（腿3 LLM 裁判 / Hooks / skill 自动沉淀 / Loop 调度）** | ⏭️ 下一步 |
+| Phase D 自主（GoalLoop + 三条腿独立验收：确定性两腿 + 独立 LLM 裁判） | ✅ 完成（D1–D9） |
+| **Phase D 后续（held-out 断言腿 / Hooks / skill 自动沉淀 / Loop 调度）** | ⏭️ 下一步 |
 
-`npm run typecheck / lint / test / build` 全绿（**446 测试**）。命令安全根（PermissionGate + 命令解析器 + bash 审批）经**六轮独立 codex 对抗核查**确认无破闸 HIGH（方法 / 严重度基线 / 历史见 `docs/security-review-baseline.md`）。
+`npm run typecheck / lint / test / build` 全绿（**495 测试**）。命令安全根（PermissionGate + 命令解析器 + bash 审批）经**六轮独立 codex 对抗核查**确认无破闸 HIGH；goal 验收子系统（确定性两腿 + 腿3 裁判）另经两轮两裁判核查（方法 / 严重度基线 / 历史见 `docs/security-review-baseline.md`）。
 
 接手入口：
 - **Phase D（自主第一批 / GoalLoop）→ `docs/handoff-D.md`**；
@@ -51,9 +51,9 @@ cp .env.example .env   # 然后编辑 .env 填 ARK_API_KEY
 ```bash
 npm run dev         # 终端 REPL：带权限闸门 + bash + 交互审批 + 会话落盘（需 ARK_API_KEY）。Ctrl-C 中断 / /exit 退出
 npm run resume      # 恢复 data/sessions/ 最近一个会话继续跑
-npm run goal        # goal 模式：npm run goal -- "<objective>" 自主跑到达标自停（确定性两条腿验收）
+npm run goal        # goal 模式：npm run goal -- "<objective>" 自主跑到达标自停（两腿验收；另设 ARK_VERIFIER_MODEL=不同模型 id 启用腿3 独立裁判）
 npm run typecheck   # tsc --noEmit
-npm test            # vitest（446 测试）
+npm test            # vitest（495 测试）
 npm run build       # tsc 产出到 dist/
 npm run lint        # eslint
 npm run demo:a1     # A1：调 Doubao 一句话 → 流式增量 + 聚合 ModelResult
@@ -65,6 +65,7 @@ npm run demo:b3     # B3：bash 安全闭环 + 危险 / 密钥拦截
 npm run demo:c1     # C1：主 agent 派调研专家（能力分发轴，真连 Doubao）
 npm run demo:c2     # C2：视角评审面板（六顶帽并行评审同一产物）
 npm run demo:d1     # D1：自主跑一个 goal 到达标自停（确定性两条腿验收，真连 Doubao）
+npm run demo:d2     # D2：腿3 独立裁判（双模型，第二模型读文件逐条打分 → verdict；需 ARK_VERIFIER_MODEL）
 ```
 
 ## 目录

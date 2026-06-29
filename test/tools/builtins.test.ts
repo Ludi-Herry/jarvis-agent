@@ -30,6 +30,16 @@ describe('readTool', () => {
     expect(out.content).toBe('');
     expect(out.error).toMatch(/Cannot read nope\.txt/);
   });
+
+  it('refuses a singular credential file (credential.json), not just the plural form', async () => {
+    // codex HIGH-2: the secret policy matched `credentials` but not the singular `credential.json`,
+    // so an ungated read (e.g. the leg-3 verifier) could slurp it. The regex now covers credential(s).
+    await writeFile(join(dir, 'credential.json'), 'TOKEN-DO-NOT-LEAK', 'utf8');
+    const out = await readTool.run({ path: 'credential.json' }, ctx);
+    expect(out.content).toBe('');
+    expect(out.error).toMatch(/sensitive/);
+    expect(out.error).not.toContain('DO-NOT-LEAK');
+  });
 });
 
 describe('writeTool', () => {

@@ -14,7 +14,7 @@ export const SENSITIVE_PATHS: RegExp[] = [
   /(^|\/)\.git-credentials$/, //  git stored credentials
   /(^|\/)\.ssh(\/|$)/, //         anything under an .ssh directory
   /(^|\/)id_(rsa|dsa|ecdsa|ed25519)(\.|$)/, // ssh private keys (and .pub — conservative)
-  /(^|\/)credentials(\.|$)/, //   aws/gcloud credentials files
+  /(^|\/)credentials?(\.|$)/, //  aws/gcloud credential(s) files (singular OR plural, e.g. credential.json)
   /(^|\/)\.\*$/, //               a bare dotfile glob (`.*`) expands to include secrets like .env
 ];
 

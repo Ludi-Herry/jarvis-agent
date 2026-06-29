@@ -45,6 +45,10 @@ codex exec -s danger-full-access --skip-git-repo-check -m gpt-5.5 \
 
 ## 历史
 
+### 2026-06-29 · Phase D 腿3 轮(独立 LLM 裁判 / 第二批)
+腿3(独立只读 LLM 裁判)落地后跑的一轮(D6–D9)。**两个独立裁判**——codex(gpt-5.5 xhigh)报 2 HIGH、独立 Claude 子代理报 no-HIGH(确认 12 条不变量未破)——**收敛在同一个超时缺口**:`runVerifier` 无墙钟超时,verifier 模型流卡在 `stream.next()` 时 `maxTurns` 只在轮间生效 → goal 挂死、不能 fail-closed 合成 couldNotVerify。codex 判 HIGH(「挂死非 fail-closed」,腿3 尺子里「挂死」明列 HIGH-3,且 Part7 §6.2 本设计了分级超时),Claude 判 LOW(liveness 非假阳性)。另 codex 独立抓到 `credential` 单数漏拦(`sensitive.ts` 只匹配复数 `credentials`,漏 `credential.json` → ungated 裁判可读送远端模型);Claude 独立抓到 decideVerdict 的 `report===undefined` 边界靠 runVerifier 契约而非边界强制(LOW,不可达 shipped 入口)。三处全部已修 + 触发单测 + post-fix 四关卡(495 测试):① runVerifier `Promise.race` + 复合 abort(父 signal ∪ 120s)超时 → couldNotVerify;② 正则 `credentials?` 覆盖单/复数 + read 拒读单测;③ goal-loop 加 report===undefined 边界防御合成 couldNotVerify。其余不变量(decideVerdict 腿1/2 先判、注入不可绕、自报 verdict 被剥离、空 pinned verified 不可达、registry 只读、redact、独立性 config 断言、熔断真接线、最高优先级不变量 runVerifier 永返回 report)两裁判均确认未破。
+- **印证**:腿3 的 fail-closed 不只「判定方向对」(永不假阳性 verified),还得保证「有限时间内一定给出判定」——**挂死也是一种没 fail-closed**。这轮收敛点(liveness)与第一批收敛点(可信根可被改写)互补:验收 backstop 既要判得对、也要判得完。腿3 把证据送第二(可能跨家族)模型,使「裁判读密钥」面比 builder 单模型更尖锐 → 密钥禁读名单要更严(credential 单数)。
+
 ### 2026-06-29 · Phase D goal 验收轮(GoalLoop 第一批)
 Phase D 第一批(GoalLoop + 确定性两条腿验收)后跑的一轮(commit D1–D5)。**两个独立裁判**(codex gpt-5.5 xhigh + 独立 Claude 子代理)**各自独立**抓到同一个 HIGH:**检查命令的 oracle 可被 builder 中性化** —— 腿1 跑 `npm test/build` 等,但命令定义在 `package.json` scripts / tsconfig / eslint/vitest config,这些文件不在腿2 的 `test/` 监控范围;builder 改 `package.json` 的 `"test":"exit 0"` 即让四关卡全绿、腿2 看不到 → 假 verified(命中「凑绿不被腿2 抓」,走配置而非 test/ 文件)。已修:腿2 把 check-oracle 文件(package.json/lockfile/tsconfig/eslint/vitest/jest config)纳入篡改检测 + 改全工作区 diff + git 失败 fail-closed + 空 checkCommands fail-closed + SKIP 正则扩 focus 标记;+4 触发单测钉死 + post-fix 复核。其余不变量(claim 不终态化、checkCommands 只从 config、熔断真接线、verified 仅显式分支兜底 fail-closed、objective 不可变、assertNever)两裁判均确认未破。
 - **印证**:两裁判独立同点收敛在「确定性 backstop 的**可信根**本身可被运动员改写」——这类「验收 oracle 完整性」漏洞比单个判定函数 bug 更隐蔽(判定逻辑没错,错在信任了 builder 可写的 oracle)。结论:goal 验收的可信根(check 命令定义文件)必须和测试一起纳入篡改检测。

@@ -1,10 +1,12 @@
-# 交接：Phase D 第一批完成（GoalLoop + 确定性两条腿验收，2026-06-29）
+# 交接：Phase D 完成（GoalLoop + 三条腿独立验收，2026-06-29）
 
-给接手者（人或 AI）。读完这页你应知道：Phase D 第一批做了什么、关键决策与 gotcha、验收怎么映射到测试、安全边界、怎么运行、下一步。完整设计见 `phase-D-plan.md`；C 阶段见 `handoff-C.md`；项目规则见根 `AGENTS.md`。
+给接手者（人或 AI）。读完这页你应知道：Phase D 两批做了什么、关键决策与 gotcha、验收怎么映射到测试、安全边界、怎么运行、下一步。完整设计见 `phase-D-plan.md`（第一批）+ Plan agent spec（第二批，已落地）；C 阶段见 `handoff-C.md`；项目规则见根 `AGENTS.md`。
 
 ## 一句话状态
 
-**Phase D 第一批全部完成**：agent 能**自主跑 goal 到达标自停**——`update_goal(complete)` 不直接终态化，走**确定性两条腿验收**（腿1 harness 自己重跑四关卡采信真退出码、腿2 git diff 测试篡改检测），完成判定**不靠 builder 自评**。`npm run typecheck / lint / test / build` 全绿（**446 测试**，+31）。`demo:d1` 真连 Doubao 跑通一个 goal 到 verified。腿3 独立 LLM 裁判**留接口、本批未做**。
+**Phase D 两批全部完成**：agent 能**自主跑 goal 到达标自停**——`update_goal(complete)` 不直接终态化，走**三条腿独立验收**：腿1 harness 重跑四关卡采信真退出码、腿2 git diff 测试/oracle 篡改检测、**腿3 独立只读 LLM 裁判**（第二个不同模型，对 harness 钉死的 pinned 需求清单逐条取证打分）。完成判定**由 `decideVerdict` 纯函数据证据算、不靠 builder 自评、不靠 LLM 自报 verdict**。`npm run typecheck / lint / test / build` 全绿（**492 测试**，较 batch-1 的 446 再 +46）。`demo:d1` 真连 Doubao 跑通确定性路径；`demo:d2` 真连**双 Doubao 模型**（builder=2.1-pro / verifier=2.0-pro，及跨家族 DeepSeek-V4-pro）跑通完整腿3 → verified。
+
+> **两批边界**：腿3 = **可选**（配 `ARK_VERIFIER_MODEL` 为不同模型才启用）。没配 → 退回第一批两腿（`decideVerdict(report===undefined)` 路径逐字不动）。所以第一批的「确定性两腿」仍是默认运行模式、未被替换。
 
 ## 架构一句话
 
@@ -18,7 +20,12 @@
 | D2 确定性两条腿 + runCommand | b0bbf4f | `run-command.ts`（从 bash.ts 抽 execute→runCommand，bash 零回归）+ `checks.ts`（腿1 重跑 check 采信真退出码 + 纯 classifyTestDiff 腿2） |
 | D3 update_goal + GoalLoop + 熔断 | 2a6b84d | `update-goal-tool.ts`（read-only/enum/闭包 claim/takeClaim/防 reward-hacking 描述）+ `goal-loop.ts`（runGoal + VerifierCircuitBreaker 真接线）+ assertObjectiveUnchanged |
 | D4 CLI goal 模式 + demo | 7ee36d0 | `goal-cli.ts`（独立入口 `npm run goal`，交互 approver + git baseline）+ render 新事件 + `demo:d1` 真连 Doubao PASSED |
-| D5 收口 | （本提交） | 验收映射 + 本交接 + README/AGENTS 刷新 + 独立核查（两裁判核出并修 oracle 中性化 HIGH）+ memory |
+| D5 收口 | ef2ac03 | 验收映射 + 本交接 + README/AGENTS 刷新 + 独立核查（两裁判核出并修 oracle 中性化 HIGH）+ memory |
+| **— 第二批 · 腿3 独立 LLM 裁判 —** | | |
+| D6 类型 + 纯函数 | （本批） | `Goal/GoalSpec/GoalCreatedRecord/replayGoal` 加 `pinned`（`?? []` 兜底，第一批不受影响）+ `decideVerdict(checks, report?, pinned?)` 完整三态（§3.2 八步，`report===undefined` 整支逐字不动）+ verdict 全分支触发测试 + 属性测试 |
+| D7 runVerifier + pinned 推导 | （本批） | `verifier.ts`（runVerifier 复用 runAgent：只读 registry+断言、第二 provider、独立 bus、无 store/无 gate、信号透传、VERIFIER_PROMPT；`parseVerifierReport` 三段+fail-closed；**永远返回 report，绝不 undefined**）+ `requirements.ts`（derivePinnedRequirements，builder model 推导，失败 `[]`） |
+| D8 接线 + monitor + CLI + demo | （本批） | runGoal 接腿3（短路 spawn + 最高优先级不变量 + verdict 事件 redact）+ `verifier-monitor.ts`（CNV 率滑窗）+ `resolveVerifierConfig`（config 层独立性断言）+ goal-cli（ARK_VERIFIER_MODEL + derive + 空 pinned 启动期 fail-closed）+ `demo:d2`（双模型，PASSED ×2 含跨家族） |
+| D9 收口 | （本提交） | 验收映射 + 本交接刷新 + 设计 vs 现实差异记进 leg3-checklist（KB Part7 是只读证据层、不改）+ 独立核查（两裁判，修超时/credential/边界 3 处）+ memory |
 
 ## §5 验收契约 → 测试映射（全绿）
 
@@ -33,6 +40,20 @@
 
 防作弊：每道护栏（腿1/腿2/熔断/objective/fail-closed 兜底）都有「真触发」单测；无删/skip 测试。
 
+### 第二批 · 腿3 防作弊契约 → 触发单测（全绿）
+
+| 风险 | 防线 | 触发测试 |
+|---|---|---|
+| 裁判被注入 override 判 verified | decideVerdict 先判腿1/腿2（确定性不可绕）；schema 无 `verdict` 字段、parse 剥离自报 | `verdict` "injected report cannot bypass the deterministic legs" · `verifier` "ignores a self-reported verdict field" |
+| **腿3 启用时 runVerifier 失败假阳性 verified**（最高优先级不变量） | runVerifier 返回类型非可选、失败合成 couldNotVerify report；runGoal 短路保证「两腿干净+启用 ⇒ report 必有值」 | `goal-loop` "NEVER falls through to verified when the verifier fails" · `verifier` "halted/throwing judge → couldNotVerify, never undefined" |
+| 裁判自我缩小需求 | pinned 创建期钉死；decideVerdict 第3步 + parse 双重覆盖校验 | `verdict` "couldNotVerify when a pinned requirement is unscored" · `verdict` "decideVerdict is the sole source of verdict" |
+| 空 pinned → verified 可达 | decideVerdict 第7步 `pinned.length>0` 守门；goal-cli 启动期空清单 fail-closed | `verdict` "empty pinned list … is couldNotVerify" |
+| 裁判越权/读密钥 exfil | registry 只读+断言；secret 路径工具层拦（ungated 也拦）；verdict 事件 rationale redact、full report 只进 goalStore | `verifier` "buildVerifierRegistry read-only" / "no write, no bash" |
+| 分流（省算力 + 不给注入面） | 腿1/腿2 挂不 spawn 裁判 | `goal-loop` "short-circuits without spawning the judge when leg 1 fails" · "spawns the verifier after the deterministic legs pass" |
+| 同模型独立性表演 | resolveVerifierConfig：verifier===builder → 不启用 + 响亮告警 | `config` "disabled when the verifier model equals the builder model" |
+| CNV 率监控失真 | monitor 只在腿3 真跑轮次 record | `verifier-monitor` "alerts when … rate exceeds threshold" |
+| 熔断（腿3 reject 路径） | recordReject 真读返回、连续 3 → halt → blocked | `goal-loop` "a leg-3 reject … breaker really halts after 3" |
+
 ## 关键决策
 
 - **裁判≠运动员，走确定性两条腿**（用户拍板）：完成判定不信 builder 自报 status——腿1 harness 真重跑四关卡采信真退出码，腿2 检测测试篡改。最防作弊、不需第二模型、最便宜。
@@ -42,9 +63,14 @@
 - **熔断真接进 runGoal**（修 Part7 P0-2 死代码）：两条 reject 路径都经 `recordReject` 读返回，连续 3 reject → halt → blocked。
 - **目录**：goal 全在 `src/capabilities/goal/`（含 goal-store，不放 runtime/goal/）——避免 runtime→capabilities 反向循环。
 
-## 本批 verified 的诚实边界（重要）
+## verified 的诚实边界（重要，两种模式分清）
 
-本批 verified = **仅确定性两条腿**（四关卡全绿 + 测试未被篡改）。它**拦不住「写了通过 check 但没真做到 objective」**——那是腿3 语义裁判的职责（本批未做）。`decideVerdict(checks, report?)` 的签名让「腿3 缺席」显式可见：`report` 可选，两腿干净 + 无 report 才走 verified 显式分支；一旦腿3 接入产出 report，把 verdict.ts 里那个 fail-closed 分支换成完整 evidence×scope 表（Part7 §3.2/§4）即收紧。
+完成判定有**两种运行模式**，verified 的含义不同：
+
+- **腿3 启用（配了不同的 `ARK_VERIFIER_MODEL`）**：verified = 四关卡全绿 + 测试/oracle 未篡改 + **独立裁判逐条证明每条 pinned 需求 proves+matched、feature works、无 couldNotVerify**。这才是「真验收」——拦得住「写了通过 check 但没真做到 objective」。但仍有**已知边界**：① 裁判是**纯文件取证**（只有 read/grep），跑不了命令、驱不动 app——凡需执行/运行态的需求裁判必须列进 `couldNotVerify`（→ blocked 交人），它不会假装验过；② 单 Doubao 账号下「不同模型」多是同族变体，**独立性弱**（载重独立性靠腿1/腿2 完全无模型 + 上下文隔离 + 独立 prompt，「不同模型」是 nice-to-have，见 checklist #4）；跨家族（DeepSeek-V4-pro）独立性更强、已验证可跑通。
+- **腿3 未启用（默认）**：verified = **仅确定性两条腿**（同第一批）。`decideVerdict(checks, report?, pinned?)` 的 `report===undefined` 整支**逐字保留**第一批语义——这是默认、未被替换的运行模式。它拦不住「通过 check 但没真做到 objective」，要那层语义验收就配 `ARK_VERIFIER_MODEL`。
+
+**最高优先级不变量（务必保住）**：腿3 启用且两腿干净时，`runVerifier` **永远返回一个 report**（spawn/parse/timeout/halted 全合成 couldNotVerify，返回类型非可选），所以 `decideVerdict` 永远拿到 report、永不回落到 `report===undefined → verified` 假阳性。改 goal-loop 接线时别破这条（回归测试 `NEVER falls through to verified when the verifier fails` 钉死）。
 
 ## 安全（goal 验收不被绕）
 
@@ -56,10 +82,21 @@
 >
 > **残留 LOW（已接受 / 记缺口）**：① check scripts 间接引用的子脚本（package.json scripts 调的 .js）本批未纳入 oracle 检测——scripts 定义本身已捕获，深层脚本待腿3/后续；② classifyTestDiff 的净增减是跨文件全局计数（A 删真用例、B 加 trivial 可互抵）、注释整段 it 仍匹配 CASE——语义弱化留腿3；③ `assertObjectiveUnchanged` 本批进程内近似 no-op（objective 同源创建期、运行中无改写路径），价值在 resume/replay 路径，作为 defense-in-depth 放对位置。
 
+> **独立核查结论（2026-06-29，D9，腿3 落地后两个独立裁判）**：codex（gpt-5.5 xhigh）报 2 个 HIGH、独立 Claude 子代理报 no-HIGH（确认 12 条不变量未破），**两裁判收敛在同一个超时缺口**。三处全部已修 + 触发单测 + post-fix 四关卡复核（495 测试）：
+> - **HIGH（收敛）· runVerifier 无墙钟超时**：verifier 模型流卡在 `stream.next()` 时 `maxTurns` 只在轮间生效 → 整个 goal 挂死、不能 fail-closed 合成 couldNotVerify（codex 判 HIGH=「挂死非 fail-closed」，Claude 判 LOW=liveness；按腿3 尺子「挂死」属 HIGH，Part7 §6.2 本设计了分级超时）。**已修**：`runVerifier` 内 `Promise.race` + 复合 abort signal（父 signal ∪ 120s deadline），超时统一返回 couldNotVerify report；触发单测「never-resolving run → couldNotVerify」。
+> - **HIGH（codex）· `credential` 单数漏拦**：`sensitive.ts` 只匹配 `credentials` 复数，漏 `credential.json` 单数 → ungated 裁判 read 能读到送进远端模型（spec 原文写的就是「credential glob」单数）。**已修**：正则改 `credentials?`（覆盖单/复数），+ read 拒读 `credential.json` 触发单测。注：此缺口本就影响 builder（read 默认放行），非腿3 新引入，但腿3 把内容送第二（可能跨家族）模型使其更尖锐。
+> - **LOW→收口（Claude）· `report===undefined` 边界防御**：decideVerdict 靠「verifierProvider 配了 ⟺ report 必有值」的 runVerifier 契约（非可选返回类型），未在边界强制。**已修**：goal-loop 加防御——腿3 启用但 report 为 undefined（契约违反）→ 合成 couldNotVerify、不落假阳性 verified；触发单测「mis-typed verifier 返回 undefined → 非 verified」。
+> - **残留 LOW（接受/记缺口）**：同族「不同模型」独立性弱（降为 nice-to-have，已实测同族 2.0/2.1 + 跨家族 DeepSeek-V4 均跑通）；语义弱化判不了（裁判纯文件取证）；redactSecrets 盖不住裸高熵串（裁判读不到密钥文件、full report 只进本地 goalStore）。
+> - **印证**：两裁判独立同点收敛在「fail-closed 的 liveness 维度」——之前几轮收敛在「可信根可被改写」，这轮收敛在「挂死也是一种没 fail-closed」。结论：goal 验收的 fail-closed 不只是「判定方向对」，还得保证「在有限时间内一定给出判定」（超时也是 couldNotVerify）。`demo:d2` 真连双模型实测 verified 与 couldNotVerify→blocked 两种终态，后者印证裁判拒绝橡皮图章、harness 交人。
+
 ## gotcha / 已知小账
 
-- **腿3 LLM 裁判未做**：verifier 角色 spawn / prompt / policy / couldNotVerify 率监控 / pinned requirements 推导都 deferred。seam：`SubagentManager.providerFor` 的 `role.model` 只是 metadata、永远回退父 provider——腿3 用「另一个 Doubao 模型 ID」不能靠 role.model，要注入第二个 `createProvider(config2)` + 断言 verifier≠builder。**实现前逐条过 `docs/phase-D-leg3-checklist.md`**（Part7 审查 + D5 oracle-tamper 提炼的 5 个坑）。
-- **腿2 检测范围**：全工作区 diff vs baseline，查 ① 测试文件（删/skip/focus 标记/数量骤降）② **check-oracle 文件**（package.json/lockfile/tsconfig/eslint/vitest/jest config 被改 → tamper，堵「把 `npm test` 改成 `exit 0`」中性化验收 oracle，H-1）。git diff 失败 → fail-closed。**判不了**：语义弱化（`toBe`→`toBeDefined`）+ check scripts 间接引用的子脚本——已知缺口，腿3/后续补。无 baseline（非 git 仓）→ 腿2 inert。
+- **腿3 不靠 `role.model` seam**：没复用 SubagentManager（`providerFor` 永远回退父 provider、registry 是父∩交集非全新只读、child 继承父 ctx/gate 三处冲突）。`runVerifier` 是**独立函数**复用 runAgent：自建 messages + `buildDefaultRegistry().subset(['read','grep'])`（+ 只读断言）+ 注入第二 provider + 独立 bus + 无 store + 无 gate + 信号透传。第二模型靠 `resolveVerifierConfig` 读 `ARK_VERIFIER_MODEL` → `createProvider({...config, model})`；**verifier≠builder 断言只能在 config 字符串层**（`ModelProvider` 无 model id getter，两硬事实之一）。
+- **腿3 纯文件取证**：裁判只有 read/grep，**跑不了命令/驱不动 app**。prompt 与工具白名单已对齐（明说只能读、凡需执行/运行态恒列 couldNotVerify、→ blocked 交人）。要让裁判跑只读命令/浏览得显式加沙箱化只读 exec/BrowseReadOnly + network-capable 收紧（checklist #6，未做）。
+- **pinned 推导用 builder model**：`derivePinnedRequirements` 一次 LLM 调用拆 objective、落盘不可变。空清单 → goal-cli **启动期 fail-closed**（拒绝启动、不烧预算，因 decideVerdict 第7步 `pinned.length>0` 守门使空清单 verified 不可达）。
+- **最高优先级不变量**：腿3 启用 + 两腿干净 ⇒ runVerifier 永返回 report（失败合成 couldNotVerify、返回类型非可选）⇒ decideVerdict 永不回落 `report===undefined → verified`。改接线别破（回归测试 `NEVER falls through to verified when the verifier fails`）。
+- **腿2 检测范围**：全工作区 diff vs baseline，查 ① 测试文件（删/skip/focus 标记/数量骤降）② **check-oracle 文件**（package.json/lockfile/tsconfig/eslint/vitest/jest config 被改 → tamper，堵「把 `npm test` 改成 `exit 0`」中性化验收 oracle，H-1）。git diff 失败 → fail-closed。**判不了**：语义弱化（`toBe`→`toBeDefined`）——当前裁判纯文件取证对「跑出来才知道」的弱化也判不了，已知缺口。无 baseline（非 git 仓）→ 腿2 inert。
+- **腿3 残留 LOW**（接受/记缺口）：① 同族「不同模型」独立性弱（已降为 nice-to-have，载重靠腿1/腿2 无模型 + 上下文隔离 + 独立 prompt，checklist #4）；② 裸高熵明文密钥 redactSecrets 盖不住（只覆盖 sk-/Bearer/key=val），但裁判读不到密钥文件（工具层拦）且 full report 只进本地 goalStore；③ held-out 隐藏断言腿未做（checklist #1，下一步）。
 - **腿1 不过 gate**：harness 自跑配置固定命令（非模型注入），过 gate 反而会在验收中弹审批/被拒。安全前提是 checkCommands 不可被 builder 影响（代码硬保证）。
 - **goal 模式的 builder write/bash 仍过 gate**：`npm run goal` 用交互 approver；自主性受 approval 约束（无人值守白名单是 Phase D 后续 + memory `restore-bash-session-allow`）。`demo:d1` 用自动 approver 演示。
 - **熔断本批只连续阈值**（无滑窗）：Part7 §6.1 的滑窗在本状态机可达性存疑，故只留连续 3 阈值。
@@ -68,28 +105,36 @@
 
 ```
 src/capabilities/goal/
-  goal.ts            # Goal/状态机/budget/checks/VerifierReport(腿3 deferred) 类型
+  goal.ts            # Goal(+pinned)/状态机/budget/checks/VerifierReport(腿3) 类型
   state.ts           # advanceGoalState 纯函数（assertNever）
-  verdict.ts         # decideVerdict 纯函数（两腿 + 显式 verified + fail-closed 兜底）
+  verdict.ts         # decideVerdict 纯函数（两腿 + report===undefined 回退逐字不动 + §3.2 八步三态 + fail-closed 兜底）
   checks.ts          # runDeterministicChecks(腿1 真退出码) + 纯 classifyTestDiff(腿2)
+  verifier.ts        # 腿3：runVerifier(复用 runAgent/只读/第二 provider/永返回 report) + parseVerifierReport + VERIFIER_PROMPT
+  requirements.ts    # derivePinnedRequirements(builder model 拆 objective → pinned，失败 [])
+  verifier-monitor.ts# VerifierMonitor(CNV 率滑窗 → degraded)
   update-goal-tool.ts# update_goal(read-only/闭包 claim/防 reward-hacking) + takeClaim
-  goal-loop.ts       # runGoal 外循环 + VerifierCircuitBreaker(真接线)
-  goal-store.ts      # GoalRecord/parse/replay/FileGoalStore/hashObjective/assertObjectiveUnchanged
+  goal-loop.ts       # runGoal 外循环 + 腿3 接线(短路/不变量/redact) + VerifierCircuitBreaker(真接线)
+  goal-store.ts      # GoalRecord(+pinned)/parse/replay/FileGoalStore/hashObjective/assertObjectiveUnchanged
+src/core/model/config.ts        # loadDoubaoConfig + resolveVerifierConfig(config 层独立性断言)
 src/core/tools/run-command.ts   # 从 bash.ts 抽的 spawn/超时树杀/结构化退出码 runner
 src/runtime/event-bus.ts        # +guardrail halt reason、+verdict/goal_state 事件
-src/surfaces/cli/goal-cli.ts    # npm run goal -- "<objective>"（交互 approver + baseline）
+src/surfaces/cli/goal-cli.ts    # npm run goal（交互 approver + baseline + ARK_VERIFIER_MODEL + derive + 空 pinned fail-closed）
 src/surfaces/cli/render.ts      # +verdict/goal_state 渲染
-scripts/d1-demo.ts              # 真连 Doubao 的活体验证
-test/capabilities/goal/         # state/verdict/goal-store/checks/goal-loop（+27 测试）
+scripts/d1-demo.ts              # 真连 Doubao 的确定性两腿活体验证
+scripts/d2-demo.ts              # 真连双 Doubao 模型的腿3 活体验证（需 ARK_VERIFIER_MODEL）
+test/capabilities/goal/         # state/verdict/goal-store/checks/goal-loop/verifier/requirements/verifier-monitor
 ```
 
 ## 怎么运行
 
-- 四关卡：`npm run typecheck / lint / test / build`
-- goal 模式：`npm run goal -- "<objective>"`（交互审批 + 自主验收，需 `ARK_API_KEY`）
-- 活体 demo：`npm run demo:d1`（真连 Doubao 跑一个 goal 到 verified）
+- 四关卡：`npm run typecheck / lint / test / build`（492 测试）
+- goal 模式（两腿）：`npm run goal -- "<objective>"`（交互审批 + 自主验收，需 `ARK_API_KEY`）
+- goal 模式（三腿）：同上，另设 `ARK_VERIFIER_MODEL=<不同的 Doubao/DeepSeek 模型 id>` 启用独立裁判
+- 活体 demo：`npm run demo:d1`（确定性两腿）；`npm run demo:d2`（双模型腿3，需 `ARK_VERIFIER_MODEL`）
 
-## 下一步（Phase D 后续批）
+## 下一步（Phase D 后续 / 腿3 加固）
 
-- **腿3 独立 LLM 裁判**（Part7 §3-§6 完整）：goal-verifier 角色 spawn（另一个 Doubao 模型、isolation、父∩只读白名单、approval=never、密钥禁读、evidence 脱敏）+ verifier prompt/schema/policy + pinned requirements 推导 + couldNotVerify 率监控。把 verdict.ts 的 fail-closed 分支换成完整 evidence×scope 表。
+- **held-out 隐藏断言腿**（checklist #1）：当前「三件套」实为腿1 重跑既有 check + 腿2 篡改 + 腿3 语义裁判；真正的 held-out（builder 没见过的隐藏断言）未做。可加一条 harness 侧 held-out，或显式标已知风险并据此加权人工抽查。
+- **腿3 能力扩展**（checklist #6）：要裁判驱动真实 app / 跑只读命令，加沙箱化只读 exec / BrowseReadOnly 工具并按 network-capable 收紧；当前纯文件取证、运行态需求恒列 couldNotVerify。
+- **主观/客观分流确定性化**（checklist #2）：当前 pinned 全交裁判逐条打分；可加 harness 钉死的「有可执行验收命令 → 客观、不 spawn」分流以省算力。
 - **Hooks**（把自动化挂到时刻）、**skill 自动沉淀**（人审 gate）、**Loop 调度**（cron 长跑）、**多模态**、**shadow-git**、**bash 白名单**（无人值守自主，配 memory `restore-bash-session-allow`）。

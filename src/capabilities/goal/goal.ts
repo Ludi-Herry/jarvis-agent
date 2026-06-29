@@ -9,9 +9,11 @@
  * This file is types only. The pure decision points live in state.ts (advanceGoalState) and
  * verdict.ts (decideVerdict); persistence in runtime/goal/goal-store.ts.
  *
- * Leg 3 (the independent LLM judge) is DEFERRED this batch: the `VerifierReport` / evidence-strength
- * vocabulary is defined so the seam is typed, but no verifier is spawned and `decideVerdict` treats a
- * present report as fail-closed (see verdict.ts).
+ * Leg 3 (the independent LLM judge) is LANDED this batch: a goal carries the harness-pinned
+ * requirement list (`pinned`), and once a verifier provider is configured `decideVerdict` scores a
+ * present `VerifierReport` over the evidence_strength × claim_scope table (Part7 §4) instead of
+ * failing it closed. With no verifier configured the `report===undefined` path is the batch-1
+ * deterministic-only fallback, unchanged.
  */
 
 /** The goal state machine (a subset for this batch: active → complete | blocked). `active` keeps the
@@ -41,14 +43,16 @@ export interface DeterministicChecks {
   tamperReason: string;
 }
 
-// ── Leg 3 vocabulary (DEFERRED this batch; types only so the seam is stable) ──
+// ── Leg 3 vocabulary (the independent LLM judge — landed this batch) ──
 
 /** Evidence strength five-classes (Part7, borrowed from the completion audit). */
 export type EvidenceStrength = 'proves' | 'contradicts' | 'incomplete' | 'tooWeak' | 'missing';
 /** Claim scope axis — a narrow check must not support a broad claim (Part7). */
 export type ClaimScope = 'matched' | 'narrowerThanClaim';
 
-/** A pinned requirement: derived once at goal creation, then immutable (leg 3 scores each one). */
+/** A pinned requirement: derived once at goal creation (one LLM decomposition of the objective),
+ *  then immutable. The verifier scores EVERY one (decideVerdict fails closed on any unscored), so the
+ *  builder can neither narrow the requirement set nor influence what gets judged (Part7 §3.2 step 3). */
 export interface PinnedRequirement {
   id: string;
   text: string;
@@ -99,6 +103,9 @@ export interface Goal {
   state: GoalState;
   budget: GoalBudget;
   testBaseline?: TestBaseline;
+  /** Harness-pinned requirement list (leg 3), derived once at creation then immutable. Empty when no
+   *  verifier is configured (batch-1 deterministic-only fallback) — the verifier scores each entry. */
+  pinned: PinnedRequirement[];
   /** The conversation log id this goal drives (cross-reference; messages live in the SessionStore). */
   sessionId: string;
   createdAt: string;

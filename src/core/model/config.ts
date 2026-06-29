@@ -29,3 +29,36 @@ export function loadDoubaoConfig(env: NodeJS.ProcessEnv = process.env): DoubaoCo
     ...(env.ARK_REASONING_KEY ? { reasoningKey: env.ARK_REASONING_KEY } : {}),
   };
 }
+
+/** Whether leg 3 (the independent LLM judge) is enabled, and if so with what config. */
+export type VerifierResolution =
+  | { enabled: true; config: DoubaoConfig }
+  | { enabled: false; reason: string };
+
+/**
+ * Decide whether to enable leg 3 from `ARK_VERIFIER_MODEL`, reusing the builder's key/baseURL with a
+ * different model. The independence assertion (verifier model ≠ builder model) is done HERE, at the
+ * config-string layer, because {@link ModelProvider} exposes no model-id getter — the only place the
+ * two model ids are comparable. Three outcomes:
+ *  - unset → disabled (the batch-1 deterministic-only fallback);
+ *  - set and ≠ the builder model → enabled (a genuinely different model);
+ *  - set and === the builder model → DISABLED with a loud reason. Same-model independence is theater
+ *    (a Doubao variant judging another Doubao variant of the SAME id shares all blind spots), so we
+ *    fall back to the deterministic legs rather than pretend.
+ */
+export function resolveVerifierConfig(
+  env: NodeJS.ProcessEnv,
+  builderConfig: DoubaoConfig,
+): VerifierResolution {
+  const model = env.ARK_VERIFIER_MODEL?.trim();
+  if (!model) {
+    return { enabled: false, reason: 'ARK_VERIFIER_MODEL not set — leg 3 disabled (deterministic legs only)' };
+  }
+  if (model === builderConfig.model) {
+    return {
+      enabled: false,
+      reason: `ARK_VERIFIER_MODEL equals the builder model (${model}) — same-model independence is theater; leg 3 disabled`,
+    };
+  }
+  return { enabled: true, config: { ...builderConfig, model } };
+}
