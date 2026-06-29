@@ -83,7 +83,6 @@ export interface GoalRunDeps {
   perRoundMaxTurns: number;
   /** Fixed check commands (leg 1). NEVER sourced from the builder's claim. Defaults to the four gates. */
   checkCommands?: string[];
-  testPathspec?: string;
   signal?: AbortSignal;
   /** Injected for tests; default {@link runAgent} / {@link runDeterministicChecks}. */
   run?: (ctx: AgentContext) => Promise<RunOutcome>;
@@ -190,7 +189,6 @@ export async function runGoal(spec: GoalSpec, deps: GoalRunDeps): Promise<GoalRu
           shellPath: deps.shellPath,
           cwd: deps.cwd,
           checkCommands: deps.checkCommands ?? DEFAULT_CHECK_COMMANDS, // from config, NEVER the claim
-          testPathspec: deps.testPathspec,
           signal: deps.signal,
         },
         goal.testBaseline,

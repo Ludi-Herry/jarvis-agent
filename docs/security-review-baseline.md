@@ -45,6 +45,10 @@ codex exec -s danger-full-access --skip-git-repo-check -m gpt-5.5 \
 
 ## 历史
 
+### 2026-06-29 · Phase D goal 验收轮(GoalLoop 第一批)
+Phase D 第一批(GoalLoop + 确定性两条腿验收)后跑的一轮(commit D1–D5)。**两个独立裁判**(codex gpt-5.5 xhigh + 独立 Claude 子代理)**各自独立**抓到同一个 HIGH:**检查命令的 oracle 可被 builder 中性化** —— 腿1 跑 `npm test/build` 等,但命令定义在 `package.json` scripts / tsconfig / eslint/vitest config,这些文件不在腿2 的 `test/` 监控范围;builder 改 `package.json` 的 `"test":"exit 0"` 即让四关卡全绿、腿2 看不到 → 假 verified(命中「凑绿不被腿2 抓」,走配置而非 test/ 文件)。已修:腿2 把 check-oracle 文件(package.json/lockfile/tsconfig/eslint/vitest/jest config)纳入篡改检测 + 改全工作区 diff + git 失败 fail-closed + 空 checkCommands fail-closed + SKIP 正则扩 focus 标记;+4 触发单测钉死 + post-fix 复核。其余不变量(claim 不终态化、checkCommands 只从 config、熔断真接线、verified 仅显式分支兜底 fail-closed、objective 不可变、assertNever)两裁判均确认未破。
+- **印证**:两裁判独立同点收敛在「确定性 backstop 的**可信根**本身可被运动员改写」——这类「验收 oracle 完整性」漏洞比单个判定函数 bug 更隐蔽(判定逻辑没错,错在信任了 builder 可写的 oracle)。结论:goal 验收的可信根(check 命令定义文件)必须和测试一起纳入篡改检测。
+
 ### 2026-06-29 · Phase C 多 agent 轮(SubagentManager / 子 agent 工具面)
 Phase C 新增 subagent 工具面后跑的一轮(commit C1–C5)。**两个独立裁判**——codex(gpt-5.5 xhigh)+ 一个独立 Claude 子代理——**各自独立**抓到同一个 HIGH:**嵌套委派的 depth/能力/预算收窄链断裂**(`buildChildRegistry` 里子的 `task` 绑的 nested manager 复用了 root registry/budget,且 `childDepth===0` 的 fallback 没剔除继承的 root-bound `task` → 叶子拿到「绑根 manager」的 task、depth 复位 → 无界递归 + read-only 子能让后代从 root 派生出 write/bash)。命中 Phase C 核查清单的②③类(能力升格 / 护栏失效),**不命中①**(写/执行仍过 gate、无静默副作用——纵深防御被击穿但 gate 这道墙没破)。已修:`buildChildRegistry` 现总剔除继承 task + 仅 `childDepth>0` 才重绑一个用「子收窄 registry + 子收窄 budget」构造的 nested manager(每层从直接父派生);spawnRole 包 try-catch fail-closed。加 2 个触发单测钉死(read-only 子委派不出 write、budget 12→6 链式、depth-0 子无 task)+ post-fix 复核。其余不变量(gate 复用、store 不污染、signal 透传、R2 fail-closed、subset 只收窄)两裁判均确认未破。
 - **印证**:codex / 独立裁判的价值在抓「结构性绕闸 / 护栏失效」——尤其核出运动员在**新工具面**引入的**跨层链式 bug**(单层正确、depth≥2 失效),这类靠单层枚举测试难覆盖。结论:命令安全根之上叠多 agent 时,**新增的 subagent 工具面值得独立核一轮**;命令解析器本身不必重核。

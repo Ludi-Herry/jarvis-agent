@@ -67,6 +67,31 @@ describe('classifyTestDiff (pure)', () => {
     ].join('\n');
     expect(classifyTestDiff(diff).testTamper).toBe('clean');
   });
+
+  it('H-1: flags a modified check-oracle file (neutralizing npm test via package.json)', () => {
+    const diff = [
+      'diff --git a/package.json b/package.json',
+      '--- a/package.json',
+      '+++ b/package.json',
+      '@@ -10,1 +10,1 @@',
+      '-    "test": "vitest run",',
+      '+    "test": "exit 0",',
+    ].join('\n');
+    const r = classifyTestDiff(diff);
+    expect(r.testTamper).toBe('weakened-or-deleted');
+    expect(r.tamperReason).toContain('package.json');
+  });
+
+  it('H-1: also flags tsconfig / eslint / vitest config edits as oracle tampering', () => {
+    expect(classifyTestDiff('diff --git a/tsconfig.json b/tsconfig.json\n+{}').testTamper).toBe('weakened-or-deleted');
+    expect(classifyTestDiff('diff --git a/eslint.config.js b/eslint.config.js\n+x').testTamper).toBe('weakened-or-deleted');
+    expect(classifyTestDiff('diff --git a/vitest.config.ts b/vitest.config.ts\n+x').testTamper).toBe('weakened-or-deleted');
+  });
+
+  it('detects focus markers (fit/fdescribe) as tampering too', () => {
+    const diff = ['diff --git a/test/x.test.ts b/test/x.test.ts', "+  fit('x', () => {})"].join('\n');
+    expect(classifyTestDiff(diff).testTamper).toBe('weakened-or-deleted');
+  });
 });
 
 describe('runDeterministicChecks — leg 1 trusts the real exit code', () => {
@@ -90,5 +115,10 @@ describe('runDeterministicChecks — leg 1 trusts the real exit code', () => {
   it('with no baseline, leg 2 is inert (clean)', async () => {
     const r = await runDeterministicChecks({ shellPath, cwd: process.cwd(), checkCommands: ['exit 0'] });
     expect(r.testTamper).toBe('clean');
+  });
+
+  it('fails closed when there are no check commands (a vacuous AND must not pass)', async () => {
+    const r = await runDeterministicChecks({ shellPath, cwd: process.cwd(), checkCommands: [] });
+    expect(r.objectiveChecksPassed).toBe(false);
   });
 });

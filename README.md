@@ -13,11 +13,13 @@
 | 持久化段（JSONL 落盘 + 断点续跑） | ✅ 完成 |
 | P1/P2 收尾 + 安全加固（cwd 约束 / finishReason / abort / 打包修 / 进程组 kill + 4 个 codex HIGH） | ✅ 完成 |
 | Phase C 多 agent（SubagentManager / roster / 视角评审面板） | ✅ 完成（C1–C5） |
-| **Phase D 自主（GoalLoop / Hooks / skill 自动沉淀）** | ⏭️ 下一步 |
+| Phase D 自主第一批（GoalLoop + 确定性两条腿验收） | ✅ 完成（D1–D5） |
+| **Phase D 后续（腿3 LLM 裁判 / Hooks / skill 自动沉淀 / Loop 调度）** | ⏭️ 下一步 |
 
-`npm run typecheck / lint / test / build` 全绿（**415 测试**）。命令安全根（PermissionGate + 命令解析器 + bash 审批）经**六轮独立 codex 对抗核查**确认无破闸 HIGH（方法 / 严重度基线 / 历史见 `docs/security-review-baseline.md`）。
+`npm run typecheck / lint / test / build` 全绿（**446 测试**）。命令安全根（PermissionGate + 命令解析器 + bash 审批）经**六轮独立 codex 对抗核查**确认无破闸 HIGH（方法 / 严重度基线 / 历史见 `docs/security-review-baseline.md`）。
 
 接手入口：
+- **Phase D（自主第一批 / GoalLoop）→ `docs/handoff-D.md`**；
 - **B 阶段 + 当前安全态 → `docs/handoff-B.md`**（顶部「当前状态更新」段）；
 - **Phase C（多 agent）→ `docs/handoff-C.md`**；
 - 持久化段 → `docs/handoff-persistence.md`；A 阶段 → `docs/handoff-A.md`；
@@ -49,8 +51,9 @@ cp .env.example .env   # 然后编辑 .env 填 ARK_API_KEY
 ```bash
 npm run dev         # 终端 REPL：带权限闸门 + bash + 交互审批 + 会话落盘（需 ARK_API_KEY）。Ctrl-C 中断 / /exit 退出
 npm run resume      # 恢复 data/sessions/ 最近一个会话继续跑
+npm run goal        # goal 模式：npm run goal -- "<objective>" 自主跑到达标自停（确定性两条腿验收）
 npm run typecheck   # tsc --noEmit
-npm test            # vitest（370 测试）
+npm test            # vitest（446 测试）
 npm run build       # tsc 产出到 dist/
 npm run lint        # eslint
 npm run demo:a1     # A1：调 Doubao 一句话 → 流式增量 + 聚合 ModelResult
@@ -61,6 +64,7 @@ npm run demo:b1     # B1：权限闸门（读 allow / 改源码 ask / 读 .env d
 npm run demo:b3     # B3：bash 安全闭环 + 危险 / 密钥拦截
 npm run demo:c1     # C1：主 agent 派调研专家（能力分发轴，真连 Doubao）
 npm run demo:c2     # C2：视角评审面板（六顶帽并行评审同一产物）
+npm run demo:d1     # D1：自主跑一个 goal 到达标自停（确定性两条腿验收，真连 Doubao）
 ```
 
 ## 目录
@@ -80,11 +84,12 @@ src/
     skills/      # SkillRegistry：三级渐进披露
     rules/       # RuleResolver：三层规则就近合并
     subagents/   # SubagentManager + derive 护栏 + roster + task 委派工具 + 视角评审面板
-  surfaces/cli/  # 终端 REPL：render（纯）+ repl（壳）+ 审批 + commander 入口
+    goal/        # GoalLoop + 确定性两条腿验收（goal 一等对象 / decideVerdict / 熔断）
+  surfaces/cli/  # 终端 REPL + goal-cli（goal 模式）：render（纯）+ repl + 审批 + commander 入口
 skills/          # git-commit/SKILL.md
 agents/          # researcher/ROLE.md（子 agent 角色花名册）
-scripts/         # a1/a2/a3/a5 + b1/b3 + c1/c2 demo（真连 Doubao / 真跑 bash）
-test/            # vitest 单测（370）
+scripts/         # a1/a2/a3/a5 + b1/b3 + c1/c2 + d1 demo（真连 Doubao / 真跑 bash）
+test/            # vitest 单测（442）
 docs/            # 各阶段 plan + handoff + security-review-baseline
 data/            # 运行期会话日志（gitignore）
 ```
@@ -92,10 +97,11 @@ data/            # 运行期会话日志（gitignore）
 ## 文档导航
 
 - `AGENTS.md` — 项目规则层（命名 / 风格 / 工程纪律 / 命令 / 设计依据）。**动手前先读。**
-- `docs/handoff-C.md` — **Phase C（多 agent / SubagentManager）接手入口**。
+- `docs/handoff-D.md` — **Phase D（自主第一批 / GoalLoop）接手入口**。
+- `docs/handoff-C.md` — Phase C（多 agent / SubagentManager）接手入口。
 - `docs/handoff-B.md` — B 阶段 + 当前安全态（顶部「当前状态更新」段是接手入口）。
 - `docs/handoff-persistence.md` — 持久化段（JSONL + 断点续跑）。
 - `docs/handoff-A.md` — Phase A 收尾交接（A0–A6）。
 - `docs/security-review-baseline.md` — 独立 codex 安全复核怎么跑、按什么严重度尺子 + 历史。
-- `docs/phase-A-plan.md` · `docs/phase-B-plan.md` · `docs/phase-C-plan.md` · `docs/persistence-plan.md` — 各阶段完整方案。
+- `docs/phase-A-plan.md` · `docs/phase-B-plan.md` · `docs/phase-C-plan.md` · `docs/phase-D-plan.md` · `docs/persistence-plan.md` — 各阶段完整方案。
 - `docs/handoff-A1.md` — A0+A1 早期交接（已被 handoff-A.md 覆盖）。

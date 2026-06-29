@@ -25,9 +25,6 @@ const DIFF_OUTPUT_CHARS = 500_000;
 /** Project canonical checks when a goal doesn't override (Jarvis's own four gates). */
 export const DEFAULT_CHECK_COMMANDS = ['npm run typecheck', 'npm run lint', 'npm test', 'npm run build'];
 
-/** git pathspec for the test tree (Jarvis convention). Overridable per goal. */
-export const DEFAULT_TEST_PATHSPEC = 'test/';
-
 /** True for a path that counts as a test file (used by the pure classifier as a second filter). */
 const TEST_PATH = /(^|\/)(test|tests|__tests__|spec)\//i;
 const TEST_FILE = /\.(test|spec)\.[tj]sx?$/i;
@@ -35,30 +32,39 @@ function isTestPath(p: string): boolean {
   return TEST_PATH.test(p) || TEST_FILE.test(p);
 }
 
+/** Files that DEFINE what the check commands do — editing them changes the verification ORACLE
+ *  itself (e.g. package.json `scripts.test` → `exit 0`), neutralizing leg 1 WITHOUT touching test/.
+ *  Treated as tampering (closes the "neutralize the oracle" bypass, H-1). */
+const CHECK_ORACLE =
+  /(^|\/)(?:package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|tsconfig(?:\.[\w-]+)?\.json|\.eslintrc(?:\.[\w-]+)?|eslint\.config\.[\w.]+|vitest\.config\.[\w.]+|vitest\.workspace\.[\w.]+|jest\.config\.[\w.]+)$/i;
+function isCheckOracle(p: string): boolean {
+  return CHECK_ORACLE.test(p);
+}
+
 const CASE = /\b(?:it|test|describe)\s*\(/; // a test-case declaration
-const SKIP = /\.(?:skip|only)\b|\bxit\b|\bxdescribe\b/; // a skip/only marker
+const SKIP = /\.(?:skip|only|todo)\b|\b(?:xit|xdescribe|xtest|fit|fdescribe)\b/; // skip/only/focus marker
 
 export interface CheckDeps {
   shellPath: string;
   cwd: string;
   /** Fixed check commands — sourced from config, NEVER from the builder's claim. */
   checkCommands: string[];
-  /** git pathspec for the test tree (leg 2). */
-  testPathspec?: string;
   signal?: AbortSignal;
 }
 
 /**
- * Run both deterministic legs. Leg 1 re-runs every check command and ANDs the real exit codes. Leg 2
- * diffs the test tree vs the baseline and classifies tampering. No baseline (not a git repo / snapshot
- * failed) → leg 2 is inert (reported clean) — a known gap this batch, not a silent pass of leg 1.
+ * Run both deterministic legs. Leg 1 re-runs every check command and ANDs the real exit codes (empty
+ * command list → fail closed). Leg 2 diffs the whole worktree vs the baseline and classifies tampering
+ * over test files AND check-oracle files. No baseline (not a git repo) → leg 2 is inert (clean) — a
+ * known gap; but a PRESENT baseline whose git diff fails or truncates fails CLOSED, not clean.
  */
 export async function runDeterministicChecks(
   deps: CheckDeps,
   baseline?: TestBaseline,
 ): Promise<DeterministicChecks> {
   const results: DeterministicChecks['results'] = [];
-  let objectiveChecksPassed = true;
+  // No check commands → nothing was actually verified → fail closed (a vacuous AND must not pass).
+  let objectiveChecksPassed = deps.checkCommands.length > 0;
   for (const command of deps.checkCommands) {
     const res = await runCommand(
       deps.shellPath,
@@ -84,16 +90,33 @@ async function scanTestTamper(
   deps: CheckDeps,
   baseline: TestBaseline,
 ): Promise<{ testTamper: 'clean' | 'weakened-or-deleted'; tamperReason: string }> {
-  const pathspec = deps.testPathspec ?? DEFAULT_TEST_PATHSPEC;
+  // Whole-worktree diff vs the baseline (no pathspec): classifyTestDiff filters to test files AND
+  // check-oracle files, so ordinary source edits are ignored but neutralizing the oracle isn't.
   const res = await runCommand(
     deps.shellPath,
-    `git diff --no-color ${baseline.headSha} -- ${pathspec}`,
+    `git diff --no-color ${baseline.headSha}`,
     deps.cwd,
     60_000,
     DIFF_OUTPUT_CHARS,
     deps.signal,
   );
-  if (res.code !== 0) return { testTamper: 'clean', tamperReason: '' }; // git failed → inert (gap noted)
+  if (res.code !== 0) {
+    // git failed with a baseline present (unreachable sha / broken index): we CANNOT confirm the
+    // tests + oracle are untampered, so fail CLOSED rather than silently passing the leg.
+    return {
+      testTamper: 'weakened-or-deleted',
+      tamperReason: `git diff failed (code ${res.code ?? 'killed'}); cannot verify tests untampered`,
+    };
+  }
+  if (res.truncated) {
+    // The diff hit the output cap — a tamper/oracle edit later in the (path-sorted) diff could be cut
+    // off, so we cannot confirm clean. Fail closed rather than pass on a partial diff (else a builder
+    // could bury a real edit behind a huge change to push it past the cap).
+    return {
+      testTamper: 'weakened-or-deleted',
+      tamperReason: `git diff exceeded the ${DIFF_OUTPUT_CHARS}-char cap; cannot fully verify tests untampered`,
+    };
+  }
   return classifyTestDiff(res.output);
 }
 
@@ -117,6 +140,13 @@ export function classifyTestDiff(diff: string): {
     if (line.startsWith('diff --git')) {
       const m = /b\/(\S+)/.exec(line);
       currentFile = m ? m[1] : '';
+      if (isCheckOracle(currentFile)) {
+        // editing a check-oracle file neutralizes leg 1 — fail closed regardless of its contents.
+        return {
+          testTamper: 'weakened-or-deleted',
+          tamperReason: `check-oracle file modified: ${currentFile}`,
+        };
+      }
       isTest = isTestPath(currentFile);
       continue;
     }
