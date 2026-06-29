@@ -77,6 +77,18 @@ export class InMemoryToolRegistry implements ToolRegistry {
       return { callId, content: '', error: `Tool ${call.name} threw: ${message(err)}` };
     }
   }
+
+  /** A new registry holding only the named tools, reusing the SAME {@link ToolDefinition}
+   *  references (so each `run` closure is intact). Names not registered here are silently
+   *  skipped — the result is always a subset of this registry, never a superset. */
+  subset(names: string[]): ToolRegistry {
+    const r = new InMemoryToolRegistry();
+    for (const name of names) {
+      const tool = this.tools.get(name);
+      if (tool) r.register(tool);
+    }
+    return r;
+  }
 }
 
 /** Local alias so the return type reads cleanly; identical to ToolRegistry's. */

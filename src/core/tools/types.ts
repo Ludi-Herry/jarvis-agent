@@ -57,4 +57,9 @@ export interface ToolRegistry {
    *  as {@link ToolResult} with `error` set, so the AgentLoop can feed the failure back
    *  to the model instead of crashing the turn. */
   run(call: ToolCall, ctx: ToolRunCtx): Promise<ToolResult>;
+  /** A NEW registry exposing only the named subset of this one's tools (same {@link ToolDefinition}
+   *  references — `run` closures intact). Unknown names are skipped. Used by the SubagentManager to
+   *  narrow a child's tool surface to the parent ∩ requested set (Phase C); a tool the parent lacks
+   *  can never appear, so a child can't gain reach by naming one. */
+  subset(names: string[]): ToolRegistry;
 }
