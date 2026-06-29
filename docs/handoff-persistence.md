@@ -46,7 +46,7 @@
 - **resume 用日志里的 system 消息**（不重新 seed），忠实于该会话；新会话才用当前 `SYSTEM_PROMPT`。
 - **`latestSessionPath` 按 mtime 选最近**；续跑后该文件被追加 → mtime 更新 → 下次 `npm run resume` 仍指它。
 - **PowerShell 管道喂中文 stdin 会变 `?`**（控制台编码 artifact，非产品 bug）——冒烟用 ASCII 或在真终端手测。
-- 压缩中途模型失败仍会中断整轮（A 遗留，未在本段硬化）。
+- 压缩中途模型失败**已在 Phase C6 硬化**：summarizer 失败跳过本轮压缩、不丢已完成的 turn，abort（Ctrl-C）仍传播中断。
 
 ## 关键文件
 
@@ -69,4 +69,4 @@ data/sessions/<id>.jsonl               # 运行期会话日志（gitignore）
 
 - **Phase C**（多 agent / SubagentManager，见项目记忆 `c-phase-agent-roster-two-axes`），或
 - **shadow-git**（无人值守长跑的自动回滚，配合 Phase D 的 GoalLoop/Hooks 再上：完整独立 git 仓快照工作区）。
-- 压缩容错硬化（A 遗留）可在任一后续段顺带做。
+- 压缩容错硬化（A 遗留）已在 **Phase C6** 顺带做掉（run-agent 压缩调用 try-catch；见 `handoff-C.md`）。

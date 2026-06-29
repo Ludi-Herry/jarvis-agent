@@ -4,7 +4,7 @@
 
 ## 一句话状态
 
-**Phase C 全部完成**：agent 能**显式委派子 agent**——两条轴都做实：① **按能力分发**（`task` 工具派专家，只回浓缩摘要）② **按视角评审面板**（N 个 read-only 评审 agent 并行读同一产物、各戴一顶视角帽）。子 agent 在**能力交集护栏**下构造时即不可越权、**复用父 gate** 因而不绕命令安全根、受 depth/预算/并发上限约束。`npm run typecheck / lint / test / build` 全绿（**413 测试**，+43）。两个里程碑各有真连 Doubao 的活体 demo（`demo:c1` 能力分发、`demo:c2` 视角面板）。
+**Phase C 全部完成**：agent 能**显式委派子 agent**——两条轴都做实：① **按能力分发**（`task` 工具派专家，只回浓缩摘要）② **按视角评审面板**（N 个 read-only 评审 agent 并行读同一产物、各戴一顶视角帽）。子 agent 在**能力交集护栏**下构造时即不可越权、**复用父 gate** 因而不绕命令安全根、受 depth/预算/并发上限约束。`npm run typecheck / lint / test / build` 全绿（**415 测试**，+45）。两个里程碑各有真连 Doubao 的活体 demo（`demo:c1` 能力分发、`demo:c2` 视角面板）。
 
 ## 架构一句话
 
@@ -18,7 +18,8 @@
 | C2 Manager + subset | 9ec118a | `registry.subset` + `ToolRegistry` 接口加一行 + `SubagentManager`；四条硬不变量各配触发单测（不带 store / 必带 gate / 独立 bus / 透传 signal）+ R2/R4/R6 |
 | C3 delegate 工具 + 接线 | 13feb9d | `task` 工具（read-only）+ CLI 组装（index 加载 roster、repl 装 manager + 注册 task）+ 模型路由 YAGNI 回退；`demo:c1` 真连 Doubao PASSED |
 | C4 视角面板 + 六顶帽 | e96b412 | `panel.ts`（runPanel 并行 + MAX_THREADS 信号量 + SIX_HATS 预设）+ `spawnRole`（按 role 对象 spawn）；并发上限 + R7 触发单测；`demo:c2` 真连 Doubao PASSED |
-| C5 收口 | （本提交） | 验收映射 + 本交接 + README/AGENTS 刷新 + 独立核查（两裁判核出并修嵌套委派 HIGH-1）+ memory |
+| C5 收口 | 7f4653a | 验收映射 + 本交接 + README/AGENTS 刷新 + 独立核查（两裁判核出并修嵌套委派 HIGH-1）+ memory |
+| C6 压缩容错硬化（A 遗留） | （本提交） | run-agent 压缩调用包 try-catch：summarizer 失败跳过本轮压缩、不丢已完成的 turn；abort 仍传播。+2 触发单测。shadow-git 维持留到 D |
 
 ## §5 验收契约 → 测试映射（全绿）
 

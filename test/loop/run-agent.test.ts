@@ -15,6 +15,7 @@ import type { Message, ToolCall, ToolResult } from '../../src/core/types.js';
 import type { FinishReason, ModelDelta, ModelProvider, ModelResult, Usage } from '../../src/core/model/types.js';
 import type { ToolDefinition } from '../../src/core/tools/types.js';
 import type { ContextManager } from '../../src/core/context/context-manager.js';
+import type { SessionStore } from '../../src/runtime/session/session-store.js';
 
 /** A model whose turns are scripted. Each step's text is streamed in two chunks (to exercise
  *  delta aggregation); the last step repeats forever (so an always-tool step loops). */
@@ -410,6 +411,87 @@ describe('runAgent — compaction (A3)', () => {
     const toolResult = events.find((e) => e.type === 'tool_result');
     expect(toolResult).toMatchObject({ out: { content: 'BUDGETED:ok' } });
     expect(messages.some((m) => m.role === 'tool' && m.content === 'BUDGETED:ok')).toBe(true);
+  });
+
+  it('survives a summarizer failure: skips compaction, keeps the turn (does not discard it), syncs', async () => {
+    const failing: ContextManager = {
+      shouldCompact: () => true, // force the compaction path
+      compact: async () => {
+        throw new Error('summarizer 503'); // a network/API failure, NOT an abort
+      },
+      budgetToolResult: async (out: ToolResult) => out,
+    };
+    const tools = new InMemoryToolRegistry();
+    tools.register(okTool);
+    const { provider } = scriptedModel([
+      { toolCalls: [{ id: 'c1', name: 'ok', arguments: '{}' }] },
+      { text: 'done' },
+    ]);
+    const bus = new InMemoryEventBus();
+    const events = record(bus);
+    const messages: Message[] = [{ role: 'user', content: 'go' }];
+    const calls: string[] = [];
+    const store: SessionStore = {
+      sync: async () => {
+        calls.push('sync');
+      },
+      checkpoint: async () => {
+        calls.push('checkpoint');
+      },
+    };
+
+    const outcome = await runAgent({
+      model: provider,
+      tools,
+      bus,
+      messages,
+      toolCtx: { cwd: dir },
+      budget: { maxTurns: 5 },
+      context: failing,
+      store,
+    });
+
+    // the turn that just completed is NOT discarded by the compaction failure
+    expect(outcome.finalText).toBe('done');
+    // it announced the skip rather than throwing
+    expect(events.some((e) => e.type === 'state' && e.phase.includes('compaction skipped'))).toBe(true);
+    // messages are intact (compact splices only AFTER the summary returns, so a failure leaves them)
+    expect(messages.some((m) => m.role === 'tool' && m.content === 'ok')).toBe(true);
+    // a failed compaction did NOT checkpoint a snapshot; it appended the tail via sync instead
+    expect(calls).not.toContain('checkpoint');
+    expect(calls).toContain('sync');
+  });
+
+  it('an abort DURING compaction propagates (user cancelled — not swallowed as a summarizer failure)', async () => {
+    const ac = new AbortController();
+    const aborting: ContextManager = {
+      shouldCompact: () => true,
+      compact: async () => {
+        ac.abort(); // simulate Ctrl-C mid-summary
+        throw new Error('cancelled');
+      },
+      budgetToolResult: async (out: ToolResult) => out,
+    };
+    const tools = new InMemoryToolRegistry();
+    tools.register(okTool);
+    const { provider } = scriptedModel([
+      { toolCalls: [{ id: 'c1', name: 'ok', arguments: '{}' }] },
+      { text: 'done' },
+    ]);
+    const messages: Message[] = [{ role: 'user', content: 'go' }];
+
+    await expect(
+      runAgent({
+        model: provider,
+        tools,
+        bus: new InMemoryEventBus(),
+        messages,
+        toolCtx: { cwd: dir },
+        budget: { maxTurns: 5 },
+        context: aborting,
+        signal: ac.signal,
+      }),
+    ).rejects.toThrow('cancelled');
   });
 });
 

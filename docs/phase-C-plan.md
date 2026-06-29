@@ -46,6 +46,7 @@
 - **C3** `delegate-tool.ts` + CLI 组装接线 + 模型路由（YAGNI 回退）+ `demo:c1`。
 - **C4** `panel.ts` + 六顶帽预设 + MAX_THREADS + `demo:c2`。
 - **C5** 收口：验收映射 + `handoff-C.md` + AGENTS.md/README 刷新 + 独立 codex 核查。
+- **C6** 压缩容错硬化（A 遗留顺带清）：run-agent 压缩调用包 try-catch——summarizer 失败跳过本轮压缩、不丢已完成的 turn，abort 仍传播。shadow-git 维持原计划留到 Phase D。
 
 ## §5 验收契约
 1. 能力分发：主 agent 调 `task` 派一个专家子 agent，子在收窄能力下完成、只回浓缩摘要进主对话。

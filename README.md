@@ -15,7 +15,7 @@
 | Phase C 多 agent（SubagentManager / roster / 视角评审面板） | ✅ 完成（C1–C5） |
 | **Phase D 自主（GoalLoop / Hooks / skill 自动沉淀）** | ⏭️ 下一步 |
 
-`npm run typecheck / lint / test / build` 全绿（**413 测试**）。命令安全根（PermissionGate + 命令解析器 + bash 审批）经**六轮独立 codex 对抗核查**确认无破闸 HIGH（方法 / 严重度基线 / 历史见 `docs/security-review-baseline.md`）。
+`npm run typecheck / lint / test / build` 全绿（**415 测试**）。命令安全根（PermissionGate + 命令解析器 + bash 审批）经**六轮独立 codex 对抗核查**确认无破闸 HIGH（方法 / 严重度基线 / 历史见 `docs/security-review-baseline.md`）。
 
 接手入口：
 - **B 阶段 + 当前安全态 → `docs/handoff-B.md`**（顶部「当前状态更新」段）；

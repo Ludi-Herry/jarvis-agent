@@ -118,9 +118,24 @@ export async function runAgent(ctx: AgentContext): Promise<RunOutcome> {
       inputTokens: projectedNextInput(res.usage, appendedToolChars),
       outputTokens: res.usage.outputTokens,
     };
+    let compacted = false;
     if (ctx.context?.shouldCompact(projectedUsage)) {
       ctx.bus.emit({ type: 'state', phase: 'compacting' });
-      await ctx.context.compact(ctx.messages, ctx.signal);
+      try {
+        await ctx.context.compact(ctx.messages, ctx.signal);
+        compacted = true;
+      } catch (err) {
+        // Compaction is a turn-END maintenance step; a summarizer failure (network/API) must NOT
+        // discard the turn that just completed. An abort (Ctrl-C) still propagates — the user
+        // cancelled the run. Otherwise skip compaction this turn and continue; the threshold trips
+        // again next turn and retries. compact() splices only AFTER the summary returns, so on
+        // failure `messages` is untouched and sync (append the tail) is the right persistence.
+        if (ctx.signal?.aborted) throw err;
+        ctx.bus.emit({ type: 'state', phase: 'compaction skipped (summarizer failed)' });
+      }
+    }
+    // A successful compaction rewrote the array → checkpoint a full snapshot; otherwise append the tail.
+    if (compacted) {
       await ctx.store?.checkpoint(ctx.messages);
     } else {
       await ctx.store?.sync(ctx.messages);
