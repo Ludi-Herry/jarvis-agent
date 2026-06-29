@@ -45,6 +45,10 @@ codex exec -s danger-full-access --skip-git-repo-check -m gpt-5.5 \
 
 ## 历史
 
+### 2026-06-29 · Phase C 多 agent 轮(SubagentManager / 子 agent 工具面)
+Phase C 新增 subagent 工具面后跑的一轮(commit C1–C5)。**两个独立裁判**——codex(gpt-5.5 xhigh)+ 一个独立 Claude 子代理——**各自独立**抓到同一个 HIGH:**嵌套委派的 depth/能力/预算收窄链断裂**(`buildChildRegistry` 里子的 `task` 绑的 nested manager 复用了 root registry/budget,且 `childDepth===0` 的 fallback 没剔除继承的 root-bound `task` → 叶子拿到「绑根 manager」的 task、depth 复位 → 无界递归 + read-only 子能让后代从 root 派生出 write/bash)。命中 Phase C 核查清单的②③类(能力升格 / 护栏失效),**不命中①**(写/执行仍过 gate、无静默副作用——纵深防御被击穿但 gate 这道墙没破)。已修:`buildChildRegistry` 现总剔除继承 task + 仅 `childDepth>0` 才重绑一个用「子收窄 registry + 子收窄 budget」构造的 nested manager(每层从直接父派生);spawnRole 包 try-catch fail-closed。加 2 个触发单测钉死(read-only 子委派不出 write、budget 12→6 链式、depth-0 子无 task)+ post-fix 复核。其余不变量(gate 复用、store 不污染、signal 透传、R2 fail-closed、subset 只收窄)两裁判均确认未破。
+- **印证**:codex / 独立裁判的价值在抓「结构性绕闸 / 护栏失效」——尤其核出运动员在**新工具面**引入的**跨层链式 bug**(单层正确、depth≥2 失效),这类靠单层枚举测试难覆盖。结论:命令安全根之上叠多 agent 时,**新增的 subagent 工具面值得独立核一轮**;命令解析器本身不必重核。
+
 ### 2026-06-29 · 两轮复核(P1/P2 遗留收尾)
 补跑被误杀的「确认无 HIGH」轮(commit 7cdbd3e)后,在清理文件工具 / loop 的 P1/P2 遗留过程中又跑一轮覆盖最终改动(commit 9e6d27a)。两轮命令安全根核心不变量(decide 对 executes-code 永不 allow、grep 跳密钥、解析器 fail-closed、gatedRun 先裁决、bash 不在无闸注册表)均未破。共发现 4 个 HIGH,**全部在命令安全根之外**且已修:
 - safeResolve 多跳悬空 symlink 写穿透(文件工具 cwd 约束)— effectiveRealPath 递归 + 40 跳 fail-closed。

@@ -17,7 +17,7 @@
 1. **子事件浮现**：子 agent 用 manager 现 new 的独立 `InMemoryEventBus`（仅 manager 订阅取摘要），子内部事件不进父 bus。`task` 是注册进父 registry 的普通工具，父 loop 已对它 emit `tool_call`/`tool_result`，父 UI 天然显示 `⏺ task(...)` + `↳ 摘要`。**零改 `render.ts` / `Event` 联合**。
 2. **`task` 工具能力 = `read-only`**：→ 默认 allow，委派不弹审批；成本控制靠预算/深度/并发护栏。不绕 write 审批：子内 write/bash 仍以各自能力命中 `gate.check`→ask。
 3. **复用父 gate**：同一 `DefaultPermissionGate` 实例传子 ctx。`sessionGrants` 按工具名共享——父对 `write` 选过 `allow-session` 后子 write 会静默放行（对 bash 无此问题，executes-code 永不进 grant）。**走 (A) 复用实例 + 钉死单测**把该语义从"意外"变"契约"（边界可控：子能力⊆父、safeResolve 锁 cwd、敏感路径先于 grant 硬 deny）。若 C5 独立评审认为 write 泄漏不可接受，再上 (B) 给子 mint 独立 gate。
-4. **depth 不碰 AgentContext**：由 manager 链自己跟踪（`withDepth(remainingDepth-1)`）。AgentContext 被全仓多处手搓构造，加字段属概念越界且有破测风险。
+4. **depth 不碰 AgentContext**：由 manager 链自己跟踪（每层 `new SubagentManager` 一个 registry/budget 收窄、`remainingDepth` 递减的子 manager）。AgentContext 被全仓多处手搓构造，加字段属概念越界且有破测风险。
 5. **收窄子 registry**：给 `InMemoryToolRegistry` 加 `subset(names)`（复用同一 `ToolDefinition` 引用），`ToolRegistry` 接口加一行 `subset`（全仓唯一实现，零破坏）。
 
 ### 务实取舍

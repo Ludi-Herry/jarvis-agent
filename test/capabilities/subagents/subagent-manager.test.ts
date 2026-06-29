@@ -13,8 +13,10 @@ import {
 } from '../../../src/runtime/permission/permission-gate.js';
 import {
   SubagentManager,
+  createDelegateTool,
+  TASK_TOOL_NAME,
   type RunAgent,
-} from '../../../src/capabilities/subagents/subagent-manager.js';
+} from '../../../src/capabilities/subagents/index.js';
 import type { AgentRole } from '../../../src/capabilities/subagents/roster.js';
 import type { AgentContext, RunOutcome } from '../../../src/core/loop/run-agent.js';
 import type { FinishReason, ModelDelta, ModelProvider, ModelResult, Usage } from '../../../src/core/model/types.js';
@@ -266,5 +268,58 @@ describe('R6: a parent session-grant for write carries into a child (pinned as a
     expect(res.ok).toBe(true);
     expect(a.asks()).toBe(1); // the child write reused the session grant — never asked again (the contract)
     expect(await readFile(join(dir, 'child.txt'), 'utf8')).toBe('hi');
+  });
+});
+
+describe('nested delegation narrows from the child, not the root (HIGH-1 fix)', () => {
+  function wired(remainingDepth: number, run: RunAgent): SubagentManager {
+    const registry = defaultRegistry(); // read / write / bash
+    const manager = new SubagentManager({
+      provider: scriptedModel([{ text: 'x' }]),
+      registry,
+      gate: new DefaultPermissionGate({}),
+      budget: { maxTurns: 24 },
+      roster: ROSTER,
+      cwd: process.cwd(),
+      remainingDepth,
+      run,
+      makeDelegateTool: (m) => createDelegateTool(m),
+      delegateToolName: TASK_TOOL_NAME,
+    });
+    registry.register(createDelegateTool(manager));
+    return manager;
+  }
+
+  it('a read-only child cannot delegate out write/bash; budget narrows from the child', async () => {
+    const cap = capturingRun();
+    const manager = wired(3, cap.run);
+
+    await manager.spawn('reader', 'go');
+    const child = cap.ctx();
+    const childTools = child?.tools.schemasForModel().map((s) => s.name) ?? [];
+    expect(childTools).toContain('task'); // depth 3→2 > 0: the child may delegate
+    expect(childTools).not.toContain('write'); // read-only child: no write/bash
+    expect(childTools).not.toContain('bash');
+    expect(child?.budget.maxTurns).toBe(12); // 24 → 12
+
+    // The child delegates to `writer` via ITS task tool. Pre-fix, the nested task was bound to a
+    // manager that still saw the ROOT registry/budget, so the grandchild could regain write and the
+    // budget reset. Now the grandchild narrows from the (read-only) child.
+    await child?.tools.run(
+      { id: 'g1', name: 'task', arguments: JSON.stringify({ role: 'writer', task: 'write x' }) },
+      { cwd: process.cwd() },
+    );
+    const grand = cap.ctx();
+    const grandTools = grand?.tools.schemasForModel().map((s) => s.name) ?? [];
+    expect(grandTools).not.toContain('write'); // cannot gain write the read-only child never had
+    expect(grand?.budget.maxTurns).toBe(6); // 12 → 6: narrows from the child, not the root's 24→12
+  });
+
+  it('a depth-exhausted child carries no task tool', async () => {
+    const cap = capturingRun();
+    const manager = wired(1, cap.run); // child gets remainingDepth 0
+    await manager.spawn('reader', 'go');
+    const childTools = cap.ctx()?.tools.schemasForModel().map((s) => s.name) ?? [];
+    expect(childTools).not.toContain('task');
   });
 });

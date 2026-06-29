@@ -51,8 +51,10 @@ export interface SpawnResult {
   turns: number;
 }
 
-/** Everything the manager needs, injected so it owns no globals (mirrors AgentContext). Cloned by
- *  {@link SubagentManager.withDepth} to make the child's manager (one nesting level shallower). */
+/** Everything the manager needs, injected so it owns no globals (mirrors AgentContext). A nested
+ *  delegate's manager is a clone of this with a narrowed registry/budget and a decremented depth
+ *  (see {@link SubagentManager} buildChildRegistry), so every level derives strictly from the one
+ *  above it — never from the root. */
 export interface SubagentManagerDeps {
   /** Parent provider — the fallback model. Model routing is YAGNI until a 2nd endpoint exists. */
   provider: ModelProvider;
@@ -80,11 +82,6 @@ export interface SubagentManagerDeps {
 
 export class SubagentManager {
   constructor(private readonly deps: SubagentManagerDeps) {}
-
-  /** A child manager one nesting level shallower; everything else inherited. */
-  withDepth(remainingDepth: number): SubagentManager {
-    return new SubagentManager({ ...this.deps, remainingDepth });
-  }
 
   get remainingDepth(): number {
     return this.deps.remainingDepth;
@@ -120,13 +117,14 @@ export class SubagentManager {
     const derivedCaps = deriveCapabilities(uniqueCapabilities(parentMeta), role.capability);
     const derivedNames = deriveTools(parentMeta, role.tools, derivedCaps);
     const childDepth = deriveDepth(this.deps.remainingDepth, role.maxDepth);
+    const childBudget = deriveBudget(this.deps.budget, role.maxTurns);
 
     // R2: a child with any side-effecting tool MUST run behind a gate; refuse fail-closed otherwise.
     if (!this.deps.gate && hasSideEffect(parentMeta, derivedNames)) {
       return fail(role.name, `refusing to spawn a side-effecting subagent without a permission gate`);
     }
 
-    const childRegistry = this.buildChildRegistry(derivedNames, childDepth);
+    const childRegistry = this.buildChildRegistry(derivedNames, childDepth, childBudget);
     const childBus = new InMemoryEventBus();
     const childMessages: Message[] = [
       { role: 'system', content: role.systemPrompt },
@@ -134,19 +132,24 @@ export class SubagentManager {
     ];
 
     const run = this.deps.run ?? runAgent;
-    const outcome = await run({
-      model: this.providerFor(role),
-      tools: childRegistry,
-      bus: childBus, // independent bus — child events never reach the parent's rendered stream
-      messages: childMessages,
-      toolCtx: { cwd: this.deps.cwd },
-      budget: deriveBudget(this.deps.budget, role.maxTurns),
-      context: this.deps.context,
-      gate: this.deps.gate, // REUSE the parent gate — write/bash inside the child still gets approved
-      // store: deliberately omitted — a child must not append to the parent's session log (R3)
-      signal, // pass the parent's abort signal through so Ctrl-C kills a bash inside the child (R8)
-    });
-    return summarize(outcome, role.name);
+    try {
+      const outcome = await run({
+        model: this.providerFor(role),
+        tools: childRegistry,
+        bus: childBus, // independent bus — child events never reach the parent's rendered stream
+        messages: childMessages,
+        toolCtx: { cwd: this.deps.cwd },
+        budget: childBudget, // strictly smaller than the parent (R5); also the basis a grandchild narrows from
+        context: this.deps.context,
+        gate: this.deps.gate, // REUSE the parent gate — write/bash inside the child still gets approved
+        // store: deliberately omitted — a child must not append to the parent's session log (R3)
+        signal, // pass the parent's abort signal through so Ctrl-C kills a bash inside the child (R8)
+      });
+      return summarize(outcome, role.name);
+    } catch (err) {
+      // A throwing child loop is a non-answer → fail closed (also keeps a panel's Promise.all alive).
+      return fail(role.name, `subagent errored: ${message(err)}`);
+    }
   }
 
   /** Parent tools as {name, capability}, skipping any without a declared capability. */
@@ -159,17 +162,28 @@ export class SubagentManager {
     return metas;
   }
 
-  /** The child's registry: the narrowed subset of the parent's tools. If the child may itself
-   *  delegate (childDepth > 0) and we know how to mint a delegate tool, the inherited parent-bound
-   *  `task` is replaced by one bound to the CHILD manager (so its depth is already decremented). */
-  private buildChildRegistry(names: string[], childDepth: number): ToolRegistry {
+  /**
+   * The child's registry: the narrowed subset of the parent's tools. The inherited (parent-bound)
+   * delegate tool is ALWAYS dropped first — keeping it would let a grandchild derive from the ROOT
+   * registry/budget and escape the chain narrowing (capability + budget would reset to root). If the
+   * child may itself delegate (childDepth > 0), a FRESH `task` is bound to a child manager scoped to
+   * the child's OWN narrowed registry + budget + decremented depth, so every nesting level narrows
+   * strictly from the level above it — never from the root.
+   */
+  private buildChildRegistry(names: string[], childDepth: number, childBudget: Budget): ToolRegistry {
     const { makeDelegateTool, delegateToolName } = this.deps;
+    const ownNames = delegateToolName ? names.filter((n) => n !== delegateToolName) : names;
+    const childRegistry = this.deps.registry.subset(ownNames);
     if (childDepth > 0 && makeDelegateTool && delegateToolName && names.includes(delegateToolName)) {
-      const childRegistry = this.deps.registry.subset(names.filter((n) => n !== delegateToolName));
-      childRegistry.register(makeDelegateTool(this.withDepth(childDepth)));
-      return childRegistry;
+      const childManager = new SubagentManager({
+        ...this.deps,
+        registry: childRegistry, // the child's OWN narrowed registry (incl. the task registered next)
+        budget: childBudget, // the child's OWN narrowed budget — a grandchild narrows from this, not root
+        remainingDepth: childDepth,
+      });
+      childRegistry.register(makeDelegateTool(childManager));
     }
-    return this.deps.registry.subset(names);
+    return childRegistry;
   }
 
   /** The model for a role. Model routing is YAGNI (single provider) — `role.model` is metadata and
@@ -209,4 +223,8 @@ function summarize(outcome: RunOutcome, role: string): SpawnResult {
 
 function fail(role: string, reason: string): SpawnResult {
   return { role, ok: false, summary: reason, turns: 0 };
+}
+
+function message(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }

@@ -17,7 +17,7 @@
 src/
   core/        # AgentLoop, ToolRegistry, ContextManager, ModelProvider
   runtime/     # EventBus（A 阶段先有这个；SessionStore/PermissionGate/Persistence 后续）
-  capabilities/# SkillRegistry（A 阶段；SubagentManager/Hooks/RuleResolver 后续）
+  capabilities/# SkillRegistry（A）+ RuleResolver（B）+ SubagentManager（C，subagents/）；Hooks 后续
   surfaces/    # cli/（future: gui/）
 skills/        # 各 skill 文件夹（SKILL.md + scripts/ + references/）
 docs/          # 方案/设计文档（phase-A-plan.md 等）
