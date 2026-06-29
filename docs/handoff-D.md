@@ -24,7 +24,7 @@
 | **— 第二批 · 腿3 独立 LLM 裁判 —** | | |
 | D6 类型 + 纯函数 | （本批） | `Goal/GoalSpec/GoalCreatedRecord/replayGoal` 加 `pinned`（`?? []` 兜底，第一批不受影响）+ `decideVerdict(checks, report?, pinned?)` 完整三态（§3.2 八步，`report===undefined` 整支逐字不动）+ verdict 全分支触发测试 + 属性测试 |
 | D7 runVerifier + pinned 推导 | （本批） | `verifier.ts`（runVerifier 复用 runAgent：只读 registry+断言、第二 provider、独立 bus、无 store/无 gate、信号透传、VERIFIER_PROMPT；`parseVerifierReport` 三段+fail-closed；**永远返回 report，绝不 undefined**）+ `requirements.ts`（derivePinnedRequirements，builder model 推导，失败 `[]`） |
-| D8 接线 + monitor + CLI + demo | （本批） | runGoal 接腿3（短路 spawn + 最高优先级不变量 + verdict 事件 redact）+ `verifier-monitor.ts`（CNV 率滑窗）+ `resolveVerifierConfig`（config 层独立性断言）+ goal-cli（ARK_VERIFIER_MODEL + derive + 空 pinned 启动期 fail-closed）+ `demo:d2`（双模型，PASSED ×2 含跨家族） |
+| D8 接线 + CLI + demo | （本批） | runGoal 接腿3（短路 spawn + 最高优先级不变量 + verdict 事件 redact）+ `resolveVerifierConfig`（config 层独立性断言）+ goal-cli（ARK_VERIFIER_MODEL + derive + 空 pinned 启动期 fail-closed）+ `demo:d2`（双模型，PASSED ×2 含跨家族）。〔D8 曾加 `VerifierMonitor`（CNV 率），#6 收口时证实其 per-goal 不可达、已删，见下文〕 |
 | D9 收口 | ef2ac03→f2e6e15 | 验收映射 + 本交接刷新 + 设计 vs 现实差异记进 leg3-checklist（KB Part7 是只读证据层、不改）+ 独立核查（两裁判，修超时/credential/边界 3 处）+ memory |
 | **— held-out 腿（checklist #1）—** | | |
 | held-out 隐藏断言腿 | （本提交） | 真正的 held-out 腿：`HeldOutResult`/`checks.heldOut` + checks.ts 跑秘密命令（leg1 绿才跑、采信真退出码）+ verdict.ts held-out 闸（泛化 rationale 不泄露）+ goal-loop 接线（legsClean 含 held-out、短路 leg3、保密 continuation）+ goal-cli `JARVIS_HELDOUT_CHECKS_FILE` + 缺席显式声明 + `demo:d3`（活体+确定性双相）+14 测试 |
@@ -53,7 +53,7 @@
 | 裁判越权/读密钥 exfil | registry 只读+断言；secret 路径工具层拦（ungated 也拦）；verdict 事件 rationale redact、full report 只进 goalStore | `verifier` "buildVerifierRegistry read-only" / "no write, no bash" |
 | 分流（省算力 + 不给注入面） | 腿1/腿2 挂不 spawn 裁判 | `goal-loop` "short-circuits without spawning the judge when leg 1 fails" · "spawns the verifier after the deterministic legs pass" |
 | 同模型独立性表演 | resolveVerifierConfig：verifier===builder → 不启用 + 响亮告警 | `config` "disabled when the verifier model equals the builder model" |
-| CNV 率监控失真 | monitor 只在腿3 真跑轮次 record | `verifier-monitor` "alerts when … rate exceeds threshold" |
+| ~~CNV 率监控失真~~（#6 收口删除） | ~~monitor 只在腿3 真跑轮次 record~~ → **删**：per-goal monitor 不可达（couldNotVerify 终态、单 goal 凑不够样本），是 #6 要消灭的死 guardrail；跨 goal 监控待 Loop 调度落地再加 | — |
 | 熔断（腿3 reject 路径） | recordReject 真读返回、连续 3 → halt → blocked | `goal-loop` "a leg-3 reject … breaker really halts after 3" |
 
 ## 关键决策
@@ -102,7 +102,7 @@
 ## gotcha / 已知小账
 
 - **腿3 不靠 `role.model` seam**：没复用 SubagentManager（`providerFor` 永远回退父 provider、registry 是父∩交集非全新只读、child 继承父 ctx/gate 三处冲突）。`runVerifier` 是**独立函数**复用 runAgent：自建 messages + `buildDefaultRegistry().subset(['read','grep'])`（+ 只读断言）+ 注入第二 provider + 独立 bus + 无 store + 无 gate + 信号透传。第二模型靠 `resolveVerifierConfig` 读 `ARK_VERIFIER_MODEL` → `createProvider({...config, model})`；**verifier≠builder 断言只能在 config 字符串层**（`ModelProvider` 无 model id getter，两硬事实之一）。
-- **腿3 纯文件取证**：裁判只有 read/grep，**跑不了命令/驱不动 app**。prompt 与工具白名单已对齐（明说只能读、凡需执行/运行态恒列 couldNotVerify、→ blocked 交人）。要让裁判跑只读命令/浏览得显式加沙箱化只读 exec/BrowseReadOnly + network-capable 收紧（checklist #6，未做）。
+- **腿3 纯文件取证**：裁判只有 read/grep，**跑不了命令/驱不动 app**。prompt 与工具白名单已对齐（明说只能读、凡需执行/运行态恒列 couldNotVerify、→ blocked 交人）。**checklist #6 已收口**：维持纯文件取证（只读 exec/驱动 app 需 OS 沙箱、暂不做）；D8 的 couldNotVerify-率 monitor 证实 per-goal 不可达、已删（跨 goal 监控待 Loop）。
 - **pinned 推导用 builder model**：`derivePinnedRequirements` 一次 LLM 调用拆 objective、落盘不可变。空清单 → goal-cli **启动期 fail-closed**（拒绝启动、不烧预算，因 decideVerdict 第7步 `pinned.length>0` 守门使空清单 verified 不可达）。
 - **最高优先级不变量**：腿3 启用 + 两腿干净 ⇒ runVerifier 永返回 report（失败合成 couldNotVerify、返回类型非可选）⇒ decideVerdict 永不回落 `report===undefined → verified`。改接线别破（回归测试 `NEVER falls through to verified when the verifier fails`）。
 - **腿2 检测范围**：全工作区 diff vs baseline，查 ① 测试文件（删/skip/focus 标记/数量骤降）② **check-oracle 文件**（package.json/lockfile/tsconfig/eslint/vitest/jest config 被改 → tamper，堵「把 `npm test` 改成 `exit 0`」中性化验收 oracle，H-1）。git diff 失败 → fail-closed。**判不了**：语义弱化（`toBe`→`toBeDefined`）——当前裁判纯文件取证对「跑出来才知道」的弱化也判不了，已知缺口。无 baseline（非 git 仓）→ 腿2 inert。
@@ -122,7 +122,6 @@ src/capabilities/goal/
   checks.ts          # runDeterministicChecks(腿1 真退出码 + held-out 秘密命令) + 纯 classifyTestDiff(腿2)
   verifier.ts        # 腿3：runVerifier(复用 runAgent/只读/第二 provider/永返回 report) + parseVerifierReport + VERIFIER_PROMPT
   requirements.ts    # derivePinnedRequirements(builder model 拆 objective → pinned，失败 [])
-  verifier-monitor.ts# VerifierMonitor(CNV 率滑窗 → degraded)
   update-goal-tool.ts# update_goal(read-only/闭包 claim/防 reward-hacking) + takeClaim
   goal-loop.ts       # runGoal 外循环 + 腿3 接线(短路/不变量/redact) + VerifierCircuitBreaker(真接线)
   goal-store.ts      # GoalRecord(+pinned)/parse/replay/FileGoalStore/hashObjective/assertObjectiveUnchanged
@@ -134,7 +133,7 @@ src/surfaces/cli/render.ts      # +verdict/goal_state 渲染
 scripts/d1-demo.ts              # 真连 Doubao 的确定性两腿活体验证
 scripts/d2-demo.ts              # 真连双 Doubao 模型的腿3 活体验证（需 ARK_VERIFIER_MODEL）
 scripts/d3-demo.ts              # held-out 腿活体（Phase A 真活 verified）+ 确定性抓假（Phase B faked → rejected）
-test/capabilities/goal/         # state/verdict/goal-store/checks/goal-loop/verifier/requirements/verifier-monitor
+test/capabilities/goal/         # state/verdict/goal-store/checks/goal-loop/verifier/requirements
 ```
 
 ## 怎么运行
@@ -147,6 +146,6 @@ test/capabilities/goal/         # state/verdict/goal-store/checks/goal-loop/veri
 
 ## 下一步（Phase D 后续 / 腿3 加固）
 
-- **腿3 能力扩展**（checklist #6）：要裁判驱动真实 app / 跑只读命令，加沙箱化只读 exec / BrowseReadOnly 工具并按 network-capable 收紧；当前纯文件取证、运行态需求恒列 couldNotVerify。
+- **腿3 能力扩展**（checklist #6，**已收口为「暂不做」**）：裁判跑只读命令/驱动 app 需 OS 级沙箱（无沙箱下「只读 exec」=跑任意代码有副作用、且削弱裁判注入安全属性），决定**维持纯文件取证**、运行态需求恒 couldNotVerify。**待沙箱基建**再开。同时 D8 的 couldNotVerify-率 `VerifierMonitor` 证实 per-goal 不可达（死 guardrail）**已删**，**跨 goal 健康监控待 Loop 调度**（多 goal 会话）落地再加。
 - **主观/客观分流确定性化**（checklist #2）：当前 pinned 全交裁判逐条打分；可加 harness 钉死的「有可执行验收命令 → 客观、不 spawn」分流以省算力。
 - **Hooks**（把自动化挂到时刻）、**skill 自动沉淀**（人审 gate）、**Loop 调度**（cron 长跑）、**多模态**、**shadow-git**、**bash 白名单**（无人值守自主，配 memory `restore-bash-session-allow`）。

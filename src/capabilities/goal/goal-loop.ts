@@ -27,7 +27,6 @@ import { DEFAULT_CHECK_COMMANDS, runDeterministicChecks, type CheckDeps } from '
 import { FileGoalStore, assertObjectiveUnchanged, hashObjective } from './goal-store.js';
 import { createUpdateGoalTool, takeClaim, type ClaimSlot } from './update-goal-tool.js';
 import { couldNotVerifyReport, runVerifier as defaultRunVerifier } from './verifier.js';
-import { VerifierMonitor } from './verifier-monitor.js';
 import type {
   DeterministicChecks,
   Goal,
@@ -126,7 +125,6 @@ export async function runGoal(spec: GoalSpec, deps: GoalRunDeps): Promise<GoalRu
   const run = deps.run ?? runAgent;
   const check = deps.check ?? runDeterministicChecks;
   const runVerifierFn = deps.runVerifier ?? defaultRunVerifier;
-  const monitor = new VerifierMonitor();
   const stamp = (): string => new Date().toISOString();
 
   const objectiveHash = hashObjective(spec.objective);
@@ -256,11 +254,10 @@ export async function runGoal(spec: GoalSpec, deps: GoalRunDeps): Promise<GoalRu
       }
       const verdict = decideVerdict(checks, report, goal.pinned);
       finalVerdict = verdict;
-      // Health monitor: feed ONLY rounds where the judge actually ran (a deterministic reject is not
-      // the verifier's verdict). A degraded couldNotVerify rate → a health warning, not silent escalation.
-      if (report !== undefined && monitor.record(verdict.outcome) === 'degraded') {
-        deps.bus.emit({ type: 'state', phase: 'verifier-health-degraded' });
-      }
+      // NOTE: no verifier-health (couldNotVerify-rate) monitor here. That signal is inherently
+      // CROSS-GOAL — within one goal, couldNotVerify is terminal (→ blocked), so a per-goal monitor can
+      // never accumulate enough samples to trip and would be a dead guardrail. It belongs in a future
+      // multi-goal session / Loop scheduler (where many goals share a verifier); deferred until then.
       // EventBus stays small + secret-free: only goalId/outcome/rationale, rationale redacted. The FULL
       // report (evidence/observed) goes to the local goalStore only, never the (potentially remote) bus.
       deps.bus.emit({ type: 'verdict', goalId: goal.id, outcome: verdict.outcome, rationale: redactSecrets(verdict.rationale) });

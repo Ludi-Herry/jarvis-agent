@@ -6,10 +6,10 @@
 > **落地状态（2026-06-29 腿3 已实现，D6–D9；held-out 腿后续补，见 #1）**：5 条全部对照执行，落地与偏差如下。
 > - **#1 held-out**：✅ **已落地**（D6–D9 之后单独补 + 经两裁判对抗复核加固）。新增真正的 held-out 腿：goal-setter 提供的**秘密**校验命令（`JARVIS_HELDOUT_CHECKS_FILE` / `deps.heldOutCommands`），builder 从不见到（不进 context/continuation/EventBus），harness 跑它采信真退出码，只在 leg1 绿后跑、失败→rejected（rationale 泛化不泄露）。缺席时 CLI 显式声明「置信偏弱、建议加权人工抽查」。`demo:d3` 活体 + 确定性双相验证（真活 verified / 伪造被抓 rejected）。**复核抓出并修的 2 个 HIGH**（两裁判收敛 + codex 独立）：① held-out 命令/输出经 cwd 内 goalStore 泄露 → 持久化前收缩为 `{passed, results:[]}`；② `JARVIS_HELDOUT_CHECKS_FILE` 留在 builder bash 环境 → 读毕即从 process.env 删除。**残留**：秘密文件须放 cwd 外（goal-setter 责任，文档已注明）。~~model-facing bash 继承密钥~~ **已硬化（2026-06-30）**：`runCommand.scrubSecretEnv`，model-facing bash 删 credential-shaped env（`isSecretEnvName`），harness 自跑命令保留全 env。
 > - **#2 主客观分流**：◐ **部分**。当前所有 pinned 都交裁判逐条打分（裁判不可缩小清单——分流的「防作弊覆盖面」目的已达）；「有可执行验收命令→客观不 spawn」的省算力分流未做（下一步）。
-> - **#3 熔断 couldNotVerify 归属**：✅ 延续 D3 取舍——**只留连续 3 阈值、放弃滑窗**（couldNotVerify→blocked 已交人、不入窗）；腿3 reject 真触发熔断有 integration 单测。另加 `VerifierMonitor` 管 couldNotVerify **率**监控（与熔断正交）。
+> - **#3 熔断 couldNotVerify 归属**：✅ 延续 D3 取舍——**只留连续 3 阈值、放弃滑窗**（couldNotVerify→blocked 已交人、不入窗）；腿3 reject 真触发熔断有 integration 单测。〔D8 曾另加 `VerifierMonitor` 管 couldNotVerify 率，#6 收口证实其 per-goal 不可达、已删，见 #6〕
 > - **#4 不同模型**：✅ 降为 nice-to-have；载重独立性靠腿1/腿2（无模型）+ 上下文隔离（runVerifier 不喂 builder transcript）+ 独立 prompt；`resolveVerifierConfig` 同模型→不启用 + 告警。已实测同族(2.0 vs 2.1)与跨家族(DeepSeek-V4)均跑通。
 > - **#5 oracle 篡改检测**：✅ D5 已修并延续（腿2 含 check-oracle 文件）。policy.md 本实现未引入（裁判 prompt 内联固定，无外部可改 policy 文件），故「policy.md 放宽」攻击面不存在。
-> - **#6 能力边界**：✅ 裁判定死为**纯文件取证**（read/grep），prompt 与白名单一致、运行态需求恒列 couldNotVerify；健康监控降级为「告警事件 + park」（无自动换模型，删自动表述）。
+> - **#6 能力边界**：✅ **收口（2026-06-30，用户拍板「保纯读 + 收口文档」）**。裁判定死为**纯文件取证**（read/grep），prompt 与白名单一致（`verifier.ts` 明说「只有 read/grep、不能跑命令/驱动 app」、运行态需求恒列 couldNotVerify）——F7 prompt 误导风险闭合。**F6 健康监控**：D8 的 `VerifierMonitor`（couldNotVerify 率告警）收口时**证实是死 guardrail**——单 goal 内 couldNotVerify 是终态（→blocked），per-goal monitor 永远凑不够样本触发，正是本条要消灭的「定义没接线/不可达」反模式 → **已删**（接线 + 类 + 测试全删）。couldNotVerify 率是**跨 goal**信号，待 Loop 调度（多 goal 会话）落地再以跨 goal 形态重加 + 真触发单测。**能跑只读命令/驱动 app**（沙箱化 exec / BrowseReadOnly）需 OS 级沙箱——无沙箱下「只读 exec」跑解释器/app=跑任意代码有副作用、且削弱「裁判被注入也不能行动」核心属性，故**暂不做**，运行态需求恒 couldNotVerify（fail-closed 交人）。
 > **背景**：当前 verified = 确定性两条腿（腿1 四关卡真退出码 + 腿2 测试篡改检测）。腿3 = 对主观项 spawn 独立只读 LLM 裁判。下列 5 条是腿3 设计/实现的已知坑。
 
 ## 总原则

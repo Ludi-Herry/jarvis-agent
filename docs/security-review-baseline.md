@@ -45,6 +45,10 @@ codex exec -s danger-full-access --skip-git-repo-check -m gpt-5.5 \
 
 ## 历史
 
+### 2026-06-30 · checklist #6 收口（裁判能力边界 + 死 guardrail 清除）
+不是对抗轮，是 leg-3 checklist #6 收口时的死代码发现，记此因为正中「绿灯≠成功」主题。D8 的 `VerifierMonitor`（couldNotVerify 率告警）**经 2026-06-29 leg-3 轮两裁判核查时判「通过」**——但那只核了「类在 report!==undefined 时正确 record」，**没核「接线后能不能真触发」**。#6 收口写「健康监控接线触发单测」时发现：单 goal 内 couldNotVerify 是终态（→blocked、loop break），`monitor` 又是 per-goal 实例，所以**至多记录 1 次 couldNotVerify**、永远凑不够阈值（≥4 且率>0.6）→ **不可达死 guardrail**。已删（接线 + 类 + 测试），文档化「couldNotVerify 率是跨 goal 信号，待 Loop 调度落地再加」。同时确认 #6 另一半：裁判 prompt 与 read/grep 白名单一致（无误导执行措辞），「跑命令/驱动 app」需 OS 沙箱、维持纯文件取证。
+- **印证**：组件级 review（「这个类逻辑对吗」）挡不住系统级不可达（「这条线在真实状态机里能走到吗」）——和熔断滑窗、CodeWhale「只自增不读」同类。**guardrail 的触发单测必须走真实接线路径**（integration），只测类本身会漏掉「类没问题、但永远调不到阈值」。教训补强了 baseline 既有铁律：写触发测试时若发现「构造不出触发输入」，那不是测试难写，是 guardrail 死了。
+
 ### 2026-06-30 · model-facing bash 密钥脱敏轮
 给 model-facing bash 加 env 脱敏（防 agent `echo $ARK_API_KEY` exfil）后跑的一轮。**两个独立裁判**——codex(gpt-5.5 xhigh)报 3 HIGH、独立 Claude 子代理报 1 HIGH——**收敛在「脱敏只删子 shell 的 env 拷贝、父 node 进程仍持有 key」**：`shellEnv` 做 `{...process.env}` 后只从拷贝删 secret，`loadDoubaoConfig` 读 key 后从不 delete，provider 捕获后 `process.env.ARK_API_KEY` 纯属残留。Linux 上 model-facing bash 经 `cat/strings /proc/$PPID/environ`、`ps eww $PPID` 读回**未脱敏**的 key——三条都过命令分析器（clean→ask）。`echo $ARK_API_KEY`/`printenv` 读的是已脱敏的子 shell 拷贝、确实拿不到，**脱敏只挡住了最 naive 那条**。win32 无 /proc 不复现，但 harness provider 无关、可部署 Linux，判 HIGH。codex 另独立抓到两条：① `grep -a . .env` 漏拦（`grep` 不在 `FILE_PATH_PROGS`，分析器放行 → bash grep 读 .env）；② denylist 漏常见名（`GITHUB_PAT`/`DATABASE_URL`/`MONGODB_URI`/`SENTRY_DSN`…）。
 **已修 + 触发单测 + post-fix 四关卡（519 测试）**：① 根因——`scrubProviderKeyFromEnv()` 在 createProvider 后从 **node 进程 process.env** 删 `ARK_API_KEY`（goal-cli + REPL），残留清零，/proc 与 echo 双向断（保留 ARK_MODEL/ARK_VERIFIER_MODEL 等非密配置）；② 防御纵深——`/proc/<pid>/environ` 纳入 `SENSITIVE_PATHS`，`cat/strings /proc/…/environ` 被命令分析器 deny；③ `grep/egrep/fgrep/rg` 加 path-aware 操作数扫描（跳过第一个非 flag 的 PATTERN、扫其余文件操作数）→ `grep -a . .env`、`grep x /proc/$PPID/environ` 被拦，`grep .env README`（.env 是 pattern）不误杀；④ `isSecretEnvName` denylist 扩 PAT/DSN/AUTHORIZATION/连接串名。子 shell 脱敏（上轮）保留作纵深。
