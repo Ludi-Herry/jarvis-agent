@@ -8,22 +8,19 @@
  * reaches a shell. Register it only alongside a gate (the b3-demo and the B4 REPL do; the bare
  * default registry does NOT).
  *
- * Execution-layer safety (the gate decides IF a command runs; this decides HOW, safely):
- *  - **Confined cwd**: the command runs in `ctx.cwd`, the project root the loop injects.
- *  - **Timeout + tree-kill**: a command past its deadline is killed with its whole child tree
- *    (`taskkill /T` on Windows, SIGKILL elsewhere) so a hung `npm install` can't wedge the loop.
- *  - **Bounded capture**: stdout+stderr are merged and capped, so runaway output can't exhaust
- *    memory; the loop's ContextManager budgets the rest to disk.
- *  - **Failures are results, not throws**: a non-zero exit, a timeout, or a missing shell all come
- *    back as a ToolRunResult the model can read and react to (matching the registry contract).
+ * The hardened spawn/timeout/tree-kill runner lives in {@link runCommand} (run-command.ts), shared
+ * with the goal verifier's leg-1 checks. This tool wraps it model-facing: it surfaces the exit code
+ * as a `[exit code: …]` text note (leg 1 reads the structured `code` from runCommand directly).
  *
- * Target shell is POSIX bash (Git Bash on Windows) — the same shell the B2 analyzer parses for, so
- * "what we checked" and "what we run" are the same language.
+ * Target shell is POSIX bash (Git Bash on Windows) — the same shell the B2 analyzer parses for.
  */
-import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
 import { z } from 'zod';
+import { defaultShellPath, runCommand } from './run-command.js';
 import type { ToolDefinition } from './types.js';
+
+// Re-exported for back-compat: callers/tests that imported `defaultShellPath` from here keep working;
+// its home is now run-command.ts (shared with the goal verifier's leg-1 checks).
+export { defaultShellPath } from './run-command.js';
 
 /** Default kill deadline. Long enough for a real build/test, short enough not to hang forever. */
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -32,9 +29,6 @@ const MAX_TIMEOUT_MS = 600_000;
 /** Cap captured output so a noisy command can't exhaust memory; the ContextManager offloads the
  *  rest to disk. Comfortably above the loop's 50K budget threshold. */
 const DEFAULT_MAX_OUTPUT_CHARS = 100_000;
-/** After we kill a timed-out/aborted command, resolve anyway this soon even if the OS never
- *  reports the child closed — so a kill-resistant or detached process can't wedge the loop. */
-const KILL_GRACE_MS = 2_000;
 
 export interface BashToolOptions {
   /** Path to the bash executable. Defaults to the Git Bash resolver ({@link defaultShellPath}). */
@@ -68,7 +62,7 @@ export function createBashTool(options: BashToolOptions = {}): ToolDefinition<{ 
     }),
     run: async ({ command, timeout_ms }, ctx) => {
       const timeout = clamp(timeout_ms ?? defaultTimeout, MIN_TIMEOUT_MS, MAX_TIMEOUT_MS);
-      const res = await execute(shellPath, command, ctx.cwd, timeout, maxOutputChars, ctx.signal);
+      const res = await runCommand(shellPath, command, ctx.cwd, timeout, maxOutputChars, ctx.signal);
 
       if (res.spawnError !== undefined) {
         return { content: '', error: `Failed to start shell (${shellPath}): ${res.spawnError}` };
@@ -83,157 +77,6 @@ export function createBashTool(options: BashToolOptions = {}): ToolDefinition<{ 
       return { content: notes.length > 0 ? `${body}\n${notes.join('\n')}` : body };
     },
   };
-}
-
-interface ExecResult {
-  output: string;
-  code: number | null;
-  timedOut: boolean;
-  aborted: boolean;
-  truncated: boolean;
-  spawnError?: string;
-}
-
-/** Spawn `bash -c command` in `cwd`, capture merged output (capped), and kill the whole tree if it
- *  outlives `timeoutMs` or the turn is aborted. Never rejects, and — critically — never depends on
- *  the kill actually succeeding: after a kill we force-resolve within {@link KILL_GRACE_MS}, so a
- *  kill-resistant or detached process can't leave the loop awaiting forever. */
-function execute(
-  shellPath: string,
-  command: string,
-  cwd: string,
-  timeoutMs: number,
-  maxOutputChars: number,
-  signal?: AbortSignal,
-): Promise<ExecResult> {
-  return new Promise<ExecResult>((resolve) => {
-    let output = '';
-    let truncated = false;
-    let timedOut = false;
-    let aborted = false;
-    let settled = false;
-    let graceArmed = false;
-    const timers: ReturnType<typeof setTimeout>[] = [];
-
-    // On POSIX, detach so the child LEADS its own process group — killTree then signals the whole
-    // group (negative pid), the analogue of Windows `taskkill /t`. On Windows we stay attached:
-    // taskkill /t already walks the child tree, and detaching there would spawn a stray console.
-    const child = spawn(shellPath, ['-c', command], {
-      cwd,
-      windowsHide: true,
-      env: shellEnv(),
-      detached: process.platform !== 'win32',
-    });
-
-    const finish = (result: Pick<ExecResult, 'code' | 'spawnError'>): void => {
-      if (settled) return;
-      settled = true;
-      for (const t of timers) clearTimeout(t);
-      if (signal) signal.removeEventListener('abort', onAbort);
-      resolve({ output, truncated, timedOut, aborted, ...result });
-    };
-
-    // Kill the tree, then arm an INDEPENDENT fallback that resolves even if 'close' never fires —
-    // so a kill-resistant or detached process can never leave the loop awaiting forever.
-    const killAndGrace = (): void => {
-      killTree(child.pid);
-      if (graceArmed) return;
-      graceArmed = true;
-      timers.push(
-        setTimeout(() => {
-          child.stdout?.destroy();
-          child.stderr?.destroy();
-          finish({ code: null });
-        }, KILL_GRACE_MS),
-      );
-    };
-
-    function onAbort(): void {
-      aborted = true;
-      killAndGrace();
-    }
-
-    const append = (buf: Buffer): void => {
-      if (truncated) return;
-      const remaining = maxOutputChars - output.length;
-      const text = buf.toString('utf8');
-      if (text.length >= remaining) {
-        output += text.slice(0, remaining);
-        truncated = true;
-      } else {
-        output += text;
-      }
-    };
-    child.stdout?.on('data', append);
-    child.stderr?.on('data', append);
-
-    timers.push(
-      setTimeout(() => {
-        timedOut = true;
-        killAndGrace();
-      }, timeoutMs),
-    );
-
-    if (signal?.aborted) onAbort();
-    else signal?.addEventListener('abort', onAbort);
-
-    child.on('error', (err) => finish({ code: null, spawnError: err.message }));
-    child.on('close', (code) => finish({ code }));
-  });
-}
-
-/** Kill a process AND its children. On Windows the child shell spawns its own subprocesses that a
- *  plain kill leaves orphaned, so use `taskkill /T`; on POSIX the child leads its own process group
- *  (spawned detached), so SIGKILL the whole GROUP via a negative pid — a plain kill(pid) would
- *  orphan the shell's children. */
-function killTree(pid: number | undefined): void {
-  if (pid === undefined) return;
-  if (process.platform === 'win32') {
-    // Best-effort; the spawned taskkill is fire-and-forget. Ignore its own failures.
-    spawn('taskkill', ['/pid', String(pid), '/t', '/f'], { windowsHide: true }).on('error', () => {});
-  } else {
-    try {
-      process.kill(-pid, 'SIGKILL'); // negative pid → the whole process group
-    } catch {
-      // group send failed (grouping didn't take?) — fall back to the single pid
-      try {
-        process.kill(pid, 'SIGKILL');
-      } catch {
-        // already gone
-      }
-    }
-  }
-}
-
-/** The child shell's environment, with the startup-file hooks stripped. A non-interactive bash
- *  sources `$BASH_ENV` (and a POSIX sh sources `$ENV`) BEFORE it runs `-c <command>` — code the
- *  command analyzer never parsed and the user never approved, so "what we checked" wouldn't be
- *  "what runs". Everything else (PATH, …) is inherited so commands still work; only these two
- *  startup hooks are dropped. (The model can't set the parent process's env anyway, but dropping
- *  them closes the door even when the operator's own environment carries one.) */
-function shellEnv(): NodeJS.ProcessEnv {
-  const env = { ...process.env };
-  delete env.BASH_ENV;
-  delete env.ENV;
-  return env;
-}
-
-/** Resolve the bash executable. An explicit `JARVIS_BASH` wins; on Windows prefer the Git Bash
- *  install (the PATH `bash` is often the WindowsApps WSL stub, which has different cwd/FS
- *  semantics); otherwise fall back to `bash` on PATH. */
-export function defaultShellPath(): string {
-  if (process.env.JARVIS_BASH) return process.env.JARVIS_BASH;
-  if (process.platform === 'win32') {
-    const candidates = [
-      `${process.env.ProgramFiles ?? 'C:\\Program Files'}\\Git\\bin\\bash.exe`,
-      `${process.env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)'}\\Git\\bin\\bash.exe`,
-      `${process.env.LOCALAPPDATA ?? ''}\\Programs\\Git\\bin\\bash.exe`,
-    ];
-    for (const candidate of candidates) {
-      if (existsSync(candidate)) return candidate;
-    }
-  }
-  return 'bash';
 }
 
 function clamp(value: number, min: number, max: number): number {

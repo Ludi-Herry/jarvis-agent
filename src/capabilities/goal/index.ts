@@ -8,3 +8,4 @@ export * from './goal.js';
 export * from './state.js';
 export * from './verdict.js';
 export * from './goal-store.js';
+export * from './checks.js';
