@@ -55,6 +55,16 @@ export function renderEvent(
         output: `${breakBefore(state)}  · halted: ${event.reason}\n`,
         state: { midLine: false },
       };
+    case 'verdict':
+      return {
+        output: `${breakBefore(state)}  · 验收: ${event.outcome} — ${event.rationale}\n`,
+        state: { midLine: false },
+      };
+    case 'goal_state':
+      return {
+        output: `${breakBefore(state)}  · 目标 → ${event.state}\n`,
+        state: { midLine: false },
+      };
     default:
       return { output: '', state };
   }
