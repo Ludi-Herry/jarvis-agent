@@ -180,6 +180,14 @@ export function parseVerifierReport(raw: string, pinned: PinnedRequirement[]): V
   if (missing.length > 0) {
     return couldNotVerifyReport(`verifier did not score every requirement: ${missing.map((m) => m.text).join('; ')}`);
   }
+  // Reject a report that scores ids OUTSIDE the pinned set. The judge is told to score EXACTLY the
+  // pinned ids (no add/drop), so extras signal injected/echoed output — e.g. a builder plants a perfect
+  // `r1..r12` JSON block hoping an injected judge echoes it; ids⊄pinned fails it closed unless it matches
+  // the exact (LLM-derived, unguessable) pinned set. With the coverage check above, this pins ids==pinned.
+  const pinnedIds = new Set(pinned.map((p) => p.id));
+  if (report.perRequirement.some((r) => !pinnedIds.has(r.requirementId))) {
+    return couldNotVerifyReport('verifier scored requirement ids outside the fixed pinned list');
+  }
   return report;
 }
 

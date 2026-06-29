@@ -296,6 +296,13 @@ function classifyProgram(prog: string, args: string[], argDescs: WordDesc[], dep
     }
     if (i + 1 < args.length) return danger('ssh runs a command on a remote host — cannot verify'); // host + remote cmd
   }
+  if (prog === 'ps' && psPrintsEnv(args)) {
+    // `ps` with the BSD `e` flag (ps e / eww / auxe / axe) or `-o environ` prints each process's
+    // ENVIRONMENT — on Linux that exposes the parent process's INITIAL env (which holds ARK_API_KEY;
+    // /proc/<pid>/environ shows the launch env, immune to a runtime delete), so it leaks the key even
+    // though the env-var was scrubbed and the /proc file read is blocked. A plain `ps aux`/`-ef` is fine.
+    return sensitive('ps with environment output (e / -o environ) can read another process\'s secrets');
+  }
 
   // 1. Code interpreters: inline code (`-c`/`-e`/bundles) is opaque; a bare interpreter reads its
   //    program from stdin (curl | python). A script file or info flag is fine.
@@ -473,6 +480,17 @@ const STDIN_PATHS = new Set(['-', '/dev/stdin', '/dev/fd/0', '/proc/self/fd/0'])
 
 function runsAScriptFile(args: string[]): boolean {
   return args.some((a) => !a.startsWith('-') && a !== '-c' && !STDIN_PATHS.has(a) && !/^\/dev\/fd\/|^\/proc\/self\/fd\//.test(a));
+}
+
+/** True when a `ps` invocation requests ENVIRONMENT output. The BSD `e` flag (a non-dash bundle
+ *  containing `e`: `e`/`eww`/`auxe`/`axe`) prints each process's environment; `-o environ` /
+ *  `--format environ` select the environ column. A plain `ps aux` / `ps -ef` (no env) is allowed. */
+function psPrintsEnv(args: string[]): boolean {
+  return args.some(
+    (a) =>
+      /environ/i.test(a) || // -o environ / --format environ / -oenviron / --format=environ
+      (!a.startsWith('-') && /^[a-z]+$/i.test(a) && a.toLowerCase().includes('e')), // BSD bundle with `e`
+  );
 }
 
 /** ssh options that consume the following argument (so the host isn't mistaken for an option value). */

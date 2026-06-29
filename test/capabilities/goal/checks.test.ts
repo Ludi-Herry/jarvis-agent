@@ -117,6 +117,17 @@ describe('runDeterministicChecks — leg 1 trusts the real exit code', () => {
     expect(r.testTamper).toBe('clean');
   });
 
+  it('fails closed when git diff fails against a PRESENT baseline (unreachable sha) — not silently clean', async () => {
+    // A present baseline whose sha git can't resolve must NOT pass leg 2 as "clean" — we cannot confirm
+    // the tests are untampered, so fail closed. (Trigger test for the impure scanTestTamper git-fail path.)
+    const r = await runDeterministicChecks(
+      { shellPath, cwd: process.cwd(), checkCommands: ['exit 0'] },
+      { headSha: 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef', testFiles: [] },
+    );
+    expect(r.testTamper).toBe('weakened-or-deleted');
+    expect(r.tamperReason).toContain('git diff failed');
+  });
+
   it('fails closed when there are no check commands (a vacuous AND must not pass)', async () => {
     const r = await runDeterministicChecks({ shellPath, cwd: process.cwd(), checkCommands: [] });
     expect(r.objectiveChecksPassed).toBe(false);

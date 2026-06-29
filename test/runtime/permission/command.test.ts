@@ -474,6 +474,19 @@ describe('analyzeCommand — codex round-3 (AST) fixes', () => {
     expect(analyze('grep ARK /proc/1234/environ').sensitive).toBe(true);
   });
 
+  it('flags ps env output (ps e/eww/-o environ) — reads another process env, /proc-immune key leak', () => {
+    // codex HIGH: on Linux /proc/<pid>/environ shows the LAUNCH env (immune to the runtime key scrub),
+    // and `ps eww` reads it — so it leaks ARK_API_KEY even though the file read is blocked.
+    expect(analyze('ps eww -p $PPID').sensitive).toBe(true);
+    expect(analyze('ps e').sensitive).toBe(true);
+    expect(analyze('ps auxe').sensitive).toBe(true);
+    expect(analyze('ps -o environ -p 1').sensitive).toBe(true);
+    expect(analyze('ps --format environ').sensitive).toBe(true);
+    // plain process listing without environment stays allowed (not over-blocked)
+    expect(analyze('ps aux').sensitive).toBe(false);
+    expect(analyze('ps -ef').sensitive).toBe(false);
+  });
+
   it('still flags a real file-reader on a literal secret', () => {
     expect(analyze('cat .env').sensitive).toBe(true);
     expect(analyze('cp .env /tmp/x').sensitive).toBe(true);

@@ -43,7 +43,11 @@ import type {
  *  the counter, so the consecutive latch fires first anyway (Part7 §6.1 window-reachability note). */
 const MAX_CONSECUTIVE_REJECTS = 3;
 
-/** A pure-ish breaker: consecutive rejects → halt. Reset on any non-reject. Latches once. */
+/** A pure-ish breaker: count rejects → halt + latch at {@link MAX_CONSECUTIVE_REJECTS}. The count is
+ *  consecutive IN THE WIRING — a non-reject verdict (verified/couldNotVerify) ends the loop (break), so
+ *  rejects can't be interleaved with non-rejects within one goal. (An earlier `recordNonReject` reset
+ *  was removed: in this state machine it ran one statement before an unconditional break, so it could
+ *  never influence a later iteration — a VerifierMonitor-class unreachable branch, fail-safe but dead.) */
 export class VerifierCircuitBreaker {
   private consecutive = 0;
   private tripped = false;
@@ -54,9 +58,6 @@ export class VerifierCircuitBreaker {
       return 'halt';
     }
     return 'continue';
-  }
-  recordNonReject(): void {
-    this.consecutive = 0;
   }
 }
 
@@ -282,7 +283,6 @@ export async function runGoal(spec: GoalSpec, deps: GoalRunDeps): Promise<GoalRu
         continue;
       }
 
-      breaker.recordNonReject();
       state = await transition(deps, goal, advanceGoalState(verdict.outcome), undefined, stamp);
       break;
     }

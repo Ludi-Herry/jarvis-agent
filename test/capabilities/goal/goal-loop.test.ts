@@ -124,6 +124,20 @@ describe('runGoal — verification gates completion', () => {
     expect(result.state).toBe('blocked');
     expect(calls()).toBe(1);
   });
+
+  it('runs out of rounds without a completion claim → blocked (budget exhaustion, fail-closed)', async () => {
+    let calls = 0;
+    const run: NonNullable<GoalRunDeps['run']> = async () => {
+      calls++;
+      return { finalText: 'still working', turns: 1 }; // never calls update_goal → no claim
+    };
+    const bus = new InMemoryEventBus();
+    const events = record(bus);
+    const result = await runGoal(spec({ budget: { maxRounds: 3 } }), baseDeps({ bus, run, check: passingCheck }));
+    expect(result.state).toBe('blocked');
+    expect(calls).toBe(3); // nudged each round, never claimed → exhausted the 3-round budget
+    expect(events.some((e) => e.type === 'halt' && e.reason === 'budget')).toBe(true);
+  });
 });
 
 describe('runGoal — circuit breaker is really wired (Part7 P0-2)', () => {
@@ -151,14 +165,12 @@ describe('VerifierCircuitBreaker', () => {
     expect(b.recordReject()).toBe('continue'); // latched — never halts twice
   });
 
-  it('resets the consecutive count on a non-reject', () => {
+  it('counts to halt and latches — no reset path (a non-reject ends the loop, so the count is consecutive)', () => {
     const b = new VerifierCircuitBreaker();
-    b.recordReject();
-    b.recordReject();
-    b.recordNonReject();
     expect(b.recordReject()).toBe('continue');
     expect(b.recordReject()).toBe('continue');
     expect(b.recordReject()).toBe('halt');
+    expect(b.recordReject()).toBe('continue'); // latched — never halts twice
   });
 });
 
@@ -190,6 +202,10 @@ function brokenReport(): VerifierReport {
 }
 function couldNotVerifyReport(): VerifierReport {
   return { feature: 'works', expected: '', observed: '', evidence: '', perRequirement: [], couldNotVerify: ['could not check locally'], rationale: 'cnv' };
+}
+/** A report scoring the pinned requirement as `cannotVerify` (an execution/external requirement). */
+function cannotVerifyReport(): VerifierReport {
+  return { feature: 'works', expected: '', observed: '', evidence: '', perRequirement: [{ requirementId: 'r1', strength: 'cannotVerify', scope: 'matched' }], couldNotVerify: ['needs a running server'], rationale: 'cnv' };
 }
 
 /** A runVerifier spy that returns a fixed report and counts how many times it was called. */
@@ -331,6 +347,18 @@ describe('runGoal — held-out leg gates completion', () => {
     );
     expect(spy.calls()).toBe(0); // held-out failed → judge never spawned (no wasted spend / injection surface)
     expect(result.finalVerdict?.outcome).toBe('rejected');
+  });
+
+  it('a leg-3 cannotVerify report parks to blocked, not a reject loop (execution-requirement integration)', async () => {
+    const { run } = claimingRun('complete');
+    const spy = verifierSpy(cannotVerifyReport());
+    const result = await runGoal(
+      spec({ pinned: PINNED }),
+      baseDeps({ run, check: passingCheck, verifierProvider: dummyProvider(), runVerifier: spy.fn }),
+    );
+    expect(spy.calls()).toBe(1);
+    expect(result.state).toBe('blocked');
+    expect(result.finalVerdict?.outcome).toBe('couldNotVerify');
   });
 
   it('held-out passing lets a clean goal verify (the leg is satisfied)', async () => {
