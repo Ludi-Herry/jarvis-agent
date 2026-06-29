@@ -9,3 +9,5 @@ export * from './state.js';
 export * from './verdict.js';
 export * from './goal-store.js';
 export * from './checks.js';
+export * from './update-goal-tool.js';
+export * from './goal-loop.js';

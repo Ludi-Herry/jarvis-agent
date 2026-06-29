@@ -54,6 +54,14 @@ export function hashObjective(objective: string): string {
   return createHash('sha256').update(objective, 'utf8').digest('hex');
 }
 
+/** Fail closed if the objective no longer matches its creation-time hash — the objective is immutable
+ *  (Part7). Pure; called before each verification as defense-in-depth + a restart integrity check. */
+export function assertObjectiveUnchanged(objective: string, expectedHash: string): void {
+  if (hashObjective(objective) !== expectedHash) {
+    throw new Error('objective changed since creation (immutability violated) — failing closed');
+  }
+}
+
 /** Serialize one record as a JSONL line. */
 export function serializeGoalRecord(record: GoalRecord): string {
   return `${JSON.stringify(record)}\n`;
