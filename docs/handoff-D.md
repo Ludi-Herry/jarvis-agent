@@ -69,7 +69,7 @@
 
 完成判定有**两种运行模式**，verified 的含义不同：
 
-- **腿3 启用（配了不同的 `ARK_VERIFIER_MODEL`）**：verified = 四关卡全绿 + 测试/oracle 未篡改 + **独立裁判逐条证明每条 pinned 需求 proves+matched、feature works、无 couldNotVerify**。这才是「真验收」——拦得住「写了通过 check 但没真做到 objective」。但仍有**已知边界**：① 裁判是**纯文件取证**（只有 read/grep），跑不了命令、驱不动 app——凡需执行/运行态的需求裁判必须列进 `couldNotVerify`（→ blocked 交人），它不会假装验过；② 单 Doubao 账号下「不同模型」多是同族变体，**独立性弱**（载重独立性靠腿1/腿2 完全无模型 + 上下文隔离 + 独立 prompt，「不同模型」是 nice-to-have，见 checklist #4）；跨家族（DeepSeek-V4-pro）独立性更强、已验证可跑通。
+- **腿3 启用（配了不同的 `ARK_VERIFIER_MODEL`）**：verified = 四关卡全绿 + 测试/oracle 未篡改 + **独立裁判逐条证明每条 pinned 需求 proves+matched、feature works、无 couldNotVerify**。这才是「真验收」——拦得住「写了通过 check 但没真做到 objective」。但仍有**已知边界**：① 裁判是**纯文件取证**（只有 read/grep），跑不了命令、驱不动 app——凡需执行/运行态的需求裁判用 **`cannotVerify`** strength + 列 `couldNotVerify`，`decideVerdict` **确定性** park（→ blocked 交人），不会假装验过、也**不会当硬反证 reject 把 builder 白循环**（checklist #2 修的 bug：`cannotVerify`→couldNotVerify；`contradicts`=实证坏才优先 reject；`incomplete/missing`=实证残缺才 reject）；② 单 Doubao 账号下「不同模型」多是同族变体，**独立性弱**（载重独立性靠腿1/腿2 完全无模型 + 上下文隔离 + 独立 prompt，「不同模型」是 nice-to-have，见 checklist #4）；跨家族（DeepSeek-V4-pro）独立性更强、已验证可跑通。
 - **腿3 未启用（默认）**：verified = **确定性腿**（腿1 + 腿2 + held-out，若配）。`decideVerdict(checks, report?, pinned?)` 的 `report===undefined` 整支**逐字保留**第一批语义（只是多被 held-out 闸 gate）——默认、未被替换。无 held-out 时拦不住「通过 check 但没真做到 objective」，要确定性兜那层就配 held-out，要语义兜就配 `ARK_VERIFIER_MODEL`。
 
 - **held-out 腿（确定性、堵自写弱测试）**：goal-setter 的**秘密**隐藏断言，builder 从不见到（不进 context/continuation/EventBus），harness 跑它采信真退出码、只在 leg1 绿后跑、失败→rejected。它是 checklist #1 想要的「真 held-out」——leg1 重跑只证「既有套件过」，held-out 才防「builder 自写 trivial 测试骗过套件」。**缺席 = 显式弱置信**（CLI 声明、建议加权人工抽查），不当通过。**保密责任**：秘密文件 + 它引用的测试须放 cwd **外**（builder read/grep confined to cwd），否则 builder 能读到就能游戏——harness 只保证不把命令/输出放进 builder 上下文。
@@ -147,5 +147,5 @@ test/capabilities/goal/         # state/verdict/goal-store/checks/goal-loop/veri
 ## 下一步（Phase D 后续 / 腿3 加固）
 
 - **腿3 能力扩展**（checklist #6，**已收口为「暂不做」**）：裁判跑只读命令/驱动 app 需 OS 级沙箱（无沙箱下「只读 exec」=跑任意代码有副作用、且削弱裁判注入安全属性），决定**维持纯文件取证**、运行态需求恒 couldNotVerify。**待沙箱基建**再开。同时 D8 的 couldNotVerify-率 `VerifierMonitor` 证实 per-goal 不可达（死 guardrail）**已删**，**跨 goal 健康监控待 Loop 调度**（多 goal 会话）落地再加。
-- **主观/客观分流确定性化**（checklist #2）：当前 pinned 全交裁判逐条打分；可加 harness 钉死的「有可执行验收命令 → 客观、不 spawn」分流以省算力。
+- **主观/客观分流**（checklist #2，**已收口**）：防作弊覆盖面**已结构性满足**（所有 pinned 都交裁判、无「标客观」旋钮可绕）；确定性客观路由（有命令→客观、跑命令验）需可信 per-需求命令、与 #6「裁判跑命令需沙箱」同根 → **defer**。顺带修了 `cannotVerify` bug（见下「verified 诚实边界」）。**待沙箱/goal-setter-authored-requirements** 再做客观路由。
 - **Hooks**（把自动化挂到时刻）、**skill 自动沉淀**（人审 gate）、**Loop 调度**（cron 长跑）、**多模态**、**shadow-git**、**bash 白名单**（无人值守自主，配 memory `restore-bash-session-allow`）。

@@ -110,15 +110,22 @@ export function decideVerdict(
     };
   }
 
-  // Step 6 — evidence too weak, or a narrow check stretched to support a broad claim → couldNotVerify
-  // (fail-closed). The claim_scope axis is what blocks "a green unit test proves the whole feature".
+  // Step 6 — could-not-verify / too-weak / narrow → couldNotVerify (park, fail-closed). `cannotVerify`
+  // is the judge saying "I couldn't verify THIS requirement locally" (needs execution / a running app /
+  // external state / human judgment) — it must PARK to a human, NOT hard-reject like incomplete/missing
+  // (which mean "I inspected it and it's partial/absent"). `tooWeak`/narrow = evidence insufficient. A
+  // genuinely-broken requirement was already caught in step 4 (`contradicts`), which takes precedence, so
+  // here we only reach unverifiable/weak items.
   const weak = report.perRequirement.find(
-    (r) => r.strength === 'tooWeak' || r.scope === 'narrowerThanClaim',
+    (r) => r.strength === 'cannotVerify' || r.strength === 'tooWeak' || r.scope === 'narrowerThanClaim',
   );
   if (weak) {
     return {
       outcome: 'couldNotVerify',
-      rationale: `evidence too weak or narrower than the claim for: ${reqText(pinned, weak.requirementId)}`,
+      rationale:
+        weak.strength === 'cannotVerify'
+          ? `verifier could not verify a requirement locally (needs execution / a running app / external state / human judgment): ${reqText(pinned, weak.requirementId)}`
+          : `evidence too weak or narrower than the claim for: ${reqText(pinned, weak.requirementId)}`,
       report,
     };
   }

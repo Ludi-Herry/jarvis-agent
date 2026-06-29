@@ -107,6 +107,35 @@ describe('decideVerdict — leg 3 scoring (Part7 §3.2 / §4)', () => {
     expect(decideVerdict(checks(), report, PINNED).outcome).toBe('couldNotVerify');
   });
 
+  it('cannotVerify PARKS (couldNotVerify), it is NOT a hard reject — the execution-requirement bug fix', () => {
+    // A requirement the judge cannot check by reading files (needs running code / external state) must
+    // route to a human, NOT loop the builder on work it actually did (the old incomplete/missing path).
+    const report = perfectReport({
+      perRequirement: [{ requirementId: 'r1', strength: 'cannotVerify', scope: 'matched' }],
+    });
+    const v = decideVerdict(checks(), report, PINNED);
+    expect(v.outcome).toBe('couldNotVerify');
+    expect(v.rationale).toContain('could not verify');
+  });
+
+  it('a proven-broken (contradicts) requirement still rejects even alongside a cannotVerify (contradicts precedence)', () => {
+    const twoPinned: PinnedRequirement[] = [...PINNED, { id: 'r2', text: 'second' }];
+    const report = perfectReport({
+      perRequirement: [
+        { requirementId: 'r1', strength: 'contradicts', scope: 'matched' },
+        { requirementId: 'r2', strength: 'cannotVerify', scope: 'matched' },
+      ],
+    });
+    expect(decideVerdict(checks(), report, twoPinned).outcome).toBe('rejected');
+  });
+
+  it('incomplete/missing still hard-reject (verified partial/absent ≠ could-not-verify)', () => {
+    for (const strength of ['incomplete', 'missing'] as const) {
+      const report = perfectReport({ perRequirement: [{ requirementId: 'r1', strength, scope: 'matched' }] });
+      expect(decideVerdict(checks(), report, PINNED).outcome, strength).toBe('rejected');
+    }
+  });
+
   it('empty pinned list with an otherwise-perfect report is couldNotVerify (verified unreachable, step 7 guard)', () => {
     const report = perfectReport({ perRequirement: [] }); // nothing to prove, no pinned to cover
     const v = decideVerdict(checks(), report, []);
@@ -174,6 +203,7 @@ describe('decideVerdict — fail-closed property (verified ⇒ a provable, clean
       'incomplete',
       'tooWeak',
       'missing',
+      'cannotVerify',
     ];
     const scopes: VerifierReport['perRequirement'][number]['scope'][] = ['matched', 'narrowerThanClaim'];
     for (const objectiveChecksPassed of [true, false]) {

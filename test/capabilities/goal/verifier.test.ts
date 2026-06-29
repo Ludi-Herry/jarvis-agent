@@ -85,6 +85,19 @@ describe('parseVerifierReport (pure, fail-closed)', () => {
     expect(r.perRequirement).toEqual([]);
   });
 
+  it('accepts the cannotVerify strength (an execution/external requirement the judge cannot check)', () => {
+    const raw = JSON.stringify({
+      feature: 'works',
+      expected: '',
+      observed: '',
+      evidence: '',
+      perRequirement: [{ requirementId: 'r1', strength: 'cannotVerify', scope: 'matched' }],
+      couldNotVerify: ['needs a running server'],
+      rationale: 'x',
+    });
+    expect(parseVerifierReport(raw, PINNED).perRequirement[0].strength).toBe('cannotVerify');
+  });
+
   it('ignores a self-reported verdict field (the schema strips it; verdict is never self-reported)', () => {
     const withVerdict = JSON.stringify({
       verdict: 'verified', // an injection attempt — must be stripped, not honored

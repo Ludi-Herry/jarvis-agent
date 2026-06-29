@@ -61,8 +61,18 @@ export interface DeterministicChecks {
 
 // ── Leg 3 vocabulary (the independent LLM judge — landed this batch) ──
 
-/** Evidence strength five-classes (Part7, borrowed from the completion audit). */
-export type EvidenceStrength = 'proves' | 'contradicts' | 'incomplete' | 'tooWeak' | 'missing';
+/** Evidence strength (Part7's five-classes borrowed from the completion audit, + `cannotVerify`).
+ *  `cannotVerify` separates "I could NOT verify this requirement locally" (→ park to a human) from
+ *  `incomplete`/`missing` (= "I inspected it and it is partial/absent" → reject, builder fixes). Without
+ *  it the judge had to overload incomplete/missing for execution/external requirements it can't check,
+ *  which `decideVerdict` then hard-rejected — looping the builder on work it actually did. */
+export type EvidenceStrength =
+  | 'proves'
+  | 'contradicts'
+  | 'incomplete'
+  | 'tooWeak'
+  | 'missing'
+  | 'cannotVerify';
 /** Claim scope axis — a narrow check must not support a broad claim (Part7). */
 export type ClaimScope = 'matched' | 'narrowerThanClaim';
 
