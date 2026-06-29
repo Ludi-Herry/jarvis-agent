@@ -16,6 +16,7 @@
     "demo:a5": "tsx scripts/a5-demo.ts",
     "demo:b1": "tsx scripts/b1-demo.ts",
     "demo:b3": "tsx scripts/b3-demo.ts",
+    "demo:c1": "tsx scripts/c1-demo.ts",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

@@ -9,3 +9,4 @@ export type { Skill } from './skills/skill-registry.js';
 export { parseFrontmatter } from './skills/frontmatter.js';
 export type { ParsedDocument } from './skills/frontmatter.js';
 export * from './rules/index.js';
+export * from './subagents/index.js';

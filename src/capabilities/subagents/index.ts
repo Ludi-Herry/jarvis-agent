@@ -8,3 +8,4 @@
 export * from './derive.js';
 export * from './roster.js';
 export * from './subagent-manager.js';
+export * from './delegate-tool.js';

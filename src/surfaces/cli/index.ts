@@ -18,7 +18,7 @@ import {
   loadDoubaoConfig,
   type Message,
 } from '../../core/index.js';
-import { SkillRegistry, loadRuleLayers, type ReadText } from '../../capabilities/index.js';
+import { SkillRegistry, loadRoster, loadRuleLayers, type ReadText } from '../../capabilities/index.js';
 import {
   defaultPolicy,
   FileSessionStore,
@@ -73,6 +73,8 @@ program
       maxOutputTokens: OUTPUT_RESERVE_TOKENS,
     });
     const skills = await SkillRegistry.load('skills');
+    // Phase C: load agent roles from agents/ (capability-dispatch subagents). Empty → no task tool.
+    const roster = await loadRoster(join(opts.cwd, 'agents'));
 
     // B5: merge project-level rule layers into the gate policy. The global ~/AGENTS.md layer is
     // intentionally NOT auto-loaded — pulling private cross-tool config into enforcement should be
@@ -119,6 +121,7 @@ program
       tools,
       context,
       skills,
+      roster,
       cwd: opts.cwd,
       modelName: config.model,
       systemPrompt: SYSTEM_PROMPT,

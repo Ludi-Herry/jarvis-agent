@@ -24,6 +24,12 @@ import { runAgent } from '../../core/loop/run-agent.js';
 import { InMemoryEventBus } from '../../runtime/event-bus.js';
 import { DefaultPermissionGate, type Approver, type PermissionPolicy } from '../../runtime/permission/index.js';
 import type { SessionStore } from '../../runtime/session/index.js';
+import {
+  SubagentManager,
+  createDelegateTool,
+  TASK_TOOL_NAME,
+  type AgentRole,
+} from '../../capabilities/subagents/index.js';
 import { initialRenderState, renderEvent } from './render.js';
 import { renderApprovalRequest, parseApprovalChoice } from './approval.js';
 
@@ -33,6 +39,9 @@ export interface ReplDeps {
   context?: ContextManager;
   /** Optional skills (A5): each turn the catalog + activated skill bodies fold into the system msg. */
   skills?: SkillRegistry;
+  /** Optional agent roster (Phase C): when non-empty, a `task` delegate tool is registered so the
+   *  main agent can spawn specialist subagents (capability-dispatch axis). */
+  roster?: AgentRole[];
   /** Base directory tool paths resolve against. */
   cwd: string;
   /** Shown in the banner. */
@@ -53,6 +62,9 @@ export interface ReplDeps {
 
 /** How many unrecognized approval answers to tolerate before failing closed (deny). */
 const MAX_APPROVAL_RETRIES = 3;
+
+/** Max subagent nesting depth (main → child → grandchild). Bounds runaway recursion / cost (R4). */
+const MAX_SUBAGENT_DEPTH = 2;
 
 export async function startRepl(deps: ReplDeps): Promise<void> {
   const out = deps.output ?? process.stdout;
@@ -125,6 +137,25 @@ export async function startRepl(deps: ReplDeps): Promise<void> {
   };
 
   const gate = new DefaultPermissionGate({ approver: deps.approver ?? interactiveApprover, policy: deps.policy });
+
+  // Phase C: with a roster configured, wire the SubagentManager and register the `task` delegate
+  // tool. Children REUSE this gate (write/bash inside a child still gets approved), run on a strictly
+  // smaller budget, and nest no deeper than MAX_SUBAGENT_DEPTH.
+  if (deps.roster && deps.roster.length > 0) {
+    const manager = new SubagentManager({
+      provider: deps.model,
+      registry: deps.tools,
+      gate,
+      budget: { maxTurns: deps.maxTurns },
+      roster: deps.roster,
+      cwd: deps.cwd,
+      context: deps.context,
+      remainingDepth: MAX_SUBAGENT_DEPTH,
+      makeDelegateTool: (mgr) => createDelegateTool(mgr),
+      delegateToolName: TASK_TOOL_NAME,
+    });
+    deps.tools.register(createDelegateTool(manager));
+  }
 
   out.write(`Jarvis-Agent · ${deps.modelName}\n输入消息,Ctrl-C 退出(/exit 也可)\n\n`);
 
