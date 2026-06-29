@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import { Command } from 'commander';
 import {
   DefaultContextManager,
+  assertKeyNotInLaunchEnv,
   buildDefaultRegistry,
   createBashTool,
   createProvider,
@@ -28,6 +29,9 @@ import {
 } from '../../runtime/index.js';
 import { startRepl } from './repl.js';
 
+// Capture BEFORE the runtime .env load: a key here came from the shell LAUNCH env (in /proc/environ on
+// Linux); one appearing only after came from .env (runtime, /proc-clean). Used by assertKeyNotInLaunchEnv.
+const ARK_KEY_IN_LAUNCH_ENV = process.env.ARK_API_KEY !== undefined;
 // tsx does not auto-load .env; mirror the demos so `npm run dev` works from a .env too.
 if (existsSync('.env')) process.loadEnvFile('.env');
 
@@ -56,6 +60,7 @@ program
   .action(async (opts: { cwd: string; maxTurns: number; resume?: string | boolean }) => {
     let config;
     try {
+      assertKeyNotInLaunchEnv(ARK_KEY_IN_LAUNCH_ENV); // /proc safety: refuse a launch-env key on Linux
       config = loadDoubaoConfig();
     } catch (err) {
       console.error(err instanceof Error ? err.message : String(err));

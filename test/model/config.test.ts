@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_ARK_MODEL,
+  assertKeyNotInLaunchEnv,
   loadDoubaoConfig,
   resolveVerifierConfig,
   scrubProviderKeyFromEnv,
@@ -74,6 +75,22 @@ describe('resolveVerifierConfig — leg 3 enablement + config-layer independence
 
   it('treats a blank verifier model as unset', () => {
     expect(resolveVerifierConfig({ ARK_VERIFIER_MODEL: '   ' }, builder).enabled).toBe(false);
+  });
+});
+
+describe('assertKeyNotInLaunchEnv — Linux /proc complete closure (refuse a launch-env key)', () => {
+  it('throws on Linux when the key was in the launch env (it would leak via /proc/<pid>/environ)', () => {
+    expect(() => assertKeyNotInLaunchEnv(true, 'linux')).toThrow(/launch environment/);
+    expect(() => assertKeyNotInLaunchEnv(true, 'linux')).toThrow(/\.env/); // tells the user to use .env
+  });
+
+  it('does NOT throw on Linux when the key came from .env (not the launch env)', () => {
+    expect(() => assertKeyNotInLaunchEnv(false, 'linux')).not.toThrow();
+  });
+
+  it('does NOT throw on Windows / macOS (no /proc env exposure) even with a launch-env key', () => {
+    expect(() => assertKeyNotInLaunchEnv(true, 'win32')).not.toThrow();
+    expect(() => assertKeyNotInLaunchEnv(true, 'darwin')).not.toThrow();
   });
 });
 

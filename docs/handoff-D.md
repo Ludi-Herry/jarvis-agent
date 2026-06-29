@@ -96,7 +96,7 @@
 > **独立核查结论（2026-06-30，held-out 腿落地后两个独立裁判）**：codex（gpt-5.5 xhigh）报 2 HIGH、独立 Claude 子代理报 1 HIGH，**两裁判收敛在同一个保密泄露**。两处全部已修 + 触发单测 + post-fix 四关卡复核（510 测试）：
 > - **HIGH（收敛）· held-out 秘密经 cwd 内 goalStore 泄露**：continuation / verdict 事件两条通道都干净（只发泛化文案），但 `recordRound({ checks })` 把完整 `checks.heldOut.results`（秘密命令原文 + 失败输出）写进 `data/goals/<id>.jsonl`，**该文件在 cwd 内**，builder 下一轮 `read`/`grep`/`bash cat` 就能读到、逐条规避——即使 goal-setter 把 held-out 文件正确放 cwd 外，harness 仍自己把秘密复制进 cwd（与代码注释「NEVER fed back to the builder」直接矛盾）。**已修**：持久化前把 `heldOut` 收缩为 `{ passed, results: [] }`、丢命令/输出（replayGoal 不回读 results，审计仍留 pass/fail）；触发单测「held-out 失败后落盘 JSONL 不含命令/输出」（用真实 FileGoalStore）。
 > - **HIGH（codex）· `JARVIS_HELDOUT_CHECKS_FILE` 留在 builder bash 环境**：`shellEnv()` 每次 exec 复制整个 `process.env`，builder 批准一次 bash 就能 `echo $JARVIS_HELDOUT_CHECKS_FILE` 拿路径 → `cat` 拿命令（`cat $var` 未解析变量分析器不判 sensitive）。**已修**：`loadHeldOutCommands` 读毕即 `delete process.env.JARVIS_HELDOUT_CHECKS_FILE`（在 runGoal 前、builder bash 跑之前），变量对 builder 不可见。
-> - **残留 LOW / follow-up**：① **model-facing bash 密钥脱敏**（2026-06-30 两轮，见 security-review-baseline「bash 密钥脱敏轮」+「Phase D 收尾轮」）：子 shell env 脱敏（`runCommand.scrubSecretEnv`）+ `/proc/*/environ` 纳入 sensitive paths + `grep` path-aware 扫描 + `ps` env 输出（`e`/`-o environ`）拦截 + denylist 扩。**诚实边界（收尾轮 codex 纠正）**：`scrubProviderKeyFromEnv` 从 node `process.env` 删 `ARK_API_KEY` 对 **Linux `/proc/<pid>/environ` 无效**（/proc 显示启动初始 env、运行时 delete 改不了），只对 Windows + 运行时 re-read 有效；Linux 上直接 /proc 读 + ps 已被分析器拦,但**解释器跑脚本读 /proc 仍可泄**（model 跑任意代码的固有面、同 #6 沙箱根）。**彻底闭合需根因修**：别让 agent 进程以含 key 的初始 env 启动（re-exec 净化 / key 经文件），defer（用户在 Windows 不复现）。② held-out 源文件/被引用测试须放 cwd 外；③ `loadHeldOutCommands` 不区分「未配置」与「路径坏了」。
+> - **残留 LOW / follow-up**：① **model-facing bash 密钥脱敏**（2026-06-30 两轮，见 security-review-baseline「bash 密钥脱敏轮」+「Phase D 收尾轮」）：子 shell env 脱敏（`runCommand.scrubSecretEnv`）+ `/proc/*/environ` 纳入 sensitive paths + `grep` path-aware 扫描 + `ps` env 输出（`e`/`-o environ`）拦截 + denylist 扩。**Linux /proc 已彻底闭合（2026-06-30 根因修）**：`assertKeyNotInLaunchEnv`(config.ts)——**Linux 下 `ARK_API_KEY` 在启动 env 里就拒绝启动、要求放 `.env`**。原理:`/proc/environ` 是 execve 快照,`.env` 经 `loadEnvFile` 在 execve **之后**注入、永不进 /proc;re-exec 修不了(Node 无 execve、祖先 npm/shell 仍持 key),唯一完整闭合是「key 不进任何启动 env」=强制 .env。捕获在 loadEnvFile 之前;Windows/macOS no-op(用户不变)。`scrubProviderKeyFromEnv` 留作纵深。`ps` env 输出 + /proc 文件读已被命令分析器拦。**净化边界**:用 .env(不要 `ARK_API_KEY=x npm run`)→ 链上无任何 /proc/environ 含 key → 彻底闭合。② held-out 源文件/被引用测试须放 cwd 外；③ `loadHeldOutCommands` 不区分「未配置」与「路径坏了」。
 > - **印证**：保密契约的泄露不在「显式回传通道」（continuation/事件都做对了），而在**审计 sink 的物理位置**——「本地 goalStore」当安全 sink 的前提是它不在 builder 可读范围，但它在 cwd 内就破了。两裁判独立同点收敛印证：保密不能只看「我没主动告诉它」，还要看「它能不能从我写的任何地方读到」。
 
 ## gotcha / 已知小账
@@ -145,6 +145,8 @@ test/capabilities/goal/         # state/verdict/goal-store/checks/goal-loop/veri
 - 活体 demo：`npm run demo:d1`（两腿）；`npm run demo:d2`（双模型腿3，需 `ARK_VERIFIER_MODEL`）；`npm run demo:d3`（held-out）
 
 ## 下一步（Phase D 后续 / 腿3 加固）
+
+> **新会话交接见 `docs/handoff-next.md`**——把下面两类（需沙箱的 #2/#6 + Phase D 后续批）的上手上下文、设计草图、别破的不变量都consolidated在那一页。
 
 - **腿3 能力扩展**（checklist #6，**已收口为「暂不做」**）：裁判跑只读命令/驱动 app 需 OS 级沙箱（无沙箱下「只读 exec」=跑任意代码有副作用、且削弱裁判注入安全属性），决定**维持纯文件取证**、运行态需求恒 couldNotVerify。**待沙箱基建**再开。同时 D8 的 couldNotVerify-率 `VerifierMonitor` 证实 per-goal 不可达（死 guardrail）**已删**，**跨 goal 健康监控待 Loop 调度**（多 goal 会话）落地再加。
 - **主观/客观分流**（checklist #2，**已收口**）：防作弊覆盖面**已结构性满足**（所有 pinned 都交裁判、无「标客观」旋钮可绕）；确定性客观路由（有命令→客观、跑命令验）需可信 per-需求命令、与 #6「裁判跑命令需沙箱」同根 → **defer**。顺带修了 `cannotVerify` bug（见下「verified 诚实边界」）。**待沙箱/goal-setter-authored-requirements** 再做客观路由。

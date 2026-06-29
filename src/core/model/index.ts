@@ -27,6 +27,7 @@ export {
   loadDoubaoConfig,
   resolveVerifierConfig,
   scrubProviderKeyFromEnv,
+  assertKeyNotInLaunchEnv,
   DEFAULT_ARK_MODEL,
   type VerifierResolution,
 } from './config.js';

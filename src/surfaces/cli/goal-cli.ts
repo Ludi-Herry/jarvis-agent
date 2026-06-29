@@ -15,6 +15,7 @@ import {
   DefaultContextManager,
   buildDefaultRegistry,
   createBashTool,
+  assertKeyNotInLaunchEnv,
   createProvider,
   defaultShellPath,
   loadDoubaoConfig,
@@ -40,6 +41,10 @@ import {
 import type { ModelProvider } from '../../core/index.js';
 import { initialRenderState, renderEvent } from './render.js';
 
+// Capture BEFORE the runtime .env load: a key present here came from the shell LAUNCH env (it is in
+// /proc/<pid>/environ on Linux); a key that appears only after loadEnvFile came from .env (runtime-
+// injected after execve, never in /proc). The guard (assertKeyNotInLaunchEnv) uses this for /proc safety.
+const ARK_KEY_IN_LAUNCH_ENV = process.env.ARK_API_KEY !== undefined;
 if (existsSync('.env')) process.loadEnvFile('.env');
 
 const OUTPUT_RESERVE_TOKENS = 16_384;
@@ -61,6 +66,7 @@ async function main(): Promise<void> {
 
   let config;
   try {
+    assertKeyNotInLaunchEnv(ARK_KEY_IN_LAUNCH_ENV); // /proc safety: refuse a launch-env key on Linux
     config = loadDoubaoConfig();
   } catch (err) {
     console.error(err instanceof Error ? err.message : String(err));
