@@ -22,7 +22,11 @@ export type Event =
   | { type: 'state'; phase: string }
   | { type: 'usage'; inputTokens: number; outputTokens: number }
   | { type: 'final'; text: string }
-  | { type: 'halt'; reason: 'maxTurns' | 'budget' | 'error' | 'truncated' | 'filtered' };
+  | { type: 'halt'; reason: 'maxTurns' | 'budget' | 'error' | 'truncated' | 'filtered' | 'guardrail' }
+  // Phase D — goal autonomy. Inlined string unions (not imported from capabilities/goal) so the
+  // runtime EventBus carries no back-dependency on the capabilities layer.
+  | { type: 'verdict'; goalId: string; outcome: 'verified' | 'rejected' | 'couldNotVerify'; rationale: string }
+  | { type: 'goal_state'; goalId: string; state: 'active' | 'complete' | 'blocked' };
 
 export type Subscriber = (event: Event) => void;
 
