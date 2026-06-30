@@ -10,12 +10,20 @@
 import type { ApprovalRequest } from '../../runtime/permission/index.js';
 
 /** Format the approval prompt: what's being asked, its key detail, and WHY (the gate's reason). */
-export function renderApprovalRequest(req: ApprovalRequest): string {
+export function renderApprovalRequest(req: ApprovalRequest, opts: { sessionAllowed?: boolean } = {}): string {
+  // `s` (allow-session) is offered only where it is meaningful + safe to expose. The REPL passes
+  // nothing → defaults true (every tool, its long-standing behavior). The goal/loop approver passes
+  // false for non-bash tools, where a session grant would be TOOL-scoped (sessionGrants.add(toolName)
+  // — a run/queue-wide write/vision exemption), so only [a]/[d] are shown there.
+  const options =
+    (opts.sessionAllowed ?? true)
+      ? `    [a] 本次允许   [s] 本会话允许   [d] 拒绝\n`
+      : `    [a] 本次允许   [d] 拒绝\n`;
   return (
     `\n  ⚠ 需要批准: ${req.toolName} (${req.capability})\n` +
     `    ${detailOf(req)}\n` +
     `    原因: ${req.reason}\n` +
-    `    [a] 本次允许   [s] 本会话允许   [d] 拒绝\n`
+    options
   );
 }
 
