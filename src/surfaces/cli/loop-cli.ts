@@ -47,6 +47,7 @@ import {
   DEFAULT_CHECK_COMMANDS,
   FileGoalStore,
   FileLoopStore,
+  ShadowGit,
   derivePinnedRequirements,
   latestLoopPath,
   loadLoop,
@@ -228,10 +229,24 @@ async function main(): Promise<void> {
     ? createProvider(verifier.config).withThinking('off')
     : undefined;
 
+  // shadow-git (opt-in via JARVIS_SHADOW_GIT): one side history under data/shadow for the WHOLE loop —
+  // every goal's per-round snapshots accumulate into the same repo, so `npm run shadow -- log / restore`
+  // audits/rolls back across the queue. Off by default (a run never silently creates the shadow repo);
+  // best-effort when on (snapshot failures never touch verification). Constructed once and shared by every
+  // runGoal: it is keyed only on cwd/gitDir and stateless between snapshots.
+  const shadowGit = process.env.JARVIS_SHADOW_GIT
+    ? new ShadowGit({ shellPath, cwd, gitDir: join(cwd, 'data', 'shadow') })
+    : undefined;
+
   console.log(`Jarvis-Agent · loop 模式 · ${config.model}`);
   console.log(`队列: ${objectives.length} 个目标${resume ? `(恢复,已完成 ${seedFinished?.size ?? 0})` : ''}`);
   console.log(`审批: ${unattended ? '无人值守(fail-closed,受闸操作自动拒绝)' : 'attended(交互批准)'}`);
-  console.log(verifier.enabled ? `腿3: 独立裁判已启用(${verifier.config.model})\n` : `腿3: 未启用(${verifier.reason})\n`);
+  console.log(verifier.enabled ? `腿3: 独立裁判已启用(${verifier.config.model})` : `腿3: 未启用(${verifier.reason})`);
+  console.log(
+    shadowGit
+      ? 'shadow-git: 已启用 —— 每轮快照工作树到 data/shadow(跨整个队列累积),审计/回滚用 npm run shadow -- log / restore <sha>\n'
+      : 'shadow-git: 未启用(设 JARVIS_SHADOW_GIT=1 开启改动审计 + 回滚)\n',
+  );
 
   // runOne — the SOLE seam to runGoal. Per goal: NEW tools registry (registry.register throws on a
   // duplicate update_goal, so it can't be shared), fresh baseline, derived pinned (block-and-continue
@@ -273,6 +288,7 @@ async function main(): Promise<void> {
         perRoundMaxTurns: PER_ROUND_MAX_TURNS,
         checkCommands: DEFAULT_CHECK_COMMANDS,
         verifierProvider,
+        shadowGit,
       },
     );
     return { state: result.state, outcome: result.finalVerdict?.outcome, rounds: result.rounds };
