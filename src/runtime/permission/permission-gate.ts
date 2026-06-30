@@ -61,8 +61,15 @@ export class DefaultPermissionGate implements PermissionGate {
   private readonly policy: PermissionPolicy;
   /** Tool names the user has approved for the rest of this session (`allow-session`). Keyed by
    *  tool name — "you allowed `write` this session". It only ever short-circuits the `ask` lane;
-   *  a `deny` is decided before this is read, so a session grant can never override one. */
+   *  a `deny` is decided before this is read, so a session grant can never override one.
+   *  NOTE: bash (executes-code) is NEVER keyed here — its grants are command-scoped (below). */
   private readonly sessionGrants = new Set<string>();
+  /** Exact bash command strings the user `allow-session`'d. Bash grants are COMMAND-scoped, not
+   *  tool-scoped: approving `git status` once unlocks only `git status` again this session, never
+   *  every shell command — a blanket bash grant is the silent-exec hole B closed (memory
+   *  restore-bash-session-allow). Like {@link sessionGrants} it only short-circuits `ask`, never a
+   *  deny, and the command is re-analyzed each call, so a remembered command can't drift dangerous. */
+  private readonly bashCommandGrants = new Set<string>();
 
   constructor(opts: GateOptions = {}) {
     this.approver = opts.approver;
@@ -91,13 +98,16 @@ export class DefaultPermissionGate implements PermissionGate {
       return { allowed: false, reason: decision.reason, source: decision.source };
     }
 
-    // action === 'ask'
-    // executes-code (bash) is NEVER session-grantable: a command analyzer can't be a complete
-    // oracle for "executes arbitrary code", so every command must be approved per-invocation —
-    // that human approval is the real boundary, with no silent path. (TODO: restore a scoped
-    // session-allow for bash when Phase D adds an allow-list for unattended autonomy.)
-    const sessionable = capability !== 'executes-code';
-    if (sessionable && this.sessionGrants.has(call.name)) {
+    // action === 'ask'. A prior `allow-session` can short-circuit this. For bash the grant is
+    // COMMAND-scoped (the exact command string), not tool-scoped: approving `git status` once does
+    // not unlock every future shell command — that blanket grant is the silent-exec hole B closed
+    // (memory restore-bash-session-allow). For non-exec tools the grant stays tool-scoped.
+    const command = capability === 'executes-code' ? (typeof args.command === 'string' ? args.command : '') : undefined;
+    if (command !== undefined) {
+      if (this.bashCommandGrants.has(command)) {
+        return { allowed: true, reason: `session-approved command: ${command}`, source: 'user' };
+      }
+    } else if (this.sessionGrants.has(call.name)) {
       return { allowed: true, reason: `session-approved: ${call.name}`, source: 'user' };
     }
     if (this.approver === undefined) {
@@ -120,8 +130,10 @@ export class DefaultPermissionGate implements PermissionGate {
     if (verdict === 'deny') {
       return { allowed: false, reason: `denied by user — ${decision.reason}`, source: 'user' };
     }
-    if (verdict === 'allow-session' && sessionable) {
-      this.sessionGrants.add(call.name); // executes-code is excluded above → allow-session = allow-once for bash
+    if (verdict === 'allow-session') {
+      // bash → remember the exact command (command-scoped); other tools → remember the tool name.
+      if (command !== undefined) this.bashCommandGrants.add(command);
+      else this.sessionGrants.add(call.name);
     }
     return { allowed: true, reason: `approved by user (${verdict})`, source: 'user' };
   }

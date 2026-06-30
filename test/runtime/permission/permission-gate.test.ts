@@ -81,12 +81,29 @@ describe('PermissionGate — the ask lane', () => {
     expect(a.asks()).toBe(2); // grant is keyed per tool name
   });
 
-  it('executes-code is NEVER session-grantable — every command is approved per-invocation', async () => {
+  it('bash allow-session is COMMAND-scoped — the SAME command is silent the second time', async () => {
     const a = fixedApprover('allow-session');
     const gate = new DefaultPermissionGate({ approver: a.approver });
-    await gate.check(call('bash', { command: 'echo a' }), 'executes-code');
-    await gate.check(call('bash', { command: 'echo b' }), 'executes-code'); // allow-session did NOT stick
+    const first = await gate.check(call('bash', { command: 'git status' }), 'executes-code');
+    const second = await gate.check(call('bash', { command: 'git status' }), 'executes-code');
+    expect(first.allowed && second.allowed).toBe(true);
+    expect(a.asks()).toBe(1); // the command-scoped grant covered the identical second call
+  });
+
+  it('bash allow-session does NOT cover a DIFFERENT command (no blanket bash grant)', async () => {
+    const a = fixedApprover('allow-session');
+    const gate = new DefaultPermissionGate({ approver: a.approver });
+    await gate.check(call('bash', { command: 'git status' }), 'executes-code'); // grants only `git status`
+    await gate.check(call('bash', { command: 'git log' }), 'executes-code'); // a different command → asks again
     expect(a.asks()).toBe(2);
+  });
+
+  it('a bash command grant can never make a later DANGEROUS command run silently', async () => {
+    const a = fixedApprover('allow-session');
+    const gate = new DefaultPermissionGate({ approver: a.approver });
+    await gate.check(call('bash', { command: 'git status' }), 'executes-code'); // a clean command, granted
+    const dangerous = await gate.check(call('bash', { command: 'git push --force' }), 'executes-code');
+    expect(dangerous).toMatchObject({ allowed: false, source: 'command' }); // denied before any grant/approver
   });
 });
 

