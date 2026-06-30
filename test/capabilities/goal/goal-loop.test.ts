@@ -156,6 +156,37 @@ describe('runGoal — circuit breaker is really wired (Part7 P0-2)', () => {
   });
 });
 
+describe('runGoal — shadow-git snapshot hook (best-effort, off the verdict path)', () => {
+  it('snapshots once per round with a round label', async () => {
+    const labels: string[] = [];
+    const shadowGit = { snapshot: async (label: string) => void labels.push(label) };
+    const { run } = claimingRun('complete');
+    const result = await runGoal(spec(), baseDeps({ run, check: passingCheck, shadowGit }));
+    expect(result.state).toBe('complete'); // hook does not disturb the verdict
+    expect(labels).toHaveLength(1);
+    expect(labels[0]).toMatch(/round 1/);
+  });
+
+  it('snapshots every round, including reject→retry rounds', async () => {
+    const labels: string[] = [];
+    const shadowGit = { snapshot: async (label: string) => void labels.push(label) };
+    const { run } = claimingRun('complete');
+    await runGoal(spec({ budget: { maxRounds: 2 } }), baseDeps({ run, check: failingCheck, shadowGit }));
+    expect(labels).toHaveLength(2); // one per round, regardless of reject
+  });
+
+  it('a throwing snapshot NEVER breaks the goal (best-effort observability)', async () => {
+    const shadowGit = {
+      snapshot: async () => {
+        throw new Error('git exploded');
+      },
+    };
+    const { run } = claimingRun('complete');
+    const result = await runGoal(spec(), baseDeps({ run, check: passingCheck, shadowGit }));
+    expect(result.state).toBe('complete'); // verdict unaffected by the snapshot failure
+  });
+});
+
 describe('VerifierCircuitBreaker', () => {
   it('trips (halt) on the 3rd consecutive reject and latches once', () => {
     const b = new VerifierCircuitBreaker();

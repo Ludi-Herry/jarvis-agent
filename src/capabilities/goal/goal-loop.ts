@@ -102,6 +102,10 @@ export interface GoalRunDeps {
   /** The judge's per-run turn ceiling (read a few files, then report). Defaults to {@link DEFAULT_VERIFIER_MAX_TURNS}. */
   verifierMaxTurns?: number;
   signal?: AbortSignal;
+  /** Optional shadow-git: a best-effort per-round snapshot of the working tree for audit / rollback of
+   *  what the builder changed. PURE OBSERVABILITY — its result is ignored and a throw is swallowed, so
+   *  it can NEVER affect the verdict or the loop. */
+  shadowGit?: { snapshot(label: string): Promise<unknown> };
   /** Injected for tests; default {@link runAgent} / {@link runDeterministicChecks} / {@link defaultRunVerifier}. */
   run?: (ctx: AgentContext) => Promise<RunOutcome>;
   check?: (deps: CheckDeps, baseline?: TestBaseline) => Promise<DeterministicChecks>;
@@ -189,6 +193,9 @@ export async function runGoal(spec: GoalSpec, deps: GoalRunDeps): Promise<GoalRu
         signal: deps.signal,
       });
       totalTurns += outcome.turns;
+      // shadow-git: snapshot the working tree after this round's builder work (audit + rollback of what
+      // the agent changed). Best-effort and OFF the verdict path — a failure/throw is swallowed.
+      await snapshotShadow(deps.shadowGit, `goal ${goal.id} round ${round}`);
       // Read (and clear) the claim the builder may have set via the update_goal tool this round.
       const claim = takeClaim(slot);
 
@@ -312,6 +319,17 @@ async function transition(
   deps.bus.emit({ type: 'goal_state', goalId: goal.id, state });
   await deps.goalStore?.recordState(state, stamp());
   return state;
+}
+
+/** Best-effort shadow snapshot: never throws, never returns anything the loop acts on. Observability
+ *  must not be able to break (or change the verdict of) the goal it observes. */
+async function snapshotShadow(shadowGit: { snapshot(label: string): Promise<unknown> } | undefined, label: string): Promise<void> {
+  if (!shadowGit) return;
+  try {
+    await shadowGit.snapshot(label);
+  } catch {
+    // swallow — a snapshot failure is not a goal failure
+  }
 }
 
 function overBudget(totalTurns: number, totalTokens: number, budget: GoalBudget): boolean {
