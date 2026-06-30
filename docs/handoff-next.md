@@ -28,7 +28,9 @@ goal 完成验收 = **确定性三腿（canonical 重跑 + 篡改检测 + held-o
 按 memory `restore-bash-session-allow` 和各工作区 `loop-and-goal-design-checklist.md` 推进：
 
 - **Hooks**（把自动化挂到时刻）：硬约束/必跑检查用 hooks 落地。
-- **Loop 调度**（cron 长跑）：多 goal 会话的入口——**也是「跨 goal 裁判健康监控」的落点**（本会话删的 per-goal `VerifierMonitor` 不可达,couldNotVerify 率是跨 goal 信号,Loop 落地后以跨 goal 形态重加 + 真 integration 触发单测,见 security-baseline #6 收口轮）。
+- **Loop 调度（2026-06-30 第一切片已落地,经对抗审查 + 修复)**:`runLoop`(`capabilities/goal/loop.ts`)= runGoal 之上的多目标外循环——耐久队列 + 顺序排空 + 崩溃安全 resume(纯重放,绝不重跑已完成)+ 6 条数值硬停止 + **跨 goal 裁判健康监控重生**(`VerifierHealthMonitor`,couldNotVerify 跨 goal 累积,cnv 正交于 consecutive-blocked 使其可达;入口 `npm run loop -- <objectives 文件>` / `resume:loop`)。**零完成授权**(loop.ts 不 import runGoal/decideVerdict,completed 逐字拷 runGoal state)。`loop-store.ts` append-only + replayLoop;`loop-cli.ts` 组合根(每目标新建 tools registry,默认 attended / `--unattended` fail-closed / `--resume`+`--force`)。
+  - **对抗审查结论(49 agent,crown jewel 复核)**:跨 goal 监控**不是死护栏**——在 leg-3 启用(`ARK_VERIFIER_MODEL`)模式下可达且设计正确,默认无 verifier 时惰性是对的(没共享裁判就没健康信号)。修了 4 个 MEDIUM:① 崩溃落在停机决定与 recordHalted 之间→resume 绕过 NEEDS_HUMAN 闸门(根因修:runLoop 顶部按种子状态预检 consecutive-blocked/monitor.isTripped + loop-cli 从重建状态推导 needs-human)② token 非真硬上限(加 per-goal token 帽)③ rl 错误路径不关→进程挂(try/finally)④ token 计费漏 leg-3/pinned 派生(off-bus,已诚实文档化)。
+  - **诚实边界 / 残留(都已在 loop-cli 注释写明)**:① headline 跨 goal 监控**仅在 `ARK_VERIFIER_MODEL` 设了才活**(默认 `npm run loop` 不开 leg-3);② **held-out 腿没接**(per-objective 秘密,一个共享文件对异构队列无意义,要 held-out 用单 goal `npm run goal`)→ loop 默认验收门槛 = leg1+leg2(同 goal-cli 无 held-out);③ 真无人值守 bash 仍 fail-closed(沙箱前置,见 bash 白名单条)。**defer**:并行目标(需 worktree)、cron 守护、mid-goal 续跑、off-bus token 计费 plumbing、per-goal 异构 verifier。`docs/security-review-baseline.md` 是权限系统专用、未记本轮(Loop 非权限子系统)。
 - **bash 无人值守白名单**：当前 bash 每次人审（B11）。无人值守自治要上 scoped allow-list,配 memory `restore-bash-session-allow`（B 加固时故意删了 session-allow,按白名单约束恢复、别无条件加回）。`decide.ts:121` / `permission-gate.ts:97` 有对应 TODO。
 - **skill 自动沉淀**（人审 gate）、**多模态**（参考 memory `openhanako-outer-vision-multimodal`）、**shadow-git**。
 
