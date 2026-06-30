@@ -51,6 +51,7 @@ import {
   derivePinnedRequirements,
   latestLoopPath,
   loadLoop,
+  resolveHooks,
   runGoal,
   runLoop,
   type GoalRunSummary,
@@ -64,6 +65,9 @@ import { initialRenderState, renderEvent } from './render.js';
 // Capture BEFORE the runtime .env load (see goal-cli): a key here came from the shell LAUNCH env
 // (in /proc on Linux); the guard refuses it so the provider key only ever arrives via .env.
 const ARK_KEY_IN_LAUNCH_ENV = process.env.ARK_API_KEY !== undefined;
+// JARVIS_HOOKS is a TRUSTED, launch-controlled source: capture BEFORE .env so an in-repo .env can't
+// set it and enable repo-authored hook commands.
+const JARVIS_HOOKS_LAUNCH = process.env.JARVIS_HOOKS;
 if (existsSync('.env')) process.loadEnvFile('.env');
 
 const OUTPUT_RESERVE_TOKENS = 16_384;
@@ -238,6 +242,12 @@ async function main(): Promise<void> {
     ? new ShadowGit({ shellPath, cwd, gitDir: join(cwd, 'data', 'shadow') })
     : undefined;
 
+  // Hooks (slice 1): opt-in via JARVIS_HOOKS (TRUSTED path). Built once, shared across the queue.
+  // In-repo / malformed config is refused with a warning. Especially relevant unattended — a
+  // PreToolUse hook is a fail-closed guardrail with no human in the loop.
+  const { hooks, warning: hookWarning } = await resolveHooks({ hooksPath: JARVIS_HOOKS_LAUNCH, cwd, shellPath });
+  if (hookWarning) console.error(`[hooks] ${hookWarning}`);
+
   console.log(`Jarvis-Agent · loop 模式 · ${config.model}`);
   console.log(`队列: ${objectives.length} 个目标${resume ? `(恢复,已完成 ${seedFinished?.size ?? 0})` : ''}`);
   console.log(`审批: ${unattended ? '无人值守(fail-closed,受闸操作自动拒绝)' : 'attended(交互批准)'}`);
@@ -279,6 +289,7 @@ async function main(): Promise<void> {
         tools,
         bus,
         gate,
+        hooks,
         context,
         store: sessionStore,
         goalStore,

@@ -19,6 +19,7 @@ import type { ContextManager } from '../../core/context/context-manager.js';
 import type { EventBus } from '../../runtime/event-bus.js';
 import type { SessionStore } from '../../runtime/session/session-store.js';
 import type { Message } from '../../core/types.js';
+import type { HookRunner } from '../hooks/index.js';
 import { type AgentContext, type RunOutcome, runAgent } from '../../core/loop/run-agent.js';
 import { redactSecrets } from '../../core/model/errors.js';
 import { decideVerdict } from './verdict.js';
@@ -80,6 +81,10 @@ export interface GoalRunDeps {
   tools: ToolRegistry;
   bus: EventBus;
   gate?: PermissionGate;
+  /** Optional tool-call hooks (Hooks slice 1). Forwarded verbatim into each round's runAgent ctx —
+   *  PreToolUse can fail-closed block a gate-allowed call, PostToolUse is advisory. Off the verdict
+   *  path entirely (the verifier legs are unaffected). Absent → no hooks. */
+  hooks?: HookRunner;
   context?: ContextManager;
   /** Builder conversation log (runAgent persists messages here). */
   store?: SessionStore;
@@ -189,6 +194,7 @@ export async function runGoal(spec: GoalSpec, deps: GoalRunDeps): Promise<GoalRu
         budget: { maxTurns: deps.perRoundMaxTurns },
         context: deps.context,
         gate: deps.gate,
+        hooks: deps.hooks,
         store: deps.store,
         signal: deps.signal,
       });

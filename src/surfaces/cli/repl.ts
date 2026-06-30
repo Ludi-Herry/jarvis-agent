@@ -30,6 +30,7 @@ import {
   TASK_TOOL_NAME,
   type AgentRole,
 } from '../../capabilities/subagents/index.js';
+import type { HookRunner } from '../../capabilities/hooks/index.js';
 import { initialRenderState, renderEvent } from './render.js';
 import { renderApprovalRequest, parseApprovalChoice } from './approval.js';
 
@@ -52,6 +53,9 @@ export interface ReplDeps {
   approver?: Approver;
   /** Gate policy (B5): the merged rule layers. Defaults to the built-in policy (no extra rules). */
   policy?: PermissionPolicy;
+  /** Optional tool-call hooks (Hooks slice 1): opt-in via JARVIS_HOOKS, built by the composition
+   *  root. PreToolUse can fail-closed block a gate-allowed call; PostToolUse is advisory. */
+  hooks?: HookRunner;
   /** Session store (persistence): when present, turns are logged so the session can be resumed. */
   store?: SessionStore;
   /** Seed the conversation from a resumed session. When absent/empty, a fresh system prompt is used. */
@@ -190,6 +194,7 @@ export async function startRepl(deps: ReplDeps): Promise<void> {
         budget: { maxTurns: deps.maxTurns },
         context: deps.context,
         gate,
+        hooks: deps.hooks,
         store: deps.store,
         systemAddendum: deps.skills?.systemAddendum(text),
         signal: activeRun.signal,

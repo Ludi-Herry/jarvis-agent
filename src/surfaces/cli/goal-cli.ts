@@ -35,6 +35,7 @@ import {
   FileGoalStore,
   ShadowGit,
   derivePinnedRequirements,
+  resolveHooks,
   runGoal,
   type PinnedRequirement,
   type TestBaseline,
@@ -46,6 +47,9 @@ import { initialRenderState, renderEvent } from './render.js';
 // /proc/<pid>/environ on Linux); a key that appears only after loadEnvFile came from .env (runtime-
 // injected after execve, never in /proc). The guard (assertKeyNotInLaunchEnv) uses this for /proc safety.
 const ARK_KEY_IN_LAUNCH_ENV = process.env.ARK_API_KEY !== undefined;
+// JARVIS_HOOKS is a TRUSTED, launch-controlled source: capture BEFORE .env so an in-repo .env can't
+// set it and enable repo-authored hook commands.
+const JARVIS_HOOKS_LAUNCH = process.env.JARVIS_HOOKS;
 if (existsSync('.env')) process.loadEnvFile('.env');
 
 const OUTPUT_RESERVE_TOKENS = 16_384;
@@ -143,6 +147,10 @@ async function main(): Promise<void> {
   // Off by default so a run never silently creates the shadow repo; best-effort when on.
   const shadowGit = process.env.JARVIS_SHADOW_GIT ? new ShadowGit({ shellPath, cwd, gitDir: join(cwd, 'data', 'shadow') }) : undefined;
 
+  // Hooks (slice 1): opt-in via JARVIS_HOOKS (TRUSTED, launch-captured). In-repo / malformed refused.
+  const { hooks, warning: hookWarning } = await resolveHooks({ hooksPath: JARVIS_HOOKS_LAUNCH, cwd, shellPath });
+  if (hookWarning) console.error(`[hooks] ${hookWarning}`);
+
   console.log(`Jarvis-Agent · goal 模式 · ${config.model}`);
   console.log(`目标: ${objective}`);
   console.log(baseline ? `验收: 四关卡 + 测试篡改检测(baseline ${baseline.headSha.slice(0, 8)})` : '验收: 四关卡(非 git 仓,跳过篡改检测)');
@@ -169,6 +177,7 @@ async function main(): Promise<void> {
       tools,
       bus,
       gate,
+      hooks,
       context,
       store: sessionStore,
       goalStore,

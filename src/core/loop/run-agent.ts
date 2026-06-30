@@ -15,7 +15,7 @@
  */
 import type { Message, ToolCall, ToolResult } from '../types.js';
 import type { ModelProvider, ModelResult } from '../model/types.js';
-import type { ToolRegistry, ToolRunCtx } from '../tools/types.js';
+import type { ToolRegistry, ToolRunCtx, ToolCapability } from '../tools/types.js';
 import type { ContextManager } from '../context/context-manager.js';
 import type { EventBus } from '../../runtime/event-bus.js';
 import type { PermissionGate } from '../../runtime/permission/permission-gate.js';
@@ -40,6 +40,16 @@ export interface AgentContext {
    *  denied call is NOT executed — its reason is fed back to the model as the tool result so it
    *  can change course. Absent → tools run ungated (the A-phase behavior). */
   gate?: PermissionGate;
+  /** Optional tool-call hooks (Hooks slice 1). Structural type (mirrors how goal-loop types
+   *  shadowGit) so core needn't import the capabilities layer. PreToolUse runs AFTER the gate
+   *  ALLOWS a call — a `blocked` result denies it (fail-closed); a hook can only narrow, never
+   *  unlock a gate deny (the gate returns its deny first, so hooks aren't even consulted on it).
+   *  PostToolUse runs AFTER the tool — advisory: it can't alter the result or throw. Absent → no
+   *  hooks (current behavior). */
+  hooks?: {
+    preToolUse(call: ToolCall, capability: ToolCapability | undefined): Promise<{ blocked: boolean; reason: string }>;
+    postToolUse(call: ToolCall, result: ToolResult): Promise<void>;
+  };
   /** Optional session store (persistence segment). When present, each turn's new messages are
    *  appended to an append-only log (and a compaction is checkpointed) so the session can be
    *  resumed after a crash/exit. Absent → nothing is persisted (the pre-persistence behavior). */
@@ -175,18 +185,48 @@ function assistantMessage(res: ModelResult): Message {
   return msg;
 }
 
-/** Run one tool call through the gate (B1). With no gate the call runs as in A2. With a gate, a
- *  denied call is never executed: it comes back as a {@link ToolResult} with the denial reason in
- *  `error`, so the loop feeds "denied + why" to the model (identical shape to a tool failure, so
- *  the existing tool_result path renders it). The synthetic result reuses the call id; the wire
- *  layer normalizes ids at send time, so it pairs with its assistant tool_call. */
+/** Run one tool call through the gate (B1) and any hooks (Hooks slice 1). With no gate the call
+ *  runs as in A2. With a gate, a denied call is never executed: it comes back as a {@link ToolResult}
+ *  with the denial reason in `error`, so the loop feeds "denied + why" to the model (identical shape
+ *  to a tool failure, so the existing tool_result path renders it). The synthetic result reuses the
+ *  call id; the wire layer normalizes ids at send time, so it pairs with its assistant tool_call.
+ *
+ *  Order is the safety contract: the gate's hard checks decide FIRST — a gate deny returns before
+ *  hooks are consulted, so a PreToolUse hook can never unlock it (it can only block a call the gate
+ *  already allowed; fail-closed). PostToolUse runs after the side effect, advisory only. */
 async function gatedRun(ctx: AgentContext, call: ToolCall): Promise<ToolResult> {
   // Pass the turn's abort signal so a long-running tool (bash) can be cancelled on Ctrl-C.
   const runCtx = ctx.signal ? { ...ctx.toolCtx, signal: ctx.signal } : ctx.toolCtx;
-  if (!ctx.gate) return ctx.tools.run(call, runCtx);
-  const verdict = await ctx.gate.check(call, ctx.tools.capabilityOf(call.name));
-  if (verdict.allowed) return ctx.tools.run(call, runCtx);
-  return { callId: call.id, content: '', error: `Permission denied: ${verdict.reason}` };
+  // Only classify the call when something consumes it (gate or hooks). With neither, the path stays
+  // byte-equivalent to the pre-hooks behavior — never touching capabilityOf.
+  const capability = ctx.gate || ctx.hooks ? ctx.tools.capabilityOf(call.name) : undefined;
+
+  // Gate hard checks. A gate deny is ABSOLUTE — return before hooks (mirrors decide.ts: rules apply
+  // after the hard checks and never unlock them).
+  if (ctx.gate) {
+    const verdict = await ctx.gate.check(call, capability);
+    if (!verdict.allowed) return { callId: call.id, content: '', error: `Permission denied: ${verdict.reason}` };
+  }
+  // PreToolUse hooks run only on a gate-allowed call and can ONLY block (fail-closed), never allow.
+  if (ctx.hooks) {
+    const pre = await ctx.hooks.preToolUse(call, capability);
+    if (pre.blocked) return { callId: call.id, content: '', error: `Permission denied: ${pre.reason}` };
+  }
+
+  const result = await ctx.tools.run(call, runCtx);
+
+  // PostToolUse hooks: advisory, off the critical path. Two guards keep observability from breaking
+  // the tool it observes: (1) a frozen shallow copy is passed, so a hooks impl can't mutate the real
+  // result the loop returns; (2) any throw is swallowed HERE (not just in the runner). Same discipline
+  // as goal-loop's snapshotShadow, robust to any hooks implementation.
+  if (ctx.hooks) {
+    try {
+      await ctx.hooks.postToolUse(call, Object.freeze({ ...result }));
+    } catch {
+      // a post-hook failure is not a tool failure
+    }
+  }
+  return result;
 }
 
 /** A tool's failure is surfaced to the model as text (so it can recover), not hidden. */

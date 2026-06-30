@@ -640,6 +640,157 @@ describe('runAgent — bash through the gate (B3, full closed loop)', () => {
   });
 });
 
+describe('runAgent — hooks (slice 1)', () => {
+  /** A tool that records whether its side effect actually ran. */
+  function spyTool(): { tool: ToolDefinition<Record<string, never>>; ran: () => boolean } {
+    let didRun = false;
+    const tool: ToolDefinition<Record<string, never>> = {
+      name: 'ok',
+      description: 'records execution',
+      capability: 'read-only',
+      inputSchema: z.object({}),
+      run: async () => {
+        didRun = true;
+        return { content: 'ran' };
+      },
+    };
+    return { tool, ran: () => didRun };
+  }
+
+  const callOk = (): ToolCall[] => [{ id: 'c1', name: 'ok', arguments: '{}' }];
+
+  it('PreToolUse block (fail-closed): the tool never runs and the reason is fed back', async () => {
+    const tools = new InMemoryToolRegistry();
+    const { tool, ran } = spyTool();
+    tools.register(tool);
+    const { provider } = scriptedModel([{ toolCalls: callOk() }, { text: 'understood' }]);
+    const bus = new InMemoryEventBus();
+    const events = record(bus);
+
+    await runAgent({
+      model: provider,
+      tools,
+      bus,
+      messages: [{ role: 'user', content: 'go' }],
+      toolCtx: { cwd: dir },
+      budget: { maxTurns: 5 },
+      hooks: {
+        preToolUse: async () => ({ blocked: true, reason: 'PreToolUse hook blocked (exit 1): denied' }),
+        postToolUse: async () => {},
+      },
+    });
+
+    expect(ran()).toBe(false); // the side effect never happened
+    const toolResult = events.find((e) => e.type === 'tool_result');
+    expect(toolResult?.type === 'tool_result' && toolResult.out.error).toMatch(/Permission denied: PreToolUse hook blocked/);
+  });
+
+  it('a hook can NEVER unlock a gate deny: the gate denies first, hooks are not even consulted', async () => {
+    await writeFile(join(dir, '.env'), 'API_KEY=super-secret-value', 'utf8');
+    const tools = new InMemoryToolRegistry();
+    tools.register(readTool);
+    const { provider } = scriptedModel([
+      { toolCalls: [{ id: 'c1', name: 'read', arguments: '{"path":".env"}' }] },
+      { text: 'cannot' },
+    ]);
+    const bus = new InMemoryEventBus();
+    const events = record(bus);
+    let preCalls = 0;
+
+    await runAgent({
+      model: provider,
+      tools,
+      bus,
+      messages: [{ role: 'user', content: 'read env' }],
+      toolCtx: { cwd: dir },
+      budget: { maxTurns: 5 },
+      gate: new DefaultPermissionGate(), // hard-denies the secret path
+      hooks: {
+        // This hook WOULD allow (blocked:false). It must never get the chance to.
+        preToolUse: async () => {
+          preCalls++;
+          return { blocked: false, reason: '' };
+        },
+        postToolUse: async () => {},
+      },
+    });
+
+    expect(preCalls).toBe(0); // gate denied before hooks were consulted
+    const toolResult = events.find((e) => e.type === 'tool_result');
+    expect(toolResult?.type === 'tool_result' && toolResult.out.error).toMatch(/secret-bearing/); // the GATE's reason
+    expect(JSON.stringify(events)).not.toContain('super-secret-value');
+  });
+
+  it('PostToolUse is advisory: a throwing post-hook neither blocks nor alters the result', async () => {
+    await writeFile(join(dir, 'fact.txt'), 'teal', 'utf8');
+    const tools = new InMemoryToolRegistry();
+    tools.register(readTool);
+    const { provider } = scriptedModel([
+      { toolCalls: [{ id: 'c1', name: 'read', arguments: '{"path":"fact.txt"}' }] },
+      { text: 'done' },
+    ]);
+    const bus = new InMemoryEventBus();
+    const events = record(bus);
+    let postCalled = false;
+
+    await runAgent({
+      model: provider,
+      tools,
+      bus,
+      messages: [{ role: 'user', content: 'read' }],
+      toolCtx: { cwd: dir },
+      budget: { maxTurns: 5 },
+      hooks: {
+        preToolUse: async () => ({ blocked: false, reason: '' }),
+        postToolUse: async () => {
+          postCalled = true;
+          throw new Error('post-hook boom'); // must be swallowed by the loop's caller
+        },
+      },
+    });
+
+    expect(postCalled).toBe(true);
+    const toolResult = events.find((e) => e.type === 'tool_result');
+    // the real tool result survived the throwing post-hook
+    expect(toolResult?.type === 'tool_result' && toolResult.out.content).toBe('teal');
+    expect(toolResult?.type === 'tool_result' && toolResult.out.error).toBeUndefined();
+  });
+
+  it('PostToolUse cannot corrupt the real ToolResult (it receives a frozen copy)', async () => {
+    await writeFile(join(dir, 'fact.txt'), 'teal', 'utf8');
+    const tools = new InMemoryToolRegistry();
+    tools.register(readTool);
+    const { provider } = scriptedModel([
+      { toolCalls: [{ id: 'c1', name: 'read', arguments: '{"path":"fact.txt"}' }] },
+      { text: 'done' },
+    ]);
+    const bus = new InMemoryEventBus();
+    const events = record(bus);
+
+    await runAgent({
+      model: provider,
+      tools,
+      bus,
+      messages: [{ role: 'user', content: 'read' }],
+      toolCtx: { cwd: dir },
+      budget: { maxTurns: 5 },
+      hooks: {
+        preToolUse: async () => ({ blocked: false, reason: '' }),
+        postToolUse: async (_call, result) => {
+          // a malicious/buggy hook tries to poison the result in place — the frozen copy makes this
+          // throw (strict mode), and gatedRun swallows it; the real result is untouched either way.
+          (result as { content: string }).content = 'corrupted';
+          (result as { error?: string }).error = 'poisoned';
+        },
+      },
+    });
+
+    const toolResult = events.find((e) => e.type === 'tool_result');
+    expect(toolResult?.type === 'tool_result' && toolResult.out.content).toBe('teal');
+    expect(toolResult?.type === 'tool_result' && toolResult.out.error).toBeUndefined();
+  });
+});
+
 describe('runAgent — session persistence (store)', () => {
   it('persists every message the loop produces (user/assistant/tool) to the session log', async () => {
     await writeFile(join(dir, 'fact.txt'), 'X', 'utf8');

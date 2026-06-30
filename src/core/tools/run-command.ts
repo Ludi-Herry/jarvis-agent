@@ -37,6 +37,10 @@ export interface RunCommandOptions {
    *  (leg-1/held-out checks, git baseline — config-sourced, not model-chosen) omit this and keep the
    *  full env, since their commands are trusted and may legitimately need it. */
   scrubSecretEnv?: boolean;
+  /** Extra env vars layered onto the child shell AFTER secret-scrubbing — for handing trusted context
+   *  (e.g. a hook's JARVIS_HOOK_* tool-call metadata) to the command without re-exposing scrubbed
+   *  secrets. Applied last, so these keys win over inherited env. */
+  extraEnv?: Record<string, string>;
 }
 
 /** Spawn `shellPath -c command` in `cwd`, capture merged stdout+stderr (capped at `maxOutputChars`),
@@ -64,7 +68,7 @@ export function runCommand(
     const child = spawn(shellPath, ['-c', command], {
       cwd,
       windowsHide: true,
-      env: shellEnv(options?.scrubSecretEnv),
+      env: shellEnv(options?.scrubSecretEnv, options?.extraEnv),
       detached: process.platform !== 'win32',
     });
 
@@ -145,8 +149,9 @@ function killTree(pid: number | undefined): void {
 /** The child shell's env with the startup-file hooks stripped: a non-interactive bash sources
  *  `$BASH_ENV` (POSIX sh sources `$ENV`) BEFORE `-c <command>` — code never parsed/approved. When
  *  `scrubSecrets` is set (the model-facing bash tool), credential-shaped vars are also removed so the
- *  agent can't read a key out of its own environment. */
-function shellEnv(scrubSecrets = false): NodeJS.ProcessEnv {
+ *  agent can't read a key out of its own environment. `extraEnv` is layered on LAST (after scrubbing),
+ *  so trusted caller-supplied context (e.g. a hook's JARVIS_HOOK_* vars) survives the scrub. */
+function shellEnv(scrubSecrets = false, extraEnv?: Record<string, string>): NodeJS.ProcessEnv {
   const env = { ...process.env };
   delete env.BASH_ENV;
   delete env.ENV;
@@ -154,6 +159,9 @@ function shellEnv(scrubSecrets = false): NodeJS.ProcessEnv {
     for (const name of Object.keys(env)) {
       if (isSecretEnvName(name)) delete env[name];
     }
+  }
+  if (extraEnv) {
+    for (const [name, value] of Object.entries(extraEnv)) env[name] = value;
   }
   return env;
 }

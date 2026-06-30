@@ -18,12 +18,13 @@ import {
   createProvider,
   createVisionComplete,
   createVisionTool,
+  defaultShellPath,
   loadDoubaoConfig,
   resolveVisionConfig,
   scrubProviderKeyFromEnv,
   type Message,
 } from '../../core/index.js';
-import { SkillRegistry, loadRoster, loadRuleLayers, type ReadText } from '../../capabilities/index.js';
+import { SkillRegistry, loadRoster, loadRuleLayers, resolveHooks, type ReadText } from '../../capabilities/index.js';
 import {
   defaultPolicy,
   FileSessionStore,
@@ -35,6 +36,9 @@ import { startRepl } from './repl.js';
 // Capture BEFORE the runtime .env load: a key here came from the shell LAUNCH env (in /proc/environ on
 // Linux); one appearing only after came from .env (runtime, /proc-clean). Used by assertKeyNotInLaunchEnv.
 const ARK_KEY_IN_LAUNCH_ENV = process.env.ARK_API_KEY !== undefined;
+// JARVIS_HOOKS is a TRUSTED, launch-controlled source: capture it BEFORE loading .env so an in-repo
+// .env (attacker-authored on an untrusted repo) can't set it and enable repo-authored hook commands.
+const JARVIS_HOOKS_LAUNCH = process.env.JARVIS_HOOKS;
 // tsx does not auto-load .env; mirror the demos so `npm run dev` works from a .env too.
 if (existsSync('.env')) process.loadEnvFile('.env');
 
@@ -109,6 +113,15 @@ program
     );
     const policy = { ...defaultPolicy(), rules: resolved.rules };
 
+    // Hooks (slice 1): opt-in via JARVIS_HOOKS (a TRUSTED, launch-controlled path captured above).
+    // Unset → no hooks. An in-repo path (realpath-canonicalized) or a malformed config is refused.
+    const { hooks, warning: hookWarning } = await resolveHooks({
+      hooksPath: JARVIS_HOOKS_LAUNCH,
+      cwd: opts.cwd,
+      shellPath: defaultShellPath(),
+    });
+    if (hookWarning) console.error(`[hooks] ${hookWarning}`);
+
     // Persistence: resume a prior session, or start (and log) a new one.
     const sessionsDir = join(opts.cwd, 'data', 'sessions');
     let store: FileSessionStore;
@@ -144,6 +157,7 @@ program
       systemPrompt: SYSTEM_PROMPT,
       maxTurns: opts.maxTurns,
       policy,
+      hooks,
       store,
       initialMessages,
     });
