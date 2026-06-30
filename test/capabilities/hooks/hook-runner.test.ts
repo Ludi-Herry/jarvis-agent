@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createHookRunner, HOOK_TIMEOUT_MS, type RunHookCommand } from '../../../src/capabilities/hooks/hook-runner.js';
+import { createHookRunner, HOOK_TIMEOUT_MS, HOOK_MAX_OUTPUT, type RunHookCommand } from '../../../src/capabilities/hooks/hook-runner.js';
 import type { HookConfig } from '../../../src/capabilities/hooks/hook-config.js';
 import type { ExecResult } from '../../../src/core/tools/run-command.js';
 import type { ToolCall, ToolResult } from '../../../src/core/types.js';
@@ -97,16 +97,39 @@ describe('HookRunner — reuses the hardened runCommand (invariant #4)', () => {
   });
 });
 
-describe('HookRunner — PostToolUse (advisory)', () => {
-  it('runs matching hooks but never blocks or alters the result', async () => {
-    const run = fakeRun([execResult({ code: 1, output: 'post failed' })]); // non-zero is ignored
+describe('HookRunner — PostToolUse (advisory feedback, slice-2)', () => {
+  it('returns the hook stdout as feedback — exit code ignored (advisory), never blocks', async () => {
+    const run = fakeRun([execResult({ code: 1, output: 'post failed' })]); // non-zero is ignored — advisory
     const runner = createHookRunner(cfg({ PostToolUse: [{ matcher: 'bash', command: 'notify' }] }), deps(run));
-    await expect(runner.postToolUse(bashCall, okResult)).resolves.toBeUndefined();
+    await expect(runner.postToolUse(bashCall, okResult)).resolves.toBe('post failed');
     expect(run.calls).toHaveLength(1);
     expect(run.calls[0][6]?.extraEnv).toMatchObject({ JARVIS_HOOK_EVENT: 'PostToolUse' });
   });
 
-  it('swallows a throwing runner (observability must not break the observed tool)', async () => {
+  it('returns undefined when the hook printed nothing (a silent formatter does not speak)', async () => {
+    const run = fakeRun([execResult({ code: 0, output: '   \n  ' })]); // whitespace-only → nothing to say
+    const runner = createHookRunner(cfg({ PostToolUse: [{ matcher: '*', command: 'fmt' }] }), deps(run));
+    await expect(runner.postToolUse(bashCall, okResult)).resolves.toBeUndefined();
+  });
+
+  it('joins the NON-EMPTY stdout of several matching hooks (empty ones contribute nothing)', async () => {
+    const run = fakeRun([execResult({ output: 'a' }), execResult({ output: '' }), execResult({ output: 'b' })]);
+    const runner = createHookRunner(
+      cfg({ PostToolUse: [{ matcher: '*', command: '1' }, { matcher: '*', command: '2' }, { matcher: '*', command: '3' }] }),
+      deps(run),
+    );
+    await expect(runner.postToolUse(bashCall, okResult)).resolves.toBe('a\nb');
+    expect(run.calls).toHaveLength(3); // all three ran (advisory; no short-circuit)
+  });
+
+  it('caps the combined feedback at HOOK_MAX_OUTPUT so several hooks cannot flood the context', async () => {
+    const run = fakeRun([execResult({ output: 'x'.repeat(9000) })]);
+    const runner = createHookRunner(cfg({ PostToolUse: [{ matcher: '*', command: 'big' }] }), deps(run));
+    const out = await runner.postToolUse(bashCall, okResult);
+    expect(out?.length).toBe(HOOK_MAX_OUTPUT);
+  });
+
+  it('swallows a throwing runner (observability must not break the observed tool) → undefined', async () => {
     const run = vi.fn().mockRejectedValue(new Error('boom')) as unknown as RunHookCommand;
     const runner = createHookRunner(cfg({ PostToolUse: [{ matcher: '*', command: 'x' }] }), deps(run));
     await expect(runner.postToolUse(bashCall, okResult)).resolves.toBeUndefined();

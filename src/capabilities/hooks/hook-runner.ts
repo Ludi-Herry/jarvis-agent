@@ -25,8 +25,9 @@ import { loadHookConfig, type HookConfig, type HookEntry, type HookEvent, type R
 /** Per-hook wall-clock ceiling (ms). A hook that outlives this is killed and treated as a block
  *  (PreToolUse) / ignored (PostToolUse) — it must not be able to wedge the agent loop. */
 export const HOOK_TIMEOUT_MS = 30_000;
-/** Cap on a hook command's captured output (chars). */
-const HOOK_MAX_OUTPUT = 8_192;
+/** Cap on a hook command's captured output (chars). Exported so the slice-2 feedback cap is asserted
+ *  against the same constant rather than a magic number. */
+export const HOOK_MAX_OUTPUT = 8_192;
 /** How much of a blocking hook's output to echo back to the model (tail chars). */
 const BLOCK_REASON_TAIL = 500;
 /** Cap on the serialized tool input passed via env (avoid OS env-size limits on a big `write`). */
@@ -42,8 +43,11 @@ export interface HookBlock {
 export interface HookRunner {
   /** Run matching PreToolUse hooks for a gate-allowed call. First non-zero exit ⇒ block (fail-closed). */
   preToolUse(call: ToolCall, capability: ToolCapability | undefined): Promise<HookBlock>;
-  /** Run matching PostToolUse hooks (advisory; never blocks, never alters the result). */
-  postToolUse(call: ToolCall, result: ToolResult): Promise<void>;
+  /** Run matching PostToolUse hooks (advisory; never blocks, never alters the result). Returns the
+   *  hooks' combined NON-EMPTY output (stdout+stderr, as runCommand merges them — tsc/eslint write
+   *  diagnostics to stderr, so merging is what lets "feed the errors back" work) for the loop to fold
+   *  into the conversation (slice-2), or `undefined` when nothing was emitted. */
+  postToolUse(call: ToolCall, result: ToolResult): Promise<string | undefined>;
 }
 
 /** The {@link runCommand} signature — injected so tests drive the runner without a real shell. */
@@ -79,13 +83,26 @@ export function createHookRunner(config: HookConfig, deps: HookRunnerDeps): Hook
       return NOT_BLOCKED;
     },
     async postToolUse(call) {
+      // Advisory + additive: run every matching hook, collect each one's NON-EMPTY output (stdout+stderr,
+      // merged by runCommand), and hand the combined text back so the loop can fold it into the
+      // conversation (slice-2). A silently-succeeding hook (printed nothing) contributes nothing — only a
+      // hook that chose to print speaks to the model. Never blocks, never alters the tool result; a throw
+      // is swallowed.
+      const outs: string[] = [];
       for (const hook of matching(config.PostToolUse, call.name)) {
         try {
-          await exec('PostToolUse', hook, call);
+          const res = await exec('PostToolUse', hook, call);
+          const trimmed = res.output.trim();
+          if (trimmed) outs.push(trimmed);
         } catch {
-          // Advisory — swallow. runCommand never rejects; this only backstops a misbehaving injected run.
+          // runCommand never rejects; this only backstops a misbehaving injected run.
         }
       }
+      if (outs.length === 0) return undefined;
+      const joined = outs.join('\n');
+      // Bound what enters the conversation: each hook's output is already capped at HOOK_MAX_OUTPUT;
+      // re-cap the JOIN so several hooks can't flood the context.
+      return joined.length > HOOK_MAX_OUTPUT ? joined.slice(0, HOOK_MAX_OUTPUT) : joined;
     },
   };
 }

@@ -89,4 +89,17 @@ describe('renderEvent', () => {
     expect(out).toContain('…');
     expect(out.length).toBeLessThan(250);
   });
+
+  it('renders a PostToolUse hook_output line and strips terminal injection from its stdout', () => {
+    const ESC = String.fromCharCode(27);
+    const out = renderEvent(initialRenderState(), {
+      type: 'hook_output',
+      hook: 'PostToolUse',
+      toolName: 'bash',
+      output: `lint${ESC}[31m failed`,
+    }).output;
+    expect(out).toContain('hook(bash) →');
+    expect(out).toContain('lint');
+    expect(out).not.toContain(ESC); // safeInline stripped the ANSI escape (no terminal injection)
+  });
 });

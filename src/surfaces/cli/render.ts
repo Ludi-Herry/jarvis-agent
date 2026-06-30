@@ -8,6 +8,7 @@
  * call, usage, status) inserts a break first so it never glues onto the streamed answer.
  */
 import type { Event } from '../../runtime/event-bus.js';
+import { safeInline } from './approval.js';
 
 export interface RenderState {
   /** True when the last write was streamed text with no trailing newline. */
@@ -77,6 +78,14 @@ export function renderEvent(
         state: { midLine: false },
       };
     }
+    case 'hook_output':
+      // A PostToolUse hook spoke. safeInline strips any ANSI/control/bidi its stdout carries so it
+      // can't inject into the terminal; preview bounds + single-lines it. (The full text still reaches
+      // the model via the conversation message run-agent injects.)
+      return {
+        output: `${breakBefore(state)}  · hook(${safeInline(event.toolName)}) → ${preview(safeInline(event.output))}\n`,
+        state: { midLine: false },
+      };
     default:
       return { output: '', state };
   }

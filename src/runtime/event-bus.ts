@@ -33,7 +33,10 @@ export type Event =
       type: 'loop_halt';
       loopId: string;
       reason: 'queue-empty' | 'max-goals' | 'token-budget' | 'wall-clock' | 'consecutive-blocked' | 'verifier-health';
-    };
+    }
+  // Hooks slice-2 — a PostToolUse hook's stdout: surfaced for observability AND folded into the
+  // conversation by run-agent so the model sees it next turn. Advisory (never alters a tool result).
+  | { type: 'hook_output'; hook: 'PostToolUse'; toolName: string; output: string };
 
 export type Subscriber = (event: Event) => void;
 
