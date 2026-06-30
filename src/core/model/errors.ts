@@ -51,7 +51,8 @@ export function redactSecrets(text: string): string {
     .replace(
       /\b(api[_-]?key|access[_-]?key|secret|token|password)(['"]?\s*[=:]\s*['"]?)[A-Za-z0-9._-]{6,}/gi,
       '$1$2***',
-    ); // labelled key=VALUE / key: 'VALUE' / "token": "VALUE" (single OR double quotes)
+    ) // labelled key=VALUE / key: 'VALUE' / "token": "VALUE" (single OR double quotes)
+    .replace(/data:[\w.+-]+\/[\w.+-]+;base64,[A-Za-z0-9+/=]+/gi, 'data:[redacted base64]'); // an echoed image/file data URL — strip the payload (vision sends these; an endpoint may reflect one)
 }
 
 export function describeModelError(err: unknown, model: string): Error {

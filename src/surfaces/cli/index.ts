@@ -16,7 +16,10 @@ import {
   buildDefaultRegistry,
   createBashTool,
   createProvider,
+  createVisionComplete,
+  createVisionTool,
   loadDoubaoConfig,
+  resolveVisionConfig,
   scrubProviderKeyFromEnv,
   type Message,
 } from '../../core/index.js';
@@ -76,6 +79,11 @@ program
     // bash is safe to register here because the REPL always runs it behind the PermissionGate (B4).
     const tools = buildDefaultRegistry();
     tools.register(createBashTool());
+    // Vision (Phase E multimodal): register the `vision` tool ONLY when ARK_VISION_MODEL names a vision
+    // model — heterogeneous delegation, a single stateless VLM call returning structured text (the main
+    // model stays text-only). Unset → no vision tool (text-only harness), like leg 3 is opt-in.
+    const vision = resolveVisionConfig(process.env, config);
+    if (vision.enabled) tools.register(createVisionTool(createVisionComplete(vision.config)));
     const context = new DefaultContextManager({
       summarizer: provider,
       maxContextTokens: provider.capability.maxContextTokens,

@@ -57,6 +57,12 @@ describe('redactSecrets', () => {
     expect(hdr).toContain('***');
   });
 
+  it('strips an echoed image/file data URL payload (vision sends these; an endpoint may reflect one)', () => {
+    const msg = redactSecrets('bad request reflecting data:image/png;base64,iVBORw0KGgoAAAANSUhEUg== back');
+    expect(msg).not.toContain('iVBORw0KGgoAAAANSUhEUg==');
+    expect(msg).toContain('data:[redacted base64]');
+  });
+
   it('leaves ordinary diagnostic text untouched', () => {
     expect(redactSecrets('rate limited or out of quota')).toBe('rate limited or out of quota');
     expect(redactSecrets('socket hang up')).toBe('socket hang up');
