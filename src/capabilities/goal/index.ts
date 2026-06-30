@@ -13,3 +13,5 @@ export * from './update-goal-tool.js';
 export * from './goal-loop.js';
 export * from './verifier.js';
 export * from './requirements.js';
+export * from './loop.js';
+export * from './loop-store.js';

@@ -26,7 +26,14 @@ export type Event =
   // Phase D — goal autonomy. Inlined string unions (not imported from capabilities/goal) so the
   // runtime EventBus carries no back-dependency on the capabilities layer.
   | { type: 'verdict'; goalId: string; outcome: 'verified' | 'rejected' | 'couldNotVerify'; rationale: string }
-  | { type: 'goal_state'; goalId: string; state: 'active' | 'complete' | 'blocked' };
+  | { type: 'goal_state'; goalId: string; state: 'active' | 'complete' | 'blocked' }
+  // Phase E — multi-goal Loop scheduling. The ONE machine-actionable moment an operator/GUI must act
+  // on: the loop stopped, and why. Reason string inlined (no capabilities back-dependency, as above).
+  | {
+      type: 'loop_halt';
+      loopId: string;
+      reason: 'queue-empty' | 'max-goals' | 'token-budget' | 'wall-clock' | 'consecutive-blocked' | 'verifier-health';
+    };
 
 export type Subscriber = (event: Event) => void;
 

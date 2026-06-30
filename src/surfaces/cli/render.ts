@@ -65,6 +65,18 @@ export function renderEvent(
         output: `${breakBefore(state)}  · 目标 → ${event.state}\n`,
         state: { midLine: false },
       };
+    case 'loop_halt': {
+      // verifier-health is the one halt that demands a human: the shared judge looks broken, so the
+      // loop refuses to keep feeding the queue to it. Make that explicit; other reasons are routine.
+      const note =
+        event.reason === 'verifier-health'
+          ? `\n  ⚠ 跨 goal 健康监控触发：独立裁判疑似失效（couldNotVerify 频发）——已停下，请人工检查裁判/模型后再 --resume`
+          : '';
+      return {
+        output: `${breakBefore(state)}  · loop 停止: ${event.reason}${note}\n`,
+        state: { midLine: false },
+      };
+    }
     default:
       return { output: '', state };
   }
