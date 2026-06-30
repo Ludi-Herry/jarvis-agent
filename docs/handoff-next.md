@@ -30,7 +30,11 @@ goal 完成验收 = **确定性三腿（canonical 重跑 + 篡改检测 + held-o
 - **Hooks**（把自动化挂到时刻）：硬约束/必跑检查用 hooks 落地。
 - **Loop 调度**（cron 长跑）：多 goal 会话的入口——**也是「跨 goal 裁判健康监控」的落点**（本会话删的 per-goal `VerifierMonitor` 不可达,couldNotVerify 率是跨 goal 信号,Loop 落地后以跨 goal 形态重加 + 真 integration 触发单测,见 security-baseline #6 收口轮）。
 - **bash 无人值守白名单**：当前 bash 每次人审（B11）。无人值守自治要上 scoped allow-list,配 memory `restore-bash-session-allow`（B 加固时故意删了 session-allow,按白名单约束恢复、别无条件加回）。`decide.ts:121` / `permission-gate.ts:97` 有对应 TODO。
-- **skill 自动沉淀**（人审 gate）、**多模态**（参考 memory `openhanako-outer-vision-multimodal`）、**shadow-git**。
+- **shadow-git（2026-07-01 第一切片已落地,经 codex 对抗审查 + 修复)**:`ShadowGit`(`src/capabilities/shadow/shadow-git.ts`)= agent 改动的旁路 git 历史——独立 `--git-dir=data/shadow --work-tree=cwd`(不碰用户 `.git`)、`init/snapshot/log/restore`、复用 `runCommand`、**best-effort**(任何 git 失败/抛出都吞,绝不破坏被观测的运行)。接进 goal-loop **每轮 best-effort 快照**(off-verdict-path,throw 被 swallow)。`JARVIS_SHADOW_GIT=1` opt-in(默认 off,不静默建 shadow 仓);`npm run shadow -- log / restore <sha>` 审计/回滚。
+  - **codex HIGH(密钥快照)已修**:shadow 的 `git add -A` 是 harness 自跑、**绕过 PermissionGate**,原 exclude 只挡结构目录,会把 `.npmrc`/`.netrc`/`.git-credentials`/`.ssh`/`credentials.json`/`*.key/*.pem` 等快照进 data/shadow(`.env` 当时只靠项目 .gitignore 侥幸挡着)。**修法**:shadow 的 `info/exclude` 复用 **harness 自己的密钥策略(sensitive.ts),不靠项目 .gitignore**,un-anchored 匹配任意深度;+ 测试(临时仓无 .gitignore,断言密钥不进 ls-files)。**别破的不变量:shadow exclude = harness 密钥边界,改 shadow 别只信项目 .gitignore。** codex 另确认:goal 钩子真 off-verdict-path、shell 注入被 `quote()` 挡、用户 .git 隔离。LOW(restore ref 防 `-` 注入)已修;restore 仅 ⚠ 提示无交互确认(用户显式 CLI,接受)。
+  - **defer**:未接 loop-cli(在 `feat/loop-scheduling` 分支,合并后需在 loop-cli 同样 opt-in 构造 ShadowGit 传 runGoal)、restore 交互确认、snapshot 异步化(当前每轮串行 await,有 30s/命令超时上界)。
+- **skill 自动沉淀（移交新会话,设计已定)**:一个 `propose_skill` 工具——入参 `{name, description, triggers, body}`,组装成正确 SKILL.md frontmatter 格式、`safeResolve` 写到 `skills/<name>/SKILL.md`,**人审 gate = 现有 PermissionGate**(writes-files→ask,用户在批准框看到 skill 内容批/拒),下次加载生效(不热重载)。本质=「agent 在人审下自创 skill」,是 `write` 工具的薄包装(加正确格式+路径+明确意图)。**判定偏弱**(投机性):skill 系统已有(SkillRegistry 只读加载 `<dir>/<name>/SKILL.md`),「自动沉淀」真实价值取决于是否真有复用场景。新会话做时:工具放 `src/core/tools/`(同 createBashTool 范式)、REPL 条件注册、faked ctx + 临时目录测试、codex 审查。
+- **多模态 vision**:见上(已落地,`feat/multimodal-vision`)。
 
 ## 上手顺序（新会话）
 

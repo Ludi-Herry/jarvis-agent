@@ -11,6 +11,7 @@
     "dev": "tsx src/surfaces/cli/index.ts",
     "resume": "tsx src/surfaces/cli/index.ts --resume",
     "goal": "tsx src/surfaces/cli/goal-cli.ts",
+    "shadow": "tsx src/surfaces/cli/shadow-cli.ts",
     "demo:a1": "tsx scripts/a1-demo.ts",
     "demo:a2": "tsx scripts/a2-demo.ts",
     "demo:a3": "tsx scripts/a3-demo.ts",

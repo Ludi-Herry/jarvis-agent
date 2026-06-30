@@ -11,3 +11,5 @@ export type { ParsedDocument } from './skills/frontmatter.js';
 export * from './rules/index.js';
 export * from './subagents/index.js';
 export * from './goal/index.js';
+export { ShadowGit } from './shadow/shadow-git.js';
+export type { ShadowGitDeps, SnapshotResult, RestoreResult } from './shadow/shadow-git.js';

@@ -33,6 +33,7 @@ import {
 import {
   DEFAULT_CHECK_COMMANDS,
   FileGoalStore,
+  ShadowGit,
   derivePinnedRequirements,
   runGoal,
   type PinnedRequirement,
@@ -137,6 +138,11 @@ async function main(): Promise<void> {
   // history). Absent → the leg is explicitly declared absent (a known weaker-confidence state).
   const heldOutCommands = loadHeldOutCommands();
 
+  // shadow-git (opt-in via JARVIS_SHADOW_GIT): a side history of the builder's file changes under
+  // data/shadow, snapshotted per round, so you can audit / `npm run shadow -- restore <sha>` a bad run.
+  // Off by default so a run never silently creates the shadow repo; best-effort when on.
+  const shadowGit = process.env.JARVIS_SHADOW_GIT ? new ShadowGit({ shellPath, cwd, gitDir: join(cwd, 'data', 'shadow') }) : undefined;
+
   console.log(`Jarvis-Agent · goal 模式 · ${config.model}`);
   console.log(`目标: ${objective}`);
   console.log(baseline ? `验收: 四关卡 + 测试篡改检测(baseline ${baseline.headSha.slice(0, 8)})` : '验收: 四关卡(非 git 仓,跳过篡改检测)');
@@ -147,8 +153,13 @@ async function main(): Promise<void> {
   );
   console.log(
     verifier.enabled
-      ? `腿3: 独立裁判已启用(${verifier.config.model}),固定验收清单 ${pinned.length} 条\n`
-      : `腿3: 未启用(${verifier.reason})\n`,
+      ? `腿3: 独立裁判已启用(${verifier.config.model}),固定验收清单 ${pinned.length} 条`
+      : `腿3: 未启用(${verifier.reason})`,
+  );
+  console.log(
+    shadowGit
+      ? 'shadow-git: 已启用 —— 每轮快照工作树到 data/shadow,审计/回滚用 npm run shadow -- log / restore <sha>\n'
+      : 'shadow-git: 未启用(设 JARVIS_SHADOW_GIT=1 开启改动审计 + 回滚)\n',
   );
 
   const result = await runGoal(
@@ -168,6 +179,7 @@ async function main(): Promise<void> {
       checkCommands: DEFAULT_CHECK_COMMANDS,
       heldOutCommands: heldOutCommands.length > 0 ? heldOutCommands : undefined,
       verifierProvider,
+      shadowGit,
     },
   );
 
