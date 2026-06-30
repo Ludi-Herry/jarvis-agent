@@ -103,3 +103,22 @@ export function resolveVerifierConfig(
   }
   return { enabled: true, config: { ...builderConfig, model } };
 }
+
+/** Whether the vision tool is enabled, and if so with what config. */
+export type VisionResolution =
+  | { enabled: true; config: DoubaoConfig }
+  | { enabled: false; reason: string };
+
+/**
+ * Decide whether to register the vision tool from `ARK_VISION_MODEL`, reusing the builder's key/baseURL
+ * with a VISION model id. Unlike the verifier there is no "equals builder" theater check — a vision
+ * model is a different KIND of model (the text builder genuinely can't see), so naming one is always the
+ * point. Unset → the harness stays text-only (no vision tool registered).
+ */
+export function resolveVisionConfig(env: NodeJS.ProcessEnv, builderConfig: DoubaoConfig): VisionResolution {
+  const model = env.ARK_VISION_MODEL?.trim();
+  if (!model) {
+    return { enabled: false, reason: 'ARK_VISION_MODEL not set — vision tool disabled (text-only)' };
+  }
+  return { enabled: true, config: { ...builderConfig, model } };
+}

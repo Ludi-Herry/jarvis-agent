@@ -30,7 +30,10 @@ goal 完成验收 = **确定性三腿（canonical 重跑 + 篡改检测 + held-o
 - **Hooks**（把自动化挂到时刻）：硬约束/必跑检查用 hooks 落地。
 - **Loop 调度**（cron 长跑）：多 goal 会话的入口——**也是「跨 goal 裁判健康监控」的落点**（本会话删的 per-goal `VerifierMonitor` 不可达,couldNotVerify 率是跨 goal 信号,Loop 落地后以跨 goal 形态重加 + 真 integration 触发单测,见 security-baseline #6 收口轮）。
 - **bash 无人值守白名单**：当前 bash 每次人审（B11）。无人值守自治要上 scoped allow-list,配 memory `restore-bash-session-allow`（B 加固时故意删了 session-allow,按白名单约束恢复、别无条件加回）。`decide.ts:121` / `permission-gate.ts:97` 有对应 TODO。
-- **skill 自动沉淀**（人审 gate）、**多模态**（参考 memory `openhanako-outer-vision-multimodal`）、**shadow-git**。
+- **多模态 vision（2026-06-30 第一切片已落地,经 codex 对抗审查 + 修复)**:**异构委派 + 坐标锚点**(memory `openhanako-outer-vision-multimodal`)——主推理模型保持纯文本(Message 无图像 part),`vision` 工具(`src/core/tools/vision-tool.ts`)读本地图像→base64→调远端 VLM(`src/core/model/vision.ts` `createVisionComplete`,非流式)→返回**结构化坐标文本**(物体名 + bbox,`VISION_PROMPT` 钉死禁散文)进主对话。`resolveVisionConfig` 读 `ARK_VISION_MODEL`,**仅设了才注册**(同 leg-3 opt-in);capability=**`network`**(发图出网→gate 判 ask、无 approver fail-closed,不静默出网);路径走 `safeResolve`(cwd 限 + 拒涉密)。仅接进 REPL + `demo:vision`。
+  - **codex 审查结论**:1 HIGH(我判 MEDIUM)——vision 是新的 model-facing 错误通道,原样回灌 `err.message` 绕过了主 provider 既有的 `describeModelError`/`redactSecrets`,端点回显 key/data-URL 会泄进上下文+session;**已修**(createVisionComplete 套 describeModelError + `redactSecrets` 扩 data-URL 脱敏)。顺带修 size-cap TOCTOU(读后按 buffer 复检)。路径/gate 主链路审查确认无静默绕过。
+  - **诚实边界 / defer**:① **活体未验**(ARK vision 请求形状、坐标输出质量需真 key + vision 模型 id + 测试图,demo 接好但我没跑);② MIME 只看扩展不 sniff magic bytes;③ vision **未接 goal/loop/verifier**(只 REPL);④ 视频(kimi 时间维)、原生多模态、图上画 mark、多图/URL 图均 defer。
+- **skill 自动沉淀**（人审 gate）、**shadow-git**。
 
 ## 上手顺序（新会话）
 

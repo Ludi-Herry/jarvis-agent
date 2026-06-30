@@ -26,8 +26,17 @@ export {
 export {
   loadDoubaoConfig,
   resolveVerifierConfig,
+  resolveVisionConfig,
   scrubProviderKeyFromEnv,
   assertKeyNotInLaunchEnv,
   DEFAULT_ARK_MODEL,
   type VerifierResolution,
+  type VisionResolution,
 } from './config.js';
+export {
+  createVisionComplete,
+  buildVisionParts,
+  VISION_PROMPT,
+  type VisionComplete,
+  type VisionContentPart,
+} from './vision.js';
