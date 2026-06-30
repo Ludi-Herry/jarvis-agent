@@ -3,6 +3,13 @@
 > Phase D 腿3 整套**已全部落地 + 经 5 轮多裁判对抗核查 + 诚实文档化**——背景见 `docs/handoff-D.md`（主交接）、`docs/phase-D-leg3-checklist.md`（5 条全收口）、`docs/security-review-baseline.md`（审查历史 + 元教训）、memory `phase-d-goalloop-deterministic-legs`。
 > Phase E 四条独立第一切片（vision / bash-allow / loop / shadow-git）**已全部合进本地 main**（见下「合并收口」）。本页交接 **两类剩余工作**：① 仍需 OS 沙箱的两件（leg3-checklist #2 客观路由 + #6 裁判 exec）；② Phase E 后续批（Hooks / skill 自动沉淀 + 各切片的 defer 残留）。
 
+## 方向决策（2026-07-01，用户拍板）
+
+- **Hooks slice 1 已落地**：PreToolUse 阻断 + PostToolUse 咨询，在 `feat/hooks` 分支（commit `e28c52e`，**待合 main**，未 push）。616 测试 / 四关卡全绿，经 codex 双 lens 对抗审查加固。详见 `docs/handoff-hooks.md`、memory `hooks-slice-1`。
+- **沙箱：跳过**。不做沙箱前置调研，也不做被沙箱卡住的两件（#2 客观路由 / #6 裁判 exec）。当前 `cannotVerify→park` / `fail-closed deny` 接受为**正确的能力天花板**（自主性封顶在「没人就拒/挂起」，attended 全好用）。将来真要无人值守跑危险/运行态操作，再回头开沙箱。下文「第一类」整节据此**暂不推进**。
+- **skill 自动沉淀（`propose_skill`）：不做**（投机性、判定偏弱、无证实的复用场景）。下文该节仅作设计存档。
+- **下一步工作（已定，交新会话）**：① 先**接 vision 进 goal/loop/verifier**（补完半截——vision 工具已落地但只在 REPL 能用）；② 再做 **Hooks slice-2 / 各切片小尾巴**。接手 prompt 见本会话末。
+
 ## Phase E 合并收口（2026-07-01）
 
 四条第一切片按「自包含→纠缠」顺序合进 **main**（4 个 merge commit + 1 个接线 commit），**四关卡全过：582 测试 / typecheck 0 / build 0 / lint 0**。**未 push**（按自主红线，push 待人工明示）。
@@ -50,8 +57,8 @@ goal 完成验收 = **确定性三腿（canonical 重跑 + 篡改检测 + held-o
 
 ### 未起 / 移交
 
-- **Hooks**（把自动化挂到时刻）：硬约束/必跑检查用 hooks 落地。未起。
-- **skill 自动沉淀**：设计已定但**本会话评估后未做**——见下节。
+- **Hooks slice 1：已落地**（`feat/hooks` `e28c52e`，待合 main）——PreToolUse 阻断 + PostToolUse 咨询，挂点 runAgent `gatedRun`，opt-in `JARVIS_HOOKS`，见 `docs/handoff-hooks.md`。**slice-2 defer**：round/session 级事件、PostToolUse 反馈进对话、每-hook timeout、多来源配置合并。
+- **skill 自动沉淀**：设计已定，**2026-07-01 决定不做**（见「方向决策」）——下节仅设计存档。
 
 ## skill 自动沉淀（设计已定，判定偏弱 → 本会话按用户原则未实现）
 
@@ -62,8 +69,8 @@ goal 完成验收 = **确定性三腿（canonical 重跑 + 篡改检测 + held-o
 ## 上手顺序（新会话）
 
 1. 读 `docs/handoff-D.md`（Phase D 主交接：架构、两种 verified 模式、最高优先级不变量、gotcha、关键文件）。
-2. 读本页：「Phase E 合并收口」（main 现状）+「第一类」（沙箱两件）+「第二类」（切片 defer）。
-3. memory `phase-d-goalloop-deterministic-legs`（不变量 + 历轮教训）、`restore-bash-session-allow`（白名单）、`phase-e-loop-scheduling`、`openhanako-outer-vision-multimodal`。
+2. 读本页：先看「方向决策（2026-07-01）」（沙箱已跳过、propose_skill 不做、下一步=vision 接线）+「Phase E 合并收口」（main 现状）+「第二类」（切片 defer）。「第一类」（沙箱两件）按决策**暂不推进**。
+3. memory `phase-d-goalloop-deterministic-legs`（不变量 + 历轮教训）、`restore-bash-session-allow`（白名单）、`phase-e-loop-scheduling`、`openhanako-outer-vision-multimodal`（vision 接线背景）、`hooks-slice-1`、`codex-for-adversarial-review`（对抗审查用 codex）。
 4. `docs/security-review-baseline.md`（审查方法 + 严重度尺子 + 历史 + 元教训：组件级 review 挡不住系统级不可达 / OS 语义坑 / 死 guardrail 成对出现）。
 
 ## 别破的不变量（改验收代码前必读）
