@@ -69,7 +69,8 @@ import {
   type TestBaseline,
 } from '../../capabilities/index.js';
 import type { ModelProvider } from '../../core/index.js';
-import { detailOf, safeInline } from './approval.js';
+import { safeInline } from './approval.js';
+import { createInteractiveApprover, readlineApproverIo } from './interactive-approver.js';
 import { initialRenderState, renderEvent } from './render.js';
 
 // Capture BEFORE the runtime .env load (see goal-cli): a key here came from the shell LAUNCH env
@@ -221,16 +222,15 @@ async function main(): Promise<void> {
   let rl: Interface | undefined;
   let approver: Approver | undefined;
   if (!unattended) {
-    rl = createInterface({ input: process.stdin, output: process.stdout });
-    const ask = rl;
-    approver = async (req) => {
-      // Show detailOf(req) so a network `vision` call is approved KNOWING which image leaves the
-      // machine, not blind on tool name alone (codex review). Same detail the REPL surfaces.
-      const answer = await new Promise<string>((resolve) =>
-        ask.question(`\n批准 ${req.toolName}? ${req.reason}\n  ${detailOf(req)}\n  [a]llow once / [d]eny: `, resolve),
-      );
-      return answer.trim().toLowerCase().startsWith('a') ? 'allow-once' : 'deny';
-    };
+    const ask = createInterface({ input: process.stdin, output: process.stdout });
+    rl = ask;
+    // The same interactive approver goal uses (interactive-approver.ts): renders detailOf +
+    // [a]/[s]/[d] and now exposes `s` (allow-session). For bash the gate's grant is command-scoped,
+    // so approving one shell command stops re-asking that EXACT command for the rest of the queue
+    // (the gate is shared across goals — loop-cli's "Shared, once" — and remembers the exact command
+    // string, never bash wholesale, deciding a deny first). Unattended (no approver) still
+    // fail-closes every ask.
+    approver = createInteractiveApprover(readlineApproverIo(ask));
   }
   // --unattended → no approver → the gate fail-closes every `ask` to deny (honest boundary).
   const gate = new DefaultPermissionGate({ approver });

@@ -44,7 +44,8 @@ import {
   type TestBaseline,
 } from '../../capabilities/index.js';
 import type { ModelProvider } from '../../core/index.js';
-import { detailOf, safeInline } from './approval.js';
+import { safeInline } from './approval.js';
+import { createInteractiveApprover, readlineApproverIo } from './interactive-approver.js';
 import { initialRenderState, renderEvent } from './render.js';
 
 // Capture BEFORE the runtime .env load: a key present here came from the shell LAUNCH env (it is in
@@ -101,14 +102,12 @@ async function main(): Promise<void> {
   if (vision.enabled) tools.register(createVisionTool(createVisionComplete(vision.config)));
 
   const rl = createInterface({ input: process.stdin, output: process.stdout });
-  const approver: Approver = async (req) => {
-    // Show detailOf(req) — the same call detail the REPL surfaces — so a network `vision` call is
-    // approved KNOWING which image leaves the machine, not blind on tool name alone (codex review).
-    const answer = await new Promise<string>((resolve) =>
-      rl.question(`\n批准 ${req.toolName}? ${req.reason}\n  ${detailOf(req)}\n  [a]llow once / [d]eny: `, resolve),
-    );
-    return answer.trim().toLowerCase().startsWith('a') ? 'allow-once' : 'deny';
-  };
+  // The same interactive approver the loop uses (interactive-approver.ts): renders detailOf +
+  // [a]/[s]/[d] (so a network `vision` call is approved KNOWING which image leaves the machine) and
+  // now exposes `s` (allow-session) — command-scoped for bash, so approving a shell command once
+  // stops re-asking that exact command for the rest of this goal run. Blank/unrecognized re-asks;
+  // EOF or exhausted retries → deny (fail-closed).
+  const approver: Approver = createInteractiveApprover(readlineApproverIo(rl));
   const gate = new DefaultPermissionGate({ approver });
   const context = new DefaultContextManager({
     summarizer: provider,

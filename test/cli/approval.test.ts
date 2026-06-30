@@ -29,6 +29,19 @@ describe('renderApprovalRequest', () => {
     const text = renderApprovalRequest(req({ args: { command: 'x'.repeat(500) } }));
     expect(text).toContain('…');
   });
+
+  it('shows [s] by default (REPL parity)', () => {
+    expect(renderApprovalRequest(req())).toContain('[s]');
+  });
+
+  it('omits [s] when sessionAllowed is false (non-bash tools in goal/loop)', () => {
+    const text = renderApprovalRequest(req({ toolName: 'write', capability: 'writes-files', args: { path: 'a.ts' } }), {
+      sessionAllowed: false,
+    });
+    expect(text).toContain('[a]');
+    expect(text).toContain('[d]');
+    expect(text).not.toContain('[s]');
+  });
 });
 
 describe('safeInline (terminal-injection guard)', () => {
