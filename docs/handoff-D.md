@@ -4,7 +4,7 @@
 
 ## 一句话状态
 
-**Phase D 全部完成**：agent 能**自主跑 goal 到达标自停**——`update_goal(complete)` 不直接终态化，走**确定性三腿 + 独立 LLM 裁判**验收：① 腿1 harness 重跑 canonical check 采信真退出码（builder 知道的检查）、② 腿2 git diff 测试/oracle 篡改检测、③ **held-out 腿**（goal-setter 的**秘密**隐藏断言，builder 从不见到——堵「自写弱测试骗过套件」）、④ **腿3 独立只读 LLM 裁判**（第二个不同模型，对 pinned 清单逐条取证打分）。完成判定**由 `decideVerdict` 纯函数据证据算、不靠 builder 自评、不靠 LLM 自报 verdict**。`npm run typecheck / lint / test / build` 全绿（**509 测试**，较 batch-1 的 446 再 +63）。`demo:d1` 确定性路径；`demo:d2` 双 Doubao 模型腿3 → verified；`demo:d3` held-out（真活 verified / 伪造被秘密闸抓 rejected）。
+**Phase D 全部完成**：agent 能**自主跑 goal 到达标自停**——`update_goal(complete)` 不直接终态化，走**确定性三腿 + 独立 LLM 裁判**验收：① 腿1 harness 重跑 canonical check 采信真退出码（builder 知道的检查）、② 腿2 git diff 测试/oracle 篡改检测、③ **held-out 腿**（goal-setter 的**秘密**隐藏断言，builder 从不见到——堵「自写弱测试骗过套件」）、④ **腿3 独立只读 LLM 裁判**（第二个不同模型，对 pinned 清单逐条取证打分）。完成判定**由 `decideVerdict` 纯函数据证据算、不靠 builder 自评、不靠 LLM 自报 verdict**。`npm run typecheck / lint / test / build` 全绿（**527 测试**，较 batch-1 的 446 再 +81）。`demo:d1` 确定性路径；`demo:d2` 双 Doubao 模型腿3 → verified；`demo:d3` held-out（真活 verified / 伪造被秘密闸抓 rejected）。
 
 > **两批边界**：腿3 = **可选**（配 `ARK_VERIFIER_MODEL` 为不同模型才启用）。没配 → 退回第一批两腿（`decideVerdict(report===undefined)` 路径逐字不动）。所以第一批的「确定性两腿」仍是默认运行模式、未被替换。
 
@@ -138,7 +138,7 @@ test/capabilities/goal/         # state/verdict/goal-store/checks/goal-loop/veri
 
 ## 怎么运行
 
-- 四关卡：`npm run typecheck / lint / test / build`（509 测试）
+- 四关卡：`npm run typecheck / lint / test / build`（527 测试）
 - goal 模式（确定性两腿）：`npm run goal -- "<objective>"`（交互审批 + 自主验收，需 `ARK_API_KEY`）
 - goal 模式（+ held-out）：另设 `JARVIS_HELDOUT_CHECKS_FILE=<文件，一行一条秘密校验命令；放 cwd 外>`
 - goal 模式（+ 腿3 裁判）：另设 `ARK_VERIFIER_MODEL=<不同的 Doubao/DeepSeek 模型 id>`

@@ -16,10 +16,10 @@
 | Phase D 自主（GoalLoop + 确定性三腿〔canonical 重跑 + 篡改检测 + held-out 隐藏断言〕+ 独立 LLM 裁判） | ✅ 完成（D1–D9 + held-out） |
 | **Phase D 后续（裁判跑只读命令 / Hooks / skill 自动沉淀 / Loop 调度）** | ⏭️ 下一步 |
 
-`npm run typecheck / lint / test / build` 全绿（**509 测试**）。命令安全根（PermissionGate + 命令解析器 + bash 审批）经**六轮独立 codex 对抗核查**确认无破闸 HIGH；goal 验收子系统（确定性腿 + 腿3 裁判）另经两轮两裁判核查（方法 / 严重度基线 / 历史见 `docs/security-review-baseline.md`）。
+`npm run typecheck / lint / test / build` 全绿（**527 测试**）。命令安全根（PermissionGate + 命令解析器 + bash 审批）经**六轮独立 codex 对抗核查**确认无破闸 HIGH；goal 验收子系统（确定性三腿 + 腿3 裁判 + bash/Linux 密钥加固）另经**多轮多裁判对抗核查**（codex + 独立 Claude 子代理，含一轮 4 裁判收尾；方法 / 严重度基线 / 历史见 `docs/security-review-baseline.md`）。
 
 接手入口：
-- **Phase D（自主第一批 / GoalLoop）→ `docs/handoff-D.md`**；
+- **Phase D（GoalLoop + 三腿 + 腿3 裁判，全部完成）→ `docs/handoff-D.md`**；**之后待办（需沙箱的 #2/#6 + 后续批）→ `docs/handoff-next.md`**；
 - **B 阶段 + 当前安全态 → `docs/handoff-B.md`**（顶部「当前状态更新」段）；
 - **Phase C（多 agent）→ `docs/handoff-C.md`**；
 - 持久化段 → `docs/handoff-persistence.md`；A 阶段 → `docs/handoff-A.md`；
@@ -53,7 +53,7 @@ npm run dev         # 终端 REPL：带权限闸门 + bash + 交互审批 + 会�
 npm run resume      # 恢复 data/sessions/ 最近一个会话继续跑
 npm run goal        # goal 模式：npm run goal -- "<objective>" 自主跑到达标自停（确定性两腿；JARVIS_HELDOUT_CHECKS_FILE 加 held-out 隐藏断言；ARK_VERIFIER_MODEL=不同模型 启用腿3 独立裁判）
 npm run typecheck   # tsc --noEmit
-npm test            # vitest（509 测试）
+npm test            # vitest（527 测试）
 npm run build       # tsc 产出到 dist/
 npm run lint        # eslint
 npm run demo:a1     # A1：调 Doubao 一句话 → 流式增量 + 聚合 ModelResult
@@ -99,7 +99,7 @@ data/            # 运行期会话日志（gitignore）
 ## 文档导航
 
 - `AGENTS.md` — 项目规则层（命名 / 风格 / 工程纪律 / 命令 / 设计依据）。**动手前先读。**
-- `docs/handoff-D.md` — **Phase D（自主第一批 / GoalLoop）接手入口**。
+- `docs/handoff-D.md` — **Phase D（GoalLoop 自主验收，全部完成）接手入口**；`docs/handoff-next.md` — 之后两类待办的新会话交接。
 - `docs/handoff-C.md` — Phase C（多 agent / SubagentManager）接手入口。
 - `docs/handoff-B.md` — B 阶段 + 当前安全态（顶部「当前状态更新」段是接手入口）。
 - `docs/handoff-persistence.md` — 持久化段（JSONL + 断点续跑）。
