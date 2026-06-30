@@ -791,6 +791,127 @@ describe('runAgent — hooks (slice 1)', () => {
   });
 });
 
+describe('runAgent — PostToolUse feedback (slice-2)', () => {
+  const noBlock = async (): Promise<{ blocked: boolean; reason: string }> => ({ blocked: false, reason: '' });
+
+  it('folds the hook output into ONE user message AFTER the tool result (pairing intact) + emits hook_output', async () => {
+    const tools = new InMemoryToolRegistry();
+    tools.register(okTool);
+    const { provider } = scriptedModel([{ toolCalls: [{ id: 'c1', name: 'ok', arguments: '{}' }] }, { text: 'done' }]);
+    const bus = new InMemoryEventBus();
+    const events = record(bus);
+    const messages: Message[] = [{ role: 'user', content: 'go' }];
+
+    await runAgent({
+      model: provider, tools, bus, messages,
+      toolCtx: { cwd: dir }, budget: { maxTurns: 5 },
+      hooks: { preToolUse: noBlock, postToolUse: async () => 'lint: unused var x' },
+    });
+
+    const asstIdx = messages.findIndex((m) => m.role === 'assistant' && m.toolCalls && m.toolCalls.length > 0);
+    expect(messages[asstIdx + 1]?.role).toBe('tool'); // tool result immediately follows tool_calls (pairing)
+    expect(messages[asstIdx + 2]?.role).toBe('user'); // feedback AFTER the result, never wedged between
+    const fb = messages[asstIdx + 2];
+    expect(fb?.role === 'user' && fb.content).toContain('PostToolUse hooks');
+    expect(fb?.role === 'user' && fb.content).toContain('不可信'); // untrusted banner — evidence, not instructions
+    expect(fb?.role === 'user' && fb.content).toContain('ok: lint: unused var x');
+
+    const hookEvent = events.find((e) => e.type === 'hook_output');
+    expect(hookEvent?.type === 'hook_output' && hookEvent.toolName).toBe('ok');
+    expect(hookEvent?.type === 'hook_output' && hookEvent.output).toBe('lint: unused var x');
+  });
+
+  it('injects nothing and emits no hook_output when the hook returns undefined', async () => {
+    const tools = new InMemoryToolRegistry();
+    tools.register(okTool);
+    const { provider } = scriptedModel([{ toolCalls: [{ id: 'c1', name: 'ok', arguments: '{}' }] }, { text: 'done' }]);
+    const bus = new InMemoryEventBus();
+    const events = record(bus);
+    const messages: Message[] = [{ role: 'user', content: 'go' }];
+
+    await runAgent({
+      model: provider, tools, bus, messages,
+      toolCtx: { cwd: dir }, budget: { maxTurns: 5 },
+      hooks: { preToolUse: noBlock, postToolUse: async () => undefined },
+    });
+
+    expect(messages.some((m) => m.role === 'user' && m.content.includes('PostToolUse hooks'))).toBe(false);
+    expect(events.some((e) => e.type === 'hook_output')).toBe(false);
+  });
+
+  it('several tool calls in a turn → feedback aggregates into ONE user message after ALL results', async () => {
+    const tools = new InMemoryToolRegistry();
+    tools.register(okTool);
+    const { provider } = scriptedModel([
+      { toolCalls: [{ id: 'c1', name: 'ok', arguments: '{}' }, { id: 'c2', name: 'ok', arguments: '{}' }] },
+      { text: 'done' },
+    ]);
+    const bus = new InMemoryEventBus();
+    const messages: Message[] = [{ role: 'user', content: 'go' }];
+
+    await runAgent({
+      model: provider, tools, bus, messages,
+      toolCtx: { cwd: dir }, budget: { maxTurns: 5 },
+      hooks: { preToolUse: noBlock, postToolUse: async (call) => `out-${call.id}` },
+    });
+
+    expect(messages.filter((m) => m.role === 'tool')).toHaveLength(2); // both results land first
+    const fb = messages.find((m) => m.role === 'user' && m.content.includes('PostToolUse hooks'));
+    // banner line first, then one line per tool call's feedback
+    expect(fb?.role === 'user' && fb.content.split('\n').slice(1)).toEqual(['ok: out-c1', 'ok: out-c2']);
+  });
+
+  it('does not block or alter the tool result even when feedback is produced', async () => {
+    await writeFile(join(dir, 'fact.txt'), 'teal', 'utf8');
+    const tools = new InMemoryToolRegistry();
+    tools.register(readTool);
+    const { provider } = scriptedModel([
+      { toolCalls: [{ id: 'c1', name: 'read', arguments: '{"path":"fact.txt"}' }] },
+      { text: 'done' },
+    ]);
+    const bus = new InMemoryEventBus();
+    const events = record(bus);
+
+    await runAgent({
+      model: provider, tools, bus,
+      messages: [{ role: 'user', content: 'read' }],
+      toolCtx: { cwd: dir }, budget: { maxTurns: 5 },
+      hooks: { preToolUse: noBlock, postToolUse: async () => 'a note' },
+    });
+
+    const toolResult = events.find((e) => e.type === 'tool_result');
+    expect(toolResult?.type === 'tool_result' && toolResult.out.content).toBe('teal'); // result unchanged
+    expect(toolResult?.type === 'tool_result' && toolResult.out.error).toBeUndefined(); // not blocked
+  });
+
+  it('caps the per-turn feedback so many tool calls cannot flood the context', async () => {
+    const tools = new InMemoryToolRegistry();
+    tools.register(okTool);
+    const { provider } = scriptedModel([
+      {
+        toolCalls: [
+          { id: 'c1', name: 'ok', arguments: '{}' },
+          { id: 'c2', name: 'ok', arguments: '{}' },
+          { id: 'c3', name: 'ok', arguments: '{}' },
+        ],
+      },
+      { text: 'done' },
+    ]);
+    const bus = new InMemoryEventBus();
+    const messages: Message[] = [{ role: 'user', content: 'go' }];
+
+    await runAgent({
+      model: provider, tools, bus, messages,
+      toolCtx: { cwd: dir }, budget: { maxTurns: 5 },
+      hooks: { preToolUse: noBlock, postToolUse: async () => 'x'.repeat(8000) }, // 3×8000 raw → must be capped
+    });
+
+    const fb = messages.find((m) => m.role === 'user' && m.content.includes('PostToolUse hooks'));
+    expect(fb?.role === 'user' && fb.content.length).toBeLessThan(17_000); // banner + ≤16384 body, not ~24k
+    expect(fb?.role === 'user' && fb.content).toContain('[截断]');
+  });
+});
+
 describe('runAgent — session persistence (store)', () => {
   it('persists every message the loop produces (user/assistant/tool) to the session log', async () => {
     await writeFile(join(dir, 'fact.txt'), 'X', 'utf8');
