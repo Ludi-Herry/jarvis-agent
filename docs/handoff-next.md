@@ -29,7 +29,10 @@ goal 完成验收 = **确定性三腿（canonical 重跑 + 篡改检测 + held-o
 
 - **Hooks**（把自动化挂到时刻）：硬约束/必跑检查用 hooks 落地。
 - **Loop 调度**（cron 长跑）：多 goal 会话的入口——**也是「跨 goal 裁判健康监控」的落点**（本会话删的 per-goal `VerifierMonitor` 不可达,couldNotVerify 率是跨 goal 信号,Loop 落地后以跨 goal 形态重加 + 真 integration 触发单测,见 security-baseline #6 收口轮）。
-- **bash 无人值守白名单**：当前 bash 每次人审（B11）。无人值守自治要上 scoped allow-list,配 memory `restore-bash-session-allow`（B 加固时故意删了 session-allow,按白名单约束恢复、别无条件加回）。`decide.ts:121` / `permission-gate.ts:97` 有对应 TODO。
+- **bash 白名单（2026-06-30 部分落地 + 部分撤回,读 security-baseline「bash 白名单轮」再动）**:
+  - **Path B 已落地**:命令级 session-allow(`permission-gate.ts` `bashCommandGrants`,精确串、需人交互批准、内存态)——REPL 里批一次 `git status` 本会话该精确串静默放行,异命令仍每次问。安全(对抗审查复核过)。
+  - **Path A 已撤回**:配置白名单自动放行(`decide.ts` 让 `allow` 规则升 bash + goal-cli 加载仓库规则)——对抗审查抓出 7 HIGH(`git push <url>` 整库外泄 / `npm install evil` 供应链 RCE / `curl -d @.env` 密钥外发 / 信任反转:从被操作仓库读 enforcement)。根因:**命令分析器是 deny-oracle 非 allow-oracle**,glob 前缀放行真实程序=交出该程序全部能力面。已回退。
+  - **真无人值守 bash 自治 = 沙箱前置**,与上面第一类 #2/#6 **同一堵墙**(没有 OS 沙箱就没有「可信地跑任意程序」的办法)。要做先有沙箱;别再用命令模式 allow-list 重试 Path A(`decide.ts` executes-code 分支注释已记结论)。memory `restore-bash-session-allow` 已更新。
 - **skill 自动沉淀**（人审 gate）、**多模态**（参考 memory `openhanako-outer-vision-multimodal`）、**shadow-git**。
 
 ## 上手顺序（新会话）
