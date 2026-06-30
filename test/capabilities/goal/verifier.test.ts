@@ -5,6 +5,7 @@ import {
   runVerifier,
   type RunVerifierDeps,
 } from '../../../src/capabilities/goal/verifier.js';
+import { buildDefaultRegistry } from '../../../src/core/tools/index.js';
 import type { AgentContext, RunOutcome } from '../../../src/core/loop/run-agent.js';
 import type { PinnedRequirement } from '../../../src/capabilities/goal/goal.js';
 import type { ModelDelta, ModelProvider, ModelResult } from '../../../src/core/model/types.js';
@@ -47,6 +48,18 @@ describe('buildVerifierRegistry — read-only invariant', () => {
     const names = r.schemasForModel().map((s) => s.name);
     expect(names).not.toContain('write');
     expect(names).not.toContain('bash');
+  });
+
+  // Pins the "leg-3 judge has NO vision" decision (vision is network → would break the read-only,
+  // cannot-act-when-injected property; a visual requirement the judge can't read-check routes to
+  // couldNotVerify → a human). The structural reason it holds: `vision` is NOT a default tool — it is
+  // registered explicitly by the CLI surfaces onto the BUILDER registry only — and the judge builds a
+  // FRESH buildDefaultRegistry().subset(['read','grep']), so it can never inherit a CLI-registered tool.
+  it('the judge never gets vision: it is not a default tool and not in the read-only subset', () => {
+    expect(buildDefaultRegistry().schemasForModel().map((s) => s.name)).not.toContain('vision');
+    const judge = buildVerifierRegistry();
+    expect(judge.schemasForModel().map((s) => s.name)).not.toContain('vision');
+    for (const s of judge.schemasForModel()) expect(judge.capabilityOf(s.name)).toBe('read-only');
   });
 });
 

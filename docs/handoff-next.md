@@ -5,10 +5,20 @@
 
 ## 方向决策（2026-07-01，用户拍板）
 
-- **Hooks slice 1 已落地**：PreToolUse 阻断 + PostToolUse 咨询，在 `feat/hooks` 分支（commit `e28c52e`，**待合 main**，未 push）。616 测试 / 四关卡全绿，经 codex 双 lens 对抗审查加固。详见 `docs/handoff-hooks.md`、memory `hooks-slice-1`。
+- **Hooks slice 1 已落地且已在 main**：PreToolUse 阻断 + PostToolUse 咨询（commit `e28c52e`+`8f162de`，已 ff 合进 main——main 与 `feat/hooks` 同指 `8f162de`、diff 为空；**未 push**）。616 测试 / 四关卡全绿，经 codex 双 lens 对抗审查加固。详见 `docs/handoff-hooks.md`、memory `hooks-slice-1`。
 - **沙箱：跳过**。不做沙箱前置调研，也不做被沙箱卡住的两件（#2 客观路由 / #6 裁判 exec）。当前 `cannotVerify→park` / `fail-closed deny` 接受为**正确的能力天花板**（自主性封顶在「没人就拒/挂起」，attended 全好用）。将来真要无人值守跑危险/运行态操作，再回头开沙箱。下文「第一类」整节据此**暂不推进**。
 - **skill 自动沉淀（`propose_skill`）：不做**（投机性、判定偏弱、无证实的复用场景）。下文该节仅作设计存档。
-- **下一步工作（已定，交新会话）**：① 先**接 vision 进 goal/loop/verifier**（补完半截——vision 工具已落地但只在 REPL 能用）；② 再做 **Hooks slice-2 / 各切片小尾巴**。接手 prompt 见本会话末。
+- **下一步工作**：① **接 vision 进 goal/loop 已完成**（2026-06-30，分支 `feat/vision-goal-loop`，未合并/未 push，四轮 codex 对抗审查 SHIP，625 测试——详见下「vision→goal/loop 接线」；注意最终**只接 builder 侧、裁判不给 vision**，与原文「/verifier」不同，理由见小节）；② 下一步 **Hooks slice-2 / 各切片小尾巴**。
+
+## vision→goal/loop 接线（2026-06-30，方向决策 ① 完成）
+
+vision defer ③「未接 goal/loop」补完——**只接 builder 侧，裁判（leg 3）刻意不给 vision**。分支 `feat/vision-goal-loop`（基于 main，**未合并/未 push**），四关卡全绿（625 测试），经**四轮 codex 跨模型对抗审查**（盲批→decoy→截断→bidi 逐层堵死）SHIP。
+
+- **builder 接线**：goal-cli/loop-cli 镜像 REPL 条件注册（`resolveVisionConfig` + opt-in `ARK_VISION_MODEL` + `createVisionTool`）。network→gate ask→attended 人批准 / unattended 无 approver fail-closed deny（无静默出图）。loop-cli 跨 goal 共享一个无状态 visionTool 实例。
+- **裁判不给 vision（架构决策，用户确认）**：network=发图出网=行动，给裁判会破坏「裁判被注入也不能行动」核心属性。`verifier.ts`/`goal-loop.ts` **零改**——`buildVerifierRegistry`=`buildDefaultRegistry().subset(['read','grep'])`+read-only 断言，vision 是 CLI 层单独注册不进 default registry，结构性隔离。视觉验收需求→裁判 cannotVerify→park 交人（与运行态需求同一天花板）。
+- **审批 UI 三件套加固（对抗审查驱动）**：审批显示的是被注入者可控的 args，盲批/decoy/截断/bidi 都是真实绕过（四轮逐层挖出）。修复=approver 显示 `detailOf` 且 **tool-aware**（按 `req.toolName` 取字段，防 decoy/padding 隐藏 egress 目标）+ egress 目标（image/path）**完整显示不截断**（防藏 basename）+ `safeInline` 剥控制符/换行/U+2028-2029/bidi（防终端注入 + 视觉欺骗）。三件套是「新接任何 network/egress 工具到 approver」的复用模板。
+- **关键文件**：`src/surfaces/cli/{goal-cli,loop-cli,approval}.ts`、`test/cli/approval.test.ts`、`test/capabilities/goal/verifier.test.ts`。
+- **剩余 follow-up**（不阻断）：完整路径病态 flood（attended UX，codex 判不阻断）；vision 自身 defer（MIME 只看扩展不 sniff、活体未验、视频时间维/原生多模态/图上画 mark/多图）。
 
 ## Phase E 合并收口（2026-07-01）
 
@@ -50,7 +60,7 @@ goal 完成验收 = **确定性三腿（canonical 重跑 + 篡改检测 + held-o
 
 ### 已在 main（四切片，各自的诚实边界 / defer）
 
-- **vision（`src/core/tools/vision-tool.ts` + `src/core/model/vision.ts`）**：异构委派 + 坐标锚点（memory `openhanako-outer-vision-multimodal`）——主推理模型保持纯文本,`vision` 工具读本地图像→base64→调远端 VLM→返回**结构化坐标文本**进主对话。`ARK_VISION_MODEL` 设了才注册（同腿3 opt-in）；capability=`network`（发图出网→gate 判 ask、无 approver fail-closed）；路径走 `safeResolve`。codex 审查修过 1 HIGH（错误通道回灌 key/data-URL,已套 `describeModelError`+`redactSecrets`）。**defer**：① 活体未验（ARK vision 请求形状/坐标质量需真 key + vision 模型 + 测试图）；② MIME 只看扩展不 sniff；③ **未接 goal/loop/verifier**（只 REPL + `demo:vision`）；④ 视频/原生多模态/图上画 mark/多图均 defer。
+- **vision（`src/core/tools/vision-tool.ts` + `src/core/model/vision.ts`）**：异构委派 + 坐标锚点（memory `openhanako-outer-vision-multimodal`）——主推理模型保持纯文本,`vision` 工具读本地图像→base64→调远端 VLM→返回**结构化坐标文本**进主对话。`ARK_VISION_MODEL` 设了才注册（同腿3 opt-in）；capability=`network`（发图出网→gate 判 ask、无 approver fail-closed）；路径走 `safeResolve`。codex 审查修过 1 HIGH（错误通道回灌 key/data-URL,已套 `describeModelError`+`redactSecrets`）。**defer**：① 活体未验（ARK vision 请求形状/坐标质量需真 key + vision 模型 + 测试图）；② MIME 只看扩展不 sniff；③ ~~未接 goal/loop/verifier~~ **已接 goal/loop builder 侧（2026-06-30，分支 `feat/vision-goal-loop`；裁判刻意不给 vision——见上「vision→goal/loop 接线」小节）**；④ 视频/原生多模态/图上画 mark/多图均 defer。
 - **loop（`src/capabilities/goal/loop.ts` + `src/surfaces/cli/loop-cli.ts`）**：runGoal 之上的多目标外循环——耐久队列 + 顺序排空 + 崩溃安全 resume（纯重放,绝不重跑已完成）+ 6 条数值硬停止 + 跨 goal 裁判健康监控（`VerifierHealthMonitor`）。**零完成授权**（loop.ts 不 import runGoal/decideVerdict）。入口 `npm run loop -- <objectives 文件>` / `resume:loop`,默认 attended / `--unattended` fail-closed / `--resume`+`--force`。**诚实边界**：① 跨 goal 监控**仅 `ARK_VERIFIER_MODEL` 设了才活**（默认 loop 不开腿3,监控正确惰性）；② **held-out 腿没接**（per-objective 秘密,共享文件对异构队列无意义,要 held-out 用单 goal `npm run goal`）；③ off-bus token 计费漏腿3/pinned 派生（已文档化）。**defer**：并行目标（需 worktree）、cron 守护、mid-goal 续跑、per-goal 异构 verifier。
 - **bash-allow（`src/runtime/permission/permission-gate.ts` + `decide.ts`）**：**命令级 session-allow（Path B）**——`allow-session` 对 bash 按**精确命令串**记（批一次 `git status` 只解锁 `git status` 再用,绝不解锁别的命令）,非 exec 工具才按工具名记；只短路 `ask`,永不翻 `deny`。**配置层 bash auto-allow 被拒（Path A 撤回,对抗审查 7 HIGH:分析器是 deny-oracle 非 allow-oracle,in-repo allow-list 在 agent 处理不可信仓时即被攻击者掌控）**——rules 只能 deny/收窄,不能 allow bash。**注意**：goal-cli / loop-cli 的 approver 只给 `allow-once`/`deny`、**不给 `allow-session`**,所以命令级 session-allow 目前只惠及 REPL；goal/loop 仍是每次受闸操作人审。**真无人值守 bash 仍 fail-closed,等 OS 沙箱**（memory `restore-bash-session-allow`：别用命令模式 allow-list 当无人值守自治）。
 - **shadow-git（`src/capabilities/shadow/shadow-git.ts`）+ 已接 goal-loop & loop-cli**：agent 改动的旁路 git 历史——独立 `--git-dir=data/shadow --work-tree=cwd`（不碰用户 `.git`）、`init/snapshot/log/restore`、复用 `runCommand`、**best-effort**（任何 git 失败/抛出都吞,off-verdict-path,绝不破坏被观测的运行）。`JARVIS_SHADOW_GIT=1` opt-in（默认 off,不静默建 shadow 仓）;`npm run shadow -- log / restore <sha>` 审计/回滚。codex HIGH（密钥快照）已修：shadow 的 `info/exclude` 复用 **harness 自己的密钥策略（`sensitive.ts`）,不靠项目 .gitignore**,任意深度匹配。**defer**：restore 交互确认（当前仅 ⚠ 提示,用户显式 CLI 接受）、snapshot 异步化（当前每轮串行 await,有 30s/命令超时上界）。

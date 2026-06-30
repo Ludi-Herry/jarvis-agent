@@ -14,6 +14,12 @@
  * unattended; everything that writes blocks safely. Truly unattended bash autonomy waits for the OS
  * sandbox (a config bash allow-list is unsafe); this entry adds no bash auto-allow.
  *
+ * Vision (opt-in via ARK_VISION_MODEL) is a BUILDER tool only, with capability=network (it sends a
+ * local image to a remote VLM). The gate routes it to `ask` like write/bash: attended it is approved,
+ * unattended it fail-closes to deny — no silent image egress even in an unattended loop. The read-only
+ * leg-3 judge deliberately has NO vision (network would break "an injected judge cannot act"); a visual
+ * requirement the judge cannot confirm by reading files routes to couldNotVerify → a human.
+ *
  * Verification surface (honest): each goal is verified by the UNCHANGED runGoal = deterministic leg 1
  * (re-run checks) + leg 2 (tamper). Leg 3 (the LLM judge) runs only when `ARK_VERIFIER_MODEL` names a
  * different model — and ONLY then can a goal return couldNotVerify, which is the sole input to the
@@ -36,9 +42,12 @@ import {
   createBashTool,
   assertKeyNotInLaunchEnv,
   createProvider,
+  createVisionComplete,
+  createVisionTool,
   defaultShellPath,
   loadDoubaoConfig,
   resolveVerifierConfig,
+  resolveVisionConfig,
   runCommand,
   scrubProviderKeyFromEnv,
 } from '../../core/index.js';
@@ -60,6 +69,7 @@ import {
   type TestBaseline,
 } from '../../capabilities/index.js';
 import type { ModelProvider } from '../../core/index.js';
+import { detailOf, safeInline } from './approval.js';
 import { initialRenderState, renderEvent } from './render.js';
 
 // Capture BEFORE the runtime .env load (see goal-cli): a key here came from the shell LAUNCH env
@@ -214,8 +224,10 @@ async function main(): Promise<void> {
     rl = createInterface({ input: process.stdin, output: process.stdout });
     const ask = rl;
     approver = async (req) => {
+      // Show detailOf(req) so a network `vision` call is approved KNOWING which image leaves the
+      // machine, not blind on tool name alone (codex review). Same detail the REPL surfaces.
       const answer = await new Promise<string>((resolve) =>
-        ask.question(`\n批准 ${req.toolName}? ${req.reason}\n  [a]llow once / [d]eny: `, resolve),
+        ask.question(`\n批准 ${req.toolName}? ${req.reason}\n  ${detailOf(req)}\n  [a]llow once / [d]eny: `, resolve),
       );
       return answer.trim().toLowerCase().startsWith('a') ? 'allow-once' : 'deny';
     };
@@ -242,16 +254,29 @@ async function main(): Promise<void> {
     ? new ShadowGit({ shellPath, cwd, gitDir: join(cwd, 'data', 'shadow') })
     : undefined;
 
+  // Vision (Phase E multimodal): resolve once and build the tool a single time — it is STATELESS (its
+  // run() reads per-call ctx), so the same instance is registered into every goal's fresh registry.
+  // Opt-in via ARK_VISION_MODEL, like leg 3. capability=network → the gate routes it to `ask`: attended
+  // the approver answers it, unattended (no approver) it fail-closes to deny. So even an unattended loop
+  // never silently sends an image out — the builder's vision call blocks exactly like its write/bash.
+  const vision = resolveVisionConfig(process.env, config);
+  const visionTool = vision.enabled ? createVisionTool(createVisionComplete(vision.config)) : undefined;
+
   // Hooks (slice 1): opt-in via JARVIS_HOOKS (TRUSTED path). Built once, shared across the queue.
   // In-repo / malformed config is refused with a warning. Especially relevant unattended — a
   // PreToolUse hook is a fail-closed guardrail with no human in the loop.
   const { hooks, warning: hookWarning } = await resolveHooks({ hooksPath: JARVIS_HOOKS_LAUNCH, cwd, shellPath });
   if (hookWarning) console.error(`[hooks] ${hookWarning}`);
 
-  console.log(`Jarvis-Agent · loop 模式 · ${config.model}`);
+  console.log(`Jarvis-Agent · loop 模式 · ${safeInline(config.model)}`);
   console.log(`队列: ${objectives.length} 个目标${resume ? `(恢复,已完成 ${seedFinished?.size ?? 0})` : ''}`);
   console.log(`审批: ${unattended ? '无人值守(fail-closed,受闸操作自动拒绝)' : 'attended(交互批准)'}`);
-  console.log(verifier.enabled ? `腿3: 独立裁判已启用(${verifier.config.model})` : `腿3: 未启用(${verifier.reason})`);
+  console.log(verifier.enabled ? `腿3: 独立裁判已启用(${safeInline(verifier.config.model)})` : `腿3: 未启用(${safeInline(verifier.reason)})`);
+  console.log(
+    vision.enabled
+      ? `vision: 已启用(${safeInline(vision.config.model)}) —— builder 可看图(发图出网,受闸 ask;无人值守自动拒绝)`
+      : `vision: 未启用(${vision.reason})`,
+  );
   console.log(
     shadowGit
       ? 'shadow-git: 已启用 —— 每轮快照工作树到 data/shadow(跨整个队列累积),审计/回滚用 npm run shadow -- log / restore <sha>\n'
@@ -264,6 +289,7 @@ async function main(): Promise<void> {
   const runOne = async (objective: string, goalId: string): Promise<GoalRunSummary> => {
     const tools = buildDefaultRegistry();
     tools.register(createBashTool());
+    if (visionTool) tools.register(visionTool); // opt-in vision (network → gate ask / unattended deny)
 
     let pinned: PinnedRequirement[] = [];
     if (verifierProvider) {

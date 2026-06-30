@@ -17,9 +17,12 @@ import {
   createBashTool,
   assertKeyNotInLaunchEnv,
   createProvider,
+  createVisionComplete,
+  createVisionTool,
   defaultShellPath,
   loadDoubaoConfig,
   resolveVerifierConfig,
+  resolveVisionConfig,
   runCommand,
   scrubProviderKeyFromEnv,
 } from '../../core/index.js';
@@ -41,6 +44,7 @@ import {
   type TestBaseline,
 } from '../../capabilities/index.js';
 import type { ModelProvider } from '../../core/index.js';
+import { detailOf, safeInline } from './approval.js';
 import { initialRenderState, renderEvent } from './render.js';
 
 // Capture BEFORE the runtime .env load: a key present here came from the shell LAUNCH env (it is in
@@ -88,11 +92,20 @@ async function main(): Promise<void> {
 
   const tools = buildDefaultRegistry();
   tools.register(createBashTool()); // safe to register: every call runs behind the gate below
+  // Vision (Phase E multimodal): mirror the REPL — register `vision` ONLY when ARK_VISION_MODEL names a
+  // vision model (opt-in, like leg 3). capability=network → the gate routes the call to `ask`, which the
+  // goal approver below answers (attended). With no approver it would fail-close to deny — no silent
+  // image egress. Reuses the in-memory config key (resolveVisionConfig reads only ARK_VISION_MODEL from
+  // the env, which scrubProviderKeyFromEnv above left intact — it is not a secret).
+  const vision = resolveVisionConfig(process.env, config);
+  if (vision.enabled) tools.register(createVisionTool(createVisionComplete(vision.config)));
 
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   const approver: Approver = async (req) => {
+    // Show detailOf(req) — the same call detail the REPL surfaces — so a network `vision` call is
+    // approved KNOWING which image leaves the machine, not blind on tool name alone (codex review).
     const answer = await new Promise<string>((resolve) =>
-      rl.question(`\n批准 ${req.toolName}? ${req.reason}\n  [a]llow once / [d]eny: `, resolve),
+      rl.question(`\n批准 ${req.toolName}? ${req.reason}\n  ${detailOf(req)}\n  [a]llow once / [d]eny: `, resolve),
     );
     return answer.trim().toLowerCase().startsWith('a') ? 'allow-once' : 'deny';
   };
@@ -151,7 +164,7 @@ async function main(): Promise<void> {
   const { hooks, warning: hookWarning } = await resolveHooks({ hooksPath: JARVIS_HOOKS_LAUNCH, cwd, shellPath });
   if (hookWarning) console.error(`[hooks] ${hookWarning}`);
 
-  console.log(`Jarvis-Agent · goal 模式 · ${config.model}`);
+  console.log(`Jarvis-Agent · goal 模式 · ${safeInline(config.model)}`);
   console.log(`目标: ${objective}`);
   console.log(baseline ? `验收: 四关卡 + 测试篡改检测(baseline ${baseline.headSha.slice(0, 8)})` : '验收: 四关卡(非 git 仓,跳过篡改检测)');
   console.log(
@@ -161,8 +174,13 @@ async function main(): Promise<void> {
   );
   console.log(
     verifier.enabled
-      ? `腿3: 独立裁判已启用(${verifier.config.model}),固定验收清单 ${pinned.length} 条`
-      : `腿3: 未启用(${verifier.reason})`,
+      ? `腿3: 独立裁判已启用(${safeInline(verifier.config.model)}),固定验收清单 ${pinned.length} 条`
+      : `腿3: 未启用(${safeInline(verifier.reason)})`,
+  );
+  console.log(
+    vision.enabled
+      ? `vision: 已启用(${safeInline(vision.config.model)}) —— builder 可看图(发图出网,受闸 ask 批准)`
+      : `vision: 未启用(${vision.reason})`,
   );
   console.log(
     shadowGit
