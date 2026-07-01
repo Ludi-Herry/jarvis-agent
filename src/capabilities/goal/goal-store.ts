@@ -45,7 +45,7 @@ export type GoalRecord =
       sessionId: string;
       createdAt: string;
     }
-  | { t: 'goal-round'; round: number; claim?: GoalClaim; checks?: DeterministicChecks; verdict?: Verdict; at: string }
+  | { t: 'goal-round'; round: number; turns?: number; tokens?: number; claim?: GoalClaim; checks?: DeterministicChecks; verdict?: Verdict; at: string }
   | { t: 'goal-state'; state: GoalState; at: string };
 
 export type GoalCreatedRecord = Extract<GoalRecord, { t: 'goal-created' }>;

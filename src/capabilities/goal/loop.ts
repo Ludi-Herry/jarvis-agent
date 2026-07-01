@@ -61,12 +61,19 @@ export interface GoalRunSummary {
   /** The verifier outcome, present only when leg 3 ran and produced one (→ feeds the health monitor). */
   outcome?: VerdictOutcome;
   rounds: number;
+  /** Full builder-token total for this goal attempt, including any pre-crash resumed rounds. */
+  tokens?: number;
+}
+
+export interface LoopGoalAttempt {
+  index: number;
+  resumed: boolean;
 }
 
 export interface LoopSpec {
   id: string;
   /** Queue of objectives. A queue item's identity is its INDEX here (not a goalId), so resume keys
-   *  off position and a crashed goal re-attempts under a fresh goalId. */
+   *  off position and an in-flight crashed goal can resume under its latest started goalId. */
   objectives: string[];
   contract: LoopContract;
 }
@@ -92,7 +99,7 @@ export interface LoopDeps {
   loopStore: LoopStore;
   /** The ONLY seam: production wires it to a closure that calls the real runGoal; tests inject a fake
    *  to drive outcomes. The objective + a per-attempt goalId go in; a {@link GoalRunSummary} comes out. */
-  runOne: (objective: string, goalId: string) => Promise<GoalRunSummary>;
+  runOne: (objective: string, goalId: string, attempt: LoopGoalAttempt) => Promise<GoalRunSummary>;
   signal?: AbortSignal;
   now?: () => number;
   stamp?: () => string;
@@ -101,6 +108,8 @@ export interface LoopDeps {
   finished?: Set<number>;
   /** Past verifier outcomes (in finish order) — re-warms the health monitor window. */
   outcomes?: VerdictOutcome[];
+  /** Started attempts without a goal-finished record; resume should reuse these goal ids. */
+  inFlight?: Map<number, string>;
   /** Consecutive blocked count carried across the restart. */
   consecutiveBlocked?: number;
   /** Tokens already spent across finished goals (seeds the cumulative budget). */
@@ -218,14 +227,15 @@ export async function runLoop(spec: LoopSpec, deps: LoopDeps): Promise<LoopRunRe
         break;
       }
 
-      const goalId = `${spec.id}-g${i}-${stamp()}`;
+      const resumedGoalId = deps.inFlight?.get(i);
+      const goalId = resumedGoalId ?? `${spec.id}-g${i}-${stamp()}`;
       await deps.loopStore.recordStarted({ index: i, goalId, at: stamp() });
       deps.bus.emit({ type: 'state', phase: `loop · goal ${i + 1}/${spec.objectives.length}` });
       started++;
 
       const before = runTokens;
-      const result = await deps.runOne(spec.objectives[i], goalId); // ← runGoal, the SOLE completer
-      const tokens = runTokens - before;
+      const result = await deps.runOne(spec.objectives[i], goalId, { index: i, resumed: resumedGoalId !== undefined }); // ← runGoal, the SOLE completer
+      const tokens = result.tokens ?? runTokens - before;
       const outcome = result.outcome;
 
       await deps.loopStore.recordFinished({

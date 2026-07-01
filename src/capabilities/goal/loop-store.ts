@@ -9,10 +9,10 @@
  *
  * The crux of crash-safe resume: a queue item's durable identity is its INDEX in `loop-created`'s
  * `objectives` array, NOT a goalId. The goalId is per-ATTEMPT (timestamped), so a goal that crashed
- * mid-run (a `goal-started` with no `goal-finished`) is simply re-attempted under a FRESH goalId — a
- * clean new goal log, no double header, finished goals never touched. `finished` (the set of indices
- * with a `goal-finished`) is the only state resume needs; the cumulative token/goal counts and the
- * monitor window are re-folded from the same records so a resume cannot reset a budget ceiling.
+ * mid-run (a `goal-started` with no `goal-finished`) is resumed under the latest started goalId so
+ * the existing goal/session logs stay connected. `finished` (the set of indices with a
+ * `goal-finished`) and `inFlight` are the queue state resume needs; the cumulative token/goal counts
+ * and the monitor window are re-folded from the same records so a resume cannot reset a budget ceiling.
  *
  * Each line is one record:
  *   {t:'loop-created', …}  — header (contract + the immutable objectives queue)
@@ -52,6 +52,8 @@ export interface LoopReplay {
   objectives: string[];
   /** Indices with a `goal-finished` — resume skips these. */
   finished: Set<number>;
+  /** Started attempts without a matching `goal-finished`, keyed by queue index. */
+  inFlight: Map<number, string>;
   /** Defined verifier outcomes in finish order — re-warms the health monitor window. */
   outcomes: VerdictOutcome[];
   /** = finished.size — seeds the cumulative maxGoals ceiling. */
@@ -91,6 +93,7 @@ export function replayLoop(records: LoopRecord[]): LoopReplay {
   let contract: LoopContract | undefined;
   let objectives: string[] = [];
   const finished = new Set<number>();
+  const inFlight = new Map<number, string>();
   const outcomes: VerdictOutcome[] = [];
   let cumulativeTokens = 0;
   let consecutiveBlocked = 0;
@@ -103,8 +106,12 @@ export function replayLoop(records: LoopRecord[]): LoopReplay {
         contract = record.contract;
         objectives = record.objectives;
         break;
+      case 'goal-started':
+        inFlight.set(record.index, record.goalId);
+        break;
       case 'goal-finished':
         finished.add(record.index);
+        inFlight.delete(record.index);
         cumulativeTokens += record.tokens;
         if (record.outcome !== undefined) outcomes.push(record.outcome);
         if (record.state === 'complete') consecutiveBlocked = 0;
@@ -113,11 +120,9 @@ export function replayLoop(records: LoopRecord[]): LoopReplay {
       case 'loop-halted':
         halted = record.reason;
         break;
-      // 'goal-started' is audit-only: a started-without-finished index stays OUT of `finished`, so it
-      // is re-attempted on resume.
     }
   }
-  return { id, contract, objectives, finished, outcomes, goalsFinished: finished.size, cumulativeTokens, consecutiveBlocked, halted };
+  return { id, contract, objectives, finished, inFlight, outcomes, goalsFinished: finished.size, cumulativeTokens, consecutiveBlocked, halted };
 }
 
 /** A file-backed append-only loop store (mirrors FileGoalStore). Implements {@link LoopStore} so it

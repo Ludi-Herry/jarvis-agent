@@ -12,6 +12,7 @@ import {
   FileGoalStore,
   assertObjectiveUnchanged,
   hashObjective,
+  type GoalRoundRecord,
 } from '../../../src/capabilities/goal/goal-store.js';
 import { InMemoryToolRegistry } from '../../../src/core/tools/registry.js';
 import { InMemoryEventBus, type Event } from '../../../src/runtime/event-bus.js';
@@ -216,7 +217,7 @@ describe('runGoal — shadow-git snapshot hook (best-effort, off the verdict pat
     );
 
     try {
-      for (let i = 0; i < 10; i++) await Promise.resolve();
+      for (let i = 0; i < 50 && calls() < 2; i++) await Promise.resolve();
       expect(calls()).toBe(2); // round 2 started after capture, before the round-1 commit finished
       expect(labels).toHaveLength(1); // the round-2 capture waits until round-1 commit owns the index
       expect(settled).toBe(false); // but the run still waits for queued commits before returning
@@ -278,6 +279,408 @@ describe('VerifierCircuitBreaker', () => {
     expect(b.recordReject()).toBe('continue');
     expect(b.recordReject()).toBe('halt');
     expect(b.recordReject()).toBe('continue'); // latched — never halts twice
+  });
+});
+
+describe('runGoal — resume', () => {
+  it('resumes an active goal from prior messages and continues at the next round without rewriting goal-created', async () => {
+    const writes: string[] = [];
+    const goalStore = {
+      writeCreated: async () => void writes.push('created'),
+      recordRound: async () => void writes.push('round'),
+      recordState: async () => void writes.push('state'),
+    } as unknown as FileGoalStore;
+    const seenMessageCounts: number[] = [];
+    const run: NonNullable<GoalRunDeps['run']> = async (ctx) => {
+      seenMessageCounts.push(ctx.messages.length);
+      await ctx.tools.run({ id: 'u', name: 'update_goal', arguments: JSON.stringify({ status: 'complete' }) }, ctx.toolCtx);
+      return { finalText: 'claimed', turns: 1 };
+    };
+    const priorGoal = {
+      id: 'g1',
+      objective: 'do the thing',
+      objectiveHash: hashObjective('do the thing'),
+      state: 'active' as const,
+      budget: { maxRounds: 3 },
+      pinned: [],
+      sessionId: 's1',
+      createdAt: 't0',
+    };
+    const priorMessages = [
+      { role: 'system' as const, content: 'you are a builder' },
+      { role: 'user' as const, content: 'do the thing' },
+      { role: 'assistant' as const, content: 'worked before crash' },
+    ];
+
+    const result = await runGoal(
+      { ...spec({ budget: { maxRounds: 3 } }), resume: { goal: priorGoal, rounds: [], messages: priorMessages } },
+      baseDeps({ run, check: passingCheck, goalStore }),
+    );
+
+    expect(result.state).toBe('complete');
+    expect(result.rounds).toBe(1);
+    expect(seenMessageCounts[0]).toBe(3);
+    expect(writes).toEqual(['round', 'state']);
+  });
+
+  it('records no-claim rounds so resume can preserve the round budget', async () => {
+    const rounds: Array<{ round: number; claim?: unknown; turns?: number }> = [];
+    const goalStore = {
+      writeCreated: async () => undefined,
+      recordRound: async (record: { round: number; claim?: unknown; turns?: number }) => void rounds.push(record),
+      recordState: async () => undefined,
+    } as unknown as FileGoalStore;
+    let calls = 0;
+    const run: NonNullable<GoalRunDeps['run']> = async (ctx) => {
+      calls++;
+      if (calls === 2) {
+        await ctx.tools.run({ id: 'u', name: 'update_goal', arguments: JSON.stringify({ status: 'complete' }) }, ctx.toolCtx);
+      }
+      return { finalText: 'round done', turns: 1 };
+    };
+
+    const result = await runGoal(spec({ budget: { maxRounds: 2 } }), baseDeps({ run, check: passingCheck, goalStore }));
+
+    expect(result.state).toBe('complete');
+    expect(rounds).toHaveLength(2);
+    expect(rounds[0]).toMatchObject({ round: 1, turns: 1 });
+    expect(rounds[0].claim).toBeUndefined();
+    expect(rounds[1].claim).toEqual({ status: 'complete' });
+  });
+
+  it('restores prior turn budget from replayed rounds before running more builder work', async () => {
+    let calls = 0;
+    const run: NonNullable<GoalRunDeps['run']> = async () => {
+      calls++;
+      return { finalText: 'still working', turns: 1 };
+    };
+    const priorGoal = {
+      id: 'g1',
+      objective: 'do the thing',
+      objectiveHash: hashObjective('do the thing'),
+      state: 'active' as const,
+      budget: { maxRounds: 5, maxTotalTurns: 5 },
+      pinned: [],
+      sessionId: 's1',
+      createdAt: 't0',
+    };
+    const priorRounds = [{ t: 'goal-round' as const, round: 1, turns: 4, at: 't1' }];
+
+    const result = await runGoal(
+      {
+        ...spec({ budget: { maxRounds: 5, maxTotalTurns: 5 } }),
+        resume: { goal: priorGoal, rounds: priorRounds, messages: [] },
+      },
+      baseDeps({ run, check: passingCheck }),
+    );
+
+    expect(result.state).toBe('blocked');
+    expect(result.rounds).toBe(2);
+    expect(calls).toBe(1);
+  });
+
+  it('restores the reject breaker on resume so prior rejected rounds still count', async () => {
+    const { run, calls } = claimingRun('complete');
+    const rejectedRound = (round: number): GoalRoundRecord => ({
+      t: 'goal-round',
+      round,
+      claim: { status: 'complete' },
+      checks: {
+        objectiveChecksPassed: false,
+        results: [{ command: 'npm test', code: 1, output: 'fail' }],
+        testTamper: 'clean',
+        tamperReason: '',
+      },
+      verdict: { outcome: 'rejected', rationale: 'failed' },
+      at: `t${round}`,
+    });
+    const priorGoal = {
+      id: 'g1',
+      objective: 'do the thing',
+      objectiveHash: hashObjective('do the thing'),
+      state: 'active' as const,
+      budget: { maxRounds: 5 },
+      pinned: [],
+      sessionId: 's1',
+      createdAt: 't0',
+    };
+
+    const result = await runGoal(
+      { ...spec({ budget: { maxRounds: 5 } }), resume: { goal: priorGoal, rounds: [rejectedRound(1), rejectedRound(2)], messages: [] } },
+      baseDeps({ run, check: failingCheck }),
+    );
+
+    expect(result.state).toBe('blocked');
+    expect(calls()).toBe(1);
+    expect(result.rounds).toBe(3);
+  });
+
+  it('does not let a replayed no-claim round reset the reject breaker', async () => {
+    const { run, calls } = claimingRun('complete');
+    const rejectedRound = (round: number): GoalRoundRecord => ({
+      t: 'goal-round',
+      round,
+      claim: { status: 'complete' },
+      checks: {
+        objectiveChecksPassed: false,
+        results: [{ command: 'npm test', code: 1, output: 'fail' }],
+        testTamper: 'clean',
+        tamperReason: '',
+      },
+      verdict: { outcome: 'rejected', rationale: 'failed' },
+      at: `t${round}`,
+    });
+    const priorGoal = {
+      id: 'g1',
+      objective: 'do the thing',
+      objectiveHash: hashObjective('do the thing'),
+      state: 'active' as const,
+      budget: { maxRounds: 5 },
+      pinned: [],
+      sessionId: 's1',
+      createdAt: 't0',
+    };
+
+    const result = await runGoal(
+      {
+        ...spec({ budget: { maxRounds: 5 } }),
+        resume: {
+          goal: priorGoal,
+          rounds: [rejectedRound(1), rejectedRound(2), { t: 'goal-round', round: 3, turns: 1, at: 't3' }],
+          messages: [],
+        },
+      },
+      baseDeps({ run, check: failingCheck }),
+    );
+
+    expect(result.state).toBe('blocked');
+    expect(result.rounds).toBe(4);
+    expect(calls()).toBe(1);
+  });
+
+  it('re-asserts an already-tripped reject breaker on resume before running another builder round', async () => {
+    const { run, calls } = claimingRun('complete');
+    const rejectedRound = (round: number): GoalRoundRecord => ({
+      t: 'goal-round',
+      round,
+      claim: { status: 'complete' },
+      checks: {
+        objectiveChecksPassed: false,
+        results: [{ command: 'npm test', code: 1, output: 'fail' }],
+        testTamper: 'clean',
+        tamperReason: '',
+      },
+      verdict: { outcome: 'rejected', rationale: 'failed' },
+      at: `t${round}`,
+    });
+    const priorGoal = {
+      id: 'g1',
+      objective: 'do the thing',
+      objectiveHash: hashObjective('do the thing'),
+      state: 'active' as const,
+      budget: { maxRounds: 5 },
+      pinned: [],
+      sessionId: 's1',
+      createdAt: 't0',
+    };
+
+    const result = await runGoal(
+      {
+        ...spec({ budget: { maxRounds: 5 } }),
+        resume: { goal: priorGoal, rounds: [rejectedRound(1), rejectedRound(2), rejectedRound(3)], messages: [] },
+      },
+      baseDeps({ run, check: failingCheck }),
+    );
+
+    expect(result.state).toBe('blocked');
+    expect(result.rounds).toBe(3);
+    expect(calls()).toBe(0);
+  });
+
+  it('fails closed when a resumed complete goal lacks a verified verdict', async () => {
+    const priorGoal = {
+      id: 'g1',
+      objective: 'do the thing',
+      objectiveHash: hashObjective('do the thing'),
+      state: 'complete' as const,
+      budget: { maxRounds: 3 },
+      pinned: [],
+      sessionId: 's1',
+      createdAt: 't0',
+    };
+
+    await expect(
+      runGoal(
+        { ...spec({ budget: { maxRounds: 3 } }), resume: { goal: priorGoal, rounds: [], messages: [] } },
+        baseDeps({ run: claimingRun('complete').run, check: passingCheck }),
+      ),
+    ).rejects.toThrow(/verified verdict/);
+  });
+
+  it('fails closed when a resumed goal budget differs from the loop spec budget', async () => {
+    const priorGoal = {
+      id: 'g1',
+      objective: 'do the thing',
+      objectiveHash: hashObjective('do the thing'),
+      state: 'active' as const,
+      budget: { maxRounds: 999 },
+      pinned: [],
+      sessionId: 's1',
+      createdAt: 't0',
+    };
+
+    await expect(
+      runGoal(
+        { ...spec({ budget: { maxRounds: 3 } }), resume: { goal: priorGoal, rounds: [], messages: [] } },
+        baseDeps({ run: claimingRun('complete').run, check: passingCheck }),
+      ),
+    ).rejects.toThrow(/budget/);
+  });
+
+  it('uses the spec baseline instead of trusting the resumed goal log baseline', async () => {
+    let seenBaseline: unknown;
+    const { run } = claimingRun('complete');
+    const check: NonNullable<GoalRunDeps['check']> = async (_deps, baseline) => {
+      seenBaseline = baseline;
+      return {
+        objectiveChecksPassed: true,
+        results: [],
+        testTamper: 'clean',
+        tamperReason: '',
+      };
+    };
+    const priorGoal = {
+      id: 'g1',
+      objective: 'do the thing',
+      objectiveHash: hashObjective('do the thing'),
+      state: 'active' as const,
+      budget: { maxRounds: 3 },
+      testBaseline: undefined,
+      pinned: [],
+      sessionId: 's1',
+      createdAt: 't0',
+    };
+    const trustedBaseline = { headSha: 'trusted-head', testFiles: [] };
+
+    const result = await runGoal(
+      {
+        ...spec({ budget: { maxRounds: 3 }, baseline: trustedBaseline }),
+        resume: { goal: priorGoal, rounds: [], messages: [] },
+      },
+      baseDeps({ run, check }),
+    );
+
+    expect(result.state).toBe('complete');
+    expect(seenBaseline).toEqual(trustedBaseline);
+  });
+
+  it('uses spec pinned requirements instead of trusting the resumed goal log pinned list', async () => {
+    const { run } = claimingRun('complete');
+    let seenPinned: PinnedRequirement[] = [];
+    const runVerifier: NonNullable<GoalRunDeps['runVerifier']> = async (_objective, pinned) => {
+      seenPinned = pinned;
+      return perfectReport();
+    };
+    const priorGoal = {
+      id: 'g1',
+      objective: 'do the thing',
+      objectiveHash: hashObjective('do the thing'),
+      state: 'active' as const,
+      budget: { maxRounds: 3 },
+      pinned: [],
+      sessionId: 's1',
+      createdAt: 't0',
+    };
+
+    const result = await runGoal(
+      {
+        ...spec({ budget: { maxRounds: 3 }, pinned: PINNED }),
+        resume: { goal: priorGoal, rounds: [], messages: [] },
+      },
+      baseDeps({ run, check: passingCheck, verifierProvider: dummyProvider(), runVerifier }),
+    );
+
+    expect(result.state).toBe('complete');
+    expect(seenPinned).toEqual(PINNED);
+  });
+
+  it('returns a persisted terminal complete goal without rerunning the builder when resume closes a loop crash gap', async () => {
+    let calls = 0;
+    let checkCalls = 0;
+    const run: NonNullable<GoalRunDeps['run']> = async () => {
+      calls++;
+      return { finalText: 'should not run', turns: 1 };
+    };
+    const check: NonNullable<GoalRunDeps['check']> = async () => {
+      checkCalls++;
+      return {
+        objectiveChecksPassed: true,
+        results: [],
+        testTamper: 'clean',
+        tamperReason: '',
+      };
+    };
+    const priorGoal = {
+      id: 'g1',
+      objective: 'do the thing',
+      objectiveHash: hashObjective('do the thing'),
+      state: 'complete' as const,
+      budget: { maxRounds: 3 },
+      pinned: [],
+      sessionId: 's1',
+      createdAt: 't0',
+    };
+
+    const result = await runGoal(
+      {
+        ...spec({ budget: { maxRounds: 3 } }),
+        resume: {
+          goal: priorGoal,
+          rounds: [{ t: 'goal-round', round: 1, claim: { status: 'complete' }, verdict: { outcome: 'verified', rationale: 'ok' }, at: 't1' }],
+          messages: [],
+        },
+      },
+      baseDeps({ run, check }),
+    );
+
+    expect(result.state).toBe('complete');
+    expect(result.finalVerdict?.outcome).toBe('verified');
+    expect(calls).toBe(0);
+    expect(checkCalls).toBe(1);
+  });
+
+  it('reruns verification for a resumed terminal complete goal and blocks if the worktree no longer verifies', async () => {
+    let calls = 0;
+    const run: NonNullable<GoalRunDeps['run']> = async () => {
+      calls++;
+      return { finalText: 'should not run', turns: 1 };
+    };
+    const priorGoal = {
+      id: 'g1',
+      objective: 'do the thing',
+      objectiveHash: hashObjective('do the thing'),
+      state: 'complete' as const,
+      budget: { maxRounds: 3 },
+      pinned: [],
+      sessionId: 's1',
+      createdAt: 't0',
+    };
+
+    const result = await runGoal(
+      {
+        ...spec({ budget: { maxRounds: 3 } }),
+        resume: {
+          goal: priorGoal,
+          rounds: [{ t: 'goal-round', round: 1, claim: { status: 'complete' }, verdict: { outcome: 'verified', rationale: 'ok' }, at: 't1' }],
+          messages: [],
+        },
+      },
+      baseDeps({ run, check: failingCheck }),
+    );
+
+    expect(result.state).toBe('blocked');
+    expect(result.finalVerdict?.outcome).toBe('rejected');
+    expect(calls).toBe(0);
   });
 });
 

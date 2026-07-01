@@ -71,6 +71,7 @@ import {
 import type { ModelProvider } from '../../core/index.js';
 import { safeInline } from './approval.js';
 import { createInteractiveApprover, readlineApproverIo } from './interactive-approver.js';
+import { loadLoopGoalResume } from './loop-resume.js';
 import { initialRenderState, renderEvent } from './render.js';
 
 // Capture BEFORE the runtime .env load (see goal-cli): a key here came from the shell LAUNCH env
@@ -140,6 +141,7 @@ async function main(): Promise<void> {
   // Held in outer scope so the fresh/resume branches can both populate the runLoop call.
   let seedFinished: Set<number> | undefined;
   let seedOutcomes: ('verified' | 'rejected' | 'couldNotVerify')[] | undefined;
+  let seedInFlight: Map<number, string> | undefined;
   let seedConsecutiveBlocked: number | undefined;
   let seedCumulativeTokens: number | undefined;
 
@@ -177,6 +179,7 @@ async function main(): Promise<void> {
     loopPath = latest;
     seedFinished = replay.finished;
     seedOutcomes = replay.outcomes;
+    seedInFlight = replay.inFlight;
     seedConsecutiveBlocked = replay.consecutiveBlocked;
     seedCumulativeTokens = replay.cumulativeTokens;
   } else {
@@ -286,10 +289,15 @@ async function main(): Promise<void> {
   // runOne — the SOLE seam to runGoal. Per goal: NEW tools registry (registry.register throws on a
   // duplicate update_goal, so it can't be shared), fresh baseline, derived pinned (block-and-continue
   // on empty rather than exiting the process), own goal/session stores, then the UNCHANGED runGoal.
-  const runOne = async (objective: string, goalId: string): Promise<GoalRunSummary> => {
+  const runOne = async (objective: string, goalId: string, attempt: { index: number; resumed: boolean }): Promise<GoalRunSummary> => {
     const tools = buildDefaultRegistry();
     tools.register(createBashTool());
     if (visionTool) tools.register(visionTool); // opt-in vision (network → gate ask / unattended deny)
+
+    const goalPath = join(cwd, 'data', 'goals', `${goalId}.jsonl`);
+    const sessionPath = join(cwd, 'data', 'sessions', `${goalId}.jsonl`);
+    const loadedResume = attempt.resumed ? await loadLoopGoalResume(goalPath, sessionPath, goalId, cwd) : undefined;
+    const resumeState = loadedResume?.resume;
 
     let pinned: PinnedRequirement[] = [];
     if (verifierProvider) {
@@ -299,17 +307,22 @@ async function main(): Promise<void> {
         // only burn budget to a block. Block this goal immediately and let the loop continue. No outcome
         // → not a verifier-health sample (the judge never ran).
         bus.emit({ type: 'goal_state', goalId, state: 'blocked' });
-        return { state: 'blocked', rounds: 0 };
+        return { state: 'blocked', rounds: resumeState?.rounds.length ?? 0, tokens: sumRoundTokens(resumeState?.rounds ?? []) };
       }
+    } else if (resumeState && resumeState.goal.pinned.length > 0) {
+      bus.emit({ type: 'goal_state', goalId, state: 'blocked' });
+      return { state: 'blocked', rounds: resumeState.rounds.length, tokens: sumRoundTokens(resumeState.rounds) };
     }
 
     const baseline = await snapshotBaseline(shellPath, cwd);
-    const goalStore = new FileGoalStore(join(cwd, 'data', 'goals', `${goalId}.jsonl`));
-    const sessionStore = new FileSessionStore(join(cwd, 'data', 'sessions', `${goalId}.jsonl`));
-    await sessionStore.writeHeader({ id: goalId, model: config.model, cwd, startedAt: new Date().toISOString() });
+    const goalStore = new FileGoalStore(goalPath);
+    const sessionStore = new FileSessionStore(sessionPath, loadedResume?.initialCursor ?? 0);
+    if (!attempt.resumed) {
+      await sessionStore.writeHeader({ id: goalId, model: config.model, cwd, startedAt: new Date().toISOString() });
+    }
 
     const result = await runGoal(
-      { id: goalId, objective, sessionId: goalId, budget: contract.perGoalBudget, baseline, pinned },
+      { id: goalId, objective, sessionId: goalId, budget: contract.perGoalBudget, baseline, pinned, resume: resumeState },
       {
         model: provider,
         tools,
@@ -328,7 +341,7 @@ async function main(): Promise<void> {
         shadowGit,
       },
     );
-    return { state: result.state, outcome: result.finalVerdict?.outcome, rounds: result.rounds };
+    return { state: result.state, outcome: result.finalVerdict?.outcome, rounds: result.rounds, tokens: result.tokens };
   };
 
   // try/finally so a thrown goal run (provider/network/disk error from inside runOne→runGoal) still
@@ -344,6 +357,7 @@ async function main(): Promise<void> {
         runOne,
         finished: seedFinished,
         outcomes: seedOutcomes,
+        inFlight: seedInFlight,
         consecutiveBlocked: seedConsecutiveBlocked,
         cumulativeTokens: seedCumulativeTokens,
       },
@@ -393,4 +407,8 @@ async function runAdvisoryHook(fn: (() => Promise<void>) | undefined): Promise<v
   } catch {
     // session hooks are notification-only
   }
+}
+
+function sumRoundTokens(rounds: Array<{ tokens?: number }>): number {
+  return rounds.reduce((sum, round) => sum + (round.tokens ?? 0), 0);
 }

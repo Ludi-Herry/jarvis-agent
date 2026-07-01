@@ -269,6 +269,26 @@ describe('runLoop — resume', () => {
     expect(result.goalsFinished).toBe(5); // 2 seeded + 3 this run
   });
 
+  it('reuses an in-flight goalId on resume and tells runOne it is resuming', async () => {
+    const bus = new InMemoryEventBus();
+    const { store, records } = fakeStore();
+    const calls: Array<{ objective: string; goalId: string; resumed: boolean; index: number }> = [];
+    const runOne = async (objective: string, goalId: string, attempt: { index: number; resumed: boolean }): Promise<GoalRunSummary> => {
+      calls.push({ objective, goalId, resumed: attempt.resumed, index: attempt.index });
+      return verified;
+    };
+
+    const result = await runLoop(
+      { id: 'L', objectives: ['a', 'b', 'c'], contract: contract() },
+      { bus, loopStore: store, runOne, finished: new Set([0]), inFlight: new Map([[1, 'L-g1-existing']]) },
+    );
+
+    expect(calls[0]).toEqual({ objective: 'b', goalId: 'L-g1-existing', resumed: true, index: 1 });
+    expect(calls[1]).toMatchObject({ objective: 'c', resumed: false, index: 2 });
+    expect(records.filter((r) => r.t === 'goal-started').map((r) => r.goalId)).toEqual(['L-g1-existing', calls[1].goalId]);
+    expect(result.goalsFinished).toBe(3);
+  });
+
   it('cumulative seeds cannot be reset by resume — maxGoals counts seeded + this run', async () => {
     const bus = new InMemoryEventBus();
     const { store } = fakeStore();
@@ -327,6 +347,24 @@ describe('runLoop — resume', () => {
     );
     expect(result.reason).toBe('token-budget');
     expect(result.started).toBe(1); // 90 seed < 100 so one runs (→110), then the cap trips
+  });
+
+  it('records a resumed goal summary token total instead of only current bus usage', async () => {
+    const bus = new InMemoryEventBus();
+    const { store, records } = fakeStore();
+    const runOne = async (): Promise<GoalRunSummary> => {
+      bus.emit({ type: 'usage', inputTokens: 5, outputTokens: 5 });
+      return { state: 'complete', outcome: 'verified', rounds: 2, tokens: 910 };
+    };
+
+    const result = await runLoop(
+      { id: 'L', objectives: ['a'], contract: contract({ maxTotalTokens: 1_000 }) },
+      { bus, loopStore: store, runOne, inFlight: new Map([[0, 'L-g0-existing']]) },
+    );
+
+    const finished = records.find((r): r is Extract<LoopRecord, { t: 'goal-finished' }> => r.t === 'goal-finished');
+    expect(finished?.tokens).toBe(910);
+    expect(result.cumulativeTokens).toBe(910);
   });
 });
 

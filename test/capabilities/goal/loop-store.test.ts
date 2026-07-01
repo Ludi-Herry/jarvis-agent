@@ -52,7 +52,7 @@ describe('FileLoopStore round-trip', () => {
     expect(replay.halted).toBe('verifier-health');
   });
 
-  it('a goal-started without a goal-finished (a crash) stays out of finished → re-attempted', async () => {
+  it('a goal-started without a goal-finished (a crash) stays out of finished but remains in-flight', async () => {
     const path = join(dir, 'L2.jsonl');
     const store = new FileLoopStore(path);
     await store.writeCreated({ id: 'L2', contract: CONTRACT, objectives: ['a', 'b'], createdAt: 't0' });
@@ -63,6 +63,21 @@ describe('FileLoopStore round-trip', () => {
     const replay = await loadLoop(path);
     expect([...replay.finished]).toEqual([0]); // index 1 NOT finished
     expect(replay.halted).toBeUndefined(); // no loop-halted → resumable
+  });
+
+  it('replays the latest started-without-finished goal as an in-flight resume attempt', async () => {
+    const path = join(dir, 'L-inflight.jsonl');
+    const store = new FileLoopStore(path);
+    await store.writeCreated({ id: 'L', contract: CONTRACT, objectives: ['a', 'b', 'c'], createdAt: 't0' });
+    await store.recordStarted({ index: 0, goalId: 'L-g0-old', at: 't1' });
+    await store.recordFinished({ index: 0, goalId: 'L-g0-old', state: 'complete', outcome: 'verified', rounds: 1, tokens: 10, at: 't2' });
+    await store.recordStarted({ index: 1, goalId: 'L-g1-first', at: 't3' });
+    await store.recordStarted({ index: 1, goalId: 'L-g1-resume', at: 't4' });
+
+    const replay = await loadLoop(path);
+
+    expect([...replay.finished]).toEqual([0]);
+    expect([...replay.inFlight]).toEqual([[1, 'L-g1-resume']]);
   });
 });
 

@@ -25,7 +25,7 @@ import { redactSecrets } from '../../core/model/errors.js';
 import { decideVerdict } from './verdict.js';
 import { advanceGoalState } from './state.js';
 import { DEFAULT_CHECK_COMMANDS, runDeterministicChecks, type CheckDeps } from './checks.js';
-import { FileGoalStore, assertObjectiveUnchanged, hashObjective } from './goal-store.js';
+import { FileGoalStore, assertObjectiveUnchanged, hashObjective, type GoalRoundRecord } from './goal-store.js';
 import { createUpdateGoalTool, takeClaim, type ClaimSlot } from './update-goal-tool.js';
 import { couldNotVerifyReport, runVerifier as defaultRunVerifier } from './verifier.js';
 import type {
@@ -52,6 +52,12 @@ const MAX_CONSECUTIVE_REJECTS = 3;
 export class VerifierCircuitBreaker {
   private consecutive = 0;
   private tripped = false;
+
+  constructor(initialRejects = 0) {
+    this.consecutive = initialRejects;
+    this.tripped = initialRejects >= MAX_CONSECUTIVE_REJECTS;
+  }
+
   recordReject(): 'continue' | 'halt' {
     this.consecutive++;
     if (!this.tripped && this.consecutive >= MAX_CONSECUTIVE_REJECTS) {
@@ -73,6 +79,14 @@ export interface GoalSpec {
    *  batch-1 deterministic-only (no verifier). The caller fail-closes on empty WHEN it configures a
    *  verifier, since decideVerdict step 5 makes verified unreachable for an empty list. */
   pinned?: PinnedRequirement[];
+  /** Existing goal/session state loaded from JSONL. Present only when loop resume continues an in-flight goal. */
+  resume?: GoalResumeState;
+}
+
+export interface GoalResumeState {
+  goal: Goal;
+  rounds: GoalRoundRecord[];
+  messages: Message[];
 }
 
 export interface ShadowSnapshotHandle {
@@ -140,6 +154,7 @@ export interface GoalRunResult {
   goal: Goal;
   state: GoalState;
   rounds: number;
+  tokens: number;
   finalVerdict?: Verdict;
 }
 
@@ -149,45 +164,92 @@ export async function runGoal(spec: GoalSpec, deps: GoalRunDeps): Promise<GoalRu
   const runVerifierFn = deps.runVerifier ?? defaultRunVerifier;
   const stamp = (): string => new Date().toISOString();
 
-  const objectiveHash = hashObjective(spec.objective);
+  const resume = spec.resume;
+  const objectiveHash = resume?.goal.objectiveHash ?? hashObjective(spec.objective);
   const pinned: PinnedRequirement[] = spec.pinned ?? [];
-  let goal: Goal = {
-    id: spec.id,
-    objective: spec.objective,
-    objectiveHash,
-    state: 'active',
-    budget: spec.budget,
-    testBaseline: spec.baseline,
-    pinned,
-    sessionId: spec.sessionId,
-    createdAt: stamp(),
-  };
-  await deps.goalStore?.writeCreated({
-    id: goal.id,
-    objective: goal.objective,
-    objectiveHash,
-    budget: goal.budget,
-    testBaseline: goal.testBaseline,
-    pinned,
-    sessionId: goal.sessionId,
-    createdAt: goal.createdAt,
-  });
+  let goal: Goal =
+    resume?.goal ?? {
+      id: spec.id,
+      objective: spec.objective,
+      objectiveHash,
+      state: 'active',
+      budget: spec.budget,
+      testBaseline: spec.baseline,
+      pinned,
+      sessionId: spec.sessionId,
+      createdAt: stamp(),
+    };
+  if (resume) {
+    assertResumeMatchesSpec(spec, goal);
+    goal = { ...goal, budget: spec.budget, testBaseline: spec.baseline, pinned };
+  }
+
+  if (resume && goal.state !== 'active') {
+    const finalVerdict = resume.rounds.at(-1)?.verdict;
+    const resumedTokens = sumRoundTokens(resume.rounds);
+    if (goal.state !== 'complete') {
+      return { goal, state: goal.state, rounds: resume.rounds.length, tokens: resumedTokens, finalVerdict };
+    }
+    if (finalVerdict?.outcome !== 'verified') {
+      throw new Error('resumed complete goal is missing a verified verdict');
+    }
+    const verification = await verifyGoalCompletion(goal, deps, check, runVerifierFn, true);
+    deps.bus.emit({
+      type: 'verdict',
+      goalId: goal.id,
+      outcome: verification.verdict.outcome,
+      rationale: redactSecrets(verification.verdict.rationale),
+    });
+    const recheckRound = resume.rounds.length + 1;
+    await deps.goalStore?.recordRound({
+      round: recheckRound,
+      turns: 0,
+      tokens: 0,
+      claim: { status: 'complete' },
+      checks: verification.persistedChecks,
+      verdict: verification.verdict,
+      at: stamp(),
+    });
+    if (verification.verdict.outcome !== 'verified') {
+      const blocked = await transition(deps, goal, 'blocked', undefined, stamp);
+      goal = { ...goal, state: blocked };
+      return { goal, state: blocked, rounds: recheckRound, tokens: resumedTokens, finalVerdict: verification.verdict };
+    }
+    return { goal, state: 'complete', rounds: recheckRound, tokens: resumedTokens, finalVerdict: verification.verdict };
+  }
+
+  if (!resume) {
+    await deps.goalStore?.writeCreated({
+      id: goal.id,
+      objective: goal.objective,
+      objectiveHash,
+      budget: goal.budget,
+      testBaseline: goal.testBaseline,
+      pinned,
+      sessionId: goal.sessionId,
+      createdAt: goal.createdAt,
+    });
+  }
 
   const slot: ClaimSlot = {};
   deps.tools.register(createUpdateGoalTool(slot));
 
-  const messages: Message[] = [
-    { role: 'system', content: deps.builderSystemPrompt },
-    { role: 'user', content: spec.objective },
-  ];
+  const messages: Message[] =
+    resume && resume.messages.length > 0
+      ? [...resume.messages]
+      : [
+          { role: 'system', content: deps.builderSystemPrompt },
+          { role: 'user', content: spec.objective },
+        ];
 
   // Accumulate tokens from the bus the builder already emits (no change to runAgent).
-  let totalTokens = 0;
+  let totalTokens = sumRoundTokens(resume?.rounds ?? []);
   const unsubscribe = deps.bus.subscribe((e) => {
     if (e.type === 'usage') totalTokens += e.inputTokens + e.outputTokens;
   });
 
-  const breaker = new VerifierCircuitBreaker();
+  const initialRejects = countTrailingRejects(resume?.rounds ?? []);
+  const breaker = new VerifierCircuitBreaker(initialRejects);
   const shadowSnapshots = createShadowSnapshotQueue(deps.shadowGit);
   const transitionAfterSnapshots = async (
     nextState: GoalState,
@@ -196,15 +258,20 @@ export async function runGoal(spec: GoalSpec, deps: GoalRunDeps): Promise<GoalRu
     await shadowSnapshots.drain();
     return transition(deps, goal, nextState, haltReason, stamp);
   };
-  let round = 0;
-  let totalTurns = 0;
+  let round = resume?.rounds.length ?? 0;
+  let totalTurns = sumRoundTurns(resume?.rounds ?? []);
   let finalVerdict: Verdict | undefined;
   let state: GoalState = 'active';
 
   try {
+    if (initialRejects >= MAX_CONSECUTIVE_REJECTS) {
+      deps.bus.emit({ type: 'halt', reason: 'guardrail' });
+      state = await transitionAfterSnapshots(advanceGoalState('rejected', true));
+    }
     while (state === 'active' && round < goal.budget.maxRounds) {
       round++;
 
+      const tokensBeforeRound = totalTokens;
       const outcome = await run({
         model: deps.model,
         tools: deps.tools,
@@ -219,6 +286,7 @@ export async function runGoal(spec: GoalSpec, deps: GoalRunDeps): Promise<GoalRu
         signal: deps.signal,
       });
       totalTurns += outcome.turns;
+      const roundTokens = totalTokens - tokensBeforeRound;
       // shadow-git: snapshot the working tree after this round's builder work (audit + rollback of what
       // the agent changed). Best-effort and OFF the verdict path — wait only for the shadow index capture
       // here, then let commit/rev-parse finish in the queue before terminal state/return.
@@ -228,6 +296,7 @@ export async function runGoal(spec: GoalSpec, deps: GoalRunDeps): Promise<GoalRu
 
       // No completion claim this round → either out of budget, or nudge and keep going.
       if (claim === undefined) {
+        await deps.goalStore?.recordRound({ round, turns: outcome.turns, tokens: roundTokens, at: stamp() });
         if (overBudget(totalTurns, totalTokens, goal.budget)) {
           state = await transitionAfterSnapshots('blocked', 'budget');
           break;
@@ -242,52 +311,11 @@ export async function runGoal(spec: GoalSpec, deps: GoalRunDeps): Promise<GoalRu
 
       if (claim.status === 'blocked') {
         state = await transitionAfterSnapshots('blocked');
-        await deps.goalStore?.recordRound({ round, claim, at: stamp() });
+        await deps.goalStore?.recordRound({ round, turns: outcome.turns, tokens: roundTokens, claim, at: stamp() });
         break;
       }
 
-      // claim === complete → INDEPENDENT verification. Objective is immutable (fail closed if not).
-      assertObjectiveUnchanged(goal.objective, goal.objectiveHash);
-      const checks = await check(
-        {
-          shellPath: deps.shellPath,
-          cwd: deps.cwd,
-          checkCommands: deps.checkCommands ?? DEFAULT_CHECK_COMMANDS, // from config, NEVER the claim
-          heldOutCommands: deps.heldOutCommands, // secret hidden assertions; from config, NEVER the claim
-          signal: deps.signal,
-        },
-        goal.testBaseline,
-      );
-
-      // Leg 3 — the independent judge. Runs ONLY if (a) a verifier provider is configured AND (b) the
-      // deterministic legs are CLEAN. Short-circuit on a failed leg: don't spawn the judge (saves a
-      // round-trip and gives a prompt injection no surface). HARD INVARIANT: when leg 3 is enabled and
-      // legs are clean, runVerifierFn ALWAYS returns a report (its return type is non-optional;
-      // runVerifier synthesizes couldNotVerify on every failure), so decideVerdict gets a report and can
-      // never fall through to the report===undefined → verified batch-1 path.
-      let report: VerifierReport | undefined;
-      // All deterministic legs clean (leg 1 + leg 2 + held-out) before spawning the judge. A held-out
-      // failure short-circuits leg 3 too (`heldOut?.passed ?? true` — absent held-out is not a failure).
-      const legsClean =
-        checks.objectiveChecksPassed && checks.testTamper === 'clean' && (checks.heldOut?.passed ?? true);
-      if (legsClean && deps.verifierProvider) {
-        deps.bus.emit({ type: 'state', phase: 'leg-3 verifier…' });
-        report = await runVerifierFn(goal.objective, goal.pinned, {
-          verifierProvider: deps.verifierProvider,
-          cwd: deps.cwd,
-          maxTurns: deps.verifierMaxTurns ?? DEFAULT_VERIFIER_MAX_TURNS,
-          signal: deps.signal,
-        });
-      }
-      // Defense in depth (separate statement so TS does not narrow `report` to non-undefined): leg 3 is
-      // enabled but the verifier returned no report — a misbehaving (mis-typed) injected runVerifier.
-      // Fail CLOSED rather than let decideVerdict take the report===undefined → verified path on clean
-      // legs. The default runVerifier never does this (it always synthesizes a report), so this only
-      // backstops a contract violation — the cardinal sin here is a false-positive verified.
-      if (legsClean && deps.verifierProvider && report === undefined) {
-        report = couldNotVerifyReport('leg 3 enabled but the verifier returned no report');
-      }
-      const verdict = decideVerdict(checks, report, goal.pinned);
+      const { checks, persistedChecks, verdict } = await verifyGoalCompletion(goal, deps, check, runVerifierFn, resume !== undefined);
       finalVerdict = verdict;
       // NOTE: no verifier-health (couldNotVerify-rate) monitor here. That signal is inherently
       // CROSS-GOAL — within one goal, couldNotVerify is terminal (→ blocked), so a per-goal monitor can
@@ -296,13 +324,7 @@ export async function runGoal(spec: GoalSpec, deps: GoalRunDeps): Promise<GoalRu
       // EventBus stays small + secret-free: only goalId/outcome/rationale, rationale redacted. The FULL
       // report (evidence/observed) goes to the local goalStore only, never the (potentially remote) bus.
       deps.bus.emit({ type: 'verdict', goalId: goal.id, outcome: verdict.outcome, rationale: redactSecrets(verdict.rationale) });
-      // The goalStore lives UNDER cwd (data/goals/…), which the builder's read/grep/bash can read — so it
-      // is NOT a safe sink for the held-out leg's secret command+output. Persist only pass/fail; dropping
-      // `heldOut.results` keeps the hidden assertions hidden across rounds (replayGoal never reads them).
-      const persistedChecks: DeterministicChecks = checks.heldOut
-        ? { ...checks, heldOut: { passed: checks.heldOut.passed, results: [] } }
-        : checks;
-      await deps.goalStore?.recordRound({ round, claim, checks: persistedChecks, verdict, at: stamp() });
+      await deps.goalStore?.recordRound({ round, turns: outcome.turns, tokens: roundTokens, claim, checks: persistedChecks, verdict, at: stamp() });
 
       if (verdict.outcome === 'rejected') {
         const action = breaker.recordReject(); // ← really read the breaker (no dead code)
@@ -332,7 +354,7 @@ export async function runGoal(spec: GoalSpec, deps: GoalRunDeps): Promise<GoalRu
   }
 
   goal = { ...goal, state };
-  return { goal, state, rounds: round, finalVerdict };
+  return { goal, state, rounds: round, tokens: totalTokens, finalVerdict };
 }
 
 /** Emit + persist a state transition. */
@@ -347,6 +369,73 @@ async function transition(
   deps.bus.emit({ type: 'goal_state', goalId: goal.id, state });
   await deps.goalStore?.recordState(state, stamp());
   return state;
+}
+
+interface VerificationRun {
+  checks: DeterministicChecks;
+  persistedChecks: DeterministicChecks;
+  verdict: Verdict;
+}
+
+async function verifyGoalCompletion(
+  goal: Goal,
+  deps: GoalRunDeps,
+  check: (deps: CheckDeps, baseline?: TestBaseline) => Promise<DeterministicChecks>,
+  runVerifierFn: NonNullable<GoalRunDeps['runVerifier']>,
+  strictPinnedVerifier: boolean,
+): Promise<VerificationRun> {
+  // claim === complete → INDEPENDENT verification. Objective is immutable (fail closed if not).
+  assertObjectiveUnchanged(goal.objective, goal.objectiveHash);
+  const checks = await check(
+    {
+      shellPath: deps.shellPath,
+      cwd: deps.cwd,
+      checkCommands: deps.checkCommands ?? DEFAULT_CHECK_COMMANDS, // from config, NEVER the claim
+      heldOutCommands: deps.heldOutCommands, // secret hidden assertions; from config, NEVER the claim
+      signal: deps.signal,
+    },
+    goal.testBaseline,
+  );
+
+  // All deterministic legs clean (leg 1 + leg 2 + held-out) before spawning the judge. A held-out
+  // failure short-circuits leg 3 too (`heldOut?.passed ?? true` — absent held-out is not a failure).
+  const legsClean =
+    checks.objectiveChecksPassed && checks.testTamper === 'clean' && (checks.heldOut?.passed ?? true);
+  let report: VerifierReport | undefined;
+
+  if (legsClean && deps.verifierProvider) {
+    deps.bus.emit({ type: 'state', phase: 'leg-3 verifier…' });
+    report = await runVerifierFn(goal.objective, goal.pinned, {
+      verifierProvider: deps.verifierProvider,
+      cwd: deps.cwd,
+      maxTurns: deps.verifierMaxTurns ?? DEFAULT_VERIFIER_MAX_TURNS,
+      signal: deps.signal,
+    });
+  }
+
+  if (legsClean && strictPinnedVerifier && !deps.verifierProvider && goal.pinned.length > 0) {
+    report = couldNotVerifyReport('resumed goal has pinned requirements but no verifier provider is configured');
+  }
+
+  // Defense in depth (separate statement so TS does not narrow `report` to non-undefined): leg 3 is
+  // enabled but the verifier returned no report — a misbehaving (mis-typed) injected runVerifier.
+  // Fail CLOSED rather than let decideVerdict take the report===undefined → verified path on clean
+  // legs. The default runVerifier never does this (it always synthesizes a report), so this only
+  // backstops a contract violation — the cardinal sin here is a false-positive verified.
+  if (legsClean && deps.verifierProvider && report === undefined) {
+    report = couldNotVerifyReport('leg 3 enabled but the verifier returned no report');
+  }
+
+  const verdict = decideVerdict(checks, report, goal.pinned);
+  const persistedChecks = persistableChecks(checks);
+  return { checks, persistedChecks, verdict };
+}
+
+function persistableChecks(checks: DeterministicChecks): DeterministicChecks {
+  // The goalStore lives UNDER cwd (data/goals/…), which the builder's read/grep/bash can read — so it
+  // is NOT a safe sink for the held-out leg's secret command+output. Persist only pass/fail; dropping
+  // `heldOut.results` keeps the hidden assertions hidden across rounds (replayGoal never reads them).
+  return checks.heldOut ? { ...checks, heldOut: { passed: checks.heldOut.passed, results: [] } } : checks;
 }
 
 interface ShadowSnapshotQueue {
@@ -398,6 +487,39 @@ function startShadowSnapshot(shadowGit: ShadowSnapshotter, label: string): Shado
   if (shadowGit.snapshotAsync) return shadowGit.snapshotAsync(label);
   const done = snapshotShadow(shadowGit, label);
   return { captured: done, done };
+}
+
+function assertResumeMatchesSpec(spec: GoalSpec, goal: Goal): void {
+  if (goal.id !== spec.id) throw new Error('resumed goal id does not match the requested goal id');
+  if (goal.sessionId !== spec.sessionId) throw new Error('resumed goal session id does not match the requested session id');
+  if (!sameJson(goal.budget, spec.budget)) throw new Error('resumed goal budget does not match the requested goal budget');
+  assertObjectiveUnchanged(spec.objective, goal.objectiveHash);
+}
+
+function sameJson(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
+}
+
+function countTrailingRejects(rounds: GoalRoundRecord[]): number {
+  let count = 0;
+  for (let i = rounds.length - 1; i >= 0; i--) {
+    const outcome = rounds[i].verdict?.outcome;
+    if (outcome === undefined) continue;
+    if (outcome === 'rejected') {
+      count++;
+      continue;
+    }
+    break;
+  }
+  return count;
+}
+
+function sumRoundTurns(rounds: GoalRoundRecord[]): number {
+  return rounds.reduce((sum, round) => sum + (round.turns ?? 0), 0);
+}
+
+function sumRoundTokens(rounds: GoalRoundRecord[]): number {
+  return rounds.reduce((sum, round) => sum + (round.tokens ?? 0), 0);
 }
 
 /** Best-effort shadow snapshot: never throws, never returns anything the loop acts on. Observability
