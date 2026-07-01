@@ -23,8 +23,9 @@ CLI 功能已实质收尾（A→E + Hooks slice-1/slice-2 follow-up）。GUI（�
 **GUI 前唯一的真前置（发现的缺口，均「加事件成员」级小改，不碰 core 逻辑）**：
 - **审批不在事件流**（最值得先定）：Approver 是请求-响应回调，审批发生时**不 emit 事件、不进持久化**（CLI 靠 approver 内 render 显示）。GUI 必须注入自己的 Approver（这是注入式设计意图）；但若要**审批历史可观测 / 可审计**，需加 `approval_request`/`approval_result` 事件（emit 在 gate.check 前后或 approver 包装层）+ 落盘。做不做是 GUI 前的第一个选择。
 - **round / budget 无专门事件**：GUI 想显示「第几轮 / token 预算条」，round 可从 goal_state 推、或随 slice-2 ⑤ round-hook 顺带加 round 事件；budget 剩余需加 budget 事件或查询接口。按 GUI 实际需求补，非阻塞。
+- **usage/status 还没有产品化入口**：session / goal / loop / cron 已有 JSONL，loop/goal 也已通过 bus 记录 usage；后续 GUI 或 CLI 可补只读 `status` / `usage` 摘要，按 primitive 汇总 turns、tokens、halt reason、verdict。该视图只能做观测，不能给 loop 完成授权。
 
-**结论**：GUI 可开工。前置 = ①本页 + README 已同步（done）+ ②上面「审批事件」取舍 + 按需补 round/budget 事件。loop 重项已收口，记录见 `docs/handoff-loop-remaining.md`；沙箱 #2/#6 是能力天花板（非代码活）。
+**结论**：GUI 可开工。前置 = ①本页 + README 已同步（done）+ ②上面「审批事件」取舍 + 按需补 round/budget/usage 观测。loop primitive 选择入口见 `docs/loop-primitives-guide.md`。loop 重项已收口，记录见 `docs/handoff-loop-remaining.md`；沙箱 #2/#6 是能力天花板（非代码活）。
 
 ## vision→goal/loop 接线（2026-06-30，方向决策 ① 完成）
 
@@ -91,6 +92,8 @@ goal 完成验收 = **确定性三腿（canonical 重跑 + 篡改检测 + held-o
 设计：一个 `propose_skill` 工具——入参 `{name, description, triggers, body}`,组装成正确 SKILL.md frontmatter、`safeResolve` 写到 `skills/<name>/SKILL.md`,**人审 gate = 现有 PermissionGate**（writes-files→ask,用户在批准框看到 skill 内容批/拒）,下次加载生效（不热重载）。本质=「agent 在人审下自创 skill」,是 `write` 工具的薄包装。做的话:工具放 `src/core/tools/`（同 createBashTool 范式）、REPL 条件注册、faked ctx + 临时目录测试、codex 审查。
 
 > **为什么未做**：交接文档自身已标它「投机性、判定偏弱」——SkillRegistry 已能只读加载 `<dir>/<name>/SKILL.md`,「自动沉淀」真实价值**取决于是否真有复用场景**,这与用户原则「不预埋未证明需要的抽象 / 新功能先判值不值得做」冲突。**要做先确认有真实复用场景**,否则就是给一个能力找用途。
+
+**手动 skill 沉淀准则**：可保留为人工动作。重复出现、步骤稳定、能减少人工验收成本时，再新增具体 `SKILL.md`；优先沉淀 frontend visual verification、loop rollout checklist、安全 review checklist 这类项目内检查。确定性步骤优先写脚本，判断性步骤再写 skill 提示。`propose_skill` 继续不做。
 
 ## 上手顺序（新会话）
 

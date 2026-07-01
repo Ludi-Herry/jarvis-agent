@@ -22,7 +22,7 @@
 `npm run typecheck / lint / test / build` 全绿（**870 测试，Windows 下 1 个 POSIX SIGINT smoke 跳过**）。命令安全根（PermissionGate + 命令解析器 + bash 审批）经**六轮独立 codex 对抗核查**确认无破闸 HIGH；goal 验收子系统（确定性三腿 + 腿3 裁判 + bash/Linux 密钥加固）经**多轮多裁判对抗核查**（codex + 独立 Claude 子代理，含一轮 4 裁判收尾）。Phase E 各切片与 Hooks slice-1/2 均经 **codex 跨模型对抗审查逐层加固**（vision 四轮 / bash 白名单 Path A 经 7 HIGH 撤回、保留命令级 Path B / Hooks 信任边界修 HIGH / slice-2 每切片 2 轮 SHIP）。方法 / 严重度基线 / 历史见 `docs/security-review-baseline.md`。
 
 接手入口：
-- **最新全景 + Phase E/Hooks 现状 + 下一步（GUI 就绪盘点）→ `docs/handoff-next.md`**；**Loop 重项收口记录（parallel resume / finalize / cron daemon）→ `docs/handoff-loop-remaining.md`**；**Phase D（GoalLoop + 三腿 + 腿3 裁判）→ `docs/handoff-D.md`**；**Hooks（tool-call / lifecycle / loop per-goal hook-map）→ `docs/handoff-hooks.md`**；
+- **Loop primitive 怎么选 → `docs/loop-primitives-guide.md`**；**最新全景 + Phase E/Hooks 现状 + 下一步（GUI 就绪盘点）→ `docs/handoff-next.md`**；**Loop 重项收口记录（parallel resume / finalize / cron daemon）→ `docs/handoff-loop-remaining.md`**；**Phase D（GoalLoop + 三腿 + 腿3 裁判）→ `docs/handoff-D.md`**；**Hooks（tool-call / lifecycle / loop per-goal hook-map）→ `docs/handoff-hooks.md`**；
 - **B 阶段 + 当前安全态 → `docs/handoff-B.md`**（顶部「当前状态更新」段）；
 - **Phase C（多 agent）→ `docs/handoff-C.md`**；
 - 持久化段 → `docs/handoff-persistence.md`；A 阶段 → `docs/handoff-A.md`；
@@ -50,6 +50,17 @@ cp .env.example .env   # 然后编辑 .env 填 ARK_API_KEY
 ```
 
 ## 命令
+
+不确定该用哪个入口时，先看 `docs/loop-primitives-guide.md`。快速判断：
+
+| 想交出去的东西 | 入口 | 用法 |
+|---|---|---|
+| check / 临时探索 | `npm run dev` | 人持续看着，适合定位、试探、单次修复 |
+| stop condition / 单目标达标 | `npm run goal` | 目标可验证，适合跑到达标自停 |
+| queue / 多目标排空 | `npm run loop` | 多个 goal，支持 resume、可信 map、并行 worktree |
+| trigger / 计划触发 | `npm run cron` | 可信 cwd 外 cron map，单次 due scan |
+| routine / 前台常驻调度 | `npm run cron:daemon` | 前台 daemon，负责锁、JSONL、信号退出 |
+| review / apply / cleanup | `npm run loop:finalize` | 并行 worktree 完成后的只读报告、交互 merge/cleanup |
 
 ```bash
 npm run dev         # 终端 REPL：带权限闸门 + bash + 交互审批 + 会话落盘（需 ARK_API_KEY）。Ctrl-C 中断 / /exit 退出
@@ -111,6 +122,7 @@ data/            # 运行期会话日志（gitignore）
 ## 文档导航
 
 - `AGENTS.md` — 项目规则层（命名 / 风格 / 工程纪律 / 命令 / 设计依据）。**动手前先读。**
+- `docs/loop-primitives-guide.md`：**Loop primitive 选择指南**，dev / goal / loop / cron / cron:daemon / finalize 怎么选，以及 usage 观测和 skill 沉淀边界。
 - `docs/handoff-D.md` — **Phase D（GoalLoop 自主验收，全部完成）接手入口**；`docs/handoff-next.md` — 之后待办 + GUI 就绪盘点。
 - `docs/handoff-loop-remaining.md` — **Loop 重项收口记录**：parallel resume、finalize apply/cleanup、cron daemon 的边界与测试证据。
 - `docs/handoff-codex.md` — **codex 自主接手宪法**（Claude 不可用后：硬不变量 + 同族自审盲区 + 边界钉死 + backlog）。
