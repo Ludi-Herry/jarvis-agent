@@ -45,8 +45,10 @@ describe('buildVisionParts', () => {
 });
 
 describe('VISION_PROMPT — the coordinate-anchoring contract (load-bearing)', () => {
-  it('demands bounding boxes and forbids vague prose directions', () => {
+  it('demands 0-1024-grid bounding boxes and forbids vague prose directions', () => {
     expect(VISION_PROMPT).toMatch(/x_min.*y_min.*x_max.*y_max/);
+    expect(VISION_PROMPT).toMatch(/0\s*[-–]\s*1024/);
+    expect(VISION_PROMPT).toMatch(/coordinate grid/i);
     expect(VISION_PROMPT).toMatch(/STRUCTURED/);
     expect(VISION_PROMPT.toLowerCase()).toContain('on the left'); // the explicit "never say ..." example
   });

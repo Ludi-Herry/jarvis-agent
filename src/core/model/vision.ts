@@ -6,7 +6,8 @@
  * "outer vision" pattern (project memory openhanako-outer-vision-multimodal): a separate VLM is the
  * "eyes" — a single stateless call — and its output is fed back to the text model as a normal tool
  * result. The text model never sees pixels; it reasons over the VLM's STRUCTURED, COORDINATE-ANCHORED
- * description.
+ * description. Coordinates use a 0-1024 visual grid because Doubao's live vision output naturally
+ * grounds boxes on that grid; the downstream reasoner only needs a stable numeric coordinate system.
  *
  * The coordinate anchoring is the load-bearing idea: the VLM must emit object names + numeric bounding
  * boxes, NOT prose directions ("on the left"). Prose makes the downstream reasoner hallucinate spatial
@@ -41,7 +42,8 @@ export const VISION_PROMPT = [
   'You are the vision module for a text-only reasoning agent. Look at the image and answer the QUESTION below.',
   'Output STRUCTURED text, never prose directions. Specifically:',
   '1. OBJECTS: list each object relevant to the question as `name: [x_min, y_min, x_max, y_max]` —',
-  '   integer pixel coordinates, origin at the TOP-LEFT, x rightward, y downward. One per line.',
+  '   integer coordinates on a 0-1024 visual coordinate grid, origin at the TOP-LEFT, x rightward,',
+  '   y downward. One per line. All coordinates MUST be within 0-1024.',
   '2. ANSWER: a direct, factual answer to the question that REFERS to objects by name and cites their',
   '   coordinates when spatial. Bind every spatial claim to numbers — never say "on the left"/"above"',
   '   without the box, because the downstream reasoner can only do geometry on the numbers.',

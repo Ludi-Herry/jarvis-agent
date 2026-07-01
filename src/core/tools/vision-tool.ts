@@ -49,7 +49,7 @@ export function createVisionTool(complete: VisionComplete): ToolDefinition<{ ima
   return {
     name: 'vision',
     description:
-      'Look at an image file and get a STRUCTURED, coordinate-anchored answer (object names + pixel ' +
+      'Look at an image file and get a STRUCTURED, coordinate-anchored answer (object names + 0-1024-grid ' +
       'bounding boxes + a direct answer). Use for screenshots, photos, diagrams, or any visual the text ' +
       'tools cannot read. The image path is relative to the project root. Sends the image to the vision ' +
       'service, so the call requires approval.',

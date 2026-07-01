@@ -47,7 +47,7 @@
 ## 三、边界钉死：哪些你能自闭环、哪些必须人把关、哪些别碰
 
 ### ✅ 能 codex 自闭环（红线清晰、机械独立）
-Hooks slice-2 的 ③ 每-hook timeout、⑤ round/session 级事件、给 hook 传 tool result 已落地；⑥ shadow restore 交互确认、⑧ vision MIME sniff 已落地；vision 活体验证仍需 `ARK_VISION_MODEL` 后跑；loop 重项仍按核心改动暂缓。剩余见下「五、backlog」。仍要：plan 先行、四关卡、多实例对抗审（见四）。
+Hooks slice-2 的 ③ 每-hook timeout、⑤ round/session 级事件、给 hook 传 tool result 已落地；⑥ shadow restore 交互确认、⑧ vision MIME sniff + 活体验证已落地；loop 重项仍按核心改动暂缓。剩余见下「五、backlog」。仍要：plan 先行、四关卡、多实例对抗审（见四）。
 
 ### ⚠️ 必须 plan + 人（Luis）把关（碰核心 / 信任边界，同族自审不够）
 - **hook 信任来源扩展**：多来源合并已按不变量 #2 落地。后续若再新增来源，每个来源都要 realpath 规范化 + 拒 cwd 内 + 只从可信来源加载；绝不新增扫 cwd 的路径。**slice-1 的 HIGH 就栽在信任边界**——这类改动做完**必须请 Luis 在关键项做最终闸**，别单靠同族自审 SHIP。
@@ -71,14 +71,14 @@ Hooks slice-2 的 ③ 每-hook timeout、⑤ round/session 级事件、给 hook 
 
 ## 五、backlog（现状 / 目标 / 关键文件 / 红线）—— 可直接当 codex 任务喂
 
-按性价比挑、分阶段、每项独立 commit。Hooks follow-up（传-result、③、⑤、④）、⑥ shadow restore 交互确认、⑧ vision MIME sniff 已落地；当前剩余是 vision 活体验证（需真 `ARK_VISION_MODEL`）、shadow snapshot 异步化、⑦ loop 重项（暂缓 / 另审）。
+按性价比挑、分阶段、每项独立 commit。Hooks follow-up（传-result、③、⑤、④）、⑥ shadow restore 交互确认、⑧ vision MIME sniff + 活体验证已落地；当前剩余是 shadow snapshot 异步化、⑦ loop 重项（暂缓 / 另审）。
 
 **Hooks follow-up 已落地（2026-07-01）**：PostToolUse 通过 `JARVIS_HOOK_TOOL_RESULT` 拿 tool result（同 4096 cap + 合法 JSON 哨兵）；`HookEntry.timeoutMs` 支持 1..300000 毫秒覆盖；`RoundStart/RoundEnd` 挂在 `runAgent` turn 边界，`SessionStart/SessionEnd` 挂在 REPL/goal/loop CLI 会话边界；多来源合并按 `~/.jarvis/hooks.json` → `JARVIS_HOOKS` 顺序拼接，每来源 realpath + 拒 cwd 内，malformed 只禁该来源；已补真实 Windows `\\?\` 与 symlink smoke。lifecycle 全部 advisory，不阻断、不回灌、不改结果。
 
 
 **⑥ shadow restore 交互确认 已落地（2026-07-01）**：`npm run shadow -- restore <sha>` 现在先走审批三件套显示 ref / cwd / 覆盖影响，EOF、空输入、非明确允许均 fail-closed 取消；只有 `allow-once` 才调用 `shadow.restore()`。关键文件：`src/surfaces/cli/shadow-cli.ts` + `test/cli/shadow-cli.test.ts`。红线：restore 仍是破坏性覆盖，不能绕审批；不要把 `allow-session` 暴露给 restore。
 
-**⑧ vision MIME sniff 已落地，活体验证待配置**：`vision-tool.ts` 现在按 magic bytes 判 PNG/JPEG/WebP/GIF/BMP，扩展名只作显示；不支持的内容在调用 VLM 前拒绝。活体验证未跑的原因是当前环境缺 `ARK_VISION_MODEL`；配置后用真测试图验证请求形状 / 坐标质量。红线：不改 network→gate ask 语义；活体验证别把 key 写进代码 / 日志（错误通道已套 `describeModelError`+`redactSecrets`）。
+**⑧ vision MIME sniff + 活体验证已落地（2026-07-01）**：`vision-tool.ts` 现在按 magic bytes 判 PNG/JPEG/WebP/GIF/BMP，扩展名只作显示；不支持的内容在调用 VLM 前拒绝。已用 `ARK_VISION_MODEL=doubao-seed-2-1-pro-260628` 跑 `demo:vision` 真连 ARK：请求形状可用，红/蓝方块测试图返回结构化坐标。实测该模型自然输出 0-1024 视觉坐标网格，故 `VISION_PROMPT` 已把契约从原图像素改为 0-1024 网格；红线：不改 network→gate ask 语义，别把 key 写进代码 / 日志（错误通道已套 `describeModelError`+`redactSecrets`）。
 
 **⑦ loop 重项** —— ⚠️ 见三、未证明需要 + 碰核心，暂缓。
 
