@@ -15,6 +15,7 @@
     "resume:loop": "tsx src/surfaces/cli/loop-cli.ts --resume",
     "loop:finalize": "tsx src/surfaces/cli/loop-finalize-cli.ts",
     "cron": "tsx src/surfaces/cli/cron-cli.ts",
+    "cron:daemon": "tsx src/surfaces/cli/cron-daemon-cli.ts",
     "shadow": "tsx src/surfaces/cli/shadow-cli.ts",
     "demo:a1": "tsx scripts/a1-demo.ts",
     "demo:a2": "tsx scripts/a2-demo.ts",

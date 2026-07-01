@@ -1,13 +1,13 @@
-# Loop 剩余重项交接：cron daemon
+# Loop 重项收口记录
 
-> 状态：2026-07-02 收尾交接。当前 main 已完成 mid-goal resume、per-goal verifier、per-goal hook runner、parallel worktree first slice、parallel resume 最小 slice、loop finalize 只读报告、loop finalize `--merge` 交互 apply、loop finalize `--cleanup` 交互清理、cron single-scan first slice。本文只交接剩余项：完整 cron daemon。
+> 状态：2026-07-02 收口。当前 main 已完成 mid-goal resume、per-goal verifier、per-goal hook runner、parallel worktree first slice、parallel resume 最小 slice、loop finalize 只读报告、loop finalize `--merge` 交互 apply、loop finalize `--cleanup` 交互清理、cron single-scan first slice、cron foreground daemon。本文保留边界、测试清单和后续禁区，避免后续会话重新打开已收口范围。
 
 ## 先读
 
 1. `README.md`：全景、命令、当前脚本。
 2. `docs/handoff-codex.md`：硬不变量、同族自审盲区、红线。
 3. `docs/handoff-next.md`：Phase E 全景和 GUI 就绪盘点。
-4. `docs/superpowers/plans/2026-07-02-cron-daemon-plan.md`：cron daemon 计划和失败模式测试清单。
+4. `docs/superpowers/plans/2026-07-02-cron-daemon-plan.md`：cron daemon 计划、落地范围和失败模式测试清单。
 5. 相关源码：
    - `src/surfaces/cli/loop-cli.ts`
    - `src/surfaces/cli/loop-args.ts`
@@ -32,6 +32,7 @@
 - parallel worktree first slice：每个 goal 跑在 cwd 外 detached worktree；目标日志仍集中在 cwd `data/`；worktrees 保留给人工检查；不 merge、不删除、不 push。
 - parallel 与 hooks 互斥：hook cwd 语义还没定义到 per-goal worktree，当前 `assertParallelHooksCompatible` fail-closed。
 - `npm run cron -- --cron-map <trusted-json>`：单次扫描，到期任务触发普通 loop；task 必须 `unattended:true`；带同工作区 scan lock、stale recovery、task 前 heartbeat；不常驻。
+- `npm run cron:daemon -- --cron-map <trusted-json> [--poll-ms <n>]`：前台 daemon，复用 cwd 外可信 cron map；默认 poll 60000ms；使用 daemon lock + scan lock；记录 `data/cron/loop-cron-daemon.jsonl`；SIGINT/SIGTERM 后释放锁退出；不自动 resume crashed loop，不自动 merge/cleanup，不后台 fork。
 
 ## 不变量
 
@@ -163,11 +164,11 @@ npm run loop:finalize -- --loop <id> --cleanup
 - cleanup 成功后写 finalize audit，且不删除 loop / goal / session / shadow log。
 - Windows worktree path 含空格、`\\?\`、junction 时不误判 cwd 边界。
 
-## 任务 3：完整 cron daemon
+## 任务 3：完整 cron daemon（已落地）
 
 ### 现状
 
-已完成 `npm run cron -- --cron-map <trusted-json>` 单次扫描。完整 daemon 仅有计划文档和失败模式清单：`docs/superpowers/plans/2026-07-02-cron-daemon-plan.md`。
+已完成 `npm run cron -- --cron-map <trusted-json>` 单次扫描和 `npm run cron:daemon -- --cron-map <trusted-json> [--poll-ms <n>]` 前台 daemon。计划与失败模式清单见 `docs/superpowers/plans/2026-07-02-cron-daemon-plan.md`。
 
 ### 目标
 
@@ -179,7 +180,7 @@ npm run cron:daemon -- --cron-map <trusted-json>
 
 daemon 只负责调度、锁、可观测性、信号退出。它不自动 resume crashed loop，不自动 merge/cleanup，不后台 fork，不安装系统服务。
 
-### 第一实现范围
+### 已落地范围
 
 - `cron-daemon-cli.ts`：前台循环，支持 `--cron-map`、`--poll-ms`。
 - daemon lock：`data/cron/loop-cron-daemon.lock`。
@@ -187,6 +188,8 @@ daemon 只负责调度、锁、可观测性、信号退出。它不自动 resume
 - 复用现有 scan lock 和 `runLoopCronOnce`。
 - SIGINT/SIGTERM：睡眠期释放锁退出；task 运行期停止接新 task，等待当前 loop 结束。
 - started-without-finished：replay 后 park，不自动重跑。
+- `task-started` 在子 loop 前写入，`task-finished` 在 `cron-attempt` 落盘后写入。
+- daemon 重启 replay 只用 daemon/cron JSONL 恢复调度状态；不信 cwd loop log 提供权限、trusted config 或完成权。
 
 ### 不要塞进 daemon 的内容
 
@@ -199,21 +202,23 @@ daemon 只负责调度、锁、可观测性、信号退出。它不自动 resume
 
 ### 关键测试
 
-直接使用 `docs/superpowers/plans/2026-07-02-cron-daemon-plan.md` 的失败模式清单。最低落地集：
+已覆盖：
 
-- daemon lock fresh / stale / recovery guard。
-- `--cron-map` realpath 拒 cwd 内，含 symlink / Windows `\\?\`。
-- 子 loop 非零记录 failure，daemon 继续处理后续 due task。
+- `--cron-map` 缺失、未知 flag、`--poll-ms` 越界。
+- `--cron-map` realpath 拒 cwd 内，含 symlink / Windows `\\?\`（沿用 cron config 既有测试）。
+- daemon lock fresh held 时第二个 daemon 退出非零；stale / recovery guard 沿用 `FileLoopCronLock` 测试。
 - task started 后崩溃，重启 park。
-- SIGINT 睡眠期释放 daemon lock。
-- child output cap。
+- cron / daemon 状态文件缺失时从空状态启动；状态路径不可读时 fail-closed。
+- task 运行期收到停止请求后不再启动后续 due task。
+- SIGINT 睡眠期释放 daemon lock（POSIX 子进程 smoke；Windows 下跳过该 smoke，纯信号 helper 覆盖同一状态机）。
+- child output cap（CLI 固定 20000）。
 - 日志尾行截断 replay 到最后完整记录。
 
 ## 建议顺序
 
-1. cron daemon：按已有 plan 实现第一范围。daemon 不依赖 merge/cleanup，可以直接从计划文档开。
+loop 三个重项已收口：parallel resume、finalize apply/cleanup、cron daemon。后续若继续动 loop 核心，先写新 plan，明确红线、信任边界和失败模式测试。
 
-每项独立 plan、独立 commit、独立四关卡。不要一次性实现三项。
+每项独立 plan、独立 commit、独立四关卡。
 
 ## 验证要求
 
@@ -236,17 +241,16 @@ Windows 子进程测试偶发 timeout / EBUSY，失败先重跑确认。不要�
 - 哪个 crash gap 会重复执行或丢失状态？
 - 哪个 cleanup 会删掉用户还没检查的产物？
 
-## 新会话交接 prompt
+## 新会话交接 prompt（后续 loop 核心改动）
 
 ```text
 接手 H:\jarvis-agent，先读 README.md → docs/handoff-codex.md → docs/handoff-next.md → docs/handoff-loop-remaining.md → docs/superpowers/plans/2026-07-02-cron-daemon-plan.md。
 
-目标：只推进 loop 剩余重项的下一步，不要一次做完三项。优先做 plan，然后按 Luis 确认的范围实现一个最小 slice、独立 commit。
+目标：loop 重项已收口。若 Luis 新开 loop 核心需求，先输出一个具体 plan：范围、文件、信任边界、失败模式测试、验收命令；确认后再做最小 slice、独立 commit。
 
-当前已完成：mid-goal resume、per-goal verifier、per-goal hook runner、parallel worktree first slice、parallel resume 最小 slice、cron single-scan first slice、loop finalize 只读报告、loop finalize --merge 交互 apply、loop finalize --cleanup 交互清理、真实 --hook-map CLI smoke、Windows \\?\ / symlink / junction hook-map smoke。
+当前已完成：mid-goal resume、per-goal verifier、per-goal hook runner、parallel worktree first slice、parallel resume 最小 slice、cron single-scan first slice、cron foreground daemon、loop finalize 只读报告、loop finalize --merge 交互 apply、loop finalize --cleanup 交互清理、真实 --hook-map CLI smoke、Windows \\?\ / symlink / junction hook-map smoke。
 
-剩余一项：
-1. 完整 cron daemon：已有计划文档 docs/superpowers/plans/2026-07-02-cron-daemon-plan.md。daemon 只负责前台调度、锁、JSONL、信号退出；不自动 resume crashed loop，不自动 merge/cleanup，不后台 fork。
+cron daemon 范围：只负责前台调度、daemon lock + scan lock、JSONL、信号退出；不自动 resume crashed loop，不自动 merge/cleanup，不后台 fork。
 
 红线：
 - 不改 decideVerdict / 三腿验收 / PermissionGate 硬 deny。
@@ -255,6 +259,4 @@ Windows 子进程测试偶发 timeout / EBUSY，失败先重跑确认。不要�
 - 不改 .env / 密钥 / CI，不 push。
 - 不删除 worktree、shadow、loop log、goal log，除非做了单独 cleanup plan 且有人明确确认。
 - 每项完成跑 npm run test / typecheck / build / lint；Windows timeout/EBUSY 先重跑确认。
-
-先输出一个具体 plan：范围、文件、信任边界、失败模式测试、验收命令。等确认后再写代码。
 ```

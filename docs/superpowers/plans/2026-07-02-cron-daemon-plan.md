@@ -1,6 +1,6 @@
 # Cron Daemon Plan
 
-> 状态：计划文档 + 失败模式测试清单。本文不实现代码。当前已落地的是 `npm run cron -- --cron-map <trusted-json>` 单次扫描；daemon 仍是后续独立任务。
+> 状态：已按本文第一范围落地。`npm run cron -- --cron-map <trusted-json>` 仍是单次扫描；新增 `npm run cron:daemon -- --cron-map <trusted-json> [--poll-ms <n>]` 前台 daemon。
 
 ## 目标
 
@@ -20,6 +20,10 @@
 - `src/capabilities/goal/loop-cron.ts`：JSONL 状态、due 判定、scan lock、stale recovery、task 前 heartbeat。
 - `data/cron/loop-cron.jsonl`：记录 `cron-attempt`，用于计算下一次运行时间。
 - `data/cron/loop-cron.lock`：防同工作区重复扫描。
+- `src/surfaces/cli/cron-daemon-cli.ts`：前台 daemon，daemon lock + scan lock，SIGINT/SIGTERM 退出。
+- `src/capabilities/goal/loop-cron-daemon.ts`：daemon JSONL、parse/replay、started-without-finished park、信号 sleep helper。
+- `data/cron/loop-cron-daemon.jsonl`：记录 daemon / scan / task 生命周期。
+- `data/cron/loop-cron-daemon.lock`：防同工作区重复 daemon。
 
 现有语义是单次扫描，可交给 Windows Task Scheduler / cron / GUI 定时唤起。daemon 的价值只在需要一个 Jarvis 自己持有生命周期的前台进程时成立。
 
@@ -59,7 +63,7 @@ npm run cron:daemon -- --cron-map <trusted-json>
 }
 ```
 
-daemon 实现前先决定是否补 `hookMapPath`：
+本次未补 `hookMapPath`。若 Luis 明确需要 cron task 触发 per-goal hooks，再加：
 
 ```json
 {
@@ -93,7 +97,7 @@ daemon 是前台进程：
 
 ## 状态与审计
 
-建议新增 `data/cron/loop-cron-daemon.jsonl`，与现有 `loop-cron.jsonl` 分开：
+已新增 `data/cron/loop-cron-daemon.jsonl`，与现有 `loop-cron.jsonl` 分开：
 
 - `daemon-started`：pid、cronMapPath、startedAt。
 - `daemon-heartbeat`：at、nextWakeAt。
@@ -190,12 +194,12 @@ daemon 是前台进程：
 
 ## 实施切片
 
-1. **纯函数与状态模型**：新增 daemon record 类型、parse/replay、parked 规则测试。
-2. **daemon lock**：复用/抽象 `FileLoopCronLock`，加 daemon lock 测试。
-3. **CLI shell**：`cron-daemon-cli.ts` 只跑 sleep + scan loop，支持 SIGINT/SIGTERM。
-4. **task lifecycle**：task-started/task-finished/parked 记录和 replay。
-5. **可选 hookMapPath**：如果 Luis 明确需要 cron 触发 per-goal hooks，再补 schema 与 command 拼接。
-6. **对抗审查**：重点审信任边界、crash replay、重复执行、锁恢复、无人值守 bash。
+1. **纯函数与状态模型**：已新增 daemon record 类型、parse/replay、parked 规则测试。
+2. **daemon lock**：已复用 `FileLoopCronLock`，daemon lock CLI smoke 覆盖 fresh held；stale / recovery guard 由 lock 单测覆盖。
+3. **CLI shell**：已新增 `cron-daemon-cli.ts`，前台 sleep + scan loop，支持 SIGINT/SIGTERM。
+4. **task lifecycle**：已新增 task-started/task-finished/parked 记录和 replay；状态文件缺失时从空状态启动，不可读时 fail-closed。
+5. **可选 hookMapPath**：本次未做；如 Luis 明确需要 cron 触发 per-goal hooks，再补 schema 与 command 拼接。
+6. **对抗审查**：收口时重点复核信任边界、crash replay、重复执行、锁恢复、无人值守 bash。
 
 ## 暂不做
 

@@ -35,6 +35,16 @@ export interface LoopCronRunResult {
   skipped: number;
 }
 
+export interface LoopCronAttemptContext {
+  taskId: string;
+  scheduledFor: string;
+  startedAt: string;
+  finishedAt: string;
+  exitCode: number | null;
+  loopId?: string;
+  nextRunAt: string;
+}
+
 export function parseLoopCronLog(text: string): LoopCronRecord[] {
   const records: LoopCronRecord[] = [];
   for (const line of text.split('\n')) {
@@ -291,8 +301,9 @@ interface LoopCronLockSnapshot {
 export async function loadLoopCronState(path: string): Promise<LoopCronState> {
   try {
     return replayLoopCronState(parseLoopCronLog(await readFile(path, 'utf8')));
-  } catch {
-    return { nextRunAtByTaskId: new Map() };
+  } catch (err) {
+    if (isNotFound(err)) return { nextRunAtByTaskId: new Map() };
+    throw new Error(`cron state cannot be read: ${path}: ${errorMessage(err)}`, { cause: err });
   }
 }
 
@@ -301,7 +312,9 @@ export async function runLoopCronOnce(
   deps: {
     store: LoopCronStore;
     runTask: (task: LoopCronTask) => Promise<LoopCronTaskResult>;
-    beforeRunTask?: (task: LoopCronTask) => Promise<void>;
+    beforeRunTask?: (task: LoopCronTask, context: { scheduledFor: string; startedAt: string }) => Promise<void>;
+    afterRecordAttempt?: (task: LoopCronTask, context: LoopCronAttemptContext) => Promise<void>;
+    shouldStop?: () => boolean;
     state?: LoopCronState;
     now?: () => Date;
   },
@@ -312,6 +325,7 @@ export async function runLoopCronOnce(
   let skipped = 0;
 
   for (const task of config.tasks) {
+    if (deps.shouldStop?.()) break;
     const scheduledFor = state.nextRunAtByTaskId.get(task.id) ?? task.nextRunAt;
     const start = now();
     if (new Date(scheduledFor).getTime() > start.getTime()) {
@@ -319,19 +333,21 @@ export async function runLoopCronOnce(
       continue;
     }
 
-    await deps.beforeRunTask?.(task);
+    await deps.beforeRunTask?.(task, { scheduledFor, startedAt: start.toISOString() });
     const result = await deps.runTask(task);
     const finish = now();
     const nextRunAt = new Date(finish.getTime() + task.intervalMinutes * 60_000).toISOString();
-    await deps.store.recordAttempt({
+    const attempt = {
       taskId: task.id,
       scheduledFor,
       startedAt: start.toISOString(),
       finishedAt: finish.toISOString(),
       exitCode: result.exitCode,
-      loopId: result.loopId,
       nextRunAt,
-    });
+      ...(result.loopId === undefined ? {} : { loopId: result.loopId }),
+    };
+    await deps.store.recordAttempt(attempt);
+    await deps.afterRecordAttempt?.(task, attempt);
     state.nextRunAtByTaskId.set(task.id, nextRunAt);
     triggered++;
   }
@@ -354,6 +370,10 @@ function isUnsupportedLink(err: unknown): boolean {
     'code' in err &&
     ['EPERM', 'EINVAL', 'ENOTSUP', 'EXDEV'].includes(String((err as { code?: unknown }).code))
   );
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 function sameOwner(actual: LoopCronLockSnapshot | null, expected: LoopCronLockSnapshot): boolean {

@@ -1,10 +1,11 @@
-import { mkdtemp, readFile, rm, unlink, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, unlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   FileLoopCronStore,
   FileLoopCronLock,
+  loadLoopCronState,
   parseLoopCronLog,
   replayLoopCronState,
   runLoopCronOnce,
@@ -35,6 +36,19 @@ function config(over: Partial<LoopCronConfig['tasks'][number]> = {}): LoopCronCo
 }
 
 describe('runLoopCronOnce', () => {
+  it('uses an empty cron state when the cron log is missing', async () => {
+    const state = await loadLoopCronState(join(dir, 'missing-cron.jsonl'));
+
+    expect(state.nextRunAtByTaskId).toEqual(new Map());
+  });
+
+  it('fails closed when the cron log cannot be read', async () => {
+    const path = join(dir, 'cron-as-dir');
+    await mkdir(path);
+
+    await expect(loadLoopCronState(path)).rejects.toThrow(/cron state cannot be read/);
+  });
+
   it('skips tasks that are not due and records no attempt', async () => {
     const path = join(dir, 'cron.jsonl');
     const store = new FileLoopCronStore(path);
