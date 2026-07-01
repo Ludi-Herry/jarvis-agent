@@ -91,6 +91,40 @@ describe('ShadowGit — real git round-trip', () => {
     expect(r.ok).toBe(true);
     expect((await shadow.log())[0]).toContain("weird 'label'");
   });
+
+  it('snapshotAsync resolves capture before the commit finishes', async () => {
+    let releaseCommit!: () => void;
+    const commitGate = new Promise<void>((resolve) => {
+      releaseCommit = resolve;
+    });
+    const commands: string[] = [];
+    const fakeRun = (async (_shellPath, command) => {
+      commands.push(command);
+      if (command.includes(' commit ')) await commitGate;
+      return {
+        output: command.includes('rev-parse') ? '0123456789abcdef0123456789abcdef01234567\n' : '',
+        code: 0,
+        timedOut: false,
+        aborted: false,
+        truncated: false,
+      } satisfies ExecResult;
+    }) as typeof runCommand;
+    const sg = new ShadowGit({ shellPath: shell, cwd: dir, gitDir: join(dir, 'data', 'shadow'), run: fakeRun });
+
+    const handle = sg.snapshotAsync('async round');
+    let doneSettled = false;
+    handle.done.then(() => {
+      doneSettled = true;
+    });
+
+    expect(await handle.captured).toEqual({ ok: true });
+    await Promise.resolve();
+    expect(commands.some((c) => c.includes('add -A'))).toBe(true);
+    expect(doneSettled).toBe(false);
+
+    releaseCommit();
+    expect(await handle.done).toEqual({ ok: true, sha: '0123456789abcdef0123456789abcdef01234567' });
+  });
 });
 
 describe('ShadowGit — best-effort (never throws, observability must not break the run)', () => {

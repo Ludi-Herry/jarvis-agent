@@ -185,6 +185,82 @@ describe('runGoal — shadow-git snapshot hook (best-effort, off the verdict pat
     const result = await runGoal(spec(), baseDeps({ run, check: passingCheck, shadowGit }));
     expect(result.state).toBe('complete'); // verdict unaffected by the snapshot failure
   });
+
+  it('waits only for snapshot capture before starting the next round, then drains commits before returning', async () => {
+    let releaseFirstCommit!: () => void;
+    const firstCommit = new Promise<void>((resolve) => {
+      releaseFirstCommit = resolve;
+    });
+    const labels: string[] = [];
+    const shadowGit = {
+      snapshot: async () => {
+        throw new Error('fallback snapshot should not be used when snapshotAsync is available');
+      },
+      snapshotAsync: (label: string) => {
+        labels.push(label);
+        return labels.length === 1
+          ? { captured: Promise.resolve(), done: firstCommit }
+          : { captured: Promise.resolve(), done: Promise.resolve() };
+      },
+    };
+    const { run, calls } = claimingRun('complete');
+    let settled = false;
+    const goal = runGoal(spec({ budget: { maxRounds: 2 } }), baseDeps({ run, check: failingCheck, shadowGit }));
+    goal.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+
+    try {
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+      expect(calls()).toBe(2); // round 2 started after capture, before the round-1 commit finished
+      expect(labels).toHaveLength(1); // the round-2 capture waits until round-1 commit owns the index
+      expect(settled).toBe(false); // but the run still waits for queued commits before returning
+    } finally {
+      releaseFirstCommit();
+      await goal.catch(() => undefined);
+    }
+    expect(labels).toHaveLength(2);
+  });
+
+  it('drains queued snapshot commits before recording a terminal goal state', async () => {
+    let releaseCommit!: () => void;
+    const events: string[] = [];
+    const commit = new Promise<void>((resolve) => {
+      releaseCommit = () => {
+        events.push('snapshot-done');
+        resolve();
+      };
+    });
+    const shadowGit = {
+      snapshot: async () => {
+        throw new Error('fallback snapshot should not be used when snapshotAsync is available');
+      },
+      snapshotAsync: () => ({ captured: Promise.resolve(), done: commit }),
+    };
+    const goalStore = {
+      writeCreated: async () => undefined,
+      recordRound: async () => undefined,
+      recordState: async () => {
+        events.push('state-recorded');
+      },
+    } as unknown as FileGoalStore;
+    const { run } = claimingRun('complete');
+    const goal = runGoal(spec(), baseDeps({ run, check: passingCheck, shadowGit, goalStore }));
+
+    try {
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+      expect(events).toEqual([]); // terminal state is not durable until shadow commits drain
+    } finally {
+      releaseCommit();
+      await goal.catch(() => undefined);
+    }
+    expect(events).toEqual(['snapshot-done', 'state-recorded']);
+  });
 });
 
 describe('VerifierCircuitBreaker', () => {

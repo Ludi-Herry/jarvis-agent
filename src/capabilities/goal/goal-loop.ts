@@ -75,6 +75,18 @@ export interface GoalSpec {
   pinned?: PinnedRequirement[];
 }
 
+export interface ShadowSnapshotHandle {
+  /** Resolves when the working-tree state for this label has been captured into the shadow index. */
+  captured: Promise<unknown>;
+  /** Resolves when the full snapshot operation (commit/rev-parse) is finished. */
+  done: Promise<unknown>;
+}
+
+export interface ShadowSnapshotter {
+  snapshot(label: string): Promise<unknown>;
+  snapshotAsync?(label: string): ShadowSnapshotHandle;
+}
+
 export interface GoalRunDeps {
   model: ModelProvider;
   /** The builder's tool registry. The `update_goal` tool is registered into it by runGoal. */
@@ -110,7 +122,7 @@ export interface GoalRunDeps {
   /** Optional shadow-git: a best-effort per-round snapshot of the working tree for audit / rollback of
    *  what the builder changed. PURE OBSERVABILITY — its result is ignored and a throw is swallowed, so
    *  it can NEVER affect the verdict or the loop. */
-  shadowGit?: { snapshot(label: string): Promise<unknown> };
+  shadowGit?: ShadowSnapshotter;
   /** Injected for tests; default {@link runAgent} / {@link runDeterministicChecks} / {@link defaultRunVerifier}. */
   run?: (ctx: AgentContext) => Promise<RunOutcome>;
   check?: (deps: CheckDeps, baseline?: TestBaseline) => Promise<DeterministicChecks>;
@@ -176,6 +188,14 @@ export async function runGoal(spec: GoalSpec, deps: GoalRunDeps): Promise<GoalRu
   });
 
   const breaker = new VerifierCircuitBreaker();
+  const shadowSnapshots = createShadowSnapshotQueue(deps.shadowGit);
+  const transitionAfterSnapshots = async (
+    nextState: GoalState,
+    haltReason: 'budget' | undefined = undefined,
+  ): Promise<GoalState> => {
+    await shadowSnapshots.drain();
+    return transition(deps, goal, nextState, haltReason, stamp);
+  };
   let round = 0;
   let totalTurns = 0;
   let finalVerdict: Verdict | undefined;
@@ -200,15 +220,16 @@ export async function runGoal(spec: GoalSpec, deps: GoalRunDeps): Promise<GoalRu
       });
       totalTurns += outcome.turns;
       // shadow-git: snapshot the working tree after this round's builder work (audit + rollback of what
-      // the agent changed). Best-effort and OFF the verdict path — a failure/throw is swallowed.
-      await snapshotShadow(deps.shadowGit, `goal ${goal.id} round ${round}`);
+      // the agent changed). Best-effort and OFF the verdict path — wait only for the shadow index capture
+      // here, then let commit/rev-parse finish in the queue before terminal state/return.
+      await shadowSnapshots.enqueue(`goal ${goal.id} round ${round}`);
       // Read (and clear) the claim the builder may have set via the update_goal tool this round.
       const claim = takeClaim(slot);
 
       // No completion claim this round → either out of budget, or nudge and keep going.
       if (claim === undefined) {
         if (overBudget(totalTurns, totalTokens, goal.budget)) {
-          state = await transition(deps, goal, 'blocked', 'budget', stamp);
+          state = await transitionAfterSnapshots('blocked', 'budget');
           break;
         }
         messages.push({
@@ -220,7 +241,7 @@ export async function runGoal(spec: GoalSpec, deps: GoalRunDeps): Promise<GoalRu
       }
 
       if (claim.status === 'blocked') {
-        state = await transition(deps, goal, 'blocked', undefined, stamp);
+        state = await transitionAfterSnapshots('blocked');
         await deps.goalStore?.recordRound({ round, claim, at: stamp() });
         break;
       }
@@ -287,7 +308,7 @@ export async function runGoal(spec: GoalSpec, deps: GoalRunDeps): Promise<GoalRu
         const action = breaker.recordReject(); // ← really read the breaker (no dead code)
         if (action === 'halt') {
           deps.bus.emit({ type: 'halt', reason: 'guardrail' });
-          state = await transition(deps, goal, advanceGoalState('rejected', true), undefined, stamp); // forceBlocked
+          state = await transitionAfterSnapshots(advanceGoalState('rejected', true)); // forceBlocked
           break;
         }
         state = advanceGoalState('rejected'); // active — keep going with a continuation
@@ -296,17 +317,18 @@ export async function runGoal(spec: GoalSpec, deps: GoalRunDeps): Promise<GoalRu
         continue;
       }
 
-      state = await transition(deps, goal, advanceGoalState(verdict.outcome), undefined, stamp);
+      state = await transitionAfterSnapshots(advanceGoalState(verdict.outcome));
       break;
     }
 
     // Loop exited still active → ran out of rounds without verifying. Fail closed.
     if (state === 'active') {
       deps.bus.emit({ type: 'halt', reason: 'budget' });
-      state = await transition(deps, goal, 'blocked', undefined, stamp);
+      state = await transitionAfterSnapshots('blocked');
     }
   } finally {
     unsubscribe();
+    await shadowSnapshots.drain();
   }
 
   goal = { ...goal, state };
@@ -327,9 +349,60 @@ async function transition(
   return state;
 }
 
+interface ShadowSnapshotQueue {
+  enqueue(label: string): Promise<void>;
+  drain(): Promise<void>;
+}
+
+/** Per-goal async shadow queue: enqueue waits only until the work-tree has been captured into the
+ *  shadow index (preserving per-round labels), while commit/rev-parse drain in the background before
+ *  the goal returns. */
+function createShadowSnapshotQueue(shadowGit: ShadowSnapshotter | undefined): ShadowSnapshotQueue {
+  let queue = Promise.resolve();
+  return {
+    async enqueue(label: string): Promise<void> {
+      if (!shadowGit) return;
+      let releaseCapture!: () => void;
+      const captured = new Promise<void>((resolve) => {
+        releaseCapture = resolve;
+      });
+      queue = queue
+        .then(async () => {
+          const handle = startShadowSnapshot(shadowGit, label);
+          const done = handle.done.catch(() => undefined);
+          try {
+            await handle.captured;
+          } catch {
+            // best-effort: a capture failure must not break the goal loop
+          } finally {
+            releaseCapture();
+          }
+          try {
+            await done;
+          } catch {
+            // best-effort: a commit failure must not break the goal loop
+          }
+        })
+        .catch(() => {
+          releaseCapture();
+        });
+      await captured;
+    },
+    async drain(): Promise<void> {
+      await queue;
+    },
+  };
+}
+
+function startShadowSnapshot(shadowGit: ShadowSnapshotter, label: string): ShadowSnapshotHandle {
+  if (shadowGit.snapshotAsync) return shadowGit.snapshotAsync(label);
+  const done = snapshotShadow(shadowGit, label);
+  return { captured: done, done };
+}
+
 /** Best-effort shadow snapshot: never throws, never returns anything the loop acts on. Observability
  *  must not be able to break (or change the verdict of) the goal it observes. */
-async function snapshotShadow(shadowGit: { snapshot(label: string): Promise<unknown> } | undefined, label: string): Promise<void> {
+async function snapshotShadow(shadowGit: ShadowSnapshotter | undefined, label: string): Promise<void> {
   if (!shadowGit) return;
   try {
     await shadowGit.snapshot(label);

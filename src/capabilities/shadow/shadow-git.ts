@@ -17,6 +17,13 @@ import { runCommand, type ExecResult } from '../../core/tools/run-command.js';
 
 /** A snapshot's result: the new commit sha, or a best-effort skip with a reason. */
 export type SnapshotResult = { ok: true; sha: string } | { ok: false; reason: string };
+export type SnapshotCaptureResult = { ok: true } | { ok: false; reason: string };
+export interface SnapshotHandle {
+  /** Resolves after `git add -A` has captured the current work-tree into the shadow index. */
+  captured: Promise<SnapshotCaptureResult>;
+  /** Resolves after the snapshot commit exists (or a best-effort skip reason is known). */
+  done: Promise<SnapshotResult>;
+}
 export type RestoreResult = { ok: true } | { ok: false; reason: string };
 
 export interface ShadowGitDeps {
@@ -121,15 +128,49 @@ export class ShadowGit {
   /** Stage everything and commit a snapshot of the working tree. `--allow-empty` so a round with no
    *  file change still gets a marker. Returns the new sha, or a skip reason (best-effort). */
   async snapshot(label: string): Promise<SnapshotResult> {
-    const ready = await this.init();
-    if (!ready.ok) return { ok: false, reason: ready.reason ?? 'init failed' };
-    const add = await this.exec(this.cmd('add -A'));
-    if (add.code !== 0) return { ok: false, reason: gitFail('add', add) };
-    const commit = await this.exec(this.cmd(`${IDENTITY} commit -q --allow-empty -m ${quote(sanitizeLabel(label))}`));
-    if (commit.code !== 0) return { ok: false, reason: gitFail('commit', commit) };
-    const head = await this.exec(this.cmd('rev-parse HEAD', false));
-    if (head.code !== 0) return { ok: false, reason: gitFail('rev-parse', head) };
-    return { ok: true, sha: head.output.trim() };
+    return this.snapshotAsync(label).done;
+  }
+
+  /** Two-phase snapshot for async goal loops: `captured` resolves after the shadow index owns the
+   *  round's work-tree state; `done` resolves after the commit/rev-parse finishes. */
+  snapshotAsync(label: string): SnapshotHandle {
+    let capturedSettled = false;
+    let resolveCaptured!: (result: SnapshotCaptureResult) => void;
+    const captured = new Promise<SnapshotCaptureResult>((resolve) => {
+      resolveCaptured = resolve;
+    });
+    const settleCaptured = (result: SnapshotCaptureResult): void => {
+      if (capturedSettled) return;
+      capturedSettled = true;
+      resolveCaptured(result);
+    };
+    const done = (async (): Promise<SnapshotResult> => {
+      try {
+        const ready = await this.init();
+        if (!ready.ok) {
+          const result = { ok: false as const, reason: ready.reason ?? 'init failed' };
+          settleCaptured(result);
+          return result;
+        }
+        const add = await this.exec(this.cmd('add -A'));
+        if (add.code !== 0) {
+          const result = { ok: false as const, reason: gitFail('add', add) };
+          settleCaptured(result);
+          return result;
+        }
+        settleCaptured({ ok: true });
+        const commit = await this.exec(this.cmd(`${IDENTITY} commit -q --allow-empty -m ${quote(sanitizeLabel(label))}`));
+        if (commit.code !== 0) return { ok: false, reason: gitFail('commit', commit) };
+        const head = await this.exec(this.cmd('rev-parse HEAD', false));
+        if (head.code !== 0) return { ok: false, reason: gitFail('rev-parse', head) };
+        return { ok: true, sha: head.output.trim() };
+      } catch (err) {
+        const result = { ok: false as const, reason: message(err) };
+        settleCaptured(result);
+        return result;
+      }
+    })();
+    return { captured, done };
   }
 
   /** The snapshot log (most recent first) as `<short-sha> <label>` lines, or [] on any failure. */
