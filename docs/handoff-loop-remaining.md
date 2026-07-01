@@ -1,6 +1,6 @@
-# Loop 剩余重项交接：parallel resume / merge-cleanup / cron daemon
+# Loop 剩余重项交接：merge-cleanup / cron daemon
 
-> 状态：2026-07-02 收尾交接。当前 main 已完成 mid-goal resume、per-goal verifier、per-goal hook runner、parallel worktree first slice、cron single-scan first slice。本文只交接剩余三项：并行 resume、自动 merge/cleanup、完整 cron daemon。
+> 状态：2026-07-02 收尾交接。当前 main 已完成 mid-goal resume、per-goal verifier、per-goal hook runner、parallel worktree first slice、parallel resume 最小 slice、cron single-scan first slice。本文只交接剩余两项：自动 merge/cleanup、完整 cron daemon。
 
 ## 先读
 
@@ -25,7 +25,7 @@
 
 - `npm run loop -- <objectives>`：串行 loop，支持 `--resume`。
 - `npm run resume:loop -- --verifier-map <trusted-json> --hook-map <trusted-json>`：恢复最近 loop；恢复时仍必须显式传 cwd 外可信 verifier/hook map。无 per-goal verifier/hooks 时也用可信空 map `{"goals":[]}`。
-- `npm run loop -- <objectives> --parallel 2..4 --worktree-root <cwd外dir>`：fresh queue only。当前 parser 明确拒绝 `--parallel` + `--resume`。
+- `npm run loop -- <objectives> --parallel 2..4 --worktree-root <cwd外dir>`：fresh queue 可并行跑。`--resume --parallel 2..4` 也可用，但必须由当前命令显式传 `--worktree-root <cwd外dir>`；in-flight goal 只恢复到既有 worktree，缺失 worktree / goal log / session header / cwd mismatch 均 fail-closed。
 - parallel worktree first slice：每个 goal 跑在 cwd 外 detached worktree；目标日志仍集中在 cwd `data/`；worktrees 保留给人工检查；不 merge、不删除、不 push。
 - parallel 与 hooks 互斥：hook cwd 语义还没定义到 per-goal worktree，当前 `assertParallelHooksCompatible` fail-closed。
 - `npm run cron -- --cron-map <trusted-json>`：单次扫描，到期任务触发普通 loop；task 必须 `unattended:true`；带同工作区 scan lock、stale recovery、task 前 heartbeat；不常驻。
@@ -41,11 +41,11 @@
 - 不自动 push、不自动 rebase、不改 `.env`、不删用户工作产物。
 - 所有架构级改动先写 plan，列红线和验证，再实现。
 
-## 任务 1：并行 resume
+## 任务 1：并行 resume（最小 slice 已落地）
 
 ### 现状
 
-`parallel-loop.ts` 已经接收 `inFlight` 并会把 `attempt.resumed` 传给 `runOne`，但 CLI 层禁止 `--parallel` + `--resume`。原因是 worktree 身份、worktree root、并行度、shadow 路径、hooks 互斥、goal/session 路径恢复还没有完整信任边界设计。
+`parallel-loop.ts` 已经接收 `inFlight` 并会把 `attempt.resumed` 传给 `runOne`。当前 CLI 已允许显式 `--resume --parallel N --worktree-root <cwd外dir>`，并在调度器写新 loop 记录前预检既有 worktree 与 goal/session log。缺失 worktree、session cwd mismatch、缺少 header 均 fail-closed。
 
 ### 目标
 
@@ -59,19 +59,19 @@
 
 ### 必须先决定
 
-- parallel resume 是否要求用户再次显式传 `--parallel N --worktree-root <cwd外dir>`。
+- parallel resume 已要求用户再次显式传 `--parallel N --worktree-root <cwd外dir>`。
 - 是否把 parallel/worktree 元数据写入 `loop-created`。即使写入，也要把 cwd 日志当审计线索，不能当可信授权。
 - resume 时缺失 worktree 时的语义：推荐 fail-closed park，提示人工检查；不要自动重建并假装是同一工作树。
 - hooks 仍保持与 parallel 互斥，除非先做 per-worktree hook cwd 设计。
 - shadow-git 在 parallel 下当前是 per-goal shadow path，恢复要继续复用相同 path 或明确 park。
 
-### 建议切片
+### 已落地切片
 
-1. plan only：写 `docs/superpowers/plans/<date>-parallel-resume-plan.md`。
-2. parser / metadata：测试 `--parallel` + `--resume` 的显式参数规则；缺 worktree root、root 在 cwd 内、parallel 数不匹配都失败。
-3. replay：让 CLI resume 对 in-flight parallel goal 找回对应 worktree cwd，并调用 `loadLoopGoalResume`。
-4. crash smoke：构造 loop log + goal/session log + worktree，断言 `runOne` 收到 `resumed:true` 和正确 cwd。
-5. 真实 CLI smoke：子进程验证 malformed resume 在写新记录前 fail-closed。
+1. plan：`docs/superpowers/plans/2026-07-02-parallel-resume-plan.md`。
+2. parser：允许显式 `--resume --parallel N --worktree-root <path>`，拒绝缺 root。
+3. worktree：新增只读既有 worktree 解析 helper；root realpath 后拒 cwd 内，缺失 worktree fail-closed。
+4. replay：CLI preflight 对 in-flight parallel goal 找回对应 worktree cwd，并调用 `loadLoopGoalResume` 校验 goal/session log。
+5. CLI smoke：子进程验证 malformed parallel resume 在写新记录前 fail-closed。
 
 ### 关键测试
 
@@ -197,10 +197,9 @@ daemon 只负责调度、锁、可观测性、信号退出。它不自动 resume
 
 ## 建议顺序
 
-1. 并行 resume：它补齐当前 parallel first slice 的 crash/replay 缺口。
-2. loop finalize 只读报告：先让 merge/cleanup 可观察，不执行破坏性动作。
-3. loop finalize apply/cleanup：等只读报告稳定后再做。
-4. cron daemon：按已有 plan 实现第一范围。daemon 不依赖 merge/cleanup，若新会话只做 cron，也可以直接从计划文档开。
+1. loop finalize 只读报告：先让 merge/cleanup 可观察，不执行破坏性动作。
+2. loop finalize apply/cleanup：等只读报告稳定后再做。
+3. cron daemon：按已有 plan 实现第一范围。daemon 不依赖 merge/cleanup，若新会话只做 cron，也可以直接从计划文档开。
 
 每项独立 plan、独立 commit、独立四关卡。不要一次性实现三项。
 
@@ -234,10 +233,9 @@ Windows 子进程测试偶发 timeout / EBUSY，失败先重跑确认。不要�
 
 当前已完成：mid-goal resume、per-goal verifier、per-goal hook runner、parallel worktree first slice、cron single-scan first slice、真实 --hook-map CLI smoke、Windows \\?\ / symlink / junction hook-map smoke。
 
-剩余三项：
-1. 并行 resume：当前 --parallel 是 fresh queue only，parser 拒绝 --parallel + --resume。要设计 worktree 身份、worktree root、trusted verifier/hook map、shadow 路径、goal/session log 恢复。不能信 cwd loop log 来提供权限或 trusted config。
-2. 自动 merge/cleanup：当前 worktrees 保留给人工检查。先做只读 finalize report，再考虑交互式 merge/cleanup。不能 push、rebase、强删；blocked/parked/rejected/missing verdict/conflict/dirty 都必须停下。
-3. 完整 cron daemon：已有计划文档 docs/superpowers/plans/2026-07-02-cron-daemon-plan.md。daemon 只负责前台调度、锁、JSONL、信号退出；不自动 resume crashed loop，不自动 merge/cleanup，不后台 fork。
+剩余两项：
+1. 自动 merge/cleanup：当前 worktrees 保留给人工检查。先做只读 finalize report，再考虑交互式 merge/cleanup。不能 push、rebase、强删；blocked/parked/rejected/missing verdict/conflict/dirty 都必须停下。
+2. 完整 cron daemon：已有计划文档 docs/superpowers/plans/2026-07-02-cron-daemon-plan.md。daemon 只负责前台调度、锁、JSONL、信号退出；不自动 resume crashed loop，不自动 merge/cleanup，不后台 fork。
 
 红线：
 - 不改 decideVerdict / 三腿验收 / PermissionGate 硬 deny。

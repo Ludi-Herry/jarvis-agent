@@ -77,8 +77,8 @@ export function parseLoopArgs(argv: string[]): LoopCliArgs {
   if (parsed.verifierMapPath !== undefined && parsed.noVerifierMap) {
     throw new Error('--verifier-map and --no-verifier-map cannot be combined');
   }
-  if (parsed.resume && parsed.parallel > 1) {
-    throw new Error('--parallel cannot be combined with --resume yet');
+  if (parsed.resume && parsed.parallel > 1 && parsed.worktreeRootPath === undefined) {
+    throw new Error('--worktree-root is required for parallel resume');
   }
 
   return parsed;

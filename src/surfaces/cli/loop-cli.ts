@@ -73,6 +73,7 @@ import {
   loadLoopVerifierMap,
   loadLoop,
   loopWorktreeRoot,
+  resolveExistingGoalWorktree,
   resolveHooks,
   runGoal,
   runLoop,
@@ -93,7 +94,7 @@ import { createInteractiveApprover, readlineApproverIo } from './interactive-app
 import { parseLoopArgs } from './loop-args.js';
 import { assertParallelHooksCompatible } from './loop-guards.js';
 import { createGoalHookResolver, preloadGoalHookOverrides } from './loop-hooks.js';
-import { loadLoopGoalResume } from './loop-resume.js';
+import { loadLoopGoalResume, type LoadedLoopGoalResume } from './loop-resume.js';
 import { initialRenderState, renderEvent } from './render.js';
 
 // Capture BEFORE the runtime .env load (see goal-cli): a key here came from the shell LAUNCH env
@@ -450,21 +451,33 @@ async function main(): Promise<void> {
   );
 
   const worktrees = new Map<number, string>();
-  const goalCwdFor = async (index: number): Promise<string> => {
+  const goalCwdFor = async (index: number, resumed: boolean): Promise<string> => {
     if (!parallelMode) return cwd;
     const existing = worktrees.get(index);
     if (existing !== undefined) return existing;
-    const path = await createGoalWorktree({ shellPath, cwd, root: worktreeBaseRoot, loopId, index });
+    const path = resumed
+      ? await resolveExistingGoalWorktree({ cwd, root: worktreeBaseRoot, loopId, index })
+      : await createGoalWorktree({ shellPath, cwd, root: worktreeBaseRoot, loopId, index });
     worktrees.set(index, path);
-    console.log(`[worktree] goal ${index + 1}/${objectives.length}: ${safeInline(path)}`);
+    console.log(`[worktree] goal ${index + 1}/${objectives.length}: ${safeInline(path)}${resumed ? ' (resume)' : ''}`);
     return path;
+  };
+  const resumeCache = new Map<number, LoadedLoopGoalResume>();
+  const loadResumeFor = async (index: number, goalId: string, goalCwd: string): Promise<LoadedLoopGoalResume> => {
+    const cached = resumeCache.get(index);
+    if (cached !== undefined) return cached;
+    const goalPath = join(cwd, 'data', 'goals', `${goalId}.jsonl`);
+    const sessionPath = join(cwd, 'data', 'sessions', `${goalId}.jsonl`);
+    const loaded = await loadLoopGoalResume(goalPath, sessionPath, goalId, goalCwd);
+    resumeCache.set(index, loaded);
+    return loaded;
   };
 
   // runOne is the SOLE seam to runGoal. Per goal: NEW tools registry (registry.register throws on a
   // duplicate update_goal, so it can't be shared), fresh baseline, derived pinned (block-and-continue
   // on empty rather than exiting the process), own goal/session stores, then the UNCHANGED runGoal.
   const runOne = async (objective: string, goalId: string, attempt: { index: number; resumed: boolean }): Promise<ParallelGoalRunSummary> => {
-    const goalCwd = await goalCwdFor(attempt.index);
+    const goalCwd = await goalCwdFor(attempt.index, attempt.resumed);
     const goalHooks = await hooksForGoal(attempt.index);
     const goalHookOverride = hookPlan.hookPathByIndex.has(attempt.index);
     const tools = buildDefaultRegistry();
@@ -473,7 +486,7 @@ async function main(): Promise<void> {
 
     const goalPath = join(cwd, 'data', 'goals', `${goalId}.jsonl`);
     const sessionPath = join(cwd, 'data', 'sessions', `${goalId}.jsonl`);
-    const loadedResume = attempt.resumed ? await loadLoopGoalResume(goalPath, sessionPath, goalId, goalCwd) : undefined;
+    const loadedResume = attempt.resumed ? await loadResumeFor(attempt.index, goalId, goalCwd) : undefined;
     const resumeState = loadedResume?.resume;
     const verifierDecision = verifierPlan.decisions[attempt.index];
     if (verifierDecision === undefined) {
@@ -549,6 +562,20 @@ async function main(): Promise<void> {
       tokens: result.tokens,
     };
   };
+
+  if (parallelMode && resume && seedInFlight !== undefined) {
+    try {
+      for (const [index, goalId] of seedInFlight) {
+        const goalCwd = await goalCwdFor(index, true);
+        await loadResumeFor(index, goalId, goalCwd);
+      }
+    } catch (err) {
+      console.error(`[loop resume] ${err instanceof Error ? err.message : String(err)}`);
+      rl?.close();
+      process.exitCode = 1;
+      return;
+    }
+  }
 
   // try/finally so a thrown goal run (provider/network/disk error from inside runOne/runGoal) still
   // CLOSES the readline. An open interface keeps stdin referenced and the event loop alive, so without

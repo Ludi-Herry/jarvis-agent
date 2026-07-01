@@ -19,6 +19,13 @@ export interface CreateGoalWorktreeOptions {
   runCommand?: WorktreeRunCommand;
 }
 
+export interface ResolveExistingGoalWorktreeOptions {
+  cwd: string;
+  root: string;
+  loopId: string;
+  index: number;
+}
+
 const WORKTREE_TIMEOUT_MS = 60_000;
 const WORKTREE_OUTPUT_LIMIT = 20_000;
 
@@ -47,6 +54,26 @@ export async function createGoalWorktree(options: CreateGoalWorktreeOptions): Pr
   if (result.code !== 0) {
     const details = result.output.trim() || result.spawnError || `exit code ${String(result.code)}`;
     throw new Error(`git worktree add failed for ${worktreePath}: ${details}`);
+  }
+  return worktreePath;
+}
+
+export async function resolveExistingGoalWorktree(options: ResolveExistingGoalWorktreeOptions): Promise<string> {
+  const root = await assertWorktreeRootOutsideCwd(options.root, options.cwd);
+  const worktreePath = join(root, safePathSegment(options.loopId), `g${options.index}`);
+  let info;
+  try {
+    info = await stat(worktreePath);
+  } catch {
+    throw new Error(`missing resumed worktree for goal ${options.index}: ${worktreePath}`);
+  }
+  if (!info.isDirectory()) {
+    throw new Error(`resumed worktree is not a directory for goal ${options.index}: ${worktreePath}`);
+  }
+  const worktreeReal = await realpath(worktreePath).catch(() => worktreePath);
+  const cwdPath = await canonicalPathForNewTarget(options.cwd);
+  if (isInsideOrSame(worktreeReal, cwdPath)) {
+    throw new Error(`resumed worktree must stay outside the repository cwd: ${worktreePath}`);
   }
   return worktreePath;
 }

@@ -113,4 +113,23 @@ describe('loadLoopGoalResume', () => {
 
     await expect(loadLoopGoalResume(goalPath, sessionPath, 'g1')).rejects.toThrow(/missing session header/);
   });
+
+  it('fails closed when the session cwd does not match the expected resumed worktree', async () => {
+    const goalPath = join(dir, 'g-cwd.jsonl');
+    const sessionPath = join(dir, 's-cwd.jsonl');
+    const goalStore = new FileGoalStore(goalPath);
+    await goalStore.writeCreated({
+      id: 'g1',
+      objective: 'do the thing',
+      objectiveHash: hashObjective('do the thing'),
+      budget: { maxRounds: 3 },
+      pinned: [],
+      sessionId: 'g1',
+      createdAt: 't0',
+    });
+    const sessionStore = new FileSessionStore(sessionPath);
+    await sessionStore.writeHeader({ id: 'g1', model: 'm', cwd: join(dir, 'wrong-worktree'), startedAt: 't0' });
+
+    await expect(loadLoopGoalResume(goalPath, sessionPath, 'g1', join(dir, 'expected-worktree'))).rejects.toThrow(/does not match/);
+  });
 });

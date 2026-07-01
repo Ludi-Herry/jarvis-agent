@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { assertWorktreeRootOutsideCwd, createGoalWorktree } from '../../../src/capabilities/goal/index.js';
+import { assertWorktreeRootOutsideCwd, createGoalWorktree, resolveExistingGoalWorktree } from '../../../src/capabilities/goal/index.js';
 import type { ExecResult } from '../../../src/core/tools/run-command.js';
 
 const ok: ExecResult = { output: '', code: 0, timedOut: false, aborted: false, truncated: false };
@@ -47,5 +47,25 @@ describe('loop worktree helpers', () => {
     expect(path).toBe(join(root, 'loop_one', 'g2'));
     expect(calls).toEqual([{ cwd: repo, command: expect.stringContaining('git worktree add --detach') }]);
     expect(calls[0].command).toContain('HEAD');
+  });
+
+  it('resolves an existing goal worktree without creating a replacement on resume', async () => {
+    const base = await mkdtemp(join(tmpdir(), 'jarvis-worktree-'));
+    const repo = join(base, 'repo');
+    const root = join(base, 'worktrees');
+    const expected = join(root, 'loop_one', 'g2');
+    await mkdir(repo, { recursive: true });
+    await mkdir(expected, { recursive: true });
+
+    await expect(resolveExistingGoalWorktree({ root, cwd: repo, loopId: 'loop:one', index: 2 })).resolves.toBe(expected);
+  });
+
+  it('fails closed when a resumed goal worktree is missing', async () => {
+    const base = await mkdtemp(join(tmpdir(), 'jarvis-worktree-'));
+    const repo = join(base, 'repo');
+    const root = join(base, 'worktrees');
+    await mkdir(repo, { recursive: true });
+
+    await expect(resolveExistingGoalWorktree({ root, cwd: repo, loopId: 'loop:one', index: 2 })).rejects.toThrow(/missing resumed worktree/);
   });
 });

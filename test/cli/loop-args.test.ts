@@ -68,8 +68,21 @@ describe('parseLoopArgs', () => {
     expect(() => parseLoopArgs(['objectives.txt', '--parallel', '1.5'])).toThrow(/positive integer/);
   });
 
-  it('rejects parallel resume until replay/worktree recovery is designed', () => {
-    expect(() => parseLoopArgs(['--resume', '--parallel', '2', '--verifier-map', '/trusted/map.json'])).toThrow(/cannot be combined with --resume/);
+  it('parses explicit parallel resume with a trusted worktree root supplied by the current command', () => {
+    expect(parseLoopArgs(['--resume', '--parallel', '2', '--worktree-root', 'C:\\trusted\\worktrees', '--verifier-map', '/trusted/map.json'])).toEqual({
+      resume: true,
+      force: false,
+      unattended: false,
+      noVerifierMap: false,
+      parallel: 2,
+      worktreeRootPath: 'C:\\trusted\\worktrees',
+      verifierMapPath: '/trusted/map.json',
+      positional: [],
+    });
+  });
+
+  it('rejects parallel resume without an explicit worktree root from the current command', () => {
+    expect(() => parseLoopArgs(['--resume', '--parallel', '2', '--verifier-map', '/trusted/map.json'])).toThrow(/--worktree-root is required/);
   });
 
   it('rejects unknown flags so typoed safety config is visible', () => {
