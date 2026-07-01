@@ -1,6 +1,7 @@
 import { readFile, realpath } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import {
+  FileLoopCronLock,
   FileLoopCronStore,
   latestLoopPath,
   loadLoopCronConfig,
@@ -13,6 +14,7 @@ import { safeInline } from './approval.js';
 import { buildLoopCronCommand, parseCronArgs } from './cron-args.js';
 
 const LOOP_CRON_TIMEOUT_MS = 3 * 60 * 60 * 1000;
+const LOOP_CRON_LOCK_STALE_MS = LOOP_CRON_TIMEOUT_MS + 5 * 60 * 1000;
 const LOOP_CRON_OUTPUT_LIMIT = 20_000;
 const ARK_KEY_IN_LAUNCH_ENV = process.env.ARK_API_KEY !== undefined;
 
@@ -50,17 +52,30 @@ async function main(): Promise<void> {
   }
 
   const cronLogPath = join(cwd, 'data', 'cron', 'loop-cron.jsonl');
+  const lock = await new FileLoopCronLock(join(cwd, 'data', 'cron', 'loop-cron.lock'), {
+    staleMs: LOOP_CRON_LOCK_STALE_MS,
+  }).tryAcquire();
+  if (lock === null) {
+    console.error('[cron] cron scan lock is held or unrecoverable; skipped');
+    process.exitCode = 1;
+    return;
+  }
   const store = new FileLoopCronStore(cronLogPath);
-  const state = await loadLoopCronState(cronLogPath);
-  const shellPath = defaultShellPath();
+  try {
+    const state = await loadLoopCronState(cronLogPath);
+    const shellPath = defaultShellPath();
 
-  console.log(`Jarvis-Agent cron scan - ${config.tasks.length} tasks from ${safeInline(config.path)}`);
-  const result = await runLoopCronOnce(config, {
-    store,
-    state,
-    runTask: async (task) => runCronTask(task, shellPath, cwd),
-  });
-  console.log(`cron scan complete: triggered=${result.triggered} skipped=${result.skipped}`);
+    console.log(`Jarvis-Agent cron scan - ${config.tasks.length} tasks from ${safeInline(config.path)}`);
+    const result = await runLoopCronOnce(config, {
+      store,
+      state,
+      beforeRunTask: async () => lock.renew(),
+      runTask: async (task) => runCronTask(task, shellPath, cwd),
+    });
+    console.log(`cron scan complete: triggered=${result.triggered} skipped=${result.skipped}`);
+  } finally {
+    await lock.release();
+  }
 }
 
 async function runCronTask(task: LoopCronTask, shellPath: string, cwd: string): Promise<{ exitCode: number | null; loopId?: string }> {
