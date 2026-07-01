@@ -27,7 +27,7 @@ import type { LoopContract, LoopHaltReason, LoopStore, VerifierOutcomeSample } f
 
 /** One line of the loop log. */
 export type LoopRecord =
-  | { t: 'loop-created'; id: string; contract: LoopContract; objectives: string[]; createdAt: string; verifierMapPath?: string }
+  | { t: 'loop-created'; id: string; contract: LoopContract; objectives: string[]; createdAt: string; verifierMapPath?: string; hookMapPath?: string }
   | { t: 'goal-started'; index: number; goalId: string; at: string }
   | {
       t: 'goal-finished';
@@ -50,6 +50,7 @@ export interface LoopReplay {
   id?: string;
   contract?: LoopContract;
   verifierMapPath?: string;
+  hookMapPath?: string;
   objectives: string[];
   /** Trusted finished seeds. File replay leaves this empty; callers may pass a trusted set. */
   finished: Set<number>;
@@ -97,6 +98,7 @@ export function replayLoop(records: LoopRecord[]): LoopReplay {
   let id: string | undefined;
   let contract: LoopContract | undefined;
   let verifierMapPath: string | undefined;
+  let hookMapPath: string | undefined;
   let objectives: string[] = [];
   const finished = new Set<number>();
   const inFlight = new Map<number, string>();
@@ -111,6 +113,7 @@ export function replayLoop(records: LoopRecord[]): LoopReplay {
         id = record.id;
         contract = record.contract;
         verifierMapPath = record.verifierMapPath;
+        hookMapPath = record.hookMapPath;
         objectives = record.objectives;
         break;
       case 'goal-started':
@@ -124,7 +127,7 @@ export function replayLoop(records: LoopRecord[]): LoopReplay {
         break;
     }
   }
-  return { id, contract, verifierMapPath, objectives, finished, inFlight, outcomes, goalsFinished: finished.size, cumulativeTokens, consecutiveBlocked, halted };
+  return { id, contract, verifierMapPath, hookMapPath, objectives, finished, inFlight, outcomes, goalsFinished: finished.size, cumulativeTokens, consecutiveBlocked, halted };
 }
 
 /** A file-backed append-only loop store (mirrors FileGoalStore). Implements {@link LoopStore} so it

@@ -289,4 +289,22 @@ describe('HookRunner — real shell smoke', () => {
     expect(hooks).toBeDefined();
     await expect(hooks?.postToolUse(bashCall, okResult)).resolves.toBe('home\nenv');
   });
+
+  it('resolveHooks can disable the user-home source for an explicit single-source hook runner', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'jarvis-hook-single-cwd-'));
+    const sourceDir = await mkdtemp(join(tmpdir(), 'jarvis-hook-single-src-'));
+    const envHooks = join(sourceDir, 'env-hooks.json');
+    await writeFile(envHooks, JSON.stringify({ PostToolUse: [{ matcher: 'bash', command: 'printf env' }] }), 'utf8');
+
+    const { hooks, warning } = await resolveHooks({
+      userHooksPath: false,
+      hooksPath: envHooks,
+      cwd,
+      shellPath: defaultShellPath(),
+    });
+
+    expect(warning).toBeUndefined();
+    expect(hooks).toBeDefined();
+    await expect(hooks?.postToolUse(bashCall, okResult)).resolves.toBe('env');
+  });
 });

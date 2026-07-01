@@ -15,14 +15,14 @@
 | Phase C 多 agent（SubagentManager / roster / 视角评审面板） | ✅ 完成（C1–C5） |
 | Phase D 自主（GoalLoop + 确定性三腿〔canonical 重跑 + 篡改检测 + held-out 隐藏断言〕+ 独立 LLM 裁判） | ✅ 完成（D1–D9 + held-out） |
 | Phase E 多能力（多 goal Loop 调度 + 外置 vision + 命令级 bash session-allow + shadow-git 旁路历史） | ✅ 完成（4 切片合入 main） |
-| Hooks（PreToolUse 阻断 + PostToolUse 咨询；slice-2 ① 反馈回灌对话 + ② bash session-allow 暴露 goal/loop） | ✅ slice-1 + slice-2 ①② 完成 |
-| **下一步：Hooks slice-2 剩余（③ 每-hook timeout / ④ 多来源配置 / ⑤ round·session 事件 / 传 result）+ GUI（晴天模式外壳）** | ⏭️ Hooks 剩余交接 codex / GUI 待开（就绪盘点见 handoff-next） |
+| Hooks（PreToolUse 阻断 + PostToolUse 咨询/反馈；tool result env；per-hook timeout；round/session lifecycle；多来源；loop per-goal hook-map） | ✅ 完成，剩余仅保留 defer |
+| **下一步：GUI（晴天模式外壳）+ loop 剩余重项** | ⏭️ GUI 可开工；loop 并行 resume / 自动 merge-cleanup / cron daemon 另审 |
 | 沙箱两件（#2 客观路由 / #6 裁判 exec）+ propose_skill | ⛔ 已拍板 defer（能力天花板：`cannotVerify→park` 是正确 fail-closed） |
 
-`npm run typecheck / lint / test / build` 全绿（**646 测试**）。命令安全根（PermissionGate + 命令解析器 + bash 审批）经**六轮独立 codex 对抗核查**确认无破闸 HIGH；goal 验收子系统（确定性三腿 + 腿3 裁判 + bash/Linux 密钥加固）经**多轮多裁判对抗核查**（codex + 独立 Claude 子代理，含一轮 4 裁判收尾）。Phase E 各切片与 Hooks slice-1/2 均经 **codex 跨模型对抗审查逐层加固**（vision 四轮 / bash 白名单 Path A 经 7 HIGH 撤回、保留命令级 Path B / Hooks 信任边界修 HIGH / slice-2 每切片 2 轮 SHIP）。方法 / 严重度基线 / 历史见 `docs/security-review-baseline.md`。
+`npm run typecheck / lint / test / build` 全绿（**826 测试**）。命令安全根（PermissionGate + 命令解析器 + bash 审批）经**六轮独立 codex 对抗核查**确认无破闸 HIGH；goal 验收子系统（确定性三腿 + 腿3 裁判 + bash/Linux 密钥加固）经**多轮多裁判对抗核查**（codex + 独立 Claude 子代理，含一轮 4 裁判收尾）。Phase E 各切片与 Hooks slice-1/2 均经 **codex 跨模型对抗审查逐层加固**（vision 四轮 / bash 白名单 Path A 经 7 HIGH 撤回、保留命令级 Path B / Hooks 信任边界修 HIGH / slice-2 每切片 2 轮 SHIP）。方法 / 严重度基线 / 历史见 `docs/security-review-baseline.md`。
 
 接手入口：
-- **最新全景 + Phase E/Hooks 现状 + 下一步（GUI 就绪盘点）→ `docs/handoff-next.md`**；**Phase D（GoalLoop + 三腿 + 腿3 裁判）→ `docs/handoff-D.md`**；**Hooks（slice-1 + slice-2 ①②）→ `docs/handoff-hooks.md`**；
+- **最新全景 + Phase E/Hooks 现状 + 下一步（GUI 就绪盘点）→ `docs/handoff-next.md`**；**Phase D（GoalLoop + 三腿 + 腿3 裁判）→ `docs/handoff-D.md`**；**Hooks（tool-call / lifecycle / loop per-goal hook-map）→ `docs/handoff-hooks.md`**；
 - **B 阶段 + 当前安全态 → `docs/handoff-B.md`**（顶部「当前状态更新」段）；
 - **Phase C（多 agent）→ `docs/handoff-C.md`**；
 - 持久化段 → `docs/handoff-persistence.md`；A 阶段 → `docs/handoff-A.md`；
@@ -55,11 +55,11 @@ cp .env.example .env   # 然后编辑 .env 填 ARK_API_KEY
 npm run dev         # 终端 REPL：带权限闸门 + bash + 交互审批 + 会话落盘（需 ARK_API_KEY）。Ctrl-C 中断 / /exit 退出
 npm run resume      # 恢复 data/sessions/ 最近一个会话继续跑
 npm run goal        # goal 模式：npm run goal -- "<objective>" 自主跑到达标自停（确定性两腿；JARVIS_HELDOUT_CHECKS_FILE 加 held-out 隐藏断言；ARK_VERIFIER_MODEL=不同模型 启用腿3 独立裁判）
-npm run loop        # loop 模式（Phase E）：npm run loop -- <objectives-file> 多 goal 队列顺序排空、崩溃安全 resume；默认 attended / --unattended fail-closed / --resume(+--force)；fresh queue 可 --parallel 2..4 用 cwd 外 worktree 并行跑（当前与 hooks 配置互斥）
-npm run resume:loop -- --verifier-map <trusted-json> # 恢复最近 loop：恢复模式来自 cwd 外可信 map；无 per-goal verifier 时用 {"goals":[]}
+npm run loop        # loop 模式（Phase E）：npm run loop -- <objectives-file> 多 goal 队列顺序排空、崩溃安全 resume；默认 attended / --unattended fail-closed / --resume(+--force)；fresh queue 可 --parallel 2..4 用 cwd 外 worktree 并行跑（与任何 hooks 配置互斥）；可 --hook-map <trusted-json> 给串行 goal 配 cwd 外 hook 覆盖
+npm run resume:loop -- --verifier-map <trusted-json> --hook-map <trusted-json> # 恢复最近 loop：恢复模式来自 cwd 外可信 map；无 per-goal verifier / hooks 时各用 {"goals":[]}；原 loop 若带 hook-map，恢复必须传同一个可信 hook-map
 npm run cron -- --cron-map <trusted-json> # cron 单次扫描：可信 cwd 外计划文件，到期任务触发普通 loop；task 必须 unattended:true；带同工作区扫描锁 + stale 回收 + task 前心跳；记录 data/cron/loop-cron.jsonl，不常驻
 npm run typecheck   # tsc --noEmit
-npm test            # vitest（646 测试）
+npm test            # vitest（826 测试）
 npm run build       # tsc 产出到 dist/
 npm run lint        # eslint
 npm run demo:a1     # A1：调 Doubao 一句话 → 流式增量 + 聚合 ModelResult
@@ -93,13 +93,13 @@ src/
     rules/       # RuleResolver：三层规则就近合并
     subagents/   # SubagentManager + derive 护栏 + roster + task 委派工具 + 视角评审面板
     goal/        # GoalLoop + 确定性三腿验收 + 腿3 裁判 + Loop 多 goal 调度（decideVerdict / 熔断 / VerifierHealthMonitor）
-    hooks/       # 工具调用 hooks（PreToolUse 阻断 / PostToolUse 咨询 + 反馈回灌）；opt-in JARVIS_HOOKS
+    hooks/       # 工具调用 hooks（PreToolUse 阻断 / PostToolUse 咨询 + 反馈回灌）；opt-in JARVIS_HOOKS / loop --hook-map
     shadow/      # shadow-git：agent 改动的旁路 git 历史；opt-in JARVIS_SHADOW_GIT
   surfaces/cli/  # 终端 REPL + goal-cli + loop-cli：render（纯）+ repl + 审批（interactive-approver 三件套）+ commander 入口
 skills/          # git-commit/SKILL.md
 agents/          # researcher/ROLE.md（子 agent 角色花名册）
 scripts/         # a1/a2/a3/a5 + b1/b3 + c1/c2 + d1 demo（真连 Doubao / 真跑 bash）
-test/            # vitest 单测（646）
+test/            # vitest 单测（826）
 docs/            # 各阶段 plan + handoff + security-review-baseline
 data/            # 运行期会话日志（gitignore）
 ```

@@ -3,13 +3,14 @@ import { parseLoopArgs } from '../../src/surfaces/cli/loop-args.js';
 
 describe('parseLoopArgs', () => {
   it('parses the objective file and verifier map without treating the map path as positional', () => {
-    expect(parseLoopArgs(['objectives.txt', '--verifier-map', 'C:\\trusted\\loop-verifiers.json'])).toEqual({
+    expect(parseLoopArgs(['objectives.txt', '--verifier-map', 'C:\\trusted\\loop-verifiers.json', '--hook-map', 'C:\\trusted\\loop-hooks.json'])).toEqual({
       resume: false,
       force: false,
       unattended: false,
       noVerifierMap: false,
       parallel: 1,
       verifierMapPath: 'C:\\trusted\\loop-verifiers.json',
+      hookMapPath: 'C:\\trusted\\loop-hooks.json',
       positional: ['objectives.txt'],
     });
   });
@@ -51,6 +52,10 @@ describe('parseLoopArgs', () => {
 
   it('rejects a missing verifier-map value', () => {
     expect(() => parseLoopArgs(['objectives.txt', '--verifier-map'])).toThrow(/requires a path/);
+  });
+
+  it('rejects a missing hook-map value', () => {
+    expect(() => parseLoopArgs(['objectives.txt', '--hook-map'])).toThrow(/requires a path/);
   });
 
   it('rejects conflicting verifier map decisions', () => {

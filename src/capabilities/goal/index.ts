@@ -18,5 +18,6 @@ export * from './parallel-loop.js';
 export * from './loop-worktree.js';
 export * from './loop-store.js';
 export * from './loop-verifier-config.js';
+export * from './loop-hook-config.js';
 export * from './loop-cron-config.js';
 export * from './loop-cron.js';

@@ -47,11 +47,11 @@
 ## 三、边界钉死：哪些你能自闭环、哪些必须人把关、哪些别碰
 
 ### ✅ 能 codex 自闭环（红线清晰、机械独立）
-Hooks slice-2 的 ③ 每-hook timeout、⑤ round/session 级事件、给 hook 传 tool result 已落地；⑥ shadow restore 交互确认、⑧ vision MIME sniff + 活体验证、loop mid-goal resume、per-goal verifier、并行目标/worktree first slice、cron first slice（含同工作区扫描锁）已落地；并行恢复/合并/清理仍按核心改动暂缓。剩余见下「五、backlog」。仍要：plan 先行、四关卡、多实例对抗审（见四）。
+Hooks slice-2 的 ③ 每-hook timeout、⑤ round/session 级事件、给 hook 传 tool result 已落地；⑥ shadow restore 交互确认、⑧ vision MIME sniff + 活体验证、loop mid-goal resume、per-goal verifier、per-goal hook runner、并行目标/worktree first slice、cron first slice（含同工作区扫描锁）已落地；并行恢复/合并/清理仍按核心改动暂缓。剩余见下「五、backlog」。仍要：plan 先行、四关卡、多实例对抗审（见四）。
 
 ### ⚠️ 必须 plan + 人（Luis）把关（碰核心 / 信任边界，同族自审不够）
 - **hook 信任来源扩展**：多来源合并已按不变量 #2 落地。后续若再新增来源，每个来源都要 realpath 规范化 + 拒 cwd 内 + 只从可信来源加载；绝不新增扫 cwd 的路径。**slice-1 的 HIGH 就栽在信任边界**——这类改动做完**必须请 Luis 在关键项做最终闸**，别单靠同族自审 SHIP。
-- **⑦ loop 的重项**（并行目标/worktree first slice、cron first slice、per-goal verifier 已落地）：碰 `decideVerdict` / 裁判架构 / worktree/调度基建。改错 = 验收被绕 = 自主性信任根崩。后续若做并行 resume、自动 merge、自动清理或常驻 daemon，先 plan、把「不得删 / 不得绕三腿 / 不得自动合并推送」写进方案、请 Luis 把关。mid-goal resume 已作为 crash/replay 子切片落地。
+- **⑦ loop 的重项**（并行目标/worktree first slice、cron first slice、per-goal verifier、per-goal hook runner 已落地）：碰 `decideVerdict` / 裁判架构 / worktree/调度基建。改错 = 验收被绕 = 自主性信任根崩。后续若做并行 resume、自动 merge、自动清理或常驻 daemon，先 plan、把「不得删 / 不得绕三腿 / 不得自动合并推送」写进方案、请 Luis 把关。mid-goal resume 已作为 crash/replay 子切片落地。
 
 ### ⛔ 能力天花板，先别硬凑
 - **沙箱 #2 客观路由 / #6 裁判 exec**：需 OS 级沙箱（容器 / seccomp / 只读 fs / 网络命名空间）才能「可信地跑任意程序」。没有沙箱，「只读 exec」做不到真只读，给裁判 exec 会破坏「裁判被注入也不能行动」核心属性。当前 `cannotVerify → park` / `fail-closed deny` 是**正确的能力天花板**，不是缺陷。要解先建沙箱基建（环境层工程 + Luis 的方向决策），别用命令白名单硬凑。
@@ -71,7 +71,7 @@ Hooks slice-2 的 ③ 每-hook timeout、⑤ round/session 级事件、给 hook 
 
 ## 五、backlog（现状 / 目标 / 关键文件 / 红线）—— 可直接当 codex 任务喂
 
-按性价比挑、分阶段、每项独立 commit。Hooks follow-up（传-result、③、⑤、④）、⑥ shadow restore 交互确认、⑧ vision MIME sniff + 活体验证、shadow snapshot 异步化、loop mid-goal resume、per-goal verifier、并行目标/worktree first slice、cron first slice 已落地（每轮等 shadow index 捕获，commit 后台 drain；loop resume 只把 cwd loop log 当 queue/contract/goalId 来源，历史 attempt 由 runGoal 复核后再写 fresh finish；terminal complete 必须重跑验收，baseline/pinned 不信 goal log，session header 缺失/不匹配 fail-closed；per-goal verifier 通过 cwd 外 `--verifier-map` 按 objective index 覆盖腿3模型，schema 严格校验，resume 一律必须显式传 cwd 外 `--verifier-map`，deterministic-only 恢复也用可信空 map `{"goals":[]}`，健康监控按 verifier key 分桶；并行目标/worktree 通过 `--parallel 2..4` opt-in，默认串行，worktree 根必须在 cwd 外，目标日志仍集中在 cwd `data/`，与 hooks 配置互斥，不自动 merge/删除/push；cron 通过 `npm run cron -- --cron-map <cwd外 JSON>` 单次扫描，到期任务触发普通 loop，task 必须 `unattended:true`，状态写 `data/cron/loop-cron.jsonl`，用 `data/cron/loop-cron.lock` 阻止同工作区重复扫描，锁含 owner token + stale 回收 + 每个 due task 前心跳，不常驻、不后台 fork、不绕 `--unattended` fail-closed）。当前剩余是 ⑦ loop 重项里的并行 resume/自动合并/自动清理/per-goal hook runner、cron daemon（暂缓 / 另审）。
+按性价比挑、分阶段、每项独立 commit。Hooks follow-up（传-result、③、⑤、④）、⑥ shadow restore 交互确认、⑧ vision MIME sniff + 活体验证、shadow snapshot 异步化、loop mid-goal resume、per-goal verifier、per-goal hook runner、并行目标/worktree first slice、cron first slice 已落地（每轮等 shadow index 捕获，commit 后台 drain；loop resume 只把 cwd loop log 当 queue/contract/goalId 来源，历史 attempt 由 runGoal 复核后再写 fresh finish；terminal complete 必须重跑验收，baseline/pinned 不信 goal log，session header 缺失/不匹配 fail-closed；per-goal verifier 通过 cwd 外 `--verifier-map` 按 objective index 覆盖腿3模型，schema 严格校验，resume 一律必须显式传 cwd 外 `--verifier-map`，deterministic-only 恢复也用可信空 map `{"goals":[]}`，健康监控按 verifier key 分桶；per-goal hook runner 通过 cwd 外 `--hook-map` 按 objective index 覆盖 hook runner，hook-map 与每个 `hookPath` 都 realpath + 拒 cwd 内，覆盖不合并，resume 一律必须显式传 cwd 外 `--hook-map`，无 per-goal hooks 用可信空 map `{"goals":[]}`，历史记录若带 hook-map 则必须传同一规范化路径，串行限定；并行目标/worktree 通过 `--parallel 2..4` opt-in，默认串行，worktree 根必须在 cwd 外，目标日志仍集中在 cwd `data/`，与 hooks 配置互斥，不自动 merge/删除/push；cron 通过 `npm run cron -- --cron-map <cwd外 JSON>` 单次扫描，到期任务触发普通 loop，task 必须 `unattended:true`，状态写 `data/cron/loop-cron.jsonl`，用 `data/cron/loop-cron.lock` 阻止同工作区重复扫描，锁含 owner token + stale 回收 + 每个 due task 前心跳，不常驻、不后台 fork、不绕 `--unattended` fail-closed）。当前剩余是 ⑦ loop 重项里的并行 resume/自动合并/自动清理、cron daemon（暂缓 / 另审）。
 
 **Hooks follow-up 已落地（2026-07-01）**：PostToolUse 通过 `JARVIS_HOOK_TOOL_RESULT` 拿 tool result（同 4096 cap + 合法 JSON 哨兵）；`HookEntry.timeoutMs` 支持 1..300000 毫秒覆盖；`RoundStart/RoundEnd` 挂在 `runAgent` turn 边界，`SessionStart/SessionEnd` 挂在 REPL/goal/loop CLI 会话边界；多来源合并按 `~/.jarvis/hooks.json` → `JARVIS_HOOKS` 顺序拼接，每来源 realpath + 拒 cwd 内，malformed 只禁该来源；已补真实 Windows `\\?\` 与 symlink smoke。lifecycle 全部 advisory，不阻断、不回灌、不改结果。
 
@@ -80,7 +80,7 @@ Hooks slice-2 的 ③ 每-hook timeout、⑤ round/session 级事件、给 hook 
 
 **⑧ vision MIME sniff + 活体验证已落地（2026-07-01）**：`vision-tool.ts` 现在按 magic bytes 判 PNG/JPEG/WebP/GIF/BMP，扩展名只作显示；不支持的内容在调用 VLM 前拒绝。已用 `ARK_VISION_MODEL=doubao-seed-2-1-pro-260628` 跑 `demo:vision` 真连 ARK：请求形状可用，红/蓝方块测试图返回结构化坐标。实测该模型自然输出 0-1024 视觉坐标网格，故 `VISION_PROMPT` 已把契约从原图像素改为 0-1024 网格；红线：不改 network→gate ask 语义，别把 key 写进代码 / 日志（错误通道已套 `describeModelError`+`redactSecrets`）。
 
-**⑦ loop 重项** —— mid-goal resume、per-goal 异构 verifier、并行目标/worktree first slice、cron first slice（含同工作区扫描锁 + stale 回收 + task 前心跳）已落地；并行 resume、自动 merge/cleanup、per-goal hook runner、cron daemon 仍见三，未证明需要 + 碰核心，暂缓。
+**⑦ loop 重项** —— mid-goal resume、per-goal 异构 verifier、per-goal hook runner、并行目标/worktree first slice、cron first slice（含同工作区扫描锁 + stale 回收 + task 前心跳）已落地；并行 resume、自动 merge/cleanup、cron daemon 仍见三，未证明需要 + 碰核心，暂缓。
 
 ---
 

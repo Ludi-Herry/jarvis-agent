@@ -32,7 +32,8 @@
  * Run:  npm run loop -- <objectives-file>            (needs ARK_API_KEY in .env)
  *       npm run loop -- <objectives-file> --unattended
  *       ARK_VERIFIER_MODEL=<id> npm run loop -- <objectives-file>   (enable leg 3 + the health monitor)
- *       npm run resume:loop -- --verifier-map <trusted-json>  (use {"goals":[]} for deterministic-only resume)
+ *       npm run resume:loop -- --verifier-map <trusted-json> --hook-map <trusted-json>
+ *         (use {"goals":[]} for deterministic-only verifier and no per-goal hook overrides)
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { readFile, realpath } from 'node:fs/promises';
@@ -60,12 +61,15 @@ import {
   FileGoalStore,
   FileLoopStore,
   ShadowGit,
+  assertResumeHookMapMatches,
   assertResumeVerifierMapMatches,
   assertWorktreeRootOutsideCwd,
+  buildLoopHookPlan,
   buildLoopVerifierPlan,
   createGoalWorktree,
   derivePinnedRequirements,
   latestLoopPath,
+  loadLoopHookMap,
   loadLoopVerifierMap,
   loadLoop,
   loopWorktreeRoot,
@@ -74,6 +78,7 @@ import {
   runLoop,
   runParallelLoop,
   type LoadedLoopVerifierMap,
+  type LoadedLoopHookMap,
   type LoopContract,
   type ParallelGoalRunSummary,
   type LoopVerifierDecision,
@@ -87,6 +92,7 @@ import { safeInline } from './approval.js';
 import { createInteractiveApprover, readlineApproverIo } from './interactive-approver.js';
 import { parseLoopArgs } from './loop-args.js';
 import { assertParallelHooksCompatible } from './loop-guards.js';
+import { createGoalHookResolver, preloadGoalHookOverrides } from './loop-hooks.js';
 import { loadLoopGoalResume } from './loop-resume.js';
 import { initialRenderState, renderEvent } from './render.js';
 
@@ -133,7 +139,7 @@ async function main(): Promise<void> {
     process.exitCode = 1;
     return;
   }
-  const { resume, force, unattended, noVerifierMap, positional, verifierMapPath, parallel, worktreeRootPath } = args;
+  const { resume, force, unattended, noVerifierMap, positional, verifierMapPath, hookMapPath, parallel, worktreeRootPath } = args;
   const parallelMode = parallel > 1;
   if (noVerifierMap) {
     console.error('--no-verifier-map is unsafe for resume; use --verifier-map <trusted empty map>');
@@ -174,6 +180,22 @@ async function main(): Promise<void> {
     }
   }
 
+  let hookMap: LoadedLoopHookMap | undefined;
+  if (hookMapPath !== undefined) {
+    try {
+      hookMap = await loadLoopHookMap({
+        path: hookMapPath,
+        cwd,
+        readText: async (p) => readFile(p, 'utf8').catch(() => null),
+        realpath: async (p) => realpath(p).catch(() => null),
+      });
+    } catch (err) {
+      console.error(`[loop hooks] ${err instanceof Error ? err.message : String(err)}`);
+      process.exitCode = 1;
+      return;
+    }
+  }
+
   // Resolve the loop: a fresh queue from a file, or a replayed one to resume.
   let loopId: string;
   let objectives: string[];
@@ -188,6 +210,7 @@ async function main(): Promise<void> {
   let seedCumulativeTokens: number | undefined;
   let seedHalted: string | undefined;
   let replayVerifierMapPath: string | undefined;
+  let replayHookMapPath: string | undefined;
 
   if (resume) {
     const latest = await latestLoopPath(loopsDir);
@@ -207,6 +230,7 @@ async function main(): Promise<void> {
     contract = replay.contract;
     loopPath = latest;
     replayVerifierMapPath = replay.verifierMapPath;
+    replayHookMapPath = replay.hookMapPath;
     seedFinished = replay.finished;
     seedOutcomes = replay.outcomes;
     seedInFlight = replay.inFlight;
@@ -246,9 +270,17 @@ async function main(): Promise<void> {
     process.exitCode = 1;
     return;
   }
+  try {
+    if (resume) assertResumeHookMapMatches(replayHookMapPath, hookMap?.path);
+  } catch (err) {
+    console.error(`[loop hooks] ${err instanceof Error ? err.message : String(err)}`);
+    process.exitCode = 1;
+    return;
+  }
 
   const verifier = resolveVerifierConfig(process.env, config);
   let verifierPlan;
+  let hookPlan;
   try {
     verifierPlan = buildLoopVerifierPlan({
       objectivesCount: objectives.length,
@@ -256,8 +288,12 @@ async function main(): Promise<void> {
       globalVerifier: verifier,
       map: verifierMap,
     });
+    hookPlan = buildLoopHookPlan({
+      objectivesCount: objectives.length,
+      map: hookMap,
+    });
   } catch (err) {
-    console.error(`[loop verifier] ${err instanceof Error ? err.message : String(err)}`);
+    console.error(`[loop config] ${err instanceof Error ? err.message : String(err)}`);
     process.exitCode = 1;
     return;
   }
@@ -300,8 +336,36 @@ async function main(): Promise<void> {
       return;
     }
   }
+  // Hooks: trusted sources only. Resolve and preload before writing loop-created, so bad configs or
+  // parallel incompatibility fail without polluting data/loops with an unusable latest loop.
+  const { hooks, warning: hookWarning } = await resolveHooks({ hooksPath: JARVIS_HOOKS_LAUNCH, cwd, shellPath });
+  if (hookWarning) console.error(`[hooks] ${hookWarning}`);
+  const hooksForGoal = createGoalHookResolver({
+    globalHooks: hooks,
+    hookPathByIndex: hookPlan.hookPathByIndex,
+    load: async (hookPath, index) => {
+      const resolved = await resolveHooks({ hooksPath: hookPath, userHooksPath: false, cwd, shellPath });
+      if (resolved.warning) throw new Error(`hook map index ${index}: ${resolved.warning}`);
+      return resolved.hooks;
+    },
+  });
+  try {
+    assertParallelHooksCompatible(parallelMode, hooks !== undefined || hookPlan.overrideCount > 0);
+    await preloadGoalHookOverrides(hooksForGoal, hookPlan.hookPathByIndex.keys());
+  } catch (err) {
+    console.error(`[hooks] ${err instanceof Error ? err.message : String(err)}`);
+    process.exitCode = 1;
+    return;
+  }
   if (!resume) {
-    await loopStore.writeCreated({ id: loopId, contract, objectives, createdAt: new Date().toISOString(), verifierMapPath: verifierMap?.path });
+    await loopStore.writeCreated({
+      id: loopId,
+      contract,
+      objectives,
+      createdAt: new Date().toISOString(),
+      verifierMapPath: verifierMap?.path,
+      hookMapPath: hookMap?.path,
+    });
   }
 
   // Shared once: bus + render, context, gate (+ optional interactive approver), verifier provider.
@@ -353,19 +417,6 @@ async function main(): Promise<void> {
   const vision = resolveVisionConfig(process.env, config);
   const visionTool = vision.enabled ? createVisionTool(createVisionComplete(vision.config)) : undefined;
 
-  // Hooks: trusted sources only: user-home default first, then launch-captured JARVIS_HOOKS.
-  // Built once and shared across the queue. Especially relevant unattended: a PreToolUse hook is a
-  // fail-closed guardrail with no human in the loop.
-  const { hooks, warning: hookWarning } = await resolveHooks({ hooksPath: JARVIS_HOOKS_LAUNCH, cwd, shellPath });
-  if (hookWarning) console.error(`[hooks] ${hookWarning}`);
-  try {
-    assertParallelHooksCompatible(parallelMode, hooks !== undefined);
-  } catch (err) {
-    console.error(`[hooks] ${err instanceof Error ? err.message : String(err)}`);
-    process.exitCode = 1;
-    return;
-  }
-
   console.log(`Jarvis-Agent loop mode - ${safeInline(config.model)}`);
   console.log(`Queue: ${objectives.length} goals${resume ? ` (resume, recheck ${seedInFlight?.size ?? 0} logged attempts)` : ''}`);
   console.log(parallelMode ? `Parallel: ${parallel} worktree goals, root ${safeInline(worktreeRoot)}` : 'Parallel: disabled');
@@ -377,6 +428,13 @@ async function main(): Promise<void> {
       ? `Leg 3: ${enabledVerifierCount}/${objectives.length} goals use an independent verifier` +
           (verifierPlan.overrideCount > 0 ? `, verifier-map overrides ${verifierPlan.overrideCount}` : '')
       : `Leg 3: disabled (${safeInline(disabledVerifierReason)})`,
+  );
+  console.log(
+    hookPlan.overrideCount > 0
+      ? `Hooks: per-goal hook-map overrides ${hookPlan.overrideCount}/${objectives.length} goals`
+      : hooks
+        ? 'Hooks: global trusted hooks enabled'
+        : 'Hooks: disabled',
   );
   console.log(
     vision.enabled
@@ -407,6 +465,8 @@ async function main(): Promise<void> {
   // on empty rather than exiting the process), own goal/session stores, then the UNCHANGED runGoal.
   const runOne = async (objective: string, goalId: string, attempt: { index: number; resumed: boolean }): Promise<ParallelGoalRunSummary> => {
     const goalCwd = await goalCwdFor(attempt.index);
+    const goalHooks = await hooksForGoal(attempt.index);
+    const goalHookOverride = hookPlan.hookPathByIndex.has(attempt.index);
     const tools = buildDefaultRegistry();
     tools.register(createBashTool());
     if (visionTool) tools.register(visionTool); // opt-in vision (network -> gate ask / unattended deny)
@@ -455,26 +515,32 @@ async function main(): Promise<void> {
         ? new ShadowGit({ shellPath, cwd: goalCwd, gitDir: join(cwd, 'data', 'shadow', loopId, `g${attempt.index}`) })
         : shadowGit;
 
-    const result = await runGoal(
-      { id: goalId, objective, sessionId: goalId, budget: contract.perGoalBudget, baseline, pinned, resume: resumeState },
-      {
-        model: provider,
-        tools,
-        bus,
-        gate: goalGate,
-        hooks,
-        context: goalContext,
-        store: sessionStore,
-        goalStore,
-        cwd: goalCwd,
-        shellPath,
-        builderSystemPrompt: BUILDER_PROMPT,
-        perRoundMaxTurns: PER_ROUND_MAX_TURNS,
-        checkCommands: DEFAULT_CHECK_COMMANDS,
-        verifierProvider,
-        shadowGit: goalShadowGit,
-      },
-    );
+    await runAdvisoryHook(goalHookOverride ? goalHooks?.sessionStart : undefined);
+    let result;
+    try {
+      result = await runGoal(
+        { id: goalId, objective, sessionId: goalId, budget: contract.perGoalBudget, baseline, pinned, resume: resumeState },
+        {
+          model: provider,
+          tools,
+          bus,
+          gate: goalGate,
+          hooks: goalHooks,
+          context: goalContext,
+          store: sessionStore,
+          goalStore,
+          cwd: goalCwd,
+          shellPath,
+          builderSystemPrompt: BUILDER_PROMPT,
+          perRoundMaxTurns: PER_ROUND_MAX_TURNS,
+          checkCommands: DEFAULT_CHECK_COMMANDS,
+          verifierProvider,
+          shadowGit: goalShadowGit,
+        },
+      );
+    } finally {
+      await runAdvisoryHook(goalHookOverride ? goalHooks?.sessionEnd : undefined);
+    }
     return {
       state: result.state,
       outcome: result.finalVerdict?.outcome,

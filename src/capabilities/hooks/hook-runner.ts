@@ -140,18 +140,22 @@ export function createHookRunner(config: HookConfig, deps: HookRunnerDeps): Hook
  */
 export async function resolveHooks(deps: {
   hooksPath?: string;
-  userHooksPath?: string;
+  userHooksPath?: string | false;
   cwd: string;
   shellPath: string;
   readText?: ReadText;
   realpath?: RealPath;
   signal?: AbortSignal;
 }): Promise<{ hooks?: HookRunner; warning?: string }> {
+  const sources =
+    deps.userHooksPath === false
+      ? [{ label: 'JARVIS_HOOKS', path: deps.hooksPath }]
+      : [
+          { label: 'user-home', path: deps.userHooksPath ?? join(homedir(), '.jarvis', 'hooks.json') },
+          { label: 'JARVIS_HOOKS', path: deps.hooksPath },
+        ];
   const loaded = await loadHookConfigs({
-    sources: [
-      { label: 'user-home', path: deps.userHooksPath ?? join(homedir(), '.jarvis', 'hooks.json') },
-      { label: 'JARVIS_HOOKS', path: deps.hooksPath },
-    ],
+    sources,
     cwd: deps.cwd,
     readText: deps.readText ?? defaultReadText,
     realpath: deps.realpath ?? defaultRealpath,

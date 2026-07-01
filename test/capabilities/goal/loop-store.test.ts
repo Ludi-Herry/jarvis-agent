@@ -110,6 +110,22 @@ describe('FileLoopStore round-trip', () => {
     expect(replay.verifierMapPath).toBe('C:\\Users\\Luis\\.jarvis\\loop-verifiers.json');
   });
 
+  it('replays the trusted hook-map path metadata from loop-created', async () => {
+    const path = join(dir, 'L-hook-map.jsonl');
+    const store = new FileLoopStore(path);
+    await store.writeCreated({
+      id: 'L',
+      contract: CONTRACT,
+      objectives: ['a'],
+      createdAt: 't0',
+      hookMapPath: 'C:\\Users\\Luis\\.jarvis\\loop-hooks.json',
+    });
+
+    const replay = await loadLoop(path);
+
+    expect(replay.hookMapPath).toBe('C:\\Users\\Luis\\.jarvis\\loop-hooks.json');
+  });
+
   it('replays the latest started-without-finished goal as an in-flight resume attempt', async () => {
     const path = join(dir, 'L-inflight.jsonl');
     const store = new FileLoopStore(path);

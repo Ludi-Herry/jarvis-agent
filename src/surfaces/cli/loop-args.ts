@@ -5,6 +5,7 @@ export interface LoopCliArgs {
   noVerifierMap: boolean;
   parallel: number;
   verifierMapPath?: string;
+  hookMapPath?: string;
   worktreeRootPath?: string;
   positional: string[];
 }
@@ -41,6 +42,14 @@ export function parseLoopArgs(argv: string[]): LoopCliArgs {
         throw new Error('--verifier-map requires a path');
       }
       parsed.verifierMapPath = value;
+      continue;
+    }
+    if (arg === '--hook-map') {
+      const value = argv[++i];
+      if (value === undefined || value.startsWith('--') || value.trim() === '') {
+        throw new Error('--hook-map requires a path');
+      }
+      parsed.hookMapPath = value;
       continue;
     }
     if (arg === '--parallel') {

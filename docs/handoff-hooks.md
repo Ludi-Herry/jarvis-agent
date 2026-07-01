@@ -1,6 +1,6 @@
 # Handoff — Hooks 能力（tool-call + lifecycle）
 
-> 状态：Hooks slice-1 + slice-2 已落地：PreToolUse 阻断、PostToolUse 咨询与反馈回灌、PostToolUse result env、每 hook timeout、round/session lifecycle 事件、多来源配置合并。本页记录当前行为、硬不变量、配置语义与剩余 defer。
+> 状态：Hooks slice-1 + slice-2 已落地：PreToolUse 阻断、PostToolUse 咨询与反馈回灌、PostToolUse result env、每 hook timeout、round/session lifecycle 事件、多来源配置合并、loop per-goal hook-map。本页记录当前行为、硬不变量、配置语义与剩余 defer。
 
 ## 是什么
 
@@ -9,7 +9,7 @@
 - **PreToolUse**（执行前，可 fail-closed **阻断**）：gate 放行后跑；任一匹配 hook 退出非零（或超时）→ 该工具调用被拒，原因喂回模型。
 - **PostToolUse**（执行后，**咨询型**）：工具跑完后跑；退出码忽略、抛错吞掉、**不改**结果、**不**阻断（纯副作用 / 可观测性，与 `goal-loop` 的 `snapshotShadow` 同纪律）。
 - **RoundStart / RoundEnd**：每个 `runAgent` model turn 的起止通知。
-- **SessionStart / SessionEnd**：CLI surface 的一次会话边界通知（REPL 进程、单次 goal run、单次 loop 队列 run）。
+- **SessionStart / SessionEnd**：CLI surface 的一次会话边界通知（REPL 进程、单次 goal run、单次 loop 队列 run；loop per-goal hook override 另在单个 goal 外包一层 per-goal SessionStart/End）。
 
 默认 **off**：`~/.jarvis/hooks.json` 不存在且未设置 `JARVIS_HOOKS` 时没有任何 hook，行为与切片前逐字节一致。存在可信来源才启用。
 
@@ -24,7 +24,7 @@ gate.check  →  (deny ⇒ 立即返回，hooks 不被咨询)
             →  PostToolUse hooks (咨询，吞异常，不改结果)
 ```
 
-`AgentContext.hooks` 用**结构型**声明（镜像 `goal-loop` 给 `shadowGit` 的写法），所以 core 层不依赖 capabilities 层。`runGoal` 把 `deps.hooks` 原样透传进每轮的 runAgent ctx（不碰 `decideVerdict` 与验收三腿）。Round 事件在 `runAgent` turn 边界触发；Session 事件在 CLI surface 边界触发。
+`AgentContext.hooks` 用**结构型**声明（镜像 `goal-loop` 给 `shadowGit` 的写法），所以 core 层不依赖 capabilities 层。`runGoal` 把 `deps.hooks` 原样透传进每轮的 runAgent ctx（不碰 `decideVerdict` 与验收三腿）。Round 事件在 `runAgent` turn 边界触发；Session 事件在 CLI surface 边界触发；loop per-goal override 只影响传给该 goal 的 `deps.hooks`。
 
 ## 硬不变量（违反即作废）
 
@@ -65,13 +65,35 @@ gate.check  →  (deny ⇒ 立即返回，hooks 不被咨询)
 
 端到端 smoke：`/tmp/hooks.json`（cwd 外）写 `{"PreToolUse":[{"matcher":"bash","command":"exit 1"}]}`，`JARVIS_HOOKS=/tmp/hooks.json npm run dev`，让模型跑一条 bash → 被 hook 阻断、原因喂回。
 
+## Loop per-goal hook-map
+
+串行 loop 可用 `--hook-map <trusted-json>` 给不同 goal 绑定不同 hook runner。hook-map 本身和每个 `hookPath` 都必须在 cwd 外，经 realpath 规范化后再判定；任何一个落进 cwd 内、不可解析、schema 错误、重复 index 或 index 超出目标队列，都会 fail-closed 终止本次 loop。不会扫描 cwd。
+
+```json
+{
+  "goals": [
+    { "index": 0, "hookPath": "C:\\Users\\Luis\\.jarvis\\hooks-strict.json" },
+    { "index": 2, "hookPath": "C:\\Users\\Luis\\.jarvis\\hooks-observe.json" }
+  ]
+}
+```
+
+语义：
+
+- 未出现在 map 里的 goal 继续使用全局 hooks（`~/.jarvis/hooks.json` + `JARVIS_HOOKS`）。
+- 出现在 map 里的 goal 使用该 `hookPath` 解析出的 hook runner，覆盖全局 hooks，不做合并。
+- per-goal override 的 `SessionStart/SessionEnd` 包住该 goal 的 `runGoal`，仍是 advisory；全局 loop 级 SessionStart/End 仍只在整个 loop 队列边界触发一次。
+- `--parallel` 与任何 hook 配置互斥，包括全局 hooks 和 per-goal hook-map override。
+- fresh loop 会把可信规范化后的 `hookMapPath` 写进 `loop-created`；resume 一律必须显式传 cwd 外 `--hook-map`，没有 per-goal override 也用可信空 map `{"goals":[]}`。如果历史记录带 `hookMapPath`，必须再次传同一个规范化路径，避免 cwd 内 loop log 被篡改后静默换配置。
+
 ## 关键文件
 
 - `src/capabilities/hooks/hook-config.ts` — 类型 + 纯函数 `parseHookConfig` + `loadHookConfigs`（多来源合并 + 每来源 cwd-排除守卫）。
 - `src/capabilities/hooks/hook-runner.ts` — `createHookRunner`（tool-call + lifecycle，注入式 `run` 默认 = `runCommand`）+ `resolveHooks`（可信来源装配）。
+- `src/capabilities/goal/loop-hook-config.ts` — `--hook-map` 的严格 schema、cwd 外 realpath 守卫、resume path 匹配。
 - `src/core/loop/run-agent.ts` — `AgentContext.hooks` + `gatedRun` + RoundStart/RoundEnd 接入。
 - `src/core/tools/run-command.ts` — `RunCommandOptions.extraEnv`（脱敏后叠加，传 hook 上下文）。
-- 装配根：`surfaces/cli/{index,repl,goal-cli,loop-cli}.ts` + `capabilities/goal/goal-loop.ts`（透传 hooks；CLI surface 触发 SessionStart/SessionEnd）。
+- 装配根：`surfaces/cli/{index,repl,goal-cli,loop-cli}.ts` + `surfaces/cli/loop-hooks.ts` + `capabilities/goal/goal-loop.ts`（透传 hooks；CLI surface 触发 SessionStart/SessionEnd）。
 - 测试：`test/capabilities/hooks/{hook-config,hook-runner}.test.ts` + `test/loop/run-agent.test.ts`（hooks slice 1 describe）。
 
 ## Slice-2 进展
