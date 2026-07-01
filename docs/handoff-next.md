@@ -10,6 +10,22 @@
 - **skill 自动沉淀（`propose_skill`）：不做**（投机性、判定偏弱、无证实的复用场景）。下文该节仅作设计存档。
 - **下一步工作**：① **接 vision 进 goal/loop 已完成**（2026-06-30，分支 `feat/vision-goal-loop`，未合并/未 push，四轮 codex 对抗审查 SHIP，625 测试——详见下「vision→goal/loop 接线」；注意最终**只接 builder 侧、裁判不给 vision**，与原文「/verifier」不同，理由见小节）；② 下一步 **Hooks slice-2 / 各切片小尾巴**。
 
+## GUI 就绪盘点（2026-07-01）
+
+CLI 功能已实质收尾（A→E + Hooks slice-1 + slice-2 ①②，646 测试）。GUI（晴天模式外壳，见 memory `ai-presence-intervention-levels`）接入的**三根架构支柱已就位**（day-1 解耦的回报），**不被 CLI 小尾巴（③~⑧）阻塞**：
+
+1. **EventBus**：加 GUI = 加一个 `bus.subscribe`（`repl`/`goal-cli`/`loop-cli` 已各 subscribe → render；`goal-loop`/`loop` 内部 subscribe 挑 usage 计费）。core 不需改。
+2. **注入式 Approver**：`Approver = (req: ApprovalRequest) => Promise<Approval>`（`permission-gate.ts`）**纯接口、不假设 TTY**；审批三件套（`renderApprovalRequest`/`detailOf`/`safeInline`，纯函数）+ `createInteractiveApprover` 是 CLI 实现，GUI 实现自己的 Approver（弹窗）即可复用三件套。
+3. **JSONL 持久化 + load**：`loadSession`/`latestSessionPath`、`loadGoal`、`loadLoop`/`latestLoopPath` —— GUI 读历史会话 / goal / loop 齐全。
+
+**Event 契约覆盖度**（`runtime/event-bus.ts`）：message_delta / tool_call / tool_result / state / usage / final / halt / verdict / goal_state / loop_halt / hook_output —— 主流程渲染够。
+
+**GUI 前唯一的真前置（发现的缺口，均「加事件成员」级小改，不碰 core 逻辑）**：
+- **审批不在事件流**（最值得先定）：Approver 是请求-响应回调，审批发生时**不 emit 事件、不进持久化**（CLI 靠 approver 内 render 显示）。GUI 必须注入自己的 Approver（这是注入式设计意图）；但若要**审批历史可观测 / 可审计**，需加 `approval_request`/`approval_result` 事件（emit 在 gate.check 前后或 approver 包装层）+ 落盘。做不做是 GUI 前的第一个选择。
+- **round / budget 无专门事件**：GUI 想显示「第几轮 / token 预算条」，round 可从 goal_state 推、或随 slice-2 ⑤ round-hook 顺带加 round 事件；budget 剩余需加 budget 事件或查询接口。按 GUI 实际需求补，非阻塞。
+
+**结论**：GUI 可开工。前置 = ①本页 + README 已同步（done）+ ②上面「审批事件」取舍 + 按需补 round/budget 事件。③~⑧（Hooks 剩余 / shadow 确认 / loop defer / vision defer）是**并行 backlog，不阻塞 GUI**；沙箱 #2/#6 是能力天花板（非代码活）。
+
 ## vision→goal/loop 接线（2026-06-30，方向决策 ① 完成）
 
 vision defer ③「未接 goal/loop」补完——**只接 builder 侧，裁判（leg 3）刻意不给 vision**。分支 `feat/vision-goal-loop`（基于 main，**未合并/未 push**），四关卡全绿（625 测试），经**四轮 codex 跨模型对抗审查**（盲批→decoy→截断→bidi 逐层堵死）SHIP。
