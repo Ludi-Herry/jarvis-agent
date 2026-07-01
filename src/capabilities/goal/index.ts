@@ -14,5 +14,7 @@ export * from './goal-loop.js';
 export * from './verifier.js';
 export * from './requirements.js';
 export * from './loop.js';
+export * from './parallel-loop.js';
+export * from './loop-worktree.js';
 export * from './loop-store.js';
 export * from './loop-verifier-config.js';

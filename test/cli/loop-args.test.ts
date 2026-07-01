@@ -8,6 +8,7 @@ describe('parseLoopArgs', () => {
       force: false,
       unattended: false,
       noVerifierMap: false,
+      parallel: 1,
       verifierMapPath: 'C:\\trusted\\loop-verifiers.json',
       positional: ['objectives.txt'],
     });
@@ -19,6 +20,7 @@ describe('parseLoopArgs', () => {
       force: true,
       unattended: true,
       noVerifierMap: false,
+      parallel: 1,
       verifierMapPath: '/trusted/map.json',
       positional: [],
     });
@@ -30,7 +32,20 @@ describe('parseLoopArgs', () => {
       force: false,
       unattended: false,
       noVerifierMap: true,
+      parallel: 1,
       positional: [],
+    });
+  });
+
+  it('parses parallel worktree options', () => {
+    expect(parseLoopArgs(['objectives.txt', '--parallel', '3', '--worktree-root', 'C:\\jarvis\\worktrees'])).toEqual({
+      resume: false,
+      force: false,
+      unattended: false,
+      noVerifierMap: false,
+      parallel: 3,
+      worktreeRootPath: 'C:\\jarvis\\worktrees',
+      positional: ['objectives.txt'],
     });
   });
 
@@ -40,6 +55,16 @@ describe('parseLoopArgs', () => {
 
   it('rejects conflicting verifier map decisions', () => {
     expect(() => parseLoopArgs(['--resume', '--verifier-map', '/trusted/map.json', '--no-verifier-map'])).toThrow(/cannot be combined/);
+  });
+
+  it('rejects invalid parallel values', () => {
+    expect(() => parseLoopArgs(['objectives.txt', '--parallel', '0'])).toThrow(/positive integer/);
+    expect(() => parseLoopArgs(['objectives.txt', '--parallel', '5'])).toThrow(/at most 4/);
+    expect(() => parseLoopArgs(['objectives.txt', '--parallel', '1.5'])).toThrow(/positive integer/);
+  });
+
+  it('rejects parallel resume until replay/worktree recovery is designed', () => {
+    expect(() => parseLoopArgs(['--resume', '--parallel', '2', '--verifier-map', '/trusted/map.json'])).toThrow(/cannot be combined with --resume/);
   });
 
   it('rejects unknown flags so typoed safety config is visible', () => {

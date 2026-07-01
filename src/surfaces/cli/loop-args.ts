@@ -3,9 +3,13 @@ export interface LoopCliArgs {
   force: boolean;
   unattended: boolean;
   noVerifierMap: boolean;
+  parallel: number;
   verifierMapPath?: string;
+  worktreeRootPath?: string;
   positional: string[];
 }
+
+const MAX_PARALLEL = 4;
 
 export function parseLoopArgs(argv: string[]): LoopCliArgs {
   const parsed: LoopCliArgs = {
@@ -13,6 +17,7 @@ export function parseLoopArgs(argv: string[]): LoopCliArgs {
     force: false,
     unattended: false,
     noVerifierMap: false,
+    parallel: 1,
     positional: [],
   };
 
@@ -38,6 +43,20 @@ export function parseLoopArgs(argv: string[]): LoopCliArgs {
       parsed.verifierMapPath = value;
       continue;
     }
+    if (arg === '--parallel') {
+      const value = argv[++i];
+      if (value === undefined || value.startsWith('--')) throw new Error('--parallel requires a positive integer');
+      parsed.parallel = parseParallel(value);
+      continue;
+    }
+    if (arg === '--worktree-root') {
+      const value = argv[++i];
+      if (value === undefined || value.startsWith('--') || value.trim() === '') {
+        throw new Error('--worktree-root requires a path');
+      }
+      parsed.worktreeRootPath = value;
+      continue;
+    }
     if (arg === '--no-verifier-map') {
       parsed.noVerifierMap = true;
       continue;
@@ -49,6 +68,16 @@ export function parseLoopArgs(argv: string[]): LoopCliArgs {
   if (parsed.verifierMapPath !== undefined && parsed.noVerifierMap) {
     throw new Error('--verifier-map and --no-verifier-map cannot be combined');
   }
+  if (parsed.resume && parsed.parallel > 1) {
+    throw new Error('--parallel cannot be combined with --resume yet');
+  }
 
+  return parsed;
+}
+
+function parseParallel(value: string): number {
+  if (!/^[1-9]\d*$/.test(value)) throw new Error('--parallel requires a positive integer');
+  const parsed = Number(value);
+  if (parsed > MAX_PARALLEL) throw new Error(`--parallel must be at most ${MAX_PARALLEL}`);
   return parsed;
 }

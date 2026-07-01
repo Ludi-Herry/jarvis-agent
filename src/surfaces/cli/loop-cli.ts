@@ -36,7 +36,8 @@
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { readFile, realpath } from 'node:fs/promises';
-import { join } from 'node:path';
+import { homedir } from 'node:os';
+import { basename, join } from 'node:path';
 import { createInterface, type Interface } from 'node:readline';
 import {
   DefaultContextManager,
@@ -60,17 +61,21 @@ import {
   FileLoopStore,
   ShadowGit,
   assertResumeVerifierMapMatches,
+  assertWorktreeRootOutsideCwd,
   buildLoopVerifierPlan,
+  createGoalWorktree,
   derivePinnedRequirements,
   latestLoopPath,
   loadLoopVerifierMap,
   loadLoop,
+  loopWorktreeRoot,
   resolveHooks,
   runGoal,
   runLoop,
-  type GoalRunSummary,
+  runParallelLoop,
   type LoadedLoopVerifierMap,
   type LoopContract,
+  type ParallelGoalRunSummary,
   type LoopVerifierDecision,
   type PinnedRequirement,
   type TestBaseline,
@@ -81,6 +86,7 @@ import type { ModelProvider } from '../../core/index.js';
 import { safeInline } from './approval.js';
 import { createInteractiveApprover, readlineApproverIo } from './interactive-approver.js';
 import { parseLoopArgs } from './loop-args.js';
+import { assertParallelHooksCompatible } from './loop-guards.js';
 import { loadLoopGoalResume } from './loop-resume.js';
 import { initialRenderState, renderEvent } from './render.js';
 
@@ -127,7 +133,8 @@ async function main(): Promise<void> {
     process.exitCode = 1;
     return;
   }
-  const { resume, force, unattended, noVerifierMap, positional, verifierMapPath } = args;
+  const { resume, force, unattended, noVerifierMap, positional, verifierMapPath, parallel, worktreeRootPath } = args;
+  const parallelMode = parallel > 1;
   if (noVerifierMap) {
     console.error('--no-verifier-map is unsafe for resume; use --verifier-map <trusted empty map>');
     process.exitCode = 1;
@@ -282,6 +289,17 @@ async function main(): Promise<void> {
   };
 
   const loopStore = new FileLoopStore(loopPath);
+  const worktreeBaseRoot = worktreeRootPath ?? join(homedir(), '.jarvis', 'worktrees', basename(cwd));
+  const worktreeRoot = loopWorktreeRoot(worktreeBaseRoot, loopId);
+  if (parallelMode) {
+    try {
+      await assertWorktreeRootOutsideCwd(worktreeBaseRoot, cwd);
+    } catch (err) {
+      console.error(`[worktree] ${err instanceof Error ? err.message : String(err)}`);
+      process.exitCode = 1;
+      return;
+    }
+  }
   if (!resume) {
     await loopStore.writeCreated({ id: loopId, contract, objectives, createdAt: new Date().toISOString(), verifierMapPath: verifierMap?.path });
   }
@@ -310,6 +328,7 @@ async function main(): Promise<void> {
   }
   // --unattended means no approver, so the gate fail-closes every `ask` to deny.
   const gate = new DefaultPermissionGate({ approver });
+  const parallelApprover = parallelMode ? serializeApprover(approver) : approver;
   const context = new DefaultContextManager({
     summarizer: provider,
     maxContextTokens: provider.capability.maxContextTokens,
@@ -321,7 +340,8 @@ async function main(): Promise<void> {
   // audits/rolls back across the queue. Off by default (a run never silently creates the shadow repo);
   // best-effort when on (snapshot failures never touch verification). Constructed once and shared by every
   // runGoal: it is keyed only on cwd/gitDir and stateless between snapshots.
-  const shadowGit = process.env.JARVIS_SHADOW_GIT
+  const shadowGitEnabled = process.env.JARVIS_SHADOW_GIT !== undefined;
+  const shadowGit = shadowGitEnabled && !parallelMode
     ? new ShadowGit({ shellPath, cwd, gitDir: join(cwd, 'data', 'shadow') })
     : undefined;
 
@@ -338,9 +358,17 @@ async function main(): Promise<void> {
   // fail-closed guardrail with no human in the loop.
   const { hooks, warning: hookWarning } = await resolveHooks({ hooksPath: JARVIS_HOOKS_LAUNCH, cwd, shellPath });
   if (hookWarning) console.error(`[hooks] ${hookWarning}`);
+  try {
+    assertParallelHooksCompatible(parallelMode, hooks !== undefined);
+  } catch (err) {
+    console.error(`[hooks] ${err instanceof Error ? err.message : String(err)}`);
+    process.exitCode = 1;
+    return;
+  }
 
   console.log(`Jarvis-Agent loop mode - ${safeInline(config.model)}`);
   console.log(`Queue: ${objectives.length} goals${resume ? ` (resume, recheck ${seedInFlight?.size ?? 0} logged attempts)` : ''}`);
+  console.log(parallelMode ? `Parallel: ${parallel} worktree goals, root ${safeInline(worktreeRoot)}` : 'Parallel: disabled');
   console.log(`Approval: ${unattended ? 'unattended (fail-closed)' : 'attended (interactive)'}`);
   const enabledVerifierCount = verifierPlan.decisions.filter((decision) => decision.enabled).length;
   const disabledVerifierReason = verifier.enabled ? 'verifier plan has no enabled objectives' : verifier.reason;
@@ -356,22 +384,36 @@ async function main(): Promise<void> {
       : `vision: disabled (${vision.reason})`,
   );
   console.log(
-    shadowGit
-      ? 'shadow-git: enabled, snapshots go to data/shadow; audit/restore with npm run shadow -- log / restore <sha>\n'
+    shadowGitEnabled
+      ? parallelMode
+        ? `shadow-git: enabled per goal under data/shadow/${safeInline(loopId)}/gN; audit/restore each branch separately\n`
+        : 'shadow-git: enabled, snapshots go to data/shadow; audit/restore with npm run shadow -- log / restore <sha>\n'
       : 'shadow-git: disabled; set JARVIS_SHADOW_GIT=1 to enable audit/restore\n',
   );
+
+  const worktrees = new Map<number, string>();
+  const goalCwdFor = async (index: number): Promise<string> => {
+    if (!parallelMode) return cwd;
+    const existing = worktrees.get(index);
+    if (existing !== undefined) return existing;
+    const path = await createGoalWorktree({ shellPath, cwd, root: worktreeBaseRoot, loopId, index });
+    worktrees.set(index, path);
+    console.log(`[worktree] goal ${index + 1}/${objectives.length}: ${safeInline(path)}`);
+    return path;
+  };
 
   // runOne is the SOLE seam to runGoal. Per goal: NEW tools registry (registry.register throws on a
   // duplicate update_goal, so it can't be shared), fresh baseline, derived pinned (block-and-continue
   // on empty rather than exiting the process), own goal/session stores, then the UNCHANGED runGoal.
-  const runOne = async (objective: string, goalId: string, attempt: { index: number; resumed: boolean }): Promise<GoalRunSummary> => {
+  const runOne = async (objective: string, goalId: string, attempt: { index: number; resumed: boolean }): Promise<ParallelGoalRunSummary> => {
+    const goalCwd = await goalCwdFor(attempt.index);
     const tools = buildDefaultRegistry();
     tools.register(createBashTool());
     if (visionTool) tools.register(visionTool); // opt-in vision (network -> gate ask / unattended deny)
 
     const goalPath = join(cwd, 'data', 'goals', `${goalId}.jsonl`);
     const sessionPath = join(cwd, 'data', 'sessions', `${goalId}.jsonl`);
-    const loadedResume = attempt.resumed ? await loadLoopGoalResume(goalPath, sessionPath, goalId, cwd) : undefined;
+    const loadedResume = attempt.resumed ? await loadLoopGoalResume(goalPath, sessionPath, goalId, goalCwd) : undefined;
     const resumeState = loadedResume?.resume;
     const verifierDecision = verifierPlan.decisions[attempt.index];
     if (verifierDecision === undefined) {
@@ -394,12 +436,24 @@ async function main(): Promise<void> {
       return { state: 'blocked', rounds: resumeState.rounds.length, tokens: sumRoundTokens(resumeState.rounds) };
     }
 
-    const baseline = await snapshotBaseline(shellPath, cwd);
+    const baseline = await snapshotBaseline(shellPath, goalCwd);
     const goalStore = new FileGoalStore(goalPath);
     const sessionStore = new FileSessionStore(sessionPath, loadedResume?.initialCursor ?? 0);
     if (!attempt.resumed) {
-      await sessionStore.writeHeader({ id: goalId, model: config.model, cwd, startedAt: new Date().toISOString() });
+      await sessionStore.writeHeader({ id: goalId, model: config.model, cwd: goalCwd, startedAt: new Date().toISOString() });
     }
+    const goalGate = parallelMode ? new DefaultPermissionGate({ approver: parallelApprover }) : gate;
+    const goalContext = parallelMode
+      ? new DefaultContextManager({
+          summarizer: provider,
+          maxContextTokens: provider.capability.maxContextTokens,
+          maxOutputTokens: OUTPUT_RESERVE_TOKENS,
+        })
+      : context;
+    const goalShadowGit =
+      shadowGitEnabled && parallelMode
+        ? new ShadowGit({ shellPath, cwd: goalCwd, gitDir: join(cwd, 'data', 'shadow', loopId, `g${attempt.index}`) })
+        : shadowGit;
 
     const result = await runGoal(
       { id: goalId, objective, sessionId: goalId, budget: contract.perGoalBudget, baseline, pinned, resume: resumeState },
@@ -407,18 +461,18 @@ async function main(): Promise<void> {
         model: provider,
         tools,
         bus,
-        gate,
+        gate: goalGate,
         hooks,
-        context,
+        context: goalContext,
         store: sessionStore,
         goalStore,
-        cwd,
+        cwd: goalCwd,
         shellPath,
         builderSystemPrompt: BUILDER_PROMPT,
         perRoundMaxTurns: PER_ROUND_MAX_TURNS,
         checkCommands: DEFAULT_CHECK_COMMANDS,
         verifierProvider,
-        shadowGit,
+        shadowGit: goalShadowGit,
       },
     );
     return {
@@ -435,23 +489,24 @@ async function main(): Promise<void> {
   // this the process would hang after the fatal error instead of exiting with the intended code.
   await runAdvisoryHook(hooks?.sessionStart);
   try {
-    const result = await runLoop(
-      { id: loopId, objectives, contract },
-      {
-        bus,
-        loopStore,
-        runOne,
-        finished: seedFinished,
-        outcomes: seedOutcomes,
-        inFlight: seedInFlight,
-        consecutiveBlocked: seedConsecutiveBlocked,
-        cumulativeTokens: seedCumulativeTokens,
-      },
-    );
+    const loopDeps = {
+      bus,
+      loopStore,
+      runOne,
+      finished: seedFinished,
+      outcomes: seedOutcomes,
+      inFlight: seedInFlight,
+      consecutiveBlocked: seedConsecutiveBlocked,
+      cumulativeTokens: seedCumulativeTokens,
+    };
+    const result = parallelMode
+      ? await runParallelLoop({ id: loopId, objectives, contract }, { ...loopDeps, maxParallel: parallel })
+      : await runLoop({ id: loopId, objectives, contract }, loopDeps);
     console.log(
       `\n=== loop ${result.reason} - this run started=${result.started} completed=${result.completed} blocked=${result.blocked} ` +
         `- cumulative finished=${result.goalsFinished}/${objectives.length} tokens=${result.cumulativeTokens} ===`,
     );
+    if (parallelMode) console.log(`Worktrees kept for inspection: ${safeInline(worktreeRoot)}`);
     if (NEEDS_HUMAN.has(result.reason)) process.exitCode = 1;
   } finally {
     await runAdvisoryHook(hooks?.sessionEnd);
@@ -530,4 +585,17 @@ function replayVerifierHealthTripped(
     if (window.filter(Boolean).length >= threshold) return true;
   }
   return false;
+}
+
+function serializeApprover(approver: Approver | undefined): Approver | undefined {
+  if (approver === undefined) return undefined;
+  let tail = Promise.resolve();
+  return async (req) => {
+    const run = tail.then(() => approver(req));
+    tail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  };
 }
