@@ -262,9 +262,9 @@ async function main(): Promise<void> {
   const vision = resolveVisionConfig(process.env, config);
   const visionTool = vision.enabled ? createVisionTool(createVisionComplete(vision.config)) : undefined;
 
-  // Hooks (slice 1): opt-in via JARVIS_HOOKS (TRUSTED path). Built once, shared across the queue.
-  // In-repo / malformed config is refused with a warning. Especially relevant unattended — a
-  // PreToolUse hook is a fail-closed guardrail with no human in the loop.
+  // Hooks: trusted sources only — user-home default first, then launch-captured JARVIS_HOOKS.
+  // Built once and shared across the queue. Especially relevant unattended — a PreToolUse hook is a
+  // fail-closed guardrail with no human in the loop.
   const { hooks, warning: hookWarning } = await resolveHooks({ hooksPath: JARVIS_HOOKS_LAUNCH, cwd, shellPath });
   if (hookWarning) console.error(`[hooks] ${hookWarning}`);
 
@@ -334,6 +334,7 @@ async function main(): Promise<void> {
   // try/finally so a thrown goal run (provider/network/disk error from inside runOne→runGoal) still
   // CLOSES the readline — an open interface keeps stdin referenced and the event loop alive, so without
   // this the process would hang after the fatal error instead of exiting with the intended code.
+  await runAdvisoryHook(hooks?.sessionStart);
   try {
     const result = await runLoop(
       { id: loopId, objectives, contract },
@@ -353,6 +354,7 @@ async function main(): Promise<void> {
     );
     if (NEEDS_HUMAN.has(result.reason)) process.exitCode = 1;
   } finally {
+    await runAdvisoryHook(hooks?.sessionEnd);
     rl?.close();
   }
 }
@@ -384,3 +386,11 @@ main().catch((err: unknown) => {
   console.error('\n[loop] fatal:', err instanceof Error ? err.message : err);
   process.exitCode = 1;
 });
+
+async function runAdvisoryHook(fn: (() => Promise<void>) | undefined): Promise<void> {
+  try {
+    await fn?.();
+  } catch {
+    // session hooks are notification-only
+  }
+}

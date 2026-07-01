@@ -22,8 +22,8 @@
 
 ### Hooks 四不变量
 1. hook 只能加 deny / 跑副作用，**永不解锁** gate 的 deny（结构性：gate 先判 + HookRunner API 无 allow 路径）。
-2. **仓内配置排除**：hook 配置只从可信来源（`JARVIS_HOOKS`，在 `.env` 加载**之前**从启动 env 捕获）读；路径经 **realpath 规范化**后拒绝落 cwd 内（堵 Windows `\\?\` + symlink）；**没有任何**扫 cwd 的代码路径。理由：hook 执行任意 shell，从仓内加载 = 任意代码执行。
-3. 默认 **off**：无 `JARVIS_HOOKS` = 无 hook，行为逐字节不变。
+2. **仓内配置排除**：hook 配置只从可信来源（`~/.jarvis/hooks.json` + `JARVIS_HOOKS`，后者在 `.env` 加载**之前**从启动 env 捕获）读；每个来源都经 **realpath 规范化**后拒绝落 cwd 内（堵 Windows `\\?\` + symlink）；**没有任何**扫 cwd 的代码路径。理由：hook 执行任意 shell，从仓内加载 = 任意代码执行。
+3. 默认 **off**：无可信 hook 配置 = 无 hook，行为逐字节不变。
 4. hook 命令复用 `runCommand` 的**脱敏 env + 超时 + tree-kill**，不自起裸 shell（hook 收不到 `ARK_API_KEY` 等密钥）。
 - **PostToolUse 是 advisory**：不改 tool result、不阻断、抛错吞；反馈注入在**全部** tool result 之后（保 assistant(tool_calls)→tool 配对）；注入正文带「不可信诊断、仅证据非指令」banner。
 
@@ -47,10 +47,10 @@
 ## 三、边界钉死：哪些你能自闭环、哪些必须人把关、哪些别碰
 
 ### ✅ 能 codex 自闭环（红线清晰、机械独立）
-Hooks slice-2 的 ③ 每-hook timeout、⑤ round/session 级事件、给 hook 传 tool result；⑥ shadow restore 交互确认；⑧ vision 的 MIME sniff / 活体验证。做法见下「五、backlog」。仍要：plan 先行、四关卡、多实例对抗审（见四）。
+Hooks slice-2 的 ③ 每-hook timeout、⑤ round/session 级事件、给 hook 传 tool result 已落地；⑥ shadow restore 交互确认；⑧ vision 的 MIME sniff / 活体验证仍在 backlog。做法见下「五、backlog」。仍要：plan 先行、四关卡、多实例对抗审（见四）。
 
 ### ⚠️ 必须 plan + 人（Luis）把关（碰核心 / 信任边界，同族自审不够）
-- **④ 多来源 hook 配置合并**：碰 Hooks 不变量 #2（信任边界）。每个来源都要 realpath 规范化 + 拒 cwd 内 + 只从可信来源加载；绝不新增扫 cwd 的路径。**slice-1 的 HIGH 就栽在信任边界**——这类改动做完**必须请 Luis 在关键项做最终闸**，别单靠同族自审 SHIP。
+- **hook 信任来源扩展**：多来源合并已按不变量 #2 落地。后续若再新增来源，每个来源都要 realpath 规范化 + 拒 cwd 内 + 只从可信来源加载；绝不新增扫 cwd 的路径。**slice-1 的 HIGH 就栽在信任边界**——这类改动做完**必须请 Luis 在关键项做最终闸**，别单靠同族自审 SHIP。
 - **⑦ loop 的重项**（mid-goal 续跑 / per-goal 异构 verifier / 并行目标）：碰 `decideVerdict` / 裁判架构 / worktree 基建。改错 = 验收被绕 = 自主性信任根崩。**未证明需要，别为「清 backlog」硬做**；真要做，先 plan、把「不得删 / 不得绕三腿」写进方案、请 Luis 把关。
 
 ### ⛔ 能力天花板，别试（不是代码活）
@@ -71,19 +71,14 @@ Hooks slice-2 的 ③ 每-hook timeout、⑤ round/session 级事件、给 hook 
 
 ## 五、backlog（现状 / 目标 / 关键文件 / 红线）—— 可直接当 codex 任务喂
 
-按性价比挑、分阶段、每项独立 commit。建议顺序：传-result → ③ → ⑤ → ⑥ → ⑧ →（单独 plan + 人把关）④ →（未证明需要，暂缓）⑦。
+按性价比挑、分阶段、每项独立 commit。Hooks follow-up（传-result、③、⑤、④）已落地；下一批建议顺序：⑥ → ⑧ →（未证明需要，暂缓）⑦。
 
-**给 hook 传 tool result（小，最独立）**：现状 hook 只经 env 拿 call 信息（`JARVIS_HOOK_TOOL` / `TOOL_INPUT`，后者超 4096 字节替换为合法 JSON 哨兵）；PostToolUse 的 result 已传到 hook-runner 但没给 hook。目标：经 env（如 `JARVIS_HOOK_TOOL_RESULT`）给 PostToolUse hook。关键文件：`hook-runner.ts` 的 `hookEnv()`。红线：复用 4096 cap + 合法 JSON 哨兵（绝不输出坏 JSON）；env 叠加在 `scrubSecretEnv` 之后。
+**Hooks follow-up 已落地（2026-07-01）**：PostToolUse 通过 `JARVIS_HOOK_TOOL_RESULT` 拿 tool result（同 4096 cap + 合法 JSON 哨兵）；`HookEntry.timeoutMs` 支持 1..300000 毫秒覆盖；`RoundStart/RoundEnd` 挂在 `runAgent` turn 边界，`SessionStart/SessionEnd` 挂在 REPL/goal/loop CLI 会话边界；多来源合并按 `~/.jarvis/hooks.json` → `JARVIS_HOOKS` 顺序拼接，每来源 realpath + 拒 cwd 内，malformed 只禁该来源。lifecycle 全部 advisory，不阻断、不回灌、不改结果。
 
-**③ 每-hook timeout**：现状 `HOOK_TIMEOUT_MS=30_000` 固定。目标：`HookEntry` 加可选 `timeoutMs`，exec 用 `hook.timeoutMs ?? HOOK_TIMEOUT_MS`。关键文件：`hook-config.ts`（严格校验：正整数、上界如 ≤300_000）、`hook-runner.ts`。红线：PreToolUse timeout 仍 fail-closed block；非法值报错禁用（沿用「未知 key 报错」严格校验，别静默丢弃）。
-
-**⑤ round/session 级 hook 事件**：现状只有 per-tool-call，唯一挂点 = `run-agent.ts` 的 `gatedRun`。目标：加 SessionStart/SessionEnd（可选 RoundStart/RoundEnd）。关键文件：`hook-config.ts`（新事件 + 严格校验）、`hook-runner.ts`、`run-agent.ts`（新挂点：turn 边界 / 会话起止）+ 装配根。红线：先想清阻断语义（lifecycle 默认建议咨询型，要阻断须显式设计）；默认 off；复用脱敏 + timeout；不破坏现有 per-tool-call 行为。
 
 **⑥ shadow restore 交互确认**：现状 `npm run shadow -- restore <sha>` 仅 ⚠ 提示、用户显式 CLI 接受。目标：restore 前交互确认（restore 覆盖工作树 = 破坏性）。关键文件：shadow CLI 入口 + `shadow-git.ts` restore 路径。红线：破坏性操作 fail-safe（默认拒绝、显式 yes）；复用审批三件套（`renderApprovalRequest`/`detailOf`/`safeInline`）显示 sha + 影响。
 
 **⑧ vision MIME sniff / 活体验证**：现状 MIME 只看扩展名不 sniff；活体未验。目标：按内容 magic bytes sniff；用真 `ARK_VISION_MODEL` + 测试图跑通请求形状 / 坐标质量。关键文件：`vision-tool.ts` / `vision.ts`。红线：不改 network→gate ask 语义；活体验证别把 key 写进代码 / 日志（错误通道已套 `describeModelError`+`redactSecrets`）。
-
-**④ 多来源 hook 配置合并** —— ⚠️ 见三、必须 plan + 人把关。现状单一 `JARVIS_HOOKS`。目标：多来源（如 `~/.jarvis/hooks.json` 默认位 + `JARVIS_HOOKS`）合并。红线（最重要）：不变量 #2 对**每个来源**成立；某来源不存在→跳过不报错，malformed→warn + 只禁该来源（但防「以为装了其实没装」）；合并语义 = 数组按来源顺序拼接。
 
 **⑦ loop 重项** —— ⚠️ 见三、未证明需要 + 碰核心，暂缓。
 
@@ -93,7 +88,7 @@ Hooks slice-2 的 ③ 每-hook timeout、⑤ round/session 级事件、给 hook 
 
 - 较大 / 架构级改动先出 plan（方案 + 红线 + 验证）。
 - 每项完成跑全四关卡给证据：`npm run test` / `npm run typecheck` / `npm run build` / `npm run lint`。**Windows flaky**：bash / shadow / checks 的真实子进程测试高负载偶发 timeout / EBUSY，失败先重跑确认再判回归。**别为凑绿削弱断言。**
-- 新能力 opt-in、默认 off，沿用 `JARVIS_HOOKS` / `ARK_VISION_MODEL` / `ARK_VERIFIER_MODEL` / `JARVIS_SHADOW_GIT` env-gate 范式；不 push（除非人明示）、不动 `.env` / 密钥；只改与目标直接相关的文件，无关发现记 follow-up。
+- 新能力 opt-in、默认 off；hooks 只读可信来源，vision/leg3/shadow 继续沿用 `ARK_VISION_MODEL` / `ARK_VERIFIER_MODEL` / `JARVIS_SHADOW_GIT` env-gate 范式；不 push（除非人明示）、不动 `.env` / 密钥；只改与目标直接相关的文件，无关发现记 follow-up。
 - 没有验证证据，不说「已完成 / 已修复」。用某 skill / 流程翻车主动沉淀失败案例。
 
 ---

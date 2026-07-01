@@ -109,6 +109,38 @@ describe('startRepl', () => {
     expect(text).toContain('› '); // prompt was shown
   });
 
+  it('runs SessionStart/SessionEnd once for the whole REPL session', async () => {
+    const tools = new InMemoryToolRegistry();
+    const { provider } = fakeModel([{ text: 'one' }, { text: 'two' }]);
+    const out = sink();
+    const calls: string[] = [];
+
+    await startRepl({
+      model: provider,
+      tools,
+      cwd: dir,
+      modelName: 'fake-model',
+      systemPrompt: 'sys',
+      maxTurns: 5,
+      input: inputOf(['hello', 'again', '/exit']),
+      output: out.stream,
+      hooks: {
+        preToolUse: async () => ({ blocked: false, reason: '' }),
+        postToolUse: async () => undefined,
+        sessionStart: async () => {
+          calls.push('session-start');
+        },
+        sessionEnd: async () => {
+          calls.push('session-end');
+        },
+        roundStart: async () => undefined,
+        roundEnd: async () => undefined,
+      },
+    });
+
+    expect(calls).toEqual(['session-start', 'session-end']);
+  });
+
   it('renders a tool call and its result inline', async () => {
     await writeFile(join(dir, 'fact.txt'), 'sky is teal', 'utf8');
     const tools = new InMemoryToolRegistry();

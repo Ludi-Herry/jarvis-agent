@@ -5,14 +5,14 @@
 
 ## 方向决策（2026-07-01，用户拍板）
 
-- **Hooks slice 1 已落地且已在 main**：PreToolUse 阻断 + PostToolUse 咨询（commit `e28c52e`+`8f162de`，已 ff 合进 main——main 与 `feat/hooks` 同指 `8f162de`、diff 为空；**未 push**）。616 测试 / 四关卡全绿，经 codex 双 lens 对抗审查加固。详见 `docs/handoff-hooks.md`、memory `hooks-slice-1`。
+- **Hooks 已扩到 slice-2 follow-up**：PreToolUse 阻断、PostToolUse 咨询与反馈回灌、result env、每-hook timeout、round/session lifecycle、多来源合并均已落地。详见 `docs/handoff-hooks.md`。
 - **沙箱：跳过**。不做沙箱前置调研，也不做被沙箱卡住的两件（#2 客观路由 / #6 裁判 exec）。当前 `cannotVerify→park` / `fail-closed deny` 接受为**正确的能力天花板**（自主性封顶在「没人就拒/挂起」，attended 全好用）。将来真要无人值守跑危险/运行态操作，再回头开沙箱。下文「第一类」整节据此**暂不推进**。
 - **skill 自动沉淀（`propose_skill`）：不做**（投机性、判定偏弱、无证实的复用场景）。下文该节仅作设计存档。
-- **下一步工作**：① **接 vision 进 goal/loop 已完成**（2026-06-30，分支 `feat/vision-goal-loop`，未合并/未 push，四轮 codex 对抗审查 SHIP，625 测试——详见下「vision→goal/loop 接线」；注意最终**只接 builder 侧、裁判不给 vision**，与原文「/verifier」不同，理由见小节）；② 下一步 **Hooks slice-2 / 各切片小尾巴**。
+- **下一步工作**：① **接 vision 进 goal/loop 已完成**（2026-06-30，分支 `feat/vision-goal-loop`，未合并/未 push，四轮 codex 对抗审查 SHIP，625 测试——详见下「vision→goal/loop 接线」；注意最终**只接 builder 侧、裁判不给 vision**，与原文「/verifier」不同，理由见小节）；② 下一步转向各切片小尾巴（shadow restore 确认、vision MIME sniff / 活体验证、loop 重项另审）。
 
 ## GUI 就绪盘点（2026-07-01）
 
-CLI 功能已实质收尾（A→E + Hooks slice-1 + slice-2 ①②，646 测试）。GUI（晴天模式外壳，见 memory `ai-presence-intervention-levels`）接入的**三根架构支柱已就位**（day-1 解耦的回报），**不被 CLI 小尾巴（③~⑧）阻塞**：
+CLI 功能已实质收尾（A→E + Hooks slice-1/slice-2 follow-up）。GUI（晴天模式外壳，见 memory `ai-presence-intervention-levels`）接入的**三根架构支柱已就位**（day-1 解耦的回报），**不被剩余 CLI 小尾巴阻塞**：
 
 1. **EventBus**：加 GUI = 加一个 `bus.subscribe`（`repl`/`goal-cli`/`loop-cli` 已各 subscribe → render；`goal-loop`/`loop` 内部 subscribe 挑 usage 计费）。core 不需改。
 2. **注入式 Approver**：`Approver = (req: ApprovalRequest) => Promise<Approval>`（`permission-gate.ts`）**纯接口、不假设 TTY**；审批三件套（`renderApprovalRequest`/`detailOf`/`safeInline`，纯函数）+ `createInteractiveApprover` 是 CLI 实现，GUI 实现自己的 Approver（弹窗）即可复用三件套。
@@ -83,7 +83,7 @@ goal 完成验收 = **确定性三腿（canonical 重跑 + 篡改检测 + held-o
 
 ### 未起 / 移交
 
-- **Hooks slice 1：已落地**（`feat/hooks` `e28c52e`，待合 main）——PreToolUse 阻断 + PostToolUse 咨询，挂点 runAgent `gatedRun`，opt-in `JARVIS_HOOKS`，见 `docs/handoff-hooks.md`。**slice-2 defer**：round/session 级事件、PostToolUse 反馈进对话、每-hook timeout、多来源配置合并。
+- **Hooks：已落地**——PreToolUse 阻断 + PostToolUse 咨询/反馈回灌 + result env + per-hook timeout + round/session lifecycle + 多来源配置合并，见 `docs/handoff-hooks.md`。剩余 defer：PostToolUse 输出不能阻断/改判；无人值守 bash 自治等 OS 沙箱。
 - **skill 自动沉淀**：设计已定，**2026-07-01 决定不做**（见「方向决策」）——下节仅设计存档。
 
 ## skill 自动沉淀（设计已定，判定偏弱 → 本会话按用户原则未实现）

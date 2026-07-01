@@ -81,9 +81,9 @@ export interface GoalRunDeps {
   tools: ToolRegistry;
   bus: EventBus;
   gate?: PermissionGate;
-  /** Optional tool-call hooks (Hooks slice 1). Forwarded verbatim into each round's runAgent ctx —
-   *  PreToolUse can fail-closed block a gate-allowed call, PostToolUse is advisory. Off the verdict
-   *  path entirely (the verifier legs are unaffected). Absent → no hooks. */
+  /** Optional hooks. Forwarded verbatim into each round's runAgent ctx — PreToolUse can fail-closed
+   *  block a gate-allowed call; PostToolUse and Round hooks are advisory. Off the verdict path
+   *  entirely (the verifier legs are unaffected). Absent → no hooks. */
   hooks?: HookRunner;
   context?: ContextManager;
   /** Builder conversation log (runAgent persists messages here). */

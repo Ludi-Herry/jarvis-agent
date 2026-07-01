@@ -1,21 +1,23 @@
 /**
- * Hook config — load and parse the user's tool-call hooks (Hooks slice 1).
+ * Hook config — load and parse trusted hook sources.
  *
- * Two events: PreToolUse (runs BEFORE a tool, can fail-closed BLOCK it) and PostToolUse (runs
- * AFTER, advisory side-effect only). The runtime (hook-runner.ts) executes a matched hook's
- * `command` via the hardened {@link runCommand}; this file only loads and validates the config.
+ * Tool-call events keep the original Hooks slice-1 semantics: PreToolUse runs BEFORE a tool and can
+ * fail-closed BLOCK it; PostToolUse runs AFTER and is advisory. Lifecycle events
+ * (RoundStart/RoundEnd/SessionStart/SessionEnd) are notification-only. The runtime
+ * (hook-runner.ts) executes a matched hook's `command` via the hardened {@link runCommand}; this file
+ * only loads and validates config.
  *
  * The trust boundary is the OPPOSITE of B5 rules and is the whole reason hooks are gated tighter:
  *  - **Rules** can only ADD deny, so loading them from the (untrusted) repo under cwd is safe —
  *    that's why the rule-resolver scans cwd (see surfaces/cli/index.ts).
  *  - **Hooks EXECUTE arbitrary shell.** Loading a hook command from the repo == arbitrary code
  *    execution the moment the agent works on an untrusted repo — the same threat that killed the
- *    bash allow-list Path A (memory restore-bash-session-allow). So hook config is read ONLY from a
- *    trusted, launch-controlled source ({@link loadHookConfig}'s injected path, from `JARVIS_HOOKS`),
- *    and a path resolving INSIDE cwd is REFUSED. There is no code path that scans cwd for hooks.
+ *    bash allow-list Path A (memory restore-bash-session-allow). So hook config is read ONLY from
+ *    trusted sources (currently the user-home default file plus launch-captured `JARVIS_HOOKS`), and
+ *    every source resolving INSIDE cwd is REFUSED. There is no code path that scans cwd for hooks.
  *
  * Loading discipline mirrors the rule-resolver: I/O is injected (`readText`) so parsing stays pure
- * and unit-testable, and absence of config means hooks are simply OFF (opt-in, like vision/leg3).
+ * and unit-testable, and absence of trusted config means hooks are simply OFF.
  * Format is JSON (a hook entry is structurally richer than an allow/deny string, which the zero-dep
  * frontmatter parser can't express), so {@link parseHookConfig} uses `JSON.parse`.
  */
@@ -26,8 +28,10 @@ import type { ReadText } from '../rules/index.js';
  *  resolved (missing/unreadable). Injected so the containment check stays unit-testable. */
 export type RealPath = (path: string) => Promise<string | null>;
 
-/** The two tool-call lifecycle events this slice supports. */
-export type HookEvent = 'PreToolUse' | 'PostToolUse';
+/** Hook lifecycle events. Tool events keep their original semantics; lifecycle events are advisory. */
+export type HookEvent = 'PreToolUse' | 'PostToolUse' | 'RoundStart' | 'RoundEnd' | 'SessionStart' | 'SessionEnd';
+
+const HOOK_EVENTS: HookEvent[] = ['PreToolUse', 'PostToolUse', 'RoundStart', 'RoundEnd', 'SessionStart', 'SessionEnd'];
 
 /** One configured hook: a tool-name matcher + the shell command to run. */
 export interface HookEntry {
@@ -35,12 +39,18 @@ export interface HookEntry {
   matcher: string;
   /** The shell command to run (non-empty), executed via the hardened {@link runCommand}. */
   command: string;
+  /** Optional per-hook wall-clock timeout override in milliseconds. */
+  timeoutMs?: number;
 }
 
 /** The parsed hook config: ordered entries per event (empty arrays when none configured). */
 export interface HookConfig {
   PreToolUse: HookEntry[];
   PostToolUse: HookEntry[];
+  RoundStart: HookEntry[];
+  RoundEnd: HookEntry[];
+  SessionStart: HookEntry[];
+  SessionEnd: HookEntry[];
 }
 
 /** What {@link loadHookConfig} returns: a config (when one was loaded) and/or a warning to surface.
@@ -51,8 +61,14 @@ export interface LoadHookResult {
   warning?: string;
 }
 
+/** One trusted hook-config source. `path` undefined/blank means absent. */
+export interface HookConfigSource {
+  label: string;
+  path?: string;
+}
+
 /**
- * Load hook config from a trusted path (from `JARVIS_HOOKS`), or return "off" when absent.
+ * Load one hook config from a trusted path, or return "off" when absent.
  *
  * REFUSES a path resolving inside `cwd` (hard invariant #2: in-repo hook config is excluded — it
  * would be attacker-authored code execution). A read failure or a parse error disables hooks with a
@@ -95,6 +111,42 @@ export async function loadHookConfig(deps: {
   }
 }
 
+/** Load and merge multiple TRUSTED hook sources. Missing sources are silently skipped; malformed or
+ *  in-cwd sources warn and only disable that source. Arrays are concatenated in source order. */
+export async function loadHookConfigs(deps: {
+  sources: HookConfigSource[];
+  cwd: string;
+  readText: ReadText;
+  realpath?: RealPath;
+}): Promise<{ config: HookConfig; warning?: string }> {
+  const config = emptyHookConfig();
+  const warnings: string[] = [];
+  const canonCwd = (deps.realpath ? await deps.realpath(deps.cwd) : null) ?? resolve(deps.cwd);
+
+  for (const source of deps.sources) {
+    const sourcePath = source.path?.trim();
+    if (!sourcePath) continue;
+    const canonPath = deps.realpath ? await deps.realpath(sourcePath) : resolve(sourcePath);
+    if (canonPath === null) continue; // absent source → off for this source, no warning
+    if (isInsideCwd(canonPath, canonCwd)) {
+      warnings.push(`${source.label}: JARVIS hook 配置位于工作目录内 (${canonPath})——拒绝加载该来源。`);
+      continue;
+    }
+    const text = await deps.readText(canonPath);
+    if (text === null) {
+      warnings.push(`${source.label}: hook 配置无法读取 (${canonPath})。已跳过该来源。`);
+      continue;
+    }
+    try {
+      mergeHookConfig(config, parseHookConfig(text));
+    } catch (err) {
+      warnings.push(`${source.label}: hook 配置解析失败 (${canonPath}): ${err instanceof Error ? err.message : String(err)}。已跳过该来源。`);
+    }
+  }
+
+  return { config, warning: warnings.length > 0 ? warnings.join('\n') : undefined };
+}
+
 /** Parse a hook config document. Throws a descriptive error on any shape violation (the loader
  *  catches it → warn + disable). Pure — no I/O. */
 export function parseHookConfig(text: string): HookConfig {
@@ -111,13 +163,17 @@ export function parseHookConfig(text: string): HookConfig {
   // Reject unknown top-level keys LOUDLY. A typo'd event name (e.g. `PreToolUes`) would otherwise be
   // silently dropped → a security guard the user believes is active is actually off. Fail-disable +
   // warning (the loader catches this) makes the mistake visible (codex 2026-06-30 review).
-  const unknown = Object.keys(obj).filter((k) => k !== 'PreToolUse' && k !== 'PostToolUse');
+  const unknown = Object.keys(obj).filter((k) => !HOOK_EVENTS.includes(k as HookEvent));
   if (unknown.length > 0) {
-    throw new Error(`未知的顶层配置项: ${unknown.join(', ')}（只支持 PreToolUse / PostToolUse；拼写错误会让 hook 静默失效，故拒绝）`);
+    throw new Error(`未知的顶层配置项: ${unknown.join(', ')}（只支持 ${HOOK_EVENTS.join(' / ')}；拼写错误会让 hook 静默失效，故拒绝）`);
   }
   return {
     PreToolUse: parseEntries(obj.PreToolUse, 'PreToolUse'),
     PostToolUse: parseEntries(obj.PostToolUse, 'PostToolUse'),
+    RoundStart: parseEntries(obj.RoundStart, 'RoundStart'),
+    RoundEnd: parseEntries(obj.RoundEnd, 'RoundEnd'),
+    SessionStart: parseEntries(obj.SessionStart, 'SessionStart'),
+    SessionEnd: parseEntries(obj.SessionEnd, 'SessionEnd'),
   };
 }
 
@@ -133,6 +189,10 @@ function parseEntries(value: unknown, event: HookEvent): HookEntry[] {
     if (typeof entry.command !== 'string' || entry.command.trim() === '') {
       throw new Error(`${event}[${i}].command 必须是非空字符串`);
     }
+    const unknown = Object.keys(entry).filter((k) => k !== 'matcher' && k !== 'command' && k !== 'timeoutMs');
+    if (unknown.length > 0) {
+      throw new Error(`${event}[${i}] 含未知配置项: ${unknown.join(', ')}（只支持 matcher / command / timeoutMs）`);
+    }
     if (entry.matcher !== undefined && typeof entry.matcher !== 'string') {
       throw new Error(`${event}[${i}].matcher 必须是字符串`);
     }
@@ -142,8 +202,13 @@ function parseEntries(value: unknown, event: HookEvent): HookEntry[] {
     if (typeof entry.matcher === 'string' && entry.matcher.trim() === '') {
       throw new Error(`${event}[${i}].matcher 不能是空字符串（省略 matcher 才表示匹配所有工具；空串多半是笔误）`);
     }
+    if (entry.timeoutMs !== undefined) {
+      if (typeof entry.timeoutMs !== 'number' || !Number.isInteger(entry.timeoutMs) || entry.timeoutMs <= 0 || entry.timeoutMs > 300_000) {
+        throw new Error(`${event}[${i}].timeoutMs 必须是 1..300000 之间的整数毫秒`);
+      }
+    }
     const matcher = entry.matcher === undefined ? '*' : entry.matcher.trim();
-    return { matcher, command: entry.command };
+    return entry.timeoutMs === undefined ? { matcher, command: entry.command } : { matcher, command: entry.command, timeoutMs: entry.timeoutMs };
   });
 }
 
@@ -152,4 +217,12 @@ function parseEntries(value: unknown, event: HookEvent): HookEntry[] {
 function isInsideCwd(absPath: string, cwd: string): boolean {
   const rel = relative(resolve(cwd), absPath);
   return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+}
+
+function emptyHookConfig(): HookConfig {
+  return { PreToolUse: [], PostToolUse: [], RoundStart: [], RoundEnd: [], SessionStart: [], SessionEnd: [] };
+}
+
+function mergeHookConfig(target: HookConfig, source: HookConfig): void {
+  for (const event of HOOK_EVENTS) target[event].push(...source[event]);
 }

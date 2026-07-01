@@ -789,6 +789,37 @@ describe('runAgent — hooks (slice 1)', () => {
     expect(toolResult?.type === 'tool_result' && toolResult.out.content).toBe('teal');
     expect(toolResult?.type === 'tool_result' && toolResult.out.error).toBeUndefined();
   });
+
+  it('runs RoundStart/RoundEnd once per model turn and does not fold lifecycle output into messages', async () => {
+    const tools = new InMemoryToolRegistry();
+    tools.register(okTool);
+    const { provider } = scriptedModel([{ toolCalls: callOk() }, { text: 'done' }]);
+    const bus = new InMemoryEventBus();
+    const calls: string[] = [];
+    const messages: Message[] = [{ role: 'user', content: 'go' }];
+
+    await runAgent({
+      model: provider,
+      tools,
+      bus,
+      messages,
+      toolCtx: { cwd: dir },
+      budget: { maxTurns: 5 },
+      hooks: {
+        preToolUse: async () => ({ blocked: false, reason: '' }),
+        postToolUse: async () => undefined,
+        roundStart: async () => {
+          calls.push('round-start');
+        },
+        roundEnd: async () => {
+          calls.push('round-end');
+        },
+      },
+    });
+
+    expect(calls).toEqual(['round-start', 'round-end', 'round-start', 'round-end']);
+    expect(messages.some((m) => m.role === 'user' && m.content.includes('RoundStart'))).toBe(false);
+  });
 });
 
 describe('runAgent — PostToolUse feedback (slice-2)', () => {

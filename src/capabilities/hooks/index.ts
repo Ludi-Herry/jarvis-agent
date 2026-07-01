@@ -1,14 +1,16 @@
 /**
- * hooks barrel — public face of `src/capabilities/hooks` (Hooks slice 1).
+ * hooks barrel — public face of `src/capabilities/hooks`.
  *
- * The composition root builds a {@link HookRunner} via {@link resolveHooks} (opt-in on `JARVIS_HOOKS`)
- * and threads it into runAgent; the pure {@link parseHookConfig} / {@link loadHookConfig} stay exported
- * for direct testing.
+ * The composition root builds a {@link HookRunner} via {@link resolveHooks} from trusted sources
+ * (`~/.jarvis/hooks.json` + launch-captured `JARVIS_HOOKS`) and threads it into runAgent; the pure
+ * {@link parseHookConfig} / loaders stay exported for direct testing.
  */
 export {
   loadHookConfig,
+  loadHookConfigs,
   parseHookConfig,
   type HookConfig,
+  type HookConfigSource,
   type HookEntry,
   type HookEvent,
   type LoadHookResult,

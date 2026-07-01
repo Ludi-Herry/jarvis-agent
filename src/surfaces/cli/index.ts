@@ -113,8 +113,8 @@ program
     );
     const policy = { ...defaultPolicy(), rules: resolved.rules };
 
-    // Hooks (slice 1): opt-in via JARVIS_HOOKS (a TRUSTED, launch-controlled path captured above).
-    // Unset → no hooks. An in-repo path (realpath-canonicalized) or a malformed config is refused.
+    // Hooks: trusted sources only — user-home default first, then launch-captured JARVIS_HOOKS.
+    // Every source is realpath-canonicalized and refused if it lands inside cwd.
     const { hooks, warning: hookWarning } = await resolveHooks({
       hooksPath: JARVIS_HOOKS_LAUNCH,
       cwd: opts.cwd,

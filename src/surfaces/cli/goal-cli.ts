@@ -159,7 +159,8 @@ async function main(): Promise<void> {
   // Off by default so a run never silently creates the shadow repo; best-effort when on.
   const shadowGit = process.env.JARVIS_SHADOW_GIT ? new ShadowGit({ shellPath, cwd, gitDir: join(cwd, 'data', 'shadow') }) : undefined;
 
-  // Hooks (slice 1): opt-in via JARVIS_HOOKS (TRUSTED, launch-captured). In-repo / malformed refused.
+  // Hooks: trusted sources only — user-home default first, then launch-captured JARVIS_HOOKS.
+  // In-repo sources are refused after realpath canonicalization; malformed sources warn per source.
   const { hooks, warning: hookWarning } = await resolveHooks({ hooksPath: JARVIS_HOOKS_LAUNCH, cwd, shellPath });
   if (hookWarning) console.error(`[hooks] ${hookWarning}`);
 
@@ -187,29 +188,35 @@ async function main(): Promise<void> {
       : 'shadow-git: 未启用(设 JARVIS_SHADOW_GIT=1 开启改动审计 + 回滚)\n',
   );
 
-  const result = await runGoal(
-    { id, objective, sessionId, budget: { maxRounds: 8 }, baseline, pinned },
-    {
-      model: provider,
-      tools,
-      bus,
-      gate,
-      hooks,
-      context,
-      store: sessionStore,
-      goalStore,
-      cwd,
-      shellPath,
-      builderSystemPrompt: BUILDER_PROMPT,
-      perRoundMaxTurns: 16,
-      checkCommands: DEFAULT_CHECK_COMMANDS,
-      heldOutCommands: heldOutCommands.length > 0 ? heldOutCommands : undefined,
-      verifierProvider,
-      shadowGit,
-    },
-  );
+  await runAdvisoryHook(hooks?.sessionStart);
+  let result;
+  try {
+    result = await runGoal(
+      { id, objective, sessionId, budget: { maxRounds: 8 }, baseline, pinned },
+      {
+        model: provider,
+        tools,
+        bus,
+        gate,
+        hooks,
+        context,
+        store: sessionStore,
+        goalStore,
+        cwd,
+        shellPath,
+        builderSystemPrompt: BUILDER_PROMPT,
+        perRoundMaxTurns: 16,
+        checkCommands: DEFAULT_CHECK_COMMANDS,
+        heldOutCommands: heldOutCommands.length > 0 ? heldOutCommands : undefined,
+        verifierProvider,
+        shadowGit,
+      },
+    );
+  } finally {
+    await runAdvisoryHook(hooks?.sessionEnd);
+    rl.close();
+  }
 
-  rl.close();
   console.log(
     `\n=== goal ${result.state} (rounds=${result.rounds}, verdict=${result.finalVerdict?.outcome ?? '—'}) ===`,
   );
@@ -251,3 +258,11 @@ main().catch((err: unknown) => {
   console.error('\n[goal] fatal:', err instanceof Error ? err.message : err);
   process.exitCode = 1;
 });
+
+async function runAdvisoryHook(fn: (() => Promise<void>) | undefined): Promise<void> {
+  try {
+    await fn?.();
+  } catch {
+    // session hooks are notification-only
+  }
+}

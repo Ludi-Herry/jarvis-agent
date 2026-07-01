@@ -53,8 +53,8 @@ export interface ReplDeps {
   approver?: Approver;
   /** Gate policy (B5): the merged rule layers. Defaults to the built-in policy (no extra rules). */
   policy?: PermissionPolicy;
-  /** Optional tool-call hooks (Hooks slice 1): opt-in via JARVIS_HOOKS, built by the composition
-   *  root. PreToolUse can fail-closed block a gate-allowed call; PostToolUse is advisory. */
+  /** Optional hooks, built by the composition root from trusted sources. PreToolUse can fail-closed
+   *  block a gate-allowed call; PostToolUse and lifecycle hooks are advisory. */
   hooks?: HookRunner;
   /** Session store (persistence): when present, turns are logged so the session can be resumed. */
   store?: SessionStore;
@@ -161,57 +161,69 @@ export async function startRepl(deps: ReplDeps): Promise<void> {
     deps.tools.register(createDelegateTool(manager));
   }
 
-  out.write(`Jarvis-Agent · ${deps.modelName}\n输入消息,Ctrl-C 退出(/exit 也可)\n\n`);
+  await runAdvisoryHook(deps.hooks?.sessionStart);
+  try {
+    out.write(`Jarvis-Agent · ${deps.modelName}\n输入消息,Ctrl-C 退出(/exit 也可)\n\n`);
 
-  for (;;) {
-    out.write('› ');
-    const line = await nextLine();
-    if (line === null) break;
-    const text = line.trim();
-    if (text === '') continue;
-    if (text === '/exit' || text === '/quit') break;
+    for (;;) {
+      out.write('› ');
+      const line = await nextLine();
+      if (line === null) break;
+      const text = line.trim();
+      if (text === '') continue;
+      if (text === '/exit' || text === '/quit') break;
 
-    messages.push({ role: 'user', content: text });
-    // Persist the user turn immediately so it survives even if the run errors before its own sync.
-    await deps.store?.sync(messages);
+      messages.push({ role: 'user', content: text });
+      // Persist the user turn immediately so it survives even if the run errors before its own sync.
+      await deps.store?.sync(messages);
 
-    const bus = new InMemoryEventBus();
-    let rstate = initialRenderState();
-    const unsubscribe = bus.subscribe((event) => {
-      const { output, state } = renderEvent(rstate, event);
-      rstate = state;
-      if (output) out.write(output);
-    });
-
-    activeRun = new AbortController();
-    try {
-      await runAgent({
-        model: deps.model,
-        tools: deps.tools,
-        bus,
-        messages,
-        toolCtx: { cwd: deps.cwd },
-        budget: { maxTurns: deps.maxTurns },
-        context: deps.context,
-        gate,
-        hooks: deps.hooks,
-        store: deps.store,
-        systemAddendum: deps.skills?.systemAddendum(text),
-        signal: activeRun.signal,
+      const bus = new InMemoryEventBus();
+      let rstate = initialRenderState();
+      const unsubscribe = bus.subscribe((event) => {
+        const { output, state } = renderEvent(rstate, event);
+        rstate = state;
+        if (output) out.write(output);
       });
-    } catch (err) {
-      out.write(
-        activeRun.signal.aborted
-          ? '\n  · (已中断)\n'
-          : `\n  · 出错: ${err instanceof Error ? err.message : String(err)}\n`,
-      );
-    } finally {
-      unsubscribe();
-      activeRun = null;
+
+      activeRun = new AbortController();
+      try {
+        await runAgent({
+          model: deps.model,
+          tools: deps.tools,
+          bus,
+          messages,
+          toolCtx: { cwd: deps.cwd },
+          budget: { maxTurns: deps.maxTurns },
+          context: deps.context,
+          gate,
+          hooks: deps.hooks,
+          store: deps.store,
+          systemAddendum: deps.skills?.systemAddendum(text),
+          signal: activeRun.signal,
+        });
+      } catch (err) {
+        out.write(
+          activeRun.signal.aborted
+            ? '\n  · (已中断)\n'
+            : `\n  · 出错: ${err instanceof Error ? err.message : String(err)}\n`,
+        );
+      } finally {
+        unsubscribe();
+        activeRun = null;
+      }
+
+      out.write('\n');
     }
-
-    out.write('\n');
+  } finally {
+    await runAdvisoryHook(deps.hooks?.sessionEnd);
+    rl.close();
   }
+}
 
-  rl.close();
+async function runAdvisoryHook(fn: (() => Promise<void>) | undefined): Promise<void> {
+  try {
+    await fn?.();
+  } catch {
+    // session hooks are notification-only
+  }
 }

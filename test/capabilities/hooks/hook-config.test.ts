@@ -1,26 +1,32 @@
 import { describe, expect, it } from 'vitest';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
-import { loadHookConfig, parseHookConfig, type RealPath } from '../../../src/capabilities/hooks/hook-config.js';
+import { loadHookConfig, loadHookConfigs, parseHookConfig, type RealPath } from '../../../src/capabilities/hooks/hook-config.js';
 import type { ReadText } from '../../../src/capabilities/rules/index.js';
 
 describe('parseHookConfig', () => {
   it('parses both events and defaults an omitted matcher to "*"', () => {
     const cfg = parseHookConfig(
       JSON.stringify({
-        PreToolUse: [{ matcher: 'bash', command: 'guard.sh' }, { command: 'always.sh' }],
+        PreToolUse: [{ matcher: 'bash', command: 'guard.sh', timeoutMs: 1234 }, { command: 'always.sh' }],
         PostToolUse: [{ matcher: 'write', command: 'fmt.sh' }],
+        RoundStart: [{ command: 'round-start.sh' }],
+        SessionEnd: [{ command: 'session-end.sh' }],
       }),
     );
     expect(cfg.PreToolUse).toEqual([
-      { matcher: 'bash', command: 'guard.sh' },
+      { matcher: 'bash', command: 'guard.sh', timeoutMs: 1234 },
       { matcher: '*', command: 'always.sh' }, // omitted matcher → matches every tool
     ]);
     expect(cfg.PostToolUse).toEqual([{ matcher: 'write', command: 'fmt.sh' }]);
+    expect(cfg.RoundStart).toEqual([{ matcher: '*', command: 'round-start.sh' }]);
+    expect(cfg.RoundEnd).toEqual([]);
+    expect(cfg.SessionStart).toEqual([]);
+    expect(cfg.SessionEnd).toEqual([{ matcher: '*', command: 'session-end.sh' }]);
   });
 
   it('treats a missing event as an empty list (not an error)', () => {
-    expect(parseHookConfig('{}')).toEqual({ PreToolUse: [], PostToolUse: [] });
+    expect(parseHookConfig('{}')).toEqual({ PreToolUse: [], PostToolUse: [], RoundStart: [], RoundEnd: [], SessionStart: [], SessionEnd: [] });
   });
 
   it.each([
@@ -31,9 +37,80 @@ describe('parseHookConfig', () => {
     ['an empty command', JSON.stringify({ PreToolUse: [{ command: '   ' }] })],
     ['a non-string matcher', JSON.stringify({ PostToolUse: [{ matcher: 1, command: 'x' }] })],
     ['an unknown top-level key (typo)', JSON.stringify({ PreToolUes: [{ command: 'x' }] })],
+    ['an unknown entry key (typo)', JSON.stringify({ PreToolUse: [{ command: 'x', timeoutMS: 1000 }] })],
     ['a present-but-empty matcher', JSON.stringify({ PreToolUse: [{ matcher: '', command: 'x' }] })],
+    ['a non-number timeout', JSON.stringify({ PreToolUse: [{ command: 'x', timeoutMs: '1000' }] })],
+    ['a zero timeout', JSON.stringify({ PreToolUse: [{ command: 'x', timeoutMs: 0 }] })],
+    ['a fractional timeout', JSON.stringify({ PreToolUse: [{ command: 'x', timeoutMs: 1000.5 }] })],
+    ['an over-limit timeout', JSON.stringify({ PreToolUse: [{ command: 'x', timeoutMs: 300001 }] })],
   ])('throws a descriptive error for %s', (_label, text) => {
     expect(() => parseHookConfig(text)).toThrow();
+  });
+});
+
+describe('loadHookConfigs — multiple trusted sources', () => {
+  const cwd = join(tmpdir(), 'jarvis-hooks-repo');
+  const home = join(tmpdir(), 'home-hooks.json');
+  const env = join(tmpdir(), 'env-hooks.json');
+  const inside = join(cwd, '.hooks.json');
+
+  it('merges PreToolUse/PostToolUse arrays in source order', async () => {
+    const files = new Map([
+      [home, JSON.stringify({ PreToolUse: [{ matcher: 'bash', command: 'home-pre' }], PostToolUse: [{ command: 'home-post' }] })],
+      [env, JSON.stringify({ PreToolUse: [{ matcher: 'write', command: 'env-pre' }], RoundStart: [{ command: 'env-round' }] })],
+    ]);
+    const res = await loadHookConfigs({
+      sources: [{ label: 'home', path: home }, { label: 'env', path: env }],
+      cwd,
+      readText: async (p) => files.get(p) ?? null,
+      realpath: async (p) => resolve(p),
+    });
+    expect(res.warning).toBeUndefined();
+    expect(res.config.PreToolUse.map((h) => h.command)).toEqual(['home-pre', 'env-pre']);
+    expect(res.config.PostToolUse.map((h) => h.command)).toEqual(['home-post']);
+    expect(res.config.RoundStart.map((h) => h.command)).toEqual(['env-round']);
+  });
+
+  it('skips a missing source without warning', async () => {
+    const res = await loadHookConfigs({
+      sources: [{ label: 'missing', path: env }],
+      cwd,
+      readText: async () => null,
+      realpath: async () => null,
+    });
+    expect(res.warning).toBeUndefined();
+    expect(res.config).toEqual({ PreToolUse: [], PostToolUse: [], RoundStart: [], RoundEnd: [], SessionStart: [], SessionEnd: [] });
+  });
+
+  it('warns and disables only the malformed source while keeping the other source active', async () => {
+    const files = new Map([
+      [home, JSON.stringify({ PreToolUse: [{ command: 'home-ok' }] })],
+      [env, 'not json{'],
+    ]);
+    const res = await loadHookConfigs({
+      sources: [{ label: 'home', path: home }, { label: 'env', path: env }],
+      cwd,
+      readText: async (p) => files.get(p) ?? null,
+      realpath: async (p) => resolve(p),
+    });
+    expect(res.warning).toMatch(/env/);
+    expect(res.config.PreToolUse.map((h) => h.command)).toEqual(['home-ok']);
+  });
+
+  it('refuses every source that realpaths inside cwd, while keeping outside sources active', async () => {
+    const files = new Map([
+      [home, JSON.stringify({ PreToolUse: [{ command: 'home-ok' }] })],
+      [inside, JSON.stringify({ PreToolUse: [{ command: 'inside-bad' }] })],
+    ]);
+    const res = await loadHookConfigs({
+      sources: [{ label: 'home', path: home }, { label: 'inside', path: inside }],
+      cwd,
+      readText: async (p) => files.get(p) ?? null,
+      realpath: async (p) => resolve(p),
+    });
+    expect(res.warning).toMatch(/inside/);
+    expect(res.warning).toMatch(/工作目录内|拒绝/);
+    expect(res.config.PreToolUse.map((h) => h.command)).toEqual(['home-ok']);
   });
 });
 

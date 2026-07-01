@@ -1,5 +1,5 @@
 /**
- * HookRunner — executes tool-call hooks at the harness seam (Hooks slice 1).
+ * HookRunner — executes configured hooks at the harness seam.
  *
  * Wired into runAgent's gatedRun (core/loop/run-agent.ts), AFTER the PermissionGate's verdict:
  *  - {@link HookRunner.preToolUse} runs the matching PreToolUse hooks on a gate-ALLOWED call. A hook
@@ -10,17 +10,21 @@
  *  - {@link HookRunner.postToolUse} runs the matching PostToolUse hooks AFTER the tool — advisory:
  *    exit code ignored, failures swallowed, the ToolResult is never altered. Same discipline as
  *    goal-loop's snapshotShadow: observability must not be able to break what it observes.
+ *  - Lifecycle hooks (RoundStart/RoundEnd/SessionStart/SessionEnd) are notification-only: output is
+ *    ignored, failures are swallowed, and they never block the loop.
  *
  * Hook commands reuse the hardened {@link runCommand} (confined cwd, timeout + tree-kill, scrubbed
  * secret env) — never a bare shell (hard invariant #4). The tool-call context is handed to the hook
  * via env vars (JARVIS_HOOK_*), layered on AFTER secret-scrub so it can't smuggle a key back out.
  */
 import { readFile, realpath as fsRealpath } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import type { ToolCall, ToolResult } from '../../core/types.js';
 import type { ToolCapability } from '../../core/tools/types.js';
 import { runCommand, type ExecResult } from '../../core/tools/run-command.js';
 import type { ReadText } from '../rules/index.js';
-import { loadHookConfig, type HookConfig, type HookEntry, type HookEvent, type RealPath } from './hook-config.js';
+import { loadHookConfigs, type HookConfig, type HookEntry, type HookEvent, type RealPath } from './hook-config.js';
 
 /** Per-hook wall-clock ceiling (ms). A hook that outlives this is killed and treated as a block
  *  (PreToolUse) / ignored (PostToolUse) — it must not be able to wedge the agent loop. */
@@ -30,8 +34,8 @@ export const HOOK_TIMEOUT_MS = 30_000;
 export const HOOK_MAX_OUTPUT = 8_192;
 /** How much of a blocking hook's output to echo back to the model (tail chars). */
 const BLOCK_REASON_TAIL = 500;
-/** Cap on the serialized tool input passed via env (avoid OS env-size limits on a big `write`). */
-const HOOK_INPUT_CAP = 4_096;
+/** Cap on serialized hook env payloads (avoid OS env-size limits on a big `write` / tool result). */
+const HOOK_ENV_VALUE_CAP = 4_096;
 
 /** A PreToolUse decision. `blocked:true` denies the call; `reason` is fed back to the model. There
  *  is deliberately NO allow path — a hook can only narrow, never unlock. */
@@ -48,6 +52,11 @@ export interface HookRunner {
    *  diagnostics to stderr, so merging is what lets "feed the errors back" work) for the loop to fold
    *  into the conversation (slice-2), or `undefined` when nothing was emitted. */
   postToolUse(call: ToolCall, result: ToolResult): Promise<string | undefined>;
+  /** Advisory lifecycle hooks. They never block, never feed output back, and swallow failures. */
+  roundStart(): Promise<void>;
+  roundEnd(): Promise<void>;
+  sessionStart(): Promise<void>;
+  sessionEnd(): Promise<void>;
 }
 
 /** The {@link runCommand} signature — injected so tests drive the runner without a real shell. */
@@ -66,11 +75,21 @@ const NOT_BLOCKED: HookBlock = { blocked: false, reason: '' };
 export function createHookRunner(config: HookConfig, deps: HookRunnerDeps): HookRunner {
   const run = deps.run ?? runCommand;
 
-  const exec = (event: HookEvent, hook: HookEntry, call: ToolCall): Promise<ExecResult> =>
-    run(deps.shellPath, hook.command, deps.cwd, HOOK_TIMEOUT_MS, HOOK_MAX_OUTPUT, deps.signal, {
+  const exec = (event: HookEvent, hook: HookEntry, call?: ToolCall, result?: ToolResult): Promise<ExecResult> =>
+    run(deps.shellPath, hook.command, deps.cwd, hook.timeoutMs ?? HOOK_TIMEOUT_MS, HOOK_MAX_OUTPUT, deps.signal, {
       scrubSecretEnv: true, // hooks must not be a side channel to exfil ARK_API_KEY etc. (invariant #4)
-      extraEnv: hookEnv(event, call),
+      extraEnv: hookEnv(event, call, result),
     });
+
+  const runLifecycle = async (event: 'RoundStart' | 'RoundEnd' | 'SessionStart' | 'SessionEnd'): Promise<void> => {
+    for (const hook of config[event]) {
+      try {
+        await exec(event, hook);
+      } catch {
+        // Lifecycle hooks are consulting/notification only. They must never wedge or fail the agent.
+      }
+    }
+  };
 
   return {
     async preToolUse(call) {
@@ -82,7 +101,7 @@ export function createHookRunner(config: HookConfig, deps: HookRunnerDeps): Hook
       }
       return NOT_BLOCKED;
     },
-    async postToolUse(call) {
+    async postToolUse(call, result) {
       // Advisory + additive: run every matching hook, collect each one's NON-EMPTY output (stdout+stderr,
       // merged by runCommand), and hand the combined text back so the loop can fold it into the
       // conversation (slice-2). A silently-succeeding hook (printed nothing) contributes nothing — only a
@@ -91,7 +110,7 @@ export function createHookRunner(config: HookConfig, deps: HookRunnerDeps): Hook
       const outs: string[] = [];
       for (const hook of matching(config.PostToolUse, call.name)) {
         try {
-          const res = await exec('PostToolUse', hook, call);
+          const res = await exec('PostToolUse', hook, call, result);
           const trimmed = res.output.trim();
           if (trimmed) outs.push(trimmed);
         } catch {
@@ -104,32 +123,40 @@ export function createHookRunner(config: HookConfig, deps: HookRunnerDeps): Hook
       // re-cap the JOIN so several hooks can't flood the context.
       return joined.length > HOOK_MAX_OUTPUT ? joined.slice(0, HOOK_MAX_OUTPUT) : joined;
     },
+    roundStart: () => runLifecycle('RoundStart'),
+    roundEnd: () => runLifecycle('RoundEnd'),
+    sessionStart: () => runLifecycle('SessionStart'),
+    sessionEnd: () => runLifecycle('SessionEnd'),
   };
 }
 
 /**
- * Build a HookRunner from a TRUSTED config path, or return "off". `hooksPath` is the value of
- * `JARVIS_HOOKS` — the CALLER must capture it from the LAUNCH env BEFORE loading any in-repo `.env`,
- * so an attacker-authored `.env` can't set it and enable repo hooks (codex 2026-06-30 review). Unset
- * ⇒ no hooks. Refuses an in-repo path (realpath-canonicalized) and a malformed config (see
- * {@link loadHookConfig}), returning a `warning` the caller surfaces. Production fs reader/realpath
- * are the defaults; tests can inject both.
+ * Build a HookRunner from trusted sources, or return "off" when none contains hooks. Source order:
+ * user-home default (`~/.jarvis/hooks.json`) first, then launch-captured `JARVIS_HOOKS`. The caller
+ * must capture `JARVIS_HOOKS` BEFORE loading any in-repo `.env`, so an attacker-authored `.env` can't
+ * set it and enable repo hooks (codex 2026-06-30 review). Every source is realpath-canonicalized and
+ * refused when it lands inside `cwd`; malformed/unreadable sources warn and only disable that source.
+ * Production fs reader/realpath are the defaults; tests can inject both.
  */
 export async function resolveHooks(deps: {
   hooksPath?: string;
+  userHooksPath?: string;
   cwd: string;
   shellPath: string;
   readText?: ReadText;
   realpath?: RealPath;
   signal?: AbortSignal;
 }): Promise<{ hooks?: HookRunner; warning?: string }> {
-  const loaded = await loadHookConfig({
-    path: deps.hooksPath,
+  const loaded = await loadHookConfigs({
+    sources: [
+      { label: 'user-home', path: deps.userHooksPath ?? join(homedir(), '.jarvis', 'hooks.json') },
+      { label: 'JARVIS_HOOKS', path: deps.hooksPath },
+    ],
     cwd: deps.cwd,
     readText: deps.readText ?? defaultReadText,
     realpath: deps.realpath ?? defaultRealpath,
   });
-  if (!loaded.config) return { warning: loaded.warning };
+  if (!hasHooks(loaded.config)) return { warning: loaded.warning };
   return {
     hooks: createHookRunner(loaded.config, { shellPath: deps.shellPath, cwd: deps.cwd, signal: deps.signal }),
     warning: loaded.warning,
@@ -148,17 +175,27 @@ const defaultRealpath: RealPath = async (p) => {
   try {
     return await fsRealpath(p);
   } catch {
-    return null; // missing / unresolvable → treated as unreadable by loadHookConfig
+    return null; // missing / unresolvable → skipped silently by loadHookConfigs
   }
 };
 
 /** The tool-call context handed to a hook via env. Kept small. */
-function hookEnv(event: HookEvent, call: ToolCall): Record<string, string> {
-  return {
+function hookEnv(event: HookEvent, call?: ToolCall, result?: ToolResult): Record<string, string> {
+  const env = {
     JARVIS_HOOK_EVENT: event,
-    JARVIS_HOOK_TOOL: call.name,
-    JARVIS_HOOK_TOOL_INPUT: hookInput(call.arguments ?? ''),
   };
+  if (call) {
+    const toolEnv = {
+      ...env,
+      JARVIS_HOOK_TOOL: call.name,
+      JARVIS_HOOK_TOOL_INPUT: hookInput(call.arguments ?? ''),
+    };
+    if (event === 'PostToolUse' && result) {
+      return { ...toolEnv, JARVIS_HOOK_TOOL_RESULT: hookResult(result) };
+    }
+    return toolEnv;
+  }
+  return env;
 }
 
 /** The tool args handed to a hook. Within the cap, passed verbatim (the model-emitted JSON). OVER the
@@ -166,7 +203,17 @@ function hookEnv(event: HookEvent, call: ToolCall): Record<string, string> {
  *  well-behaved hook that `JSON.parse`s the value can't choke on a big `write` payload and spuriously
  *  block the call (codex 2026-06-30 review). The cap also keeps env under OS per-var size limits. */
 function hookInput(args: string): string {
-  return args.length <= HOOK_INPUT_CAP ? args : JSON.stringify({ _jarvis_truncated: true, bytes: args.length });
+  return cappedEnvValue(args);
+}
+
+/** PostToolUse receives the observed ToolResult. It is capped with the same valid-JSON sentinel as
+ *  tool input so hooks can safely JSON.parse the env var without risking OS env-size failures. */
+function hookResult(result: ToolResult): string {
+  return cappedEnvValue(JSON.stringify(result));
+}
+
+function cappedEnvValue(value: string): string {
+  return value.length <= HOOK_ENV_VALUE_CAP ? value : JSON.stringify({ _jarvis_truncated: true, bytes: value.length });
 }
 
 /** Entries whose matcher glob matches the tool name (anchored, `*` the only wildcard). */
@@ -207,4 +254,16 @@ function globMatch(pattern: string, value: string): boolean {
   }
   while (p < pattern.length && pattern[p] === '*') p++;
   return p === pattern.length;
+}
+
+function hasHooks(config: HookConfig): boolean {
+  return (
+    config.PreToolUse.length +
+      config.PostToolUse.length +
+      config.RoundStart.length +
+      config.RoundEnd.length +
+      config.SessionStart.length +
+      config.SessionEnd.length >
+    0
+  );
 }
