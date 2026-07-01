@@ -4,7 +4,7 @@
 
 **Goal:** Resume a loop item that crashed after `goal-started` without losing the in-progress goal conversation, verification history, or goal id.
 
-**Architecture:** Keep `runGoal` as the only component allowed to finish a goal. `replayLoop` identifies unfinished started attempts, `runLoop` reuses their `goalId`, and `loop-cli` loads the existing goal/session JSONL before calling `runGoal`. `runGoal` receives an explicit resume state, skips duplicate headers, seeds prior messages/rounds/turns/tokens/breaker state, and still routes all completion through deterministic checks, optional leg 3, and `decideVerdict`.
+**Architecture:** Keep `runGoal` as the only component allowed to finish a goal. `replayLoop` identifies logged attempts by index, `runLoop` reuses their latest `goalId`, and `loop-cli` loads the existing goal/session JSONL before calling `runGoal`. Cwd loop logs are not trusted for completion, verifier health, or token seeds; logged attempts are rechecked before a fresh `goal-finished` line is recorded. `runGoal` receives an explicit resume state, skips duplicate headers, seeds prior messages/rounds/turns/tokens/breaker state, and still routes all completion through deterministic checks, optional leg 3, and `decideVerdict`.
 
 **Tech Stack:** TypeScript strict ESM, Vitest, append-only JSONL stores, existing `FileGoalStore`, `FileSessionStore`, `runLoop`, and `runGoal`.
 
@@ -31,12 +31,13 @@ Deferred slices stay separate:
 - Session resume requires a valid session header matching goal id and cwd.
 - Goal resume reuses the existing `data/goals/<goalId>.jsonl`; it does not write a duplicate `goal-created` record.
 - `loop-halted` human checkpoints still apply before any resumed item runs.
+- `data/loops/*.jsonl` under cwd supplies queue/contract/goalId only; `goal-finished.state/outcome/tokens` are audit fields and do not seed skip sets, verifier health, or budget.
 
 ## Files
 
 - Modify: `src/capabilities/goal/loop-store.ts`
-  - Add in-flight started attempts to `LoopReplay`.
-  - Make `replayLoop` fold `goal-started` and `goal-finished` into that map.
+  - Add resumable logged attempts to `LoopReplay`.
+  - Make `replayLoop` fold both `goal-started` and `goal-finished` into that map without trusting finished state/outcome/tokens.
 - Modify: `src/capabilities/goal/loop.ts`
   - Pass resume metadata into `runOne`.
   - Reuse in-flight goal ids from replay.
@@ -76,8 +77,11 @@ it('replays the latest started-without-finished goal as an in-flight resume atte
 
   const replay = await loadLoop(path);
 
-  expect([...replay.finished]).toEqual([0]);
-  expect([...replay.inFlight]).toEqual([[1, 'L-g1-resume']]);
+  expect([...replay.finished]).toEqual([]);
+  expect([...replay.inFlight]).toEqual([
+    [0, 'L-g0-old'],
+    [1, 'L-g1-resume'],
+  ]);
 });
 ```
 
@@ -96,7 +100,7 @@ Expected: fails because `LoopReplay` has no `inFlight` property.
 In `src/capabilities/goal/loop-store.ts`, extend `LoopReplay`:
 
 ```ts
-/** Started attempts without a matching goal-finished, keyed by queue index. Sequential loop has at most one, but a map keeps replay future-compatible. */
+/** Logged attempts to recheck, keyed by queue index. Sequential loop has at most one, but a map keeps replay future-compatible. */
 inFlight: Map<number, string>;
 ```
 
@@ -113,12 +117,7 @@ case 'goal-started':
   inFlight.set(record.index, record.goalId);
   break;
 case 'goal-finished':
-  finished.add(record.index);
-  inFlight.delete(record.index);
-  cumulativeTokens += record.tokens;
-  if (record.outcome !== undefined) outcomes.push(record.outcome);
-  if (record.state === 'complete') consecutiveBlocked = 0;
-  else if (record.outcome !== 'couldNotVerify') consecutiveBlocked++;
+  inFlight.set(record.index, record.goalId);
   break;
 ```
 

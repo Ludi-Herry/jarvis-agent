@@ -129,6 +129,38 @@ describe('runLoop — cross-goal verifier-health (load-bearing, real wiring)', (
     expect(result.started).toBe(5);
   });
 
+  it('trips verifier-health when couldNotVerify samples share the same verifier key', async () => {
+    const bus = new InMemoryEventBus();
+    const { store } = fakeStore();
+    const { runOne } = scriptedRunOne([{ state: 'blocked', outcome: 'couldNotVerify', verifierKey: 'model:a', rounds: 1 }]);
+
+    const result = await runLoop(
+      { id: 'L', objectives: ['a', 'b', 'c', 'd'], contract: contract({ cnvWindow: 3, cnvThreshold: 3, maxConsecutiveBlocked: 100 }) },
+      { bus, loopStore: store, runOne },
+    );
+
+    expect(result.reason).toBe('verifier-health');
+    expect(result.started).toBe(3);
+  });
+
+  it('does not merge couldNotVerify health across different verifier keys', async () => {
+    const bus = new InMemoryEventBus();
+    const { store } = fakeStore();
+    const { runOne } = scriptedRunOne([
+      { state: 'blocked', outcome: 'couldNotVerify', verifierKey: 'model:a', rounds: 1 },
+      { state: 'blocked', outcome: 'couldNotVerify', verifierKey: 'model:b', rounds: 1 },
+      { state: 'blocked', outcome: 'couldNotVerify', verifierKey: 'model:c', rounds: 1 },
+    ]);
+
+    const result = await runLoop(
+      { id: 'L', objectives: ['a', 'b', 'c'], contract: contract({ cnvWindow: 3, cnvThreshold: 3, maxConsecutiveBlocked: 100 }) },
+      { bus, loopStore: store, runOne },
+    );
+
+    expect(result.reason).toBe('queue-empty');
+    expect(result.started).toBe(3);
+  });
+
   it('all verified/rejected (no cnv) never health-halts', async () => {
     const bus = new InMemoryEventBus();
     const { store } = fakeStore();
@@ -327,6 +359,51 @@ describe('runLoop — resume', () => {
     const result = await runLoop(
       { id: 'L', objectives: ['a', 'b', 'c', 'd'], contract: contract({ cnvWindow: 3, cnvThreshold: 3, maxConsecutiveBlocked: 100 }) },
       { bus, loopStore: store, runOne, finished: new Set([0, 1, 2]), outcomes: ['couldNotVerify', 'couldNotVerify', 'couldNotVerify'] },
+    );
+    expect(result.reason).toBe('verifier-health');
+    expect(result.started).toBe(0);
+    expect(seen).toEqual([]);
+  });
+
+  it('does not re-assert verifier-health on resume when keyed cnv samples do not share a thresholded verifier', async () => {
+    const bus = new InMemoryEventBus();
+    const { store } = fakeStore();
+    const { runOne, seen } = scriptedRunOne([verified]);
+    const result = await runLoop(
+      { id: 'L', objectives: ['a', 'b', 'c', 'd'], contract: contract({ cnvWindow: 3, cnvThreshold: 3, maxConsecutiveBlocked: 100 }) },
+      {
+        bus,
+        loopStore: store,
+        runOne,
+        finished: new Set([0, 1, 2]),
+        outcomes: [
+          { outcome: 'couldNotVerify', verifierKey: 'model:a' },
+          { outcome: 'couldNotVerify', verifierKey: 'model:a' },
+          { outcome: 'couldNotVerify', verifierKey: 'model:b' },
+        ],
+      },
+    );
+    expect(result.reason).toBe('queue-empty');
+    expect(seen).toEqual(['d']);
+  });
+
+  it('halts before running on resume when one verifier key is already unhealthy', async () => {
+    const bus = new InMemoryEventBus();
+    const { store } = fakeStore();
+    const { runOne, seen } = scriptedRunOne([verified]);
+    const result = await runLoop(
+      { id: 'L', objectives: ['a', 'b', 'c', 'd'], contract: contract({ cnvWindow: 3, cnvThreshold: 3, maxConsecutiveBlocked: 100 }) },
+      {
+        bus,
+        loopStore: store,
+        runOne,
+        finished: new Set([0, 1, 2]),
+        outcomes: [
+          { outcome: 'couldNotVerify', verifierKey: 'model:a' },
+          { outcome: 'couldNotVerify', verifierKey: 'model:a' },
+          { outcome: 'couldNotVerify', verifierKey: 'model:a' },
+        ],
+      },
     );
     expect(result.reason).toBe('verifier-health');
     expect(result.started).toBe(0);

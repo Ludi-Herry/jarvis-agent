@@ -60,9 +60,16 @@ export interface GoalRunSummary {
   state: GoalState;
   /** The verifier outcome, present only when leg 3 ran and produced one (→ feeds the health monitor). */
   outcome?: VerdictOutcome;
+  verifierKey?: string;
   rounds: number;
   /** Full builder-token total for this goal attempt, including any pre-crash resumed rounds. */
   tokens?: number;
+}
+
+export interface VerifierOutcomeSample {
+  index?: number;
+  outcome: VerdictOutcome;
+  verifierKey?: string;
 }
 
 export interface LoopGoalAttempt {
@@ -87,6 +94,7 @@ export interface LoopStore {
     goalId: string;
     state: GoalState;
     outcome?: VerdictOutcome;
+    verifierKey?: string;
     rounds: number;
     tokens: number;
     at: string;
@@ -107,7 +115,7 @@ export interface LoopDeps {
   /** Indices already FINISHED — never re-run. */
   finished?: Set<number>;
   /** Past verifier outcomes (in finish order) — re-warms the health monitor window. */
-  outcomes?: VerdictOutcome[];
+  outcomes?: Array<VerdictOutcome | VerifierOutcomeSample>;
   /** Started attempts without a goal-finished record; resume should reuse these goal ids. */
   inFlight?: Map<number, string>;
   /** Consecutive blocked count carried across the restart. */
@@ -165,6 +173,16 @@ export class VerifierHealthMonitor {
   }
 }
 
+const DEFAULT_VERIFIER_HEALTH_KEY = '__default__';
+
+function sampleOutcome(sample: VerdictOutcome | VerifierOutcomeSample): VerdictOutcome {
+  return typeof sample === 'string' ? sample : sample.outcome;
+}
+
+function sampleKey(sample: VerdictOutcome | VerifierOutcomeSample): string {
+  return typeof sample === 'string' ? DEFAULT_VERIFIER_HEALTH_KEY : (sample.verifierKey ?? DEFAULT_VERIFIER_HEALTH_KEY);
+}
+
 /**
  * Drain the queue to a stop condition. Structurally mirrors runGoal: injected deps, a try/finally
  * around one loop, emit + persist on every transition. The CLI writes the `loop-created` header
@@ -181,8 +199,17 @@ export async function runLoop(spec: LoopSpec, deps: LoopDeps): Promise<LoopRunRe
   let cumulativeTokens = deps.cumulativeTokens ?? 0; // cumulative (seed from replay)
   let consecutiveBlocked = deps.consecutiveBlocked ?? 0;
 
-  const monitor = new VerifierHealthMonitor(c.cnvWindow, c.cnvThreshold);
-  for (const o of deps.outcomes ?? []) monitor.record(o); // re-warm the window from replayed outcomes
+  const monitors = new Map<string, VerifierHealthMonitor>();
+  const monitorFor = (key: string): VerifierHealthMonitor => {
+    let monitor = monitors.get(key);
+    if (monitor === undefined) {
+      monitor = new VerifierHealthMonitor(c.cnvWindow, c.cnvThreshold);
+      monitors.set(key, monitor);
+    }
+    return monitor;
+  };
+  const anyMonitorTripped = (): boolean => [...monitors.values()].some((monitor) => monitor.isTripped());
+  for (const o of deps.outcomes ?? []) monitorFor(sampleKey(o)).record(sampleOutcome(o)); // re-warm keyed windows from replayed outcomes
 
   // Same cross-goal token accounting runGoal does per-goal (sum the bus `usage` events).
   let runTokens = 0;
@@ -222,7 +249,7 @@ export async function runLoop(spec: LoopSpec, deps: LoopDeps): Promise<LoopRunRe
         reason = 'consecutive-blocked';
         break;
       }
-      if (monitor.isTripped()) {
+      if (anyMonitorTripped()) {
         reason = 'verifier-health';
         break;
       }
@@ -243,6 +270,7 @@ export async function runLoop(spec: LoopSpec, deps: LoopDeps): Promise<LoopRunRe
         goalId,
         state: result.state,
         outcome,
+        verifierKey: result.verifierKey,
         rounds: result.rounds,
         tokens,
         at: stamp(),
@@ -263,7 +291,7 @@ export async function runLoop(spec: LoopSpec, deps: LoopDeps): Promise<LoopRunRe
         reason = 'consecutive-blocked';
         break;
       }
-      if (monitor.record(outcome) === 'halt') {
+      if (outcome !== undefined && monitorFor(result.verifierKey ?? DEFAULT_VERIFIER_HEALTH_KEY).record(outcome) === 'halt') {
         reason = 'verifier-health';
         break;
       }

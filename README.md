@@ -56,7 +56,7 @@ npm run dev         # 终端 REPL：带权限闸门 + bash + 交互审批 + 会�
 npm run resume      # 恢复 data/sessions/ 最近一个会话继续跑
 npm run goal        # goal 模式：npm run goal -- "<objective>" 自主跑到达标自停（确定性两腿；JARVIS_HELDOUT_CHECKS_FILE 加 held-out 隐藏断言；ARK_VERIFIER_MODEL=不同模型 启用腿3 独立裁判）
 npm run loop        # loop 模式（Phase E）：npm run loop -- <objectives-file> 多 goal 队列顺序排空、崩溃安全 resume；默认 attended / --unattended fail-closed / --resume(+--force)
-npm run resume:loop # 恢复 data/loops/ 最近一个 loop 继续
+npm run resume:loop -- --verifier-map <trusted-json> # 恢复最近 loop：恢复模式来自 cwd 外可信 map；无 per-goal verifier 时用 {"goals":[]}
 npm run typecheck   # tsc --noEmit
 npm test            # vitest（646 测试）
 npm run build       # tsc 产出到 dist/

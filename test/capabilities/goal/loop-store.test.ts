@@ -31,7 +31,7 @@ afterEach(async () => {
 });
 
 describe('FileLoopStore round-trip', () => {
-  it('replays created → started → finished → halted into resume state', async () => {
+  it('replays created and attempts but does not trust finished state/outcome seeds', async () => {
     const path = join(dir, 'L1.jsonl');
     const store = new FileLoopStore(path);
     await store.writeCreated({ id: 'L1', contract: CONTRACT, objectives: ['a', 'b', 'c'], createdAt: 't0' });
@@ -45,10 +45,14 @@ describe('FileLoopStore round-trip', () => {
     expect(replay.id).toBe('L1');
     expect(replay.contract).toEqual(CONTRACT);
     expect(replay.objectives).toEqual(['a', 'b', 'c']);
-    expect([...replay.finished]).toEqual([0, 1]);
-    expect(replay.goalsFinished).toBe(2);
-    expect(replay.cumulativeTokens).toBe(150);
-    expect(replay.outcomes).toEqual(['verified', 'couldNotVerify']); // defined outcomes, in order
+    expect([...replay.finished]).toEqual([]);
+    expect([...replay.inFlight]).toEqual([
+      [0, 'L1-g0-x'],
+      [1, 'L1-g1-x'],
+    ]);
+    expect(replay.goalsFinished).toBe(0);
+    expect(replay.cumulativeTokens).toBe(0);
+    expect(replay.outcomes).toEqual([]);
     expect(replay.halted).toBe('verifier-health');
   });
 
@@ -61,8 +65,49 @@ describe('FileLoopStore round-trip', () => {
     await store.recordStarted({ index: 1, goalId: 'L2-g1-x', at: 't3' }); // crashed here — no finished
 
     const replay = await loadLoop(path);
-    expect([...replay.finished]).toEqual([0]); // index 1 NOT finished
+    expect([...replay.finished]).toEqual([]);
+    expect([...replay.inFlight]).toEqual([
+      [0, 'L2-g0-x'],
+      [1, 'L2-g1-x'],
+    ]);
     expect(replay.halted).toBeUndefined(); // no loop-halted → resumable
+  });
+
+  it('does not trust log verifier outcomes or verifierKey for keyed health resume', async () => {
+    const path = join(dir, 'L-keyed-verifier.jsonl');
+    const store = new FileLoopStore(path);
+    await store.writeCreated({ id: 'L', contract: CONTRACT, objectives: ['a'], createdAt: 't0' });
+    await store.recordFinished({
+      index: 0,
+      goalId: 'L-g0-x',
+      state: 'blocked',
+      outcome: 'couldNotVerify',
+      verifierKey: 'model:judge-a',
+      rounds: 1,
+      tokens: 10,
+      at: 't1',
+    });
+
+    const replay = await loadLoop(path);
+
+    expect(replay.outcomes).toEqual([]);
+    expect([...replay.inFlight]).toEqual([[0, 'L-g0-x']]);
+  });
+
+  it('replays the trusted verifier-map path metadata from loop-created', async () => {
+    const path = join(dir, 'L-verifier-map.jsonl');
+    const store = new FileLoopStore(path);
+    await store.writeCreated({
+      id: 'L',
+      contract: CONTRACT,
+      objectives: ['a'],
+      createdAt: 't0',
+      verifierMapPath: 'C:\\Users\\Luis\\.jarvis\\loop-verifiers.json',
+    });
+
+    const replay = await loadLoop(path);
+
+    expect(replay.verifierMapPath).toBe('C:\\Users\\Luis\\.jarvis\\loop-verifiers.json');
   });
 
   it('replays the latest started-without-finished goal as an in-flight resume attempt', async () => {
@@ -76,8 +121,11 @@ describe('FileLoopStore round-trip', () => {
 
     const replay = await loadLoop(path);
 
-    expect([...replay.finished]).toEqual([0]);
-    expect([...replay.inFlight]).toEqual([[1, 'L-g1-resume']]);
+    expect([...replay.finished]).toEqual([]);
+    expect([...replay.inFlight]).toEqual([
+      [0, 'L-g0-old'],
+      [1, 'L-g1-resume'],
+    ]);
   });
 });
 
@@ -103,8 +151,15 @@ describe('replayLoop — consecutive-blocked folding (mirrors runLoop)', () => {
       fin(4, 'blocked', 'rejected'),
     ];
     const replay = replayLoop(records);
-    expect(replay.consecutiveBlocked).toBe(1); // reset by complete, cnv neutral, then one rejected block
-    expect(replay.outcomes).toEqual(['rejected', 'rejected', 'verified', 'couldNotVerify', 'rejected']);
+    expect(replay.consecutiveBlocked).toBe(0);
+    expect(replay.outcomes).toEqual([]);
+    expect([...replay.inFlight]).toEqual([
+      [0, 'g0'],
+      [1, 'g1'],
+      [2, 'g2'],
+      [3, 'g3'],
+      [4, 'g4'],
+    ]);
   });
 });
 
@@ -123,8 +178,9 @@ describe('parseLoopLog — crash safety', () => {
     const records = parseLoopLog(await readFile(path, 'utf8'));
     expect(records).toHaveLength(2); // half-written line skipped
     const replay = replayLoop(records);
-    expect([...replay.finished]).toEqual([0]);
-    expect(replay.cumulativeTokens).toBe(7);
+    expect([...replay.finished]).toEqual([]);
+    expect([...replay.inFlight]).toEqual([[0, 'g0']]);
+    expect(replay.cumulativeTokens).toBe(0);
   });
 });
 

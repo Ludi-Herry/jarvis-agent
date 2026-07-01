@@ -10,9 +10,8 @@
  * The crux of crash-safe resume: a queue item's durable identity is its INDEX in `loop-created`'s
  * `objectives` array, NOT a goalId. The goalId is per-ATTEMPT (timestamped), so a goal that crashed
  * mid-run (a `goal-started` with no `goal-finished`) is resumed under the latest started goalId so
- * the existing goal/session logs stay connected. `finished` (the set of indices with a
- * `goal-finished`) and `inFlight` are the queue state resume needs; the cumulative token/goal counts
- * and the monitor window are re-folded from the same records so a resume cannot reset a budget ceiling.
+ * the existing goal/session logs stay connected. Because this log lives under cwd, resume treats a
+ * `goal-finished` line as an attempt to recheck, not as trusted completion/health/budget authority.
  *
  * Each line is one record:
  *   {t:'loop-created', …}  — header (contract + the immutable objectives queue)
@@ -24,11 +23,11 @@
 import { appendFile, mkdir, readFile, readdir, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { GoalState, VerdictOutcome } from './goal.js';
-import type { LoopContract, LoopHaltReason, LoopStore } from './loop.js';
+import type { LoopContract, LoopHaltReason, LoopStore, VerifierOutcomeSample } from './loop.js';
 
 /** One line of the loop log. */
 export type LoopRecord =
-  | { t: 'loop-created'; id: string; contract: LoopContract; objectives: string[]; createdAt: string }
+  | { t: 'loop-created'; id: string; contract: LoopContract; objectives: string[]; createdAt: string; verifierMapPath?: string }
   | { t: 'goal-started'; index: number; goalId: string; at: string }
   | {
       t: 'goal-finished';
@@ -36,6 +35,7 @@ export type LoopRecord =
       goalId: string;
       state: GoalState;
       outcome?: VerdictOutcome;
+      verifierKey?: string;
       rounds: number;
       tokens: number;
       at: string;
@@ -49,18 +49,19 @@ export interface LoopReplay {
   /** The original loop id (from `loop-created`) so a resume reuses it for goalId prefixes. */
   id?: string;
   contract?: LoopContract;
+  verifierMapPath?: string;
   objectives: string[];
-  /** Indices with a `goal-finished` — resume skips these. */
+  /** Trusted finished seeds. File replay leaves this empty; callers may pass a trusted set. */
   finished: Set<number>;
-  /** Started attempts without a matching `goal-finished`, keyed by queue index. */
+  /** Attempts to resume/recheck, keyed by queue index. File replay uses the latest logged goalId. */
   inFlight: Map<number, string>;
-  /** Defined verifier outcomes in finish order — re-warms the health monitor window. */
-  outcomes: VerdictOutcome[];
-  /** = finished.size — seeds the cumulative maxGoals ceiling. */
+  /** Trusted verifier outcomes in finish order. File replay leaves this empty. */
+  outcomes: Array<VerdictOutcome | VerifierOutcomeSample>;
+  /** Trusted finished count. File replay seeds this from `finished.size`, which is zero. */
   goalsFinished: number;
-  /** Σ goal-finished.tokens — seeds the cumulative maxTotalTokens ceiling. */
+  /** Trusted cumulative tokens. File replay leaves this at zero. */
   cumulativeTokens: number;
-  /** Re-folded consecutive-blocked count (complete→0, blocked non-cnv→+1, cnv→unchanged). */
+  /** Trusted consecutive-blocked count. File replay leaves this at zero. */
   consecutiveBlocked: number;
   /** Set only by a `loop-halted` record — a crash (no such record) leaves it undefined → resumable. */
   halted?: LoopHaltReason;
@@ -86,17 +87,22 @@ export function parseLoopLog(text: string): LoopRecord[] {
   return records;
 }
 
-/** Fold records back into the resume state. Pure. `goal-finished` records are folded in log order, so
- *  the consecutive-blocked count and the outcome window reconstruct exactly what the live run held. */
+/** Fold records back into the resume state. Pure.
+ *
+ * Security note: `data/loops/*.jsonl` is under cwd, so replay treats `goal-finished` as an audit line
+ * that identifies the latest goalId to recheck. It does not trust state/outcome/token fields to skip
+ * work, seed verifier health, or spend budget.
+ */
 export function replayLoop(records: LoopRecord[]): LoopReplay {
   let id: string | undefined;
   let contract: LoopContract | undefined;
+  let verifierMapPath: string | undefined;
   let objectives: string[] = [];
   const finished = new Set<number>();
   const inFlight = new Map<number, string>();
-  const outcomes: VerdictOutcome[] = [];
-  let cumulativeTokens = 0;
-  let consecutiveBlocked = 0;
+  const outcomes: Array<VerdictOutcome | VerifierOutcomeSample> = [];
+  const cumulativeTokens = 0;
+  const consecutiveBlocked = 0;
   let halted: LoopHaltReason | undefined;
 
   for (const record of records) {
@@ -104,25 +110,21 @@ export function replayLoop(records: LoopRecord[]): LoopReplay {
       case 'loop-created':
         id = record.id;
         contract = record.contract;
+        verifierMapPath = record.verifierMapPath;
         objectives = record.objectives;
         break;
       case 'goal-started':
         inFlight.set(record.index, record.goalId);
         break;
       case 'goal-finished':
-        finished.add(record.index);
-        inFlight.delete(record.index);
-        cumulativeTokens += record.tokens;
-        if (record.outcome !== undefined) outcomes.push(record.outcome);
-        if (record.state === 'complete') consecutiveBlocked = 0;
-        else if (record.outcome !== 'couldNotVerify') consecutiveBlocked++; // cnv neutral (matches runLoop)
+        inFlight.set(record.index, record.goalId);
         break;
       case 'loop-halted':
         halted = record.reason;
         break;
     }
   }
-  return { id, contract, objectives, finished, inFlight, outcomes, goalsFinished: finished.size, cumulativeTokens, consecutiveBlocked, halted };
+  return { id, contract, verifierMapPath, objectives, finished, inFlight, outcomes, goalsFinished: finished.size, cumulativeTokens, consecutiveBlocked, halted };
 }
 
 /** A file-backed append-only loop store (mirrors FileGoalStore). Implements {@link LoopStore} so it
@@ -146,6 +148,7 @@ export class FileLoopStore implements LoopStore {
     goalId: string;
     state: GoalState;
     outcome?: VerdictOutcome;
+    verifierKey?: string;
     rounds: number;
     tokens: number;
     at: string;
