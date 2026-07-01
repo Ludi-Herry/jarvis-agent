@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { join, resolve } from 'node:path';
+import { mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { join, resolve, toNamespacedPath } from 'node:path';
 import {
   assertResumeHookMapMatches,
   buildLoopHookPlan,
@@ -108,6 +109,160 @@ describe('loadLoopHookMap trust boundary', () => {
         realpath: async (p) => (p === mapOutside ? resolve(p) : null),
       }),
     ).rejects.toThrow(/hook path cannot be read/);
+  });
+
+  it('refuses a real outside symlink that points to an in-cwd hook map', async () => {
+    const repo = await mkdtemp(join(tmpdir(), 'jarvis-loop-hooks-repo-real-'));
+    const outside = await mkdtemp(join(tmpdir(), 'jarvis-loop-hooks-outside-real-'));
+    const insideMap = join(repo, 'loop-hooks.json');
+    const outsideLink = join(outside, 'trusted-looking-loop-hooks.json');
+    await writeFile(insideMap, JSON.stringify({ goals: [] }), 'utf8');
+
+    try {
+      try {
+        await symlink(insideMap, outsideLink, 'file');
+      } catch {
+        return; // Windows without symlink privilege: junction / \\?\ smokes below cover the realpath guard.
+      }
+      await expect(
+        loadLoopHookMap({
+          path: outsideLink,
+          cwd: repo,
+          readText: async (p) => readFile(p, 'utf8').catch(() => null),
+          realpath: async (p) => realpath(p).catch(() => null),
+        }),
+      ).rejects.toThrow(/inside the working directory/);
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a real outside symlink that points a per-goal hook path into cwd', async () => {
+    const repo = await mkdtemp(join(tmpdir(), 'jarvis-loop-hooks-repo-real-'));
+    const outside = await mkdtemp(join(tmpdir(), 'jarvis-loop-hooks-outside-real-'));
+    const mapPath = join(outside, 'loop-hooks.json');
+    const insideHook = join(repo, 'goal-hooks.json');
+    const outsideLink = join(outside, 'trusted-looking-goal-hooks.json');
+    await writeFile(insideHook, JSON.stringify({ PreToolUse: [{ command: 'echo hook' }] }), 'utf8');
+
+    try {
+      try {
+        await symlink(insideHook, outsideLink, 'file');
+      } catch {
+        return; // Windows without symlink privilege: junction / \\?\ smokes below cover the realpath guard.
+      }
+      await writeFile(mapPath, JSON.stringify({ goals: [{ index: 0, hookPath: outsideLink }] }), 'utf8');
+      await expect(
+        loadLoopHookMap({
+          path: mapPath,
+          cwd: repo,
+          readText: async (p) => readFile(p, 'utf8').catch(() => null),
+          realpath: async (p) => realpath(p).catch(() => null),
+        }),
+      ).rejects.toThrow(/hook path is inside the working directory/);
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a real Windows outside junction that points a per-goal hook path into cwd', async () => {
+    if (process.platform !== 'win32') return;
+
+    const repo = await mkdtemp(join(tmpdir(), 'jarvis-loop-hooks-repo-real-'));
+    const outside = await mkdtemp(join(tmpdir(), 'jarvis-loop-hooks-outside-real-'));
+    const mapPath = join(outside, 'loop-hooks.json');
+    const insideHook = join(repo, 'goal-hooks.json');
+    const outsideLinkDir = join(outside, 'trusted-looking-repo');
+    await writeFile(insideHook, JSON.stringify({ PreToolUse: [{ command: 'echo hook' }] }), 'utf8');
+    await symlink(repo, outsideLinkDir, 'junction');
+    await writeFile(mapPath, JSON.stringify({ goals: [{ index: 0, hookPath: join(outsideLinkDir, 'goal-hooks.json') }] }), 'utf8');
+
+    try {
+      await expect(
+        loadLoopHookMap({
+          path: mapPath,
+          cwd: repo,
+          readText: async (p) => readFile(p, 'utf8').catch(() => null),
+          realpath: async (p) => realpath(p).catch(() => null),
+        }),
+      ).rejects.toThrow(/hook path is inside the working directory/);
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a real Windows outside junction that points to an in-cwd hook map', async () => {
+    if (process.platform !== 'win32') return;
+
+    const repo = await mkdtemp(join(tmpdir(), 'jarvis-loop-hooks-repo-real-'));
+    const outside = await mkdtemp(join(tmpdir(), 'jarvis-loop-hooks-outside-real-'));
+    const insideMap = join(repo, 'loop-hooks.json');
+    const outsideLinkDir = join(outside, 'trusted-looking-repo');
+    await writeFile(insideMap, JSON.stringify({ goals: [] }), 'utf8');
+    await symlink(repo, outsideLinkDir, 'junction');
+
+    try {
+      await expect(
+        loadLoopHookMap({
+          path: join(outsideLinkDir, 'loop-hooks.json'),
+          cwd: repo,
+          readText: async (p) => readFile(p, 'utf8').catch(() => null),
+          realpath: async (p) => realpath(p).catch(() => null),
+        }),
+      ).rejects.toThrow(/inside the working directory/);
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a real Windows \\\\?\\ path that points to an in-cwd hook map', async () => {
+    if (process.platform !== 'win32') return;
+
+    const repo = await mkdtemp(join(tmpdir(), 'jarvis-loop-hooks-repo-real-'));
+    const insideMap = join(repo, 'loop-hooks.json');
+    await writeFile(insideMap, JSON.stringify({ goals: [] }), 'utf8');
+
+    try {
+      await expect(
+        loadLoopHookMap({
+          path: toNamespacedPath(insideMap),
+          cwd: repo,
+          readText: async (p) => readFile(p, 'utf8').catch(() => null),
+          realpath: async (p) => realpath(p).catch(() => null),
+        }),
+      ).rejects.toThrow(/inside the working directory/);
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a real Windows \\\\?\\ path that points a per-goal hook path into cwd', async () => {
+    if (process.platform !== 'win32') return;
+
+    const repo = await mkdtemp(join(tmpdir(), 'jarvis-loop-hooks-repo-real-'));
+    const outside = await mkdtemp(join(tmpdir(), 'jarvis-loop-hooks-outside-real-'));
+    const mapPath = join(outside, 'loop-hooks.json');
+    const insideHook = join(repo, 'goal-hooks.json');
+    await writeFile(insideHook, JSON.stringify({ PreToolUse: [{ command: 'echo hook' }] }), 'utf8');
+    await writeFile(mapPath, JSON.stringify({ goals: [{ index: 0, hookPath: toNamespacedPath(insideHook) }] }), 'utf8');
+
+    try {
+      await expect(
+        loadLoopHookMap({
+          path: mapPath,
+          cwd: repo,
+          readText: async (p) => readFile(p, 'utf8').catch(() => null),
+          realpath: async (p) => realpath(p).catch(() => null),
+        }),
+      ).rejects.toThrow(/hook path is inside the working directory/);
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+      await rm(outside, { recursive: true, force: true });
+    }
   });
 });
 
