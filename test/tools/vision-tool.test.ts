@@ -29,11 +29,15 @@ function fakeComplete(answer = 'OBJECTS:\ncat: [10, 20, 110, 220]\nANSWER: one c
   return { complete, parts: () => seen, calls: () => calls };
 }
 
-const IMG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]); // PNG magic + a few bytes
+const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const JPG_BYTES = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]);
+const WEBP_BYTES = Buffer.from('RIFFxxxxWEBP', 'ascii');
+const GIF_BYTES = Buffer.from('GIF89a', 'ascii');
+const BMP_BYTES = Buffer.from([0x42, 0x4d, 0x00, 0x00]);
 
 describe('vision tool — happy path', () => {
   it('reads the image, sends the structured prompt + a data URL, and returns the VLM answer', async () => {
-    await writeFile(join(dir, 'shot.png'), IMG_BYTES);
+    await writeFile(join(dir, 'shot.png'), PNG_BYTES);
     const fake = fakeComplete();
     const tool = createVisionTool(fake.complete);
 
@@ -48,18 +52,26 @@ describe('vision tool — happy path', () => {
     expect((parts[0] as { text: string }).text).toContain('how many cats?');
     expect((parts[0] as { text: string }).text).toMatch(/bounding box|x_min/i); // the coordinate contract
     // part 1: the image as a base64 data URL with the right mime + the exact bytes
-    expect(parts[1]).toEqual({ type: 'image_url', image_url: { url: `data:image/png;base64,${IMG_BYTES.toString('base64')}` } });
+    expect(parts[1]).toEqual({ type: 'image_url', image_url: { url: `data:image/png;base64,${PNG_BYTES.toString('base64')}` } });
   });
 
-  it('maps .jpg/.jpeg/.webp/.gif/.bmp to the right mime', async () => {
-    for (const [name, mime] of [
-      ['a.jpg', 'image/jpeg'],
-      ['a.jpeg', 'image/jpeg'],
-      ['a.webp', 'image/webp'],
-      ['a.gif', 'image/gif'],
-      ['a.bmp', 'image/bmp'],
+  it('sniffs the MIME from image bytes, not the extension', async () => {
+    await writeFile(join(dir, 'mislabeled.png'), JPG_BYTES);
+    const fake = fakeComplete();
+    await createVisionTool(fake.complete).run({ image: 'mislabeled.png', question: 'q' }, { cwd: dir });
+    const url = (fake.parts()![1] as { image_url: { url: string } }).image_url.url;
+    expect(url.startsWith(`data:image/jpeg;base64,`)).toBe(true);
+  });
+
+  it('maps supported magic bytes to the right MIME', async () => {
+    for (const [name, bytes, mime] of [
+      ['a.jpg', JPG_BYTES, 'image/jpeg'],
+      ['a.jpeg', JPG_BYTES, 'image/jpeg'],
+      ['a.webp', WEBP_BYTES, 'image/webp'],
+      ['a.gif', GIF_BYTES, 'image/gif'],
+      ['a.bmp', BMP_BYTES, 'image/bmp'],
     ] as const) {
-      await writeFile(join(dir, name), IMG_BYTES);
+      await writeFile(join(dir, name), bytes);
       const fake = fakeComplete();
       await createVisionTool(fake.complete).run({ image: name, question: 'q' }, { cwd: dir });
       const url = (fake.parts()![1] as { image_url: { url: string } }).image_url.url;
@@ -68,7 +80,7 @@ describe('vision tool — happy path', () => {
   });
 
   it('returns a placeholder (not empty) when the VLM returns no text', async () => {
-    await writeFile(join(dir, 'shot.png'), IMG_BYTES);
+    await writeFile(join(dir, 'shot.png'), PNG_BYTES);
     const out = await createVisionTool(fakeComplete('').complete).run({ image: 'shot.png', question: 'q' }, { cwd: dir });
     expect(out.error).toBeUndefined();
     expect(out.content).toMatch(/no description/i);
@@ -76,9 +88,10 @@ describe('vision tool — happy path', () => {
 });
 
 describe('vision tool — guards (the VLM is never called on a rejected input)', () => {
-  it('rejects an unsupported extension before any read or VLM call', async () => {
+  it('rejects unsupported image bytes and never calls the VLM', async () => {
+    await writeFile(join(dir, 'fake.png'), Buffer.from('not an image', 'utf8'));
     const fake = fakeComplete();
-    const out = await createVisionTool(fake.complete).run({ image: 'notes.txt', question: 'q' }, { cwd: dir });
+    const out = await createVisionTool(fake.complete).run({ image: 'fake.png', question: 'q' }, { cwd: dir });
     expect(out.error).toMatch(/Unsupported image type/);
     expect(fake.calls()).toBe(0);
   });
@@ -98,7 +111,7 @@ describe('vision tool — guards (the VLM is never called on a rejected input)',
   });
 
   it('surfaces a VLM error as a tool error (not a thrown turn)', async () => {
-    await writeFile(join(dir, 'shot.png'), IMG_BYTES);
+    await writeFile(join(dir, 'shot.png'), PNG_BYTES);
     const complete: VisionComplete = async () => {
       throw new Error('vision endpoint 503');
     };

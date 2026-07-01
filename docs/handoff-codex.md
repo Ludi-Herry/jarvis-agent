@@ -47,7 +47,7 @@
 ## 三、边界钉死：哪些你能自闭环、哪些必须人把关、哪些别碰
 
 ### ✅ 能 codex 自闭环（红线清晰、机械独立）
-Hooks slice-2 的 ③ 每-hook timeout、⑤ round/session 级事件、给 hook 传 tool result 已落地；⑥ shadow restore 交互确认；⑧ vision 的 MIME sniff / 活体验证仍在 backlog。做法见下「五、backlog」。仍要：plan 先行、四关卡、多实例对抗审（见四）。
+Hooks slice-2 的 ③ 每-hook timeout、⑤ round/session 级事件、给 hook 传 tool result 已落地；⑥ shadow restore 交互确认、⑧ vision MIME sniff 已落地；vision 活体验证仍需 `ARK_VISION_MODEL` 后跑；loop 重项仍按核心改动暂缓。剩余见下「五、backlog」。仍要：plan 先行、四关卡、多实例对抗审（见四）。
 
 ### ⚠️ 必须 plan + 人（Luis）把关（碰核心 / 信任边界，同族自审不够）
 - **hook 信任来源扩展**：多来源合并已按不变量 #2 落地。后续若再新增来源，每个来源都要 realpath 规范化 + 拒 cwd 内 + 只从可信来源加载；绝不新增扫 cwd 的路径。**slice-1 的 HIGH 就栽在信任边界**——这类改动做完**必须请 Luis 在关键项做最终闸**，别单靠同族自审 SHIP。
@@ -71,14 +71,14 @@ Hooks slice-2 的 ③ 每-hook timeout、⑤ round/session 级事件、给 hook 
 
 ## 五、backlog（现状 / 目标 / 关键文件 / 红线）—— 可直接当 codex 任务喂
 
-按性价比挑、分阶段、每项独立 commit。Hooks follow-up（传-result、③、⑤、④）已落地；下一批建议顺序：⑥ → ⑧ →（未证明需要，暂缓）⑦。
+按性价比挑、分阶段、每项独立 commit。Hooks follow-up（传-result、③、⑤、④）、⑥ shadow restore 交互确认、⑧ vision MIME sniff 已落地；当前剩余是 vision 活体验证（需真 `ARK_VISION_MODEL`）、shadow snapshot 异步化、⑦ loop 重项（暂缓 / 另审）。
 
-**Hooks follow-up 已落地（2026-07-01）**：PostToolUse 通过 `JARVIS_HOOK_TOOL_RESULT` 拿 tool result（同 4096 cap + 合法 JSON 哨兵）；`HookEntry.timeoutMs` 支持 1..300000 毫秒覆盖；`RoundStart/RoundEnd` 挂在 `runAgent` turn 边界，`SessionStart/SessionEnd` 挂在 REPL/goal/loop CLI 会话边界；多来源合并按 `~/.jarvis/hooks.json` → `JARVIS_HOOKS` 顺序拼接，每来源 realpath + 拒 cwd 内，malformed 只禁该来源。lifecycle 全部 advisory，不阻断、不回灌、不改结果。
+**Hooks follow-up 已落地（2026-07-01）**：PostToolUse 通过 `JARVIS_HOOK_TOOL_RESULT` 拿 tool result（同 4096 cap + 合法 JSON 哨兵）；`HookEntry.timeoutMs` 支持 1..300000 毫秒覆盖；`RoundStart/RoundEnd` 挂在 `runAgent` turn 边界，`SessionStart/SessionEnd` 挂在 REPL/goal/loop CLI 会话边界；多来源合并按 `~/.jarvis/hooks.json` → `JARVIS_HOOKS` 顺序拼接，每来源 realpath + 拒 cwd 内，malformed 只禁该来源；已补真实 Windows `\\?\` 与 symlink smoke。lifecycle 全部 advisory，不阻断、不回灌、不改结果。
 
 
-**⑥ shadow restore 交互确认**：现状 `npm run shadow -- restore <sha>` 仅 ⚠ 提示、用户显式 CLI 接受。目标：restore 前交互确认（restore 覆盖工作树 = 破坏性）。关键文件：shadow CLI 入口 + `shadow-git.ts` restore 路径。红线：破坏性操作 fail-safe（默认拒绝、显式 yes）；复用审批三件套（`renderApprovalRequest`/`detailOf`/`safeInline`）显示 sha + 影响。
+**⑥ shadow restore 交互确认 已落地（2026-07-01）**：`npm run shadow -- restore <sha>` 现在先走审批三件套显示 ref / cwd / 覆盖影响，EOF、空输入、非明确允许均 fail-closed 取消；只有 `allow-once` 才调用 `shadow.restore()`。关键文件：`src/surfaces/cli/shadow-cli.ts` + `test/cli/shadow-cli.test.ts`。红线：restore 仍是破坏性覆盖，不能绕审批；不要把 `allow-session` 暴露给 restore。
 
-**⑧ vision MIME sniff / 活体验证**：现状 MIME 只看扩展名不 sniff；活体未验。目标：按内容 magic bytes sniff；用真 `ARK_VISION_MODEL` + 测试图跑通请求形状 / 坐标质量。关键文件：`vision-tool.ts` / `vision.ts`。红线：不改 network→gate ask 语义；活体验证别把 key 写进代码 / 日志（错误通道已套 `describeModelError`+`redactSecrets`）。
+**⑧ vision MIME sniff 已落地，活体验证待配置**：`vision-tool.ts` 现在按 magic bytes 判 PNG/JPEG/WebP/GIF/BMP，扩展名只作显示；不支持的内容在调用 VLM 前拒绝。活体验证未跑的原因是当前环境缺 `ARK_VISION_MODEL`；配置后用真测试图验证请求形状 / 坐标质量。红线：不改 network→gate ask 语义；活体验证别把 key 写进代码 / 日志（错误通道已套 `describeModelError`+`redactSecrets`）。
 
 **⑦ loop 重项** —— ⚠️ 见三、未证明需要 + 碰核心，暂缓。
 

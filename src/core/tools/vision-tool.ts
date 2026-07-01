@@ -16,7 +16,6 @@
  * auto-allowed. With no approver (unattended) it fails closed, so no silent image egress.
  */
 import { readFile, stat } from 'node:fs/promises';
-import { extname } from 'node:path';
 import { z } from 'zod';
 import { safeResolve } from './safe-path.js';
 import { buildVisionParts, type VisionComplete } from '../model/vision.js';
@@ -26,18 +25,20 @@ import type { ToolDefinition } from './types.js';
  *  huge file shouldn't be slurped. 10 MB covers screenshots/photos with margin. */
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
-/** Extension → MIME for the data URL. An unknown extension is rejected rather than guessed. */
-const IMAGE_MIME: Record<string, string> = {
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.webp': 'image/webp',
-  '.gif': 'image/gif',
-  '.bmp': 'image/bmp',
-};
-
-function imageMime(path: string): string | undefined {
-  return IMAGE_MIME[extname(path).toLowerCase()];
+/** Sniff MIME from magic bytes. The extension is only UX; content decides what is sent to the VLM. */
+function imageMime(buf: Buffer): string | undefined {
+  if (buf.length >= 8 && buf.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
+    return 'image/png';
+  }
+  if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'image/jpeg';
+  if (buf.length >= 12 && buf.subarray(0, 4).toString('ascii') === 'RIFF' && buf.subarray(8, 12).toString('ascii') === 'WEBP') {
+    return 'image/webp';
+  }
+  if (buf.length >= 6 && (buf.subarray(0, 6).toString('ascii') === 'GIF87a' || buf.subarray(0, 6).toString('ascii') === 'GIF89a')) {
+    return 'image/gif';
+  }
+  if (buf.length >= 2 && buf[0] === 0x42 && buf[1] === 0x4d) return 'image/bmp';
+  return undefined;
 }
 
 /**
@@ -54,14 +55,10 @@ export function createVisionTool(complete: VisionComplete): ToolDefinition<{ ima
       'service, so the call requires approval.',
     capability: 'network',
     inputSchema: z.object({
-      image: z.string().describe('Image file path, relative to the project root (.png/.jpg/.jpeg/.webp/.gif/.bmp).'),
+      image: z.string().describe('Image file path, relative to the project root (PNG/JPEG/WebP/GIF/BMP content).'),
       question: z.string().describe('What to look for or determine in the image.'),
     }),
     run: async ({ image, question }, ctx) => {
-      const mime = imageMime(image);
-      if (mime === undefined) {
-        return { content: '', error: `Unsupported image type for ${image} (use .png/.jpg/.jpeg/.webp/.gif/.bmp).` };
-      }
       const safe = await safeResolve(ctx.cwd, image);
       if (!safe.ok) return { content: '', error: `Cannot read image ${image}: ${safe.reason}` };
       try {
@@ -75,6 +72,10 @@ export function createVisionTool(complete: VisionComplete): ToolDefinition<{ ima
         const buf = await readFile(safe.abs);
         if (buf.length > MAX_IMAGE_BYTES) {
           return { content: '', error: `Image ${image} is ${buf.length} bytes — over the ${MAX_IMAGE_BYTES}-byte limit.` };
+        }
+        const mime = imageMime(buf);
+        if (mime === undefined) {
+          return { content: '', error: `Unsupported image type for ${image} (content is not PNG/JPEG/WebP/GIF/BMP).` };
         }
         const dataUrl = `data:${mime};base64,${buf.toString('base64')}`;
         const answer = await complete(buildVisionParts(dataUrl, question), ctx.signal);

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { join, resolve } from 'node:path';
+import { join, resolve, toNamespacedPath } from 'node:path';
 import { tmpdir } from 'node:os';
+import { mkdtemp, readFile, realpath, symlink, writeFile } from 'node:fs/promises';
 import { loadHookConfig, loadHookConfigs, parseHookConfig, type RealPath } from '../../../src/capabilities/hooks/hook-config.js';
 import type { ReadText } from '../../../src/capabilities/rules/index.js';
 
@@ -173,5 +174,60 @@ describe('loadHookConfig — trust boundary', () => {
     const res = await loadHookConfig({ path: join(tmpdir(), 'missing.json'), cwd, readText: fixed(okConfig), realpath });
     expect(res.config).toBeUndefined();
     expect(res.warning).toMatch(/无法读取/);
+  });
+
+  it('REFUSES a real outside symlink that points to an in-cwd hook config', async () => {
+    const repo = await mkdtemp(join(tmpdir(), 'jarvis-hooks-repo-real-'));
+    const outside = await mkdtemp(join(tmpdir(), 'jarvis-hooks-outside-real-'));
+    const insideConfig = join(repo, '.hooks.json');
+    const outsideLink = join(outside, 'trusted-looking-hooks.json');
+    await writeFile(insideConfig, okConfig, 'utf8');
+    try {
+      await symlink(insideConfig, outsideLink, 'file');
+    } catch {
+      return; // Windows without symlink privilege: synthetic realpath test above still covers the guard.
+    }
+    const res = await loadHookConfig({
+      path: outsideLink,
+      cwd: repo,
+      readText: async (p) => readFile(p, 'utf8').catch(() => null),
+      realpath: async (p) => realpath(p).catch(() => null),
+    });
+    expect(res.config).toBeUndefined();
+    expect(res.warning).toMatch(/工作目录内|拒绝/);
+  });
+
+  it('REFUSES a real Windows outside junction that points into cwd', async () => {
+    if (process.platform !== 'win32') return;
+    const repo = await mkdtemp(join(tmpdir(), 'jarvis-hooks-repo-real-'));
+    const outside = await mkdtemp(join(tmpdir(), 'jarvis-hooks-outside-real-'));
+    const insideConfig = join(repo, '.hooks.json');
+    const outsideLinkDir = join(outside, 'trusted-looking-repo');
+    await writeFile(insideConfig, okConfig, 'utf8');
+    await symlink(repo, outsideLinkDir, 'junction');
+    const res = await loadHookConfig({
+      path: join(outsideLinkDir, '.hooks.json'),
+      cwd: repo,
+      readText: async (p) => readFile(p, 'utf8').catch(() => null),
+      realpath: async (p) => realpath(p).catch(() => null),
+    });
+    expect(res.config).toBeUndefined();
+    expect(res.warning).toMatch(/工作目录内|拒绝/);
+  });
+
+  it('REFUSES a real Windows \\\\?\\ path that points to an in-cwd hook config', async () => {
+    if (process.platform !== 'win32') return;
+    const repo = await mkdtemp(join(tmpdir(), 'jarvis-hooks-repo-real-'));
+    const insideConfig = join(repo, '.hooks.json');
+    await writeFile(insideConfig, okConfig, 'utf8');
+    const namespaced = toNamespacedPath(insideConfig);
+    const res = await loadHookConfig({
+      path: namespaced,
+      cwd: repo,
+      readText: async (p) => readFile(p, 'utf8').catch(() => null),
+      realpath: async (p) => realpath(p).catch(() => null),
+    });
+    expect(res.config).toBeUndefined();
+    expect(res.warning).toMatch(/工作目录内|拒绝/);
   });
 });
