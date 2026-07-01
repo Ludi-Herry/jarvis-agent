@@ -106,7 +106,8 @@ data/            # 运行期会话日志（gitignore）
 ## 文档导航
 
 - `AGENTS.md` — 项目规则层（命名 / 风格 / 工程纪律 / 命令 / 设计依据）。**动手前先读。**
-- `docs/handoff-D.md` — **Phase D（GoalLoop 自主验收，全部完成）接手入口**；`docs/handoff-next.md` — 之后两类待办的新会话交接。
+- `docs/handoff-D.md` — **Phase D（GoalLoop 自主验收，全部完成）接手入口**；`docs/handoff-next.md` — 之后待办 + GUI 就绪盘点。
+- `docs/handoff-codex.md` — **codex 自主接手宪法**（Claude 不可用后：硬不变量 + 同族自审盲区 + 边界钉死 + backlog）。
 - `docs/handoff-C.md` — Phase C（多 agent / SubagentManager）接手入口。
 - `docs/handoff-B.md` — B 阶段 + 当前安全态（顶部「当前状态更新」段是接手入口）。
 - `docs/handoff-persistence.md` — 持久化段（JSONL + 断点续跑）。
