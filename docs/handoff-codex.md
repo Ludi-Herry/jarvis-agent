@@ -80,7 +80,7 @@ Hooks slice-2 的 ③ 每-hook timeout、⑤ round/session 级事件、给 hook 
 
 **⑧ vision MIME sniff + 活体验证已落地（2026-07-01）**：`vision-tool.ts` 现在按 magic bytes 判 PNG/JPEG/WebP/GIF/BMP，扩展名只作显示；不支持的内容在调用 VLM 前拒绝。已用 `ARK_VISION_MODEL=doubao-seed-2-1-pro-260628` 跑 `demo:vision` 真连 ARK：请求形状可用，红/蓝方块测试图返回结构化坐标。实测该模型自然输出 0-1024 视觉坐标网格，故 `VISION_PROMPT` 已把契约从原图像素改为 0-1024 网格；红线：不改 network→gate ask 语义，别把 key 写进代码 / 日志（错误通道已套 `describeModelError`+`redactSecrets`）。
 
-**⑦ loop 重项** —— mid-goal resume、per-goal 异构 verifier、per-goal hook runner、并行目标/worktree first slice、cron first slice（含同工作区扫描锁 + stale 回收 + task 前心跳）已落地；并行 resume、自动 merge/cleanup、cron daemon 仍见三，未证明需要 + 碰核心，暂缓。
+**⑦ loop 重项** —— mid-goal resume、per-goal 异构 verifier、per-goal hook runner、并行目标/worktree first slice、cron first slice（含同工作区扫描锁 + stale 回收 + task 前心跳）已落地；cron daemon 已补计划文档与失败模式测试清单：`docs/superpowers/plans/2026-07-02-cron-daemon-plan.md`；并行 resume、自动 merge/cleanup、cron daemon 实现仍见三，未证明需要 + 碰核心，暂缓。
 
 ---
 
