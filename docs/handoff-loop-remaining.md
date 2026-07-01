@@ -202,7 +202,7 @@ daemon 只负责调度、锁、可观测性、信号退出。它不自动 resume
 
 ## 建议顺序
 
-1. loop finalize apply/cleanup：等只读报告稳定后再做。
+1. loop finalize apply/cleanup：交互执行设计见 `docs/superpowers/plans/2026-07-02-loop-finalize-apply-cleanup-design.md`；后续按 merge apply、cleanup confirm 两个独立 slice 做。
 2. cron daemon：按已有 plan 实现第一范围。daemon 不依赖 merge/cleanup，若新会话只做 cron，也可以直接从计划文档开。
 
 每项独立 plan、独立 commit、独立四关卡。不要一次性实现三项。
@@ -238,7 +238,7 @@ Windows 子进程测试偶发 timeout / EBUSY，失败先重跑确认。不要�
 当前已完成：mid-goal resume、per-goal verifier、per-goal hook runner、parallel worktree first slice、cron single-scan first slice、真实 --hook-map CLI smoke、Windows \\?\ / symlink / junction hook-map smoke。
 
 剩余两项：
-1. finalize apply/cleanup：当前已能只读生成 report。下一步再考虑交互式 merge/cleanup。不能 push、rebase、强删；blocked/parked/rejected/missing verdict/conflict/dirty 都必须停下。
+1. finalize apply/cleanup：当前已能只读生成 report，交互执行设计见 `docs/superpowers/plans/2026-07-02-loop-finalize-apply-cleanup-design.md`。下一步按设计做 merge apply slice。不能 push、rebase、强删；blocked/parked/rejected/missing verdict/conflict/dirty 都必须停下。
 2. 完整 cron daemon：已有计划文档 docs/superpowers/plans/2026-07-02-cron-daemon-plan.md。daemon 只负责前台调度、锁、JSONL、信号退出；不自动 resume crashed loop，不自动 merge/cleanup，不后台 fork。
 
 红线：
