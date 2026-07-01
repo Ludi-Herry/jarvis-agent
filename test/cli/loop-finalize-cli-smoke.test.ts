@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdtemp, mkdir, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -69,6 +69,83 @@ describe('loop finalize CLI smoke', () => {
     }
   });
 
+  it('cancels cleanup mode unless the exact confirmation phrase is typed', async () => {
+    const fixture = await setupCleanWorktreeFixture('L-cancel-cleanup', { audit: true });
+    try {
+      const result = await runFinalizeCli(['--loop', fixture.loopId, '--worktree-root', fixture.worktreeRoot, '--cleanup'], fixture.cwd, 'yes\n');
+
+      expect(result.code).toBe(1);
+      expect(`${result.stdout}\n${result.stderr}`).toContain('cleanup cancelled');
+      await expect(stat(fixture.worktreePath)).resolves.toMatchObject({ isDirectory: expect.any(Function) });
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it('removes a clean audited worktree after cleanup confirmation and keeps logs', async () => {
+    const fixture = await setupCleanWorktreeFixture('L-cleanup-remove', { audit: true });
+    try {
+      const loopLogPath = join(fixture.cwd, 'data', 'loops', `${fixture.loopId}.jsonl`);
+      const auditPath = join(fixture.cwd, 'data', 'loops', `${fixture.loopId}.finalize.jsonl`);
+
+      const result = await runFinalizeCli(
+        ['--loop', fixture.loopId, '--worktree-root', fixture.worktreeRoot, '--cleanup'],
+        fixture.cwd,
+        `cleanup ${fixture.loopId}\n`,
+      );
+
+      expect(result.code).toBe(0);
+      expect(result.stdout).toContain('cleanup-removed');
+      await expect(stat(fixture.worktreePath)).rejects.toThrow();
+      await expect(readFile(loopLogPath, 'utf8')).resolves.toContain('"t":"loop-created"');
+      const audit = await readFile(auditPath, 'utf8');
+      expect(audit).toContain('"t":"merge-applied"');
+      expect(audit).toContain('"t":"cleanup-confirmed"');
+      expect(audit).toContain('"t":"cleanup-removed"');
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it('does not remove a clean worktree without a merge-applied audit record', async () => {
+    const fixture = await setupCleanWorktreeFixture('L-cleanup-no-audit', { audit: false });
+    try {
+      const result = await runFinalizeCli(
+        ['--loop', fixture.loopId, '--worktree-root', fixture.worktreeRoot, '--cleanup'],
+        fixture.cwd,
+        `cleanup ${fixture.loopId}\n`,
+      );
+
+      expect(result.code).toBe(0);
+      expect(result.stdout).toContain('Cleanup candidates: 0');
+      await expect(stat(fixture.worktreePath)).resolves.toMatchObject({ isDirectory: expect.any(Function) });
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it('does not remove an audited worktree that still has tracked changes', async () => {
+    const fixture = await setupMergeFixture('L-cleanup-dirty');
+    try {
+      await writeFinalizeAudit(fixture.cwd, fixture.loopId, [
+        { t: 'merge-applied', loopId: fixture.loopId, index: 0, goalId: 'g0', worktreePath: fixture.worktreePath, at: 't3' },
+      ]);
+
+      const result = await runFinalizeCli(
+        ['--loop', fixture.loopId, '--worktree-root', fixture.worktreeRoot, '--cleanup'],
+        fixture.cwd,
+        `cleanup ${fixture.loopId}\n`,
+      );
+
+      expect(result.code).toBe(0);
+      expect(result.stdout).toContain('dirty');
+      expect(result.stdout).toContain('Cleanup candidates: 0');
+      await expect(stat(fixture.worktreePath)).resolves.toMatchObject({ isDirectory: expect.any(Function) });
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
   it('prints a parked report when the verified worktree is missing', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'jarvis-finalize-cwd-'));
     const worktreeRoot = await mkdtemp(join(tmpdir(), 'jarvis-finalize-worktrees-'));
@@ -117,6 +194,7 @@ describe('loop finalize CLI smoke', () => {
 async function setupMergeFixture(loopId: string): Promise<{
   cwd: string;
   worktreeRoot: string;
+  worktreePath: string;
   loopId: string;
   cleanup: () => Promise<void>;
 }> {
@@ -141,6 +219,53 @@ async function setupMergeFixture(loopId: string): Promise<{
     return {
       cwd,
       worktreeRoot,
+      worktreePath,
+      loopId,
+      cleanup: async () => {
+        await rm(cwd, { recursive: true, force: true });
+        await rm(worktreeRoot, { recursive: true, force: true });
+      },
+    };
+  } catch (err) {
+    await rm(cwd, { recursive: true, force: true });
+    await rm(worktreeRoot, { recursive: true, force: true });
+    throw err;
+  }
+}
+
+async function setupCleanWorktreeFixture(loopId: string, opts: { audit: boolean }): Promise<{
+  cwd: string;
+  worktreeRoot: string;
+  worktreePath: string;
+  loopId: string;
+  cleanup: () => Promise<void>;
+}> {
+  const cwd = await mkdtemp(join(tmpdir(), 'jarvis-finalize-cwd-'));
+  const worktreeRoot = await mkdtemp(join(tmpdir(), 'jarvis-finalize-worktrees-'));
+  try {
+    await runGit(cwd, ['init']);
+    await runGit(cwd, ['config', 'user.name', 'Jarvis Test']);
+    await runGit(cwd, ['config', 'user.email', 'jarvis@example.test']);
+    await runGit(cwd, ['config', 'core.autocrlf', 'false']);
+    await writeFile(join(cwd, '.gitignore'), '/data/\n', 'utf8');
+    await writeFile(join(cwd, 'file.txt'), 'base\n', 'utf8');
+    await runGit(cwd, ['add', '.gitignore', 'file.txt']);
+    await runGit(cwd, ['commit', '-m', 'init']);
+
+    const worktreePath = join(worktreeRoot, loopId, 'g0');
+    await mkdir(dirname(worktreePath), { recursive: true });
+    await runGit(cwd, ['worktree', 'add', '--detach', worktreePath, 'HEAD']);
+    await writeLoopLog(cwd, loopId);
+    if (opts.audit) {
+      await writeFinalizeAudit(cwd, loopId, [
+        { t: 'merge-applied', loopId, index: 0, goalId: 'g0', worktreePath, at: 't3' },
+      ]);
+    }
+
+    return {
+      cwd,
+      worktreeRoot,
+      worktreePath,
       loopId,
       cleanup: async () => {
         await rm(cwd, { recursive: true, force: true });
@@ -163,6 +288,11 @@ async function writeLoopLog(cwd: string, loopId: string): Promise<void> {
       serializeLoopRecord({ t: 'goal-finished', index: 0, goalId: 'g0', state: 'complete', outcome: 'verified', rounds: 1, tokens: 1, at: 't2' }),
     'utf8',
   );
+}
+
+async function writeFinalizeAudit(cwd: string, loopId: string, records: Array<Record<string, unknown>>): Promise<void> {
+  await mkdir(join(cwd, 'data', 'loops'), { recursive: true });
+  await writeFile(join(cwd, 'data', 'loops', `${loopId}.finalize.jsonl`), records.map((record) => JSON.stringify(record)).join('\n') + '\n', 'utf8');
 }
 
 async function listTree(root: string): Promise<string[]> {

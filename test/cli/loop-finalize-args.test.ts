@@ -7,6 +7,7 @@ describe('parseLoopFinalizeArgs', () => {
       loopId: 'L1',
       worktreeRootPath: 'C:\\trusted\\worktrees',
       merge: false,
+      cleanup: false,
     });
   });
 
@@ -14,6 +15,15 @@ describe('parseLoopFinalizeArgs', () => {
     expect(parseLoopFinalizeArgs(['--loop', 'L1', '--merge'])).toEqual({
       loopId: 'L1',
       merge: true,
+      cleanup: false,
+    });
+  });
+
+  it('parses interactive cleanup mode', () => {
+    expect(parseLoopFinalizeArgs(['--loop', 'L1', '--cleanup'])).toEqual({
+      loopId: 'L1',
+      merge: false,
+      cleanup: true,
     });
   });
 
@@ -23,7 +33,7 @@ describe('parseLoopFinalizeArgs', () => {
     expect(() => parseLoopFinalizeArgs(['--wat'])).toThrow(/unknown flag/);
   });
 
-  it('rejects cleanup because this slice only implements merge', () => {
-    expect(() => parseLoopFinalizeArgs(['--loop', 'L1', '--cleanup'])).toThrow(/cleanup/);
+  it('rejects combining merge and cleanup in one invocation', () => {
+    expect(() => parseLoopFinalizeArgs(['--loop', 'L1', '--merge', '--cleanup'])).toThrow(/combine/);
   });
 });

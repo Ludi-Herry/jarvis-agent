@@ -1,6 +1,6 @@
 # Loop Finalize Apply / Cleanup Design
 
-> 状态：Slice A `--merge` 交互 apply 已落地；`--cleanup` 仍按本文设计后续实现。当前默认 `npm run loop:finalize -- --loop <id>` 保持只读报告。
+> 状态：Slice A `--merge` 交互 apply 与 Slice B `--cleanup` 交互清理均已落地。当前默认 `npm run loop:finalize -- --loop <id>` 保持只读报告。
 
 ## 目标
 
@@ -25,13 +25,13 @@ npm run loop:finalize -- --loop <id>
 npm run loop:finalize -- --loop <id> --merge
 ```
 
-后续执行 slice：只做 cleanup apply：
+已落地执行 slice：只做 cleanup apply：
 
 ```bash
 npm run loop:finalize -- --loop <id> --cleanup
 ```
 
-可选组合等 cleanup slice 稳定后再考虑：
+可选组合后续再考虑：
 
 ```bash
 npm run loop:finalize -- --loop <id> --merge --cleanup
@@ -139,6 +139,13 @@ cleanup 不跟 merge 自动绑定。只有以下 worktree 可进入 cleanup prop
 
 cleanup 成功后只记录审计，不删除 loop log、goal log、session log、shadow log。
 
+当前实现：
+
+- `--cleanup` 会先打印 cleanup candidate / park report，再要求输入完整 `cleanup <loopId>`。
+- 候选必须同时满足：`data/loops/<id>.finalize.jsonl` 有对应 `merge-applied` 审计、当前 worktree realpath 通过边界检查、当前 worktree clean。
+- dirty / untracked / conflict / missing audit / missing worktree 全部 park，不删除。
+- 执行使用 `git worktree remove <path>`，不带 `--force`。
+
 ## 审计记录
 
 新增 `data/loops/<id>.finalize.jsonl`，与原 loop log 分开，避免把执行态混入调度 replay。
@@ -205,14 +212,14 @@ cleanup 成功后只记录审计，不删除 loop log、goal log、session log�
 - 成功写 `merge-confirmed` / `merge-applied` / `finalize-stopped` 到 `data/loops/<id>.finalize.jsonl`。
 - patch 为空、patch check 失败、apply 失败写 `merge-parked` 并停止后续 proposal。
 
-### Slice B：cleanup dry-run + confirm
+### Slice B：cleanup dry-run + confirm（已落地）
 
 文件：
 
-- `src/capabilities/goal/loop-finalize-cleanup.ts`
+- `src/surfaces/cli/loop-finalize-args.ts`
 - `src/surfaces/cli/loop-finalize-cli.ts`
-- `test/capabilities/goal/loop-finalize-cleanup.test.ts`
-- `test/cli/loop-finalize-cli-cleanup-smoke.test.ts`
+- `test/cli/loop-finalize-args.test.ts`
+- `test/cli/loop-finalize-cli-smoke.test.ts`
 
 测试：
 

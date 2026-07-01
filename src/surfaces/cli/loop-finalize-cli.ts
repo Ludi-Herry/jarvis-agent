@@ -72,31 +72,61 @@ async function main(): Promise<void> {
   }
 
   printReport(report);
-  if (!args.merge) return;
+  if (args.merge) {
+    const confirmed = await confirmMerge(report.loopId);
+    if (!confirmed) {
+      console.error('[loop finalize] merge cancelled: exact confirmation phrase was not provided');
+      process.exitCode = 1;
+      return;
+    }
 
-  const confirmed = await confirmMerge(report.loopId);
-  if (!confirmed) {
-    console.error('[loop finalize] merge cancelled: exact confirmation phrase was not provided');
-    process.exitCode = 1;
+    let freshReport: LoopFinalizeReport;
+    try {
+      const freshStatuses = await collectWorktreeStatuses({ created, cwd, worktreeBaseRoot, shellPath });
+      freshReport = buildLoopFinalizeReport(records, freshStatuses);
+    } catch (err) {
+      console.error(`[loop finalize] ${err instanceof Error ? err.message : String(err)}`);
+      process.exitCode = 1;
+      return;
+    }
+
+    const auditPath = join(cwd, 'data', 'loops', `${freshReport.loopId}.finalize.jsonl`);
+    try {
+      await applyMergeProposals({ cwd, shellPath, report: freshReport, auditPath });
+    } catch (err) {
+      console.error(`[loop finalize] ${err instanceof Error ? err.message : String(err)}`);
+      process.exitCode = 1;
+    }
     return;
   }
 
-  let freshReport: LoopFinalizeReport;
-  try {
-    const freshStatuses = await collectWorktreeStatuses({ created, cwd, worktreeBaseRoot, shellPath });
-    freshReport = buildLoopFinalizeReport(records, freshStatuses);
-  } catch (err) {
-    console.error(`[loop finalize] ${err instanceof Error ? err.message : String(err)}`);
-    process.exitCode = 1;
-    return;
-  }
+  if (args.cleanup) {
+    const auditPath = join(cwd, 'data', 'loops', `${report.loopId}.finalize.jsonl`);
+    try {
+      printCleanupReport(buildCleanupReport(report, await readMergeAppliedAudit(auditPath, report.loopId)));
+    } catch (err) {
+      console.error(`[loop finalize] ${err instanceof Error ? err.message : String(err)}`);
+      process.exitCode = 1;
+      return;
+    }
 
-  const auditPath = join(cwd, 'data', 'loops', `${freshReport.loopId}.finalize.jsonl`);
-  try {
-    await applyMergeProposals({ cwd, shellPath, report: freshReport, auditPath });
-  } catch (err) {
-    console.error(`[loop finalize] ${err instanceof Error ? err.message : String(err)}`);
-    process.exitCode = 1;
+    const confirmed = await confirmCleanup(report.loopId);
+    if (!confirmed) {
+      console.error('[loop finalize] cleanup cancelled: exact confirmation phrase was not provided');
+      process.exitCode = 1;
+      return;
+    }
+
+    try {
+      const freshStatuses = await collectWorktreeStatuses({ created, cwd, worktreeBaseRoot, shellPath });
+      const freshReport = buildLoopFinalizeReport(records, freshStatuses);
+      const freshAudit = await readMergeAppliedAudit(auditPath, freshReport.loopId);
+      const cleanupReport = buildCleanupReport(freshReport, freshAudit);
+      await applyCleanupCandidates({ cwd, shellPath, cleanupReport, auditPath });
+    } catch (err) {
+      console.error(`[loop finalize] ${err instanceof Error ? err.message : String(err)}`);
+      process.exitCode = 1;
+    }
   }
 }
 
@@ -205,6 +235,13 @@ async function confirmMerge(loopId: string): Promise<boolean> {
   return answer === expected;
 }
 
+async function confirmCleanup(loopId: string): Promise<boolean> {
+  const expected = `cleanup ${loopId}`;
+  process.stdout.write(`[loop finalize] Type "${expected}" to remove cleanup candidates: `);
+  const answer = await readOneLine(process.stdin);
+  return answer === expected;
+}
+
 async function readOneLine(input: NodeJS.ReadableStream): Promise<string | null> {
   const rl = createInterface({ input });
   try {
@@ -235,6 +272,140 @@ async function applyMergeProposals(opts: { cwd: string; shellPath: string; repor
     await applyOneProposal(opts, proposal);
   }
   await appendAudit(opts.auditPath, { t: 'finalize-stopped', loopId: opts.report.loopId, reason: 'merged', at: new Date().toISOString() });
+}
+
+interface CleanupCandidate {
+  index: number;
+  goalId: string;
+  worktreePath: string;
+}
+
+interface CleanupParkedItem {
+  index: number;
+  goalId?: string;
+  reason: string;
+  worktreePath?: string;
+}
+
+interface CleanupReport {
+  loopId: string;
+  candidates: CleanupCandidate[];
+  parked: CleanupParkedItem[];
+}
+
+function buildCleanupReport(report: LoopFinalizeReport, mergeApplied: Set<string>): CleanupReport {
+  const candidates: CleanupCandidate[] = [];
+  const parked: CleanupParkedItem[] = [];
+
+  for (const item of report.items) {
+    const base = {
+      index: item.index,
+      ...(item.goalId === undefined ? {} : { goalId: item.goalId }),
+      ...(item.worktree?.path === undefined ? {} : { worktreePath: item.worktree.path }),
+    };
+    if (item.goalId === undefined || !mergeApplied.has(cleanupAuditKey(item.index, item.goalId))) {
+      parked.push({ ...base, reason: 'missing-merge-audit' });
+      continue;
+    }
+    if (item.worktree === undefined || !item.worktree.exists) {
+      parked.push({ ...base, reason: 'missing-worktree' });
+      continue;
+    }
+    if (item.worktree.conflicted) {
+      parked.push({ ...base, reason: 'conflict' });
+      continue;
+    }
+    if (!item.worktree.statusReadable || !item.worktree.diffReadable || item.worktree.hasUntracked || item.worktree.hasTrackedChanges || !item.worktree.clean) {
+      parked.push({ ...base, reason: 'dirty' });
+      continue;
+    }
+    candidates.push({ index: item.index, goalId: item.goalId, worktreePath: item.worktree.path });
+  }
+
+  return { loopId: report.loopId, candidates, parked };
+}
+
+function printCleanupReport(report: CleanupReport): void {
+  console.log(`Cleanup candidates: ${report.candidates.length}`);
+  for (const candidate of report.candidates) {
+    console.log(`[cleanup ${candidate.index}] candidate ${safeInline(candidate.goalId)}`);
+    console.log(`    worktree: ${safeInline(candidate.worktreePath)}`);
+  }
+  for (const item of report.parked) {
+    const goal = item.goalId ? ` ${safeInline(item.goalId)}` : '';
+    console.log(`[cleanup ${item.index}] park ${safeInline(item.reason)}${goal}`);
+    if (item.worktreePath) console.log(`    worktree: ${safeInline(item.worktreePath)}`);
+  }
+}
+
+async function readMergeAppliedAudit(path: string, loopId: string): Promise<Set<string>> {
+  let text: string;
+  try {
+    text = await readFile(path, 'utf8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return new Set();
+    throw err;
+  }
+
+  const out = new Set<string>();
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (trimmed === '') continue;
+    try {
+      const record = JSON.parse(trimmed) as { t?: unknown; loopId?: unknown; index?: unknown; goalId?: unknown };
+      if (record.t === 'merge-applied' && record.loopId === loopId && typeof record.index === 'number' && typeof record.goalId === 'string') {
+        out.add(cleanupAuditKey(record.index, record.goalId));
+      }
+    } catch {
+      // Ignore truncated/corrupt audit tail lines, mirroring loop JSONL replay.
+    }
+  }
+  return out;
+}
+
+function cleanupAuditKey(index: number, goalId: string): string {
+  return `${index}\0${goalId}`;
+}
+
+async function applyCleanupCandidates(opts: { cwd: string; shellPath: string; cleanupReport: CleanupReport; auditPath: string }): Promise<void> {
+  await appendAudit(opts.auditPath, {
+    t: 'cleanup-confirmed',
+    loopId: opts.cleanupReport.loopId,
+    candidates: opts.cleanupReport.candidates.length,
+    at: new Date().toISOString(),
+  });
+
+  if (opts.cleanupReport.candidates.length === 0) {
+    await appendAudit(opts.auditPath, { t: 'finalize-stopped', loopId: opts.cleanupReport.loopId, reason: 'no-cleanup-candidates', at: new Date().toISOString() });
+    console.log('[loop finalize] no cleanup candidates after re-scan');
+    return;
+  }
+
+  for (const candidate of opts.cleanupReport.candidates) {
+    const removed = await runGitWrite(opts.shellPath, `git worktree remove ${shellQuote(candidate.worktreePath)}`, opts.cwd);
+    if (removed.code !== 0) {
+      await appendAudit(opts.auditPath, {
+        t: 'finalize-stopped',
+        loopId: opts.cleanupReport.loopId,
+        reason: 'cleanup-remove-failed',
+        index: candidate.index,
+        goalId: candidate.goalId,
+        detail: compactGitOutput(removed),
+        at: new Date().toISOString(),
+      });
+      throw new Error(`cleanup-remove-failed: ${compactGitOutput(removed)}`);
+    }
+    await appendAudit(opts.auditPath, {
+      t: 'cleanup-removed',
+      loopId: opts.cleanupReport.loopId,
+      index: candidate.index,
+      goalId: candidate.goalId,
+      worktreePath: candidate.worktreePath,
+      at: new Date().toISOString(),
+    });
+    console.log(`[loop finalize] cleanup-removed [${candidate.index}] ${safeInline(candidate.goalId)}`);
+  }
+  await appendAudit(opts.auditPath, { t: 'finalize-stopped', loopId: opts.cleanupReport.loopId, reason: 'cleanup', at: new Date().toISOString() });
 }
 
 async function assertMainCwdClean(cwd: string, shellPath: string): Promise<void> {
