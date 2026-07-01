@@ -1,6 +1,6 @@
-# Loop 剩余重项交接：finalize apply-cleanup / cron daemon
+# Loop 剩余重项交接：finalize cleanup / cron daemon
 
-> 状态：2026-07-02 收尾交接。当前 main 已完成 mid-goal resume、per-goal verifier、per-goal hook runner、parallel worktree first slice、parallel resume 最小 slice、loop finalize 只读报告、cron single-scan first slice。本文只交接剩余两项：finalize apply/cleanup、完整 cron daemon。
+> 状态：2026-07-02 收尾交接。当前 main 已完成 mid-goal resume、per-goal verifier、per-goal hook runner、parallel worktree first slice、parallel resume 最小 slice、loop finalize 只读报告、loop finalize `--merge` 交互 apply、cron single-scan first slice。本文只交接剩余两项：finalize cleanup、完整 cron daemon。
 
 ## 先读
 
@@ -26,7 +26,8 @@
 - `npm run loop -- <objectives>`：串行 loop，支持 `--resume`。
 - `npm run resume:loop -- --verifier-map <trusted-json> --hook-map <trusted-json>`：恢复最近 loop；恢复时仍必须显式传 cwd 外可信 verifier/hook map。无 per-goal verifier/hooks 时也用可信空 map `{"goals":[]}`。
 - `npm run loop -- <objectives> --parallel 2..4 --worktree-root <cwd外dir>`：fresh queue 可并行跑。`--resume --parallel 2..4` 也可用，但必须由当前命令显式传 `--worktree-root <cwd外dir>`；in-flight goal 只恢复到既有 worktree，缺失 worktree / goal log / session header / cwd mismatch 均 fail-closed。
-- `npm run loop:finalize -- --loop <id>`：只读 finalize report，汇总 logged verdict / worktree status / diff，并生成 merge proposal；不 merge、不 cleanup。
+- `npm run loop:finalize -- --loop <id>`：只读 finalize report，汇总 logged verdict / worktree status / diff，并生成 merge proposal；不 cleanup。
+- `npm run loop:finalize -- --loop <id> --merge`：交互式 apply，必须输入完整 `merge <loopId>`；执行前重新扫描，只合入 verified + tracked diff proposal；untracked / conflict / missing verdict / rejected / blocked 全部 park 或停下；不 cleanup。
 - parallel worktree first slice：每个 goal 跑在 cwd 外 detached worktree；目标日志仍集中在 cwd `data/`；worktrees 保留给人工检查；不 merge、不删除、不 push。
 - parallel 与 hooks 互斥：hook cwd 语义还没定义到 per-goal worktree，当前 `assertParallelHooksCompatible` fail-closed。
 - `npm run cron -- --cron-map <trusted-json>`：单次扫描，到期任务触发普通 loop；task 必须 `unattended:true`；带同工作区 scan lock、stale recovery、task 前 heartbeat；不常驻。
@@ -84,33 +85,31 @@
 - `--parallel` + any hooks 仍失败。
 - budget、consecutive blocked、verifier health 在 resume 后不重置。
 
-## 任务 2：finalize apply / cleanup
+## 任务 2：finalize cleanup
 
 ### 现状
 
-parallel first slice 只保留 worktrees；当前只读 finalize report 已落地：
+parallel first slice 保留 worktrees；当前 finalize 已落地两步：
 
 - `npm run loop:finalize -- --loop <id>` 只汇总状态和 proposal。
-- `--merge` / `--cleanup` 明确拒绝，防误触发。
+- `npm run loop:finalize -- --loop <id> --merge` 只在人工输入 `merge <loopId>` 后 apply tracked diff。
+- `--cleanup` 明确拒绝，防误触发。
 
 parallel worktrees 仍然：
 
-- 不 merge。
 - 不删除 worktree。
 - 不 push。
 - loop 结束后打印 worktree root 供人工检查。
 
-这是有意保守。merge 和 cleanup 都可能造成数据丢失或掩盖失败，需要独立命令和人工确认。
+cleanup 仍保持保守。它可能造成数据丢失或掩盖失败，需要独立命令和人工确认。
 
 ### 目标
 
-下一步再考虑执行：
+下一步再考虑 cleanup 执行：
 
-- 汇总每个 goal worktree 的 diff / status / verdict。
-- 对 verified goal 生成 merge proposal。
+- cleanup 只处理已明确完成且已合并/确认保留快照的 worktree。
 - 对 blocked / parked / rejected / couldNotVerify goal 保留 worktree，不清理。
 - conflict、dirty、缺失 verdict、未通过验收都 park。
-- cleanup 只处理已明确完成且已合并/确认保留快照的 worktree。
 
 ### 建议接口
 
@@ -120,10 +119,16 @@ parallel worktrees 仍然：
 npm run loop:finalize -- --loop <id>
 ```
 
-后续如要执行，必须显式 opt-in：
+已落地交互 merge：
 
 ```bash
-npm run loop:finalize -- --loop <id> --merge --cleanup
+npm run loop:finalize -- --loop <id> --merge
+```
+
+后续 cleanup 必须显式 opt-in：
+
+```bash
+npm run loop:finalize -- --loop <id> --cleanup
 ```
 
 执行模式必须走交互确认；无人值守模式不执行 merge/cleanup。不要把 merge/cleanup 放进普通 `npm run loop` 的默认结尾。
@@ -140,18 +145,18 @@ npm run loop:finalize -- --loop <id> --merge --cleanup
 ### 建议切片
 
 1. plan + 只读汇总已落地：`docs/superpowers/plans/2026-07-02-loop-finalize-report-plan.md`，读取 loop log + worktree status，输出 report，零副作用。
-2. dry-run merge：计算可合并集合，检测 conflict，仍不写主 worktree。
-3. interactive apply：只在人工明确确认后 merge。
-4. cleanup：只清理已合并且 clean 的 worktree，先 dry-run，再 confirm。
+2. merge apply 已落地：`docs/superpowers/plans/2026-07-02-loop-finalize-apply-cleanup-design.md`，`--merge` 需要完整确认短语，成功后写 `data/loops/<id>.finalize.jsonl`。
+3. cleanup：只清理已合并且 clean 的 worktree，先 dry-run，再 confirm。
 
 ### 关键测试
 
-- verified + clean worktree 出现在 proposal。
+- verified + tracked diff worktree 出现在 proposal。
 - blocked / parked / rejected / missing verdict 不进 proposal。
 - conflict 时 proposal 标记 conflict 并不 merge。
 - dirty untracked 文件阻止 cleanup。
 - cleanup dry-run 不删文件。
 - apply 模式需要交互确认；EOF / 空输入 / 非明确允许均取消。
+- apply 成功后写 finalize audit，且不删除 worktree。
 - Windows worktree path 含空格、`\\?\`、junction 时不误判 cwd 边界。
 
 ## 任务 3：完整 cron daemon
@@ -202,7 +207,7 @@ daemon 只负责调度、锁、可观测性、信号退出。它不自动 resume
 
 ## 建议顺序
 
-1. loop finalize apply/cleanup：交互执行设计见 `docs/superpowers/plans/2026-07-02-loop-finalize-apply-cleanup-design.md`；后续按 merge apply、cleanup confirm 两个独立 slice 做。
+1. loop finalize cleanup：交互执行设计见 `docs/superpowers/plans/2026-07-02-loop-finalize-apply-cleanup-design.md`；merge apply slice 已落地，后续只做 cleanup confirm。
 2. cron daemon：按已有 plan 实现第一范围。daemon 不依赖 merge/cleanup，若新会话只做 cron，也可以直接从计划文档开。
 
 每项独立 plan、独立 commit、独立四关卡。不要一次性实现三项。
@@ -238,7 +243,7 @@ Windows 子进程测试偶发 timeout / EBUSY，失败先重跑确认。不要�
 当前已完成：mid-goal resume、per-goal verifier、per-goal hook runner、parallel worktree first slice、cron single-scan first slice、真实 --hook-map CLI smoke、Windows \\?\ / symlink / junction hook-map smoke。
 
 剩余两项：
-1. finalize apply/cleanup：当前已能只读生成 report，交互执行设计见 `docs/superpowers/plans/2026-07-02-loop-finalize-apply-cleanup-design.md`。下一步按设计做 merge apply slice。不能 push、rebase、强删；blocked/parked/rejected/missing verdict/conflict/dirty 都必须停下。
+1. finalize cleanup：当前已能只读生成 report，也能通过 `--merge` 在人工输入 `merge <loopId>` 后 apply verified + tracked diff proposal。下一步按 `docs/superpowers/plans/2026-07-02-loop-finalize-apply-cleanup-design.md` 做 cleanup confirm slice。不能 push、rebase、强删；blocked/parked/rejected/missing verdict/conflict/dirty 都必须停下。
 2. 完整 cron daemon：已有计划文档 docs/superpowers/plans/2026-07-02-cron-daemon-plan.md。daemon 只负责前台调度、锁、JSONL、信号退出；不自动 resume crashed loop，不自动 merge/cleanup，不后台 fork。
 
 红线：

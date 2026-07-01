@@ -1,6 +1,7 @@
-import { readFile, stat } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { basename, join } from 'node:path';
+import { appendFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { homedir, tmpdir } from 'node:os';
+import { basename, dirname, join } from 'node:path';
+import { createInterface } from 'node:readline';
 import {
   assertWorktreeRootOutsideCwd,
   buildLoopFinalizeReport,
@@ -8,6 +9,9 @@ import {
   parseLoopLog,
   resolveExistingGoalWorktree,
   type FinalizeWorktreeStatus,
+  type LoopCreatedRecord,
+  type LoopFinalizeProposal,
+  type LoopFinalizeReport,
 } from '../../capabilities/index.js';
 import { defaultShellPath, runCommand } from '../../core/index.js';
 import { safeInline } from './approval.js';
@@ -15,6 +19,9 @@ import { parseLoopFinalizeArgs } from './loop-finalize-args.js';
 
 const GIT_READ_TIMEOUT_MS = 10_000;
 const GIT_READ_OUTPUT_LIMIT = 20_000;
+const GIT_WRITE_TIMEOUT_MS = 30_000;
+const GIT_WRITE_OUTPUT_LIMIT = 50_000;
+const GIT_PATCH_OUTPUT_LIMIT = 5_000_000;
 
 async function main(): Promise<void> {
   let args;
@@ -54,43 +61,105 @@ async function main(): Promise<void> {
   }
 
   const shellPath = defaultShellPath();
-  const statuses = new Map<number, FinalizeWorktreeStatus>();
+  let report: LoopFinalizeReport;
   try {
-    for (let index = 0; index < created.objectives.length; index++) {
-      const fallbackPath = join(loopWorktreeRoot(worktreeBaseRoot, created.id), `g${index}`);
-      let worktreePath = fallbackPath;
-      try {
-        worktreePath = await resolveExistingGoalWorktree({ cwd, root: worktreeBaseRoot, loopId: created.id, index });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        if (!/missing resumed worktree|not a directory/.test(message)) throw err;
-        statuses.set(index, { path: fallbackPath, exists: false, clean: false, conflicted: false, status: '', diffStat: '' });
-        continue;
-      }
-      statuses.set(index, await readWorktreeStatus(worktreePath, shellPath));
-    }
+    const statuses = await collectWorktreeStatuses({ created, cwd, worktreeBaseRoot, shellPath });
+    report = buildLoopFinalizeReport(records, statuses);
   } catch (err) {
     console.error(`[loop finalize] ${err instanceof Error ? err.message : String(err)}`);
     process.exitCode = 1;
     return;
   }
 
-  const report = buildLoopFinalizeReport(records, statuses);
   printReport(report);
+  if (!args.merge) return;
+
+  const confirmed = await confirmMerge(report.loopId);
+  if (!confirmed) {
+    console.error('[loop finalize] merge cancelled: exact confirmation phrase was not provided');
+    process.exitCode = 1;
+    return;
+  }
+
+  let freshReport: LoopFinalizeReport;
+  try {
+    const freshStatuses = await collectWorktreeStatuses({ created, cwd, worktreeBaseRoot, shellPath });
+    freshReport = buildLoopFinalizeReport(records, freshStatuses);
+  } catch (err) {
+    console.error(`[loop finalize] ${err instanceof Error ? err.message : String(err)}`);
+    process.exitCode = 1;
+    return;
+  }
+
+  const auditPath = join(cwd, 'data', 'loops', `${freshReport.loopId}.finalize.jsonl`);
+  try {
+    await applyMergeProposals({ cwd, shellPath, report: freshReport, auditPath });
+  } catch (err) {
+    console.error(`[loop finalize] ${err instanceof Error ? err.message : String(err)}`);
+    process.exitCode = 1;
+  }
+}
+
+async function collectWorktreeStatuses(opts: {
+  created: LoopCreatedRecord;
+  cwd: string;
+  worktreeBaseRoot: string;
+  shellPath: string;
+}): Promise<Map<number, FinalizeWorktreeStatus>> {
+  const statuses = new Map<number, FinalizeWorktreeStatus>();
+  for (let index = 0; index < opts.created.objectives.length; index++) {
+    const fallbackPath = join(loopWorktreeRoot(opts.worktreeBaseRoot, opts.created.id), `g${index}`);
+    try {
+      const worktreePath = await resolveExistingGoalWorktree({ cwd: opts.cwd, root: opts.worktreeBaseRoot, loopId: opts.created.id, index });
+      statuses.set(index, await readWorktreeStatus(worktreePath, opts.shellPath));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (!/missing resumed worktree|not a directory/.test(message)) throw err;
+      statuses.set(index, missingWorktreeStatus(fallbackPath));
+      continue;
+    }
+  }
+  return statuses;
 }
 
 async function readWorktreeStatus(path: string, shellPath: string): Promise<FinalizeWorktreeStatus> {
   const info = await stat(path).catch(() => null);
   if (info === null || !info.isDirectory()) {
-    return { path, exists: false, clean: false, conflicted: false, status: '', diffStat: '' };
+    return missingWorktreeStatus(path);
   }
   const status = await runGitRead(shellPath, 'git status --porcelain=v1 --untracked-files=all', path);
   const diffStat = await runGitRead(shellPath, 'git diff --stat HEAD', path);
   const statusText = status.code === 0 ? status.output.trim() : `git status failed: ${status.output.trim() || status.spawnError || String(status.code)}`;
   const diffText = diffStat.code === 0 ? diffStat.output.trim() : `git diff failed: ${diffStat.output.trim() || diffStat.spawnError || String(diffStat.code)}`;
-  const conflicted = hasConflict(statusText);
-  const clean = status.code === 0 && diffStat.code === 0 && statusText === '' && !conflicted;
-  return { path, exists: true, clean, conflicted, status: statusText, diffStat: diffText };
+  const classified = status.code === 0 ? classifyStatus(statusText) : { conflicted: false, hasTrackedChanges: false, hasUntracked: false };
+  const clean = status.code === 0 && statusText === '' && !classified.conflicted;
+  return {
+    path,
+    exists: true,
+    clean,
+    conflicted: classified.conflicted,
+    hasTrackedChanges: classified.hasTrackedChanges,
+    hasUntracked: classified.hasUntracked,
+    statusReadable: status.code === 0,
+    diffReadable: diffStat.code === 0,
+    status: statusText,
+    diffStat: diffText,
+  };
+}
+
+function missingWorktreeStatus(path: string): FinalizeWorktreeStatus {
+  return {
+    path,
+    exists: false,
+    clean: false,
+    conflicted: false,
+    hasTrackedChanges: false,
+    hasUntracked: false,
+    statusReadable: false,
+    diffReadable: false,
+    status: '',
+    diffStat: '',
+  };
 }
 
 function runGitRead(shellPath: string, command: string, cwd: string) {
@@ -99,14 +168,25 @@ function runGitRead(shellPath: string, command: string, cwd: string) {
   });
 }
 
-function hasConflict(status: string): boolean {
-  return status
-    .split(/\r?\n/)
-    .filter((line) => line.trim() !== '')
-    .some((line) => /^(DD|AU|UD|UA|DU|AA|UU)/.test(line));
+function classifyStatus(status: string): { conflicted: boolean; hasTrackedChanges: boolean; hasUntracked: boolean } {
+  let conflicted = false;
+  let hasTrackedChanges = false;
+  let hasUntracked = false;
+  for (const line of status.split(/\r?\n/).filter((entry) => entry.trim() !== '')) {
+    if (line.startsWith('??')) {
+      hasUntracked = true;
+      continue;
+    }
+    if (/^(DD|AU|UD|UA|DU|AA|UU)/.test(line)) {
+      conflicted = true;
+      continue;
+    }
+    hasTrackedChanges = true;
+  }
+  return { conflicted, hasTrackedChanges, hasUntracked };
 }
 
-function printReport(report: ReturnType<typeof buildLoopFinalizeReport>): void {
+function printReport(report: LoopFinalizeReport): void {
   console.log(`Loop finalize report: ${safeInline(report.loopId)}`);
   console.log(`Merge proposals: ${report.proposals.length}`);
   for (const item of report.items) {
@@ -116,6 +196,141 @@ function printReport(report: ReturnType<typeof buildLoopFinalizeReport>): void {
     if (item.worktree?.status) console.log(`    status: ${safeInline(item.worktree.status)}`);
     if (item.worktree?.diffStat) console.log(`    diff: ${safeInline(item.worktree.diffStat)}`);
   }
+}
+
+async function confirmMerge(loopId: string): Promise<boolean> {
+  const expected = `merge ${loopId}`;
+  process.stdout.write(`[loop finalize] Type "${expected}" to apply merge proposals: `);
+  const answer = await readOneLine(process.stdin);
+  return answer === expected;
+}
+
+async function readOneLine(input: NodeJS.ReadableStream): Promise<string | null> {
+  const rl = createInterface({ input });
+  try {
+    for await (const line of rl) return line;
+    return null;
+  } finally {
+    rl.close();
+  }
+}
+
+async function applyMergeProposals(opts: { cwd: string; shellPath: string; report: LoopFinalizeReport; auditPath: string }): Promise<void> {
+  if (opts.report.proposals.length === 0) {
+    await appendAudit(opts.auditPath, { t: 'merge-confirmed', loopId: opts.report.loopId, proposals: 0, at: new Date().toISOString() });
+    await appendAudit(opts.auditPath, { t: 'finalize-stopped', loopId: opts.report.loopId, reason: 'no-proposals', at: new Date().toISOString() });
+    console.log('[loop finalize] no merge proposals after re-scan');
+    return;
+  }
+
+  await assertMainCwdClean(opts.cwd, opts.shellPath);
+  await appendAudit(opts.auditPath, {
+    t: 'merge-confirmed',
+    loopId: opts.report.loopId,
+    proposals: opts.report.proposals.length,
+    at: new Date().toISOString(),
+  });
+
+  for (const proposal of opts.report.proposals) {
+    await applyOneProposal(opts, proposal);
+  }
+  await appendAudit(opts.auditPath, { t: 'finalize-stopped', loopId: opts.report.loopId, reason: 'merged', at: new Date().toISOString() });
+}
+
+async function assertMainCwdClean(cwd: string, shellPath: string): Promise<void> {
+  const status = await runGitRead(shellPath, 'git status --porcelain=v1 --untracked-files=all', cwd);
+  if (status.code !== 0) throw new Error(`main cwd status failed: ${compactGitOutput(status)}`);
+  if (status.output.trim() !== '') throw new Error(`main cwd is dirty; merge stopped:\n${status.output.trim()}`);
+}
+
+async function applyOneProposal(
+  opts: { cwd: string; shellPath: string; report: LoopFinalizeReport; auditPath: string },
+  proposal: LoopFinalizeProposal,
+): Promise<void> {
+  const item = opts.report.items.find((candidate) => candidate.index === proposal.index);
+  const worktreePath = item?.worktree?.path ?? proposal.worktreePath;
+  const patch = await runGitPatch(opts.shellPath, 'git diff --binary HEAD', worktreePath);
+  if (patch.code !== 0 || patch.truncated) {
+    await parkAndThrow(opts.auditPath, opts.report.loopId, proposal, 'patch-generation-failed', compactGitOutput(patch));
+  }
+  if (patch.output.trim() === '') {
+    await parkAndThrow(opts.auditPath, opts.report.loopId, proposal, 'empty-patch', 'git diff --binary HEAD produced no patch');
+  }
+
+  const headBefore = await readGitHead(opts.cwd, opts.shellPath);
+  const tempDir = await mkdtemp(join(tmpdir(), 'jarvis-finalize-patch-'));
+  try {
+    const patchPath = join(tempDir, `${opts.report.loopId}-g${proposal.index}.patch`);
+    await writeFile(patchPath, patch.output, 'utf8');
+    const quotedPatchPath = shellQuote(patchPath);
+    const check = await runGitWrite(opts.shellPath, `git apply --check --index ${quotedPatchPath}`, opts.cwd);
+    if (check.code !== 0) await parkAndThrow(opts.auditPath, opts.report.loopId, proposal, 'patch-check-failed', compactGitOutput(check));
+    const applied = await runGitWrite(opts.shellPath, `git apply --index ${quotedPatchPath}`, opts.cwd);
+    if (applied.code !== 0) await parkAndThrow(opts.auditPath, opts.report.loopId, proposal, 'patch-apply-failed', compactGitOutput(applied));
+  } finally {
+    await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+  }
+
+  const headAfter = await readGitHead(opts.cwd, opts.shellPath);
+  await appendAudit(opts.auditPath, {
+    t: 'merge-applied',
+    loopId: opts.report.loopId,
+    index: proposal.index,
+    goalId: proposal.goalId,
+    worktreePath,
+    patchBytes: Buffer.byteLength(patch.output, 'utf8'),
+    headBefore,
+    headAfter,
+    at: new Date().toISOString(),
+  });
+  console.log(`[loop finalize] merge-applied [${proposal.index}] ${safeInline(proposal.goalId)}`);
+}
+
+async function readGitHead(cwd: string, shellPath: string): Promise<string> {
+  const head = await runGitRead(shellPath, 'git rev-parse HEAD', cwd);
+  if (head.code !== 0) throw new Error(`git rev-parse HEAD failed: ${compactGitOutput(head)}`);
+  return head.output.trim();
+}
+
+async function parkAndThrow(
+  auditPath: string,
+  loopId: string,
+  proposal: LoopFinalizeProposal,
+  reason: string,
+  detail: string,
+): Promise<never> {
+  await appendAudit(auditPath, {
+    t: 'merge-parked',
+    loopId,
+    index: proposal.index,
+    goalId: proposal.goalId,
+    reason,
+    detail,
+    at: new Date().toISOString(),
+  });
+  await appendAudit(auditPath, { t: 'finalize-stopped', loopId, reason, at: new Date().toISOString() });
+  throw new Error(`${reason}: ${detail}`);
+}
+
+function runGitPatch(shellPath: string, command: string, cwd: string) {
+  return runCommand(shellPath, command, cwd, GIT_WRITE_TIMEOUT_MS, GIT_PATCH_OUTPUT_LIMIT);
+}
+
+function runGitWrite(shellPath: string, command: string, cwd: string) {
+  return runCommand(shellPath, command, cwd, GIT_WRITE_TIMEOUT_MS, GIT_WRITE_OUTPUT_LIMIT);
+}
+
+function compactGitOutput(result: Awaited<ReturnType<typeof runCommand>>): string {
+  return result.output.trim() || result.spawnError || String(result.code);
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+async function appendAudit(path: string, record: Record<string, unknown>): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  await appendFile(path, `${JSON.stringify(record)}\n`, 'utf8');
 }
 
 main().catch((err: unknown) => {

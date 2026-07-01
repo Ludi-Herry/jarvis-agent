@@ -1,12 +1,12 @@
 # Loop Finalize Apply / Cleanup Design
 
-> 状态：交互执行设计。本文不实现代码。当前已落地的是 `npm run loop:finalize -- --loop <id>` 只读报告；本设计约束后续 `--merge` / `--cleanup` 的交互执行切片。
+> 状态：Slice A `--merge` 交互 apply 已落地；`--cleanup` 仍按本文设计后续实现。当前默认 `npm run loop:finalize -- --loop <id>` 保持只读报告。
 
 ## 目标
 
 把只读 finalize report 升级为可人工确认的收尾流程：
 
-- `--merge`：只对 report 中的 verified + clean proposal 做交互式 merge。
+- `--merge`：只对 report 中的 verified + tracked diff proposal 做交互式 merge。
 - `--cleanup`：只对已确认合并且仍 clean 的 worktree 做交互式清理。
 - 任一 goal 出现 blocked、parked、rejected、missing verdict、missing worktree、dirty、conflict，默认停下并保留 worktree。
 - 不 push、不 rebase、不强删、不改 verdict、不修改三腿验收。
@@ -19,19 +19,19 @@
 npm run loop:finalize -- --loop <id>
 ```
 
-第一执行 slice：只做 merge apply：
+已落地执行 slice：只做 merge apply：
 
 ```bash
 npm run loop:finalize -- --loop <id> --merge
 ```
 
-第二执行 slice：只做 cleanup apply：
+后续执行 slice：只做 cleanup apply：
 
 ```bash
 npm run loop:finalize -- --loop <id> --cleanup
 ```
 
-可选组合只在两个独立 slice 都稳定后再开放：
+可选组合等 cleanup slice 稳定后再考虑：
 
 ```bash
 npm run loop:finalize -- --loop <id> --merge --cleanup
@@ -86,7 +86,10 @@ EOF、空输入、非完整短语全部取消。
 - logged state 是 `complete`。
 - logged outcome 是 `verified`。
 - worktree 存在，realpath 后仍在 trusted worktree root 内，且不落 cwd 内。
-- `git status --porcelain=v1 --untracked-files=all` clean。
+- `git status --porcelain=v1 --untracked-files=all` 可读。
+- 有 tracked changes。
+- 没有 untracked 文件。
+- 没有 conflict。
 - `git diff --stat HEAD` 可读。
 
 ### 执行步骤
@@ -95,7 +98,7 @@ EOF、空输入、非完整短语全部取消。
 
 1. 记录主 cwd 当前 `HEAD`。
 2. 在主 cwd 重新确认 `git status --porcelain=v1 --untracked-files=all` clean；不 clean 立即停止。
-3. 在 worktree 重新确认 clean；不 clean 立即停止。
+3. 在 worktree 重新确认 proposal 条件；不满足立即停止。
 4. 生成 worktree 相对 `HEAD` 的 patch：
    - `git -C <worktree> diff --binary HEAD`
    - 可选补 untracked 文件策略见下方未决问题；第一版建议 untracked 存在即 park，不纳入 merge。
@@ -110,7 +113,7 @@ EOF、空输入、非完整短语全部取消。
 以下任一情况停止后续 merge，保留所有 worktree：
 
 - 主 cwd dirty。
-- worktree dirty。
+- worktree untracked / conflict / status 不可读 / diff 不可读。
 - patch 为空。
 - patch check 失败。
 - conflict。
@@ -174,26 +177,33 @@ cleanup 成功后只记录审计，不删除 loop log、goal log、session log�
 
 ## 实施切片
 
-### Slice A：merge interactive apply
+### Slice A：merge interactive apply（已落地）
 
 文件：
 
-- `src/capabilities/goal/loop-finalize-apply.ts`
+- `src/capabilities/goal/loop-finalize.ts`
 - `src/surfaces/cli/loop-finalize-args.ts`
 - `src/surfaces/cli/loop-finalize-cli.ts`
-- `test/capabilities/goal/loop-finalize-apply.test.ts`
-- `test/cli/loop-finalize-cli-merge-smoke.test.ts`
+- `test/capabilities/goal/loop-finalize.test.ts`
+- `test/cli/loop-finalize-cli-smoke.test.ts`
 
 测试：
 
 - `--merge` 需要完整确认短语。
 - EOF / 空输入 / `yes` 取消。
 - 主 cwd dirty 时不 apply。
-- worktree dirty / untracked 时不 apply。
+- worktree untracked 时不 apply。
 - conflict 时不 apply。
-- verified + clean + patch check 通过时应用 patch。
+- verified + tracked diff + patch check 通过时应用 patch。
 - applied 后写 finalize audit。
 - 不调用 push / rebase / force remove。
+
+实现说明：
+
+- `--merge` 会先打印只读 report，再要求输入完整 `merge <loopId>`。
+- 确认后重新扫描 worktree 状态，主 cwd clean 后才串行 apply。
+- 成功写 `merge-confirmed` / `merge-applied` / `finalize-stopped` 到 `data/loops/<id>.finalize.jsonl`。
+- patch 为空、patch check 失败、apply 失败写 `merge-parked` 并停止后续 proposal。
 
 ### Slice B：cleanup dry-run + confirm
 

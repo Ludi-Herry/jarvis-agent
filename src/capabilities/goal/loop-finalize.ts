@@ -6,6 +6,10 @@ export interface FinalizeWorktreeStatus {
   exists: boolean;
   clean: boolean;
   conflicted: boolean;
+  hasTrackedChanges: boolean;
+  hasUntracked: boolean;
+  statusReadable: boolean;
+  diffReadable: boolean;
   status: string;
   diffStat: string;
 }
@@ -13,14 +17,15 @@ export interface FinalizeWorktreeStatus {
 export type LoopFinalizeDecision = 'proposal' | 'park';
 
 export type LoopFinalizeReason =
-  | 'verified-clean'
+  | 'verified-mergeable'
   | 'blocked'
   | 'could-not-verify'
   | 'rejected'
   | 'missing-verdict'
   | 'missing-worktree'
   | 'conflict'
-  | 'dirty';
+  | 'dirty'
+  | 'no-diff';
 
 export interface LoopFinalizeItem {
   index: number;
@@ -82,10 +87,13 @@ export function buildLoopFinalizeReport(records: LoopRecord[], worktrees: Map<nu
     if (worktree.conflicted) {
       return { ...base, worktree, decision: 'park', reason: 'conflict' };
     }
-    if (!worktree.clean) {
+    if (!worktree.statusReadable || !worktree.diffReadable || worktree.hasUntracked) {
       return { ...base, worktree, decision: 'park', reason: 'dirty' };
     }
-    return { ...base, worktree, decision: 'proposal', reason: 'verified-clean' };
+    if (!worktree.hasTrackedChanges) {
+      return { ...base, worktree, decision: 'park', reason: 'no-diff' };
+    }
+    return { ...base, worktree, decision: 'proposal', reason: 'verified-mergeable' };
   });
 
   const proposals = items

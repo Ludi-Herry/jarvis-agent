@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { mkdtemp, mkdir, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { serializeLoopRecord, type LoopContract } from '../../src/capabilities/goal/index.js';
 
@@ -16,20 +16,56 @@ const CONTRACT: LoopContract = {
 };
 
 describe('loop finalize CLI smoke', () => {
-  it('rejects merge mode as report-only without touching files', async () => {
-    const cwd = await mkdtemp(join(tmpdir(), 'jarvis-finalize-cwd-'));
+  it('cancels merge mode unless the exact confirmation phrase is typed', async () => {
+    const fixture = await setupMergeFixture('L-cancel-merge');
     try {
-      await mkdir(join(cwd, 'data', 'loops'), { recursive: true });
-      const sentinel = join(cwd, 'sentinel.txt');
-      await writeFile(sentinel, 'keep', 'utf8');
-
-      const result = await runFinalizeCli(['--loop', 'L1', '--merge'], cwd);
+      const result = await runFinalizeCli(['--loop', fixture.loopId, '--worktree-root', fixture.worktreeRoot, '--merge'], fixture.cwd, 'yes\n');
 
       expect(result.code).toBe(1);
-      expect(`${result.stdout}\n${result.stderr}`).toContain('report-only');
-      await expect(readFile(sentinel, 'utf8')).resolves.toBe('keep');
+      expect(`${result.stdout}\n${result.stderr}`).toContain('cancelled');
+      await expect(readFile(join(fixture.cwd, 'file.txt'), 'utf8')).resolves.toBe('base\n');
     } finally {
-      await rm(cwd, { recursive: true, force: true });
+      await fixture.cleanup();
+    }
+  });
+
+  it('applies a confirmed merge proposal from a verified worktree and writes audit JSONL', async () => {
+    const fixture = await setupMergeFixture('L-apply-merge');
+    try {
+      const result = await runFinalizeCli(
+        ['--loop', fixture.loopId, '--worktree-root', fixture.worktreeRoot, '--merge'],
+        fixture.cwd,
+        `merge ${fixture.loopId}\n`,
+      );
+
+      expect(result.code).toBe(0);
+      expect(result.stdout).toContain('merge-applied');
+      await expect(readFile(join(fixture.cwd, 'file.txt'), 'utf8')).resolves.toBe('base\nworktree\n');
+      const audit = await readFile(join(fixture.cwd, 'data', 'loops', `${fixture.loopId}.finalize.jsonl`), 'utf8');
+      expect(audit).toContain('"t":"merge-confirmed"');
+      expect(audit).toContain('"t":"merge-applied"');
+      expect(audit).toContain('"index":0');
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it('stops a confirmed merge when the main cwd is dirty', async () => {
+    const fixture = await setupMergeFixture('L-main-dirty');
+    try {
+      await writeFile(join(fixture.cwd, 'manual.txt'), 'draft\n', 'utf8');
+
+      const result = await runFinalizeCli(
+        ['--loop', fixture.loopId, '--worktree-root', fixture.worktreeRoot, '--merge'],
+        fixture.cwd,
+        `merge ${fixture.loopId}\n`,
+      );
+
+      expect(result.code).toBe(1);
+      expect(`${result.stdout}\n${result.stderr}`).toContain('main cwd is dirty');
+      await expect(readFile(join(fixture.cwd, 'file.txt'), 'utf8')).resolves.toBe('base\n');
+    } finally {
+      await fixture.cleanup();
     }
   });
 
@@ -39,13 +75,7 @@ describe('loop finalize CLI smoke', () => {
     try {
       const loopId = 'L-missing-worktree';
       await mkdir(join(cwd, 'data', 'loops'), { recursive: true });
-      await writeFile(
-        join(cwd, 'data', 'loops', `${loopId}.jsonl`),
-        serializeLoopRecord({ t: 'loop-created', id: loopId, contract: CONTRACT, objectives: ['inspect README'], createdAt: 't0' }) +
-          serializeLoopRecord({ t: 'goal-started', index: 0, goalId: 'g0', at: 't1' }) +
-          serializeLoopRecord({ t: 'goal-finished', index: 0, goalId: 'g0', state: 'complete', outcome: 'verified', rounds: 1, tokens: 1, at: 't2' }),
-        'utf8',
-      );
+      await writeLoopLog(cwd, loopId);
 
       const before = await listTree(cwd);
       const result = await runFinalizeCli(['--loop', loopId, '--worktree-root', worktreeRoot], cwd);
@@ -69,13 +99,7 @@ describe('loop finalize CLI smoke', () => {
     try {
       const loopId = 'L-symlink-worktree';
       await mkdir(join(cwd, 'data', 'loops'), { recursive: true });
-      await writeFile(
-        join(cwd, 'data', 'loops', `${loopId}.jsonl`),
-        serializeLoopRecord({ t: 'loop-created', id: loopId, contract: CONTRACT, objectives: ['inspect README'], createdAt: 't0' }) +
-          serializeLoopRecord({ t: 'goal-started', index: 0, goalId: 'g0', at: 't1' }) +
-          serializeLoopRecord({ t: 'goal-finished', index: 0, goalId: 'g0', state: 'complete', outcome: 'verified', rounds: 1, tokens: 1, at: 't2' }),
-        'utf8',
-      );
+      await writeLoopLog(cwd, loopId);
       await mkdir(join(worktreeRoot, loopId), { recursive: true });
       await symlink(cwd, join(worktreeRoot, loopId, 'g0'), 'junction');
 
@@ -90,6 +114,57 @@ describe('loop finalize CLI smoke', () => {
   });
 });
 
+async function setupMergeFixture(loopId: string): Promise<{
+  cwd: string;
+  worktreeRoot: string;
+  loopId: string;
+  cleanup: () => Promise<void>;
+}> {
+  const cwd = await mkdtemp(join(tmpdir(), 'jarvis-finalize-cwd-'));
+  const worktreeRoot = await mkdtemp(join(tmpdir(), 'jarvis-finalize-worktrees-'));
+  try {
+    await runGit(cwd, ['init']);
+    await runGit(cwd, ['config', 'user.name', 'Jarvis Test']);
+    await runGit(cwd, ['config', 'user.email', 'jarvis@example.test']);
+    await runGit(cwd, ['config', 'core.autocrlf', 'false']);
+    await writeFile(join(cwd, '.gitignore'), '/data/\n', 'utf8');
+    await writeFile(join(cwd, 'file.txt'), 'base\n', 'utf8');
+    await runGit(cwd, ['add', '.gitignore', 'file.txt']);
+    await runGit(cwd, ['commit', '-m', 'init']);
+
+    const worktreePath = join(worktreeRoot, loopId, 'g0');
+    await mkdir(dirname(worktreePath), { recursive: true });
+    await runGit(cwd, ['worktree', 'add', '--detach', worktreePath, 'HEAD']);
+    await writeFile(join(worktreePath, 'file.txt'), 'base\nworktree\n', 'utf8');
+    await writeLoopLog(cwd, loopId);
+
+    return {
+      cwd,
+      worktreeRoot,
+      loopId,
+      cleanup: async () => {
+        await rm(cwd, { recursive: true, force: true });
+        await rm(worktreeRoot, { recursive: true, force: true });
+      },
+    };
+  } catch (err) {
+    await rm(cwd, { recursive: true, force: true });
+    await rm(worktreeRoot, { recursive: true, force: true });
+    throw err;
+  }
+}
+
+async function writeLoopLog(cwd: string, loopId: string): Promise<void> {
+  await mkdir(join(cwd, 'data', 'loops'), { recursive: true });
+  await writeFile(
+    join(cwd, 'data', 'loops', `${loopId}.jsonl`),
+    serializeLoopRecord({ t: 'loop-created', id: loopId, contract: CONTRACT, objectives: ['inspect README'], createdAt: 't0' }) +
+      serializeLoopRecord({ t: 'goal-started', index: 0, goalId: 'g0', at: 't1' }) +
+      serializeLoopRecord({ t: 'goal-finished', index: 0, goalId: 'g0', state: 'complete', outcome: 'verified', rounds: 1, tokens: 1, at: 't2' }),
+    'utf8',
+  );
+}
+
 async function listTree(root: string): Promise<string[]> {
   const out: string[] = [];
   async function walk(dir: string): Promise<void> {
@@ -103,7 +178,7 @@ async function listTree(root: string): Promise<string[]> {
   return out.sort();
 }
 
-function runFinalizeCli(args: string[], cwd: string): Promise<{ code: number | null; stdout: string; stderr: string }> {
+function runFinalizeCli(args: string[], cwd: string, input = ''): Promise<{ code: number | null; stdout: string; stderr: string }> {
   const env = { ...process.env };
   delete env.ARK_API_KEY;
   const child = spawn(process.execPath, [resolve('node_modules/tsx/dist/cli.mjs'), resolve('src/surfaces/cli/loop-finalize-cli.ts'), ...args], {
@@ -121,6 +196,7 @@ function runFinalizeCli(args: string[], cwd: string): Promise<{ code: number | n
   child.stderr.on('data', (chunk: string) => {
     stderr += chunk;
   });
+  child.stdin?.end(input);
 
   return new Promise((resolvePromise, reject) => {
     const timer = setTimeout(() => {
@@ -134,6 +210,26 @@ function runFinalizeCli(args: string[], cwd: string): Promise<{ code: number | n
     child.on('close', (code) => {
       clearTimeout(timer);
       resolvePromise({ code, stdout, stderr });
+    });
+  });
+}
+
+function runGit(cwd: string, args: string[]): Promise<void> {
+  return new Promise((resolvePromise, reject) => {
+    const child = spawn('git', args, { cwd, windowsHide: true });
+    let output = '';
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string) => {
+      output += chunk;
+    });
+    child.stderr.on('data', (chunk: string) => {
+      output += chunk;
+    });
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code === 0) resolvePromise();
+      else reject(new Error(`git ${args.join(' ')} failed (${code}): ${output}`));
     });
   });
 }
