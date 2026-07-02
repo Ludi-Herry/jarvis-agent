@@ -32,6 +32,19 @@ describe('reportFromSandboxedRequirementChecks', () => {
     expect(decideVerdict(cleanChecks, report, pinned).outcome).toBe('verified');
   });
 
+  it('includes sandbox audit context in verifier evidence', () => {
+    const report = reportFromSandboxedRequirementChecks([pinned[0]], [
+      { requirementId: 'r1', command: 'git status --short', result: completed(0, 'ok') },
+    ]);
+
+    expect(report.evidence).toContain('sandbox audit:');
+    expect(report.evidence).toContain('"backend": "wsl2-unshare"');
+    expect(report.evidence).toContain('"mounts"');
+    expect(report.evidence).toContain('"networkMode": "none"');
+    expect(report.evidence).toContain('"limits"');
+    expect(report.evidence).toContain('"timeoutMs": 1000');
+  });
+
   it('maps sandbox unavailable to cannotVerify and a couldNotVerify verdict', () => {
     const report = reportFromSandboxedRequirementChecks(pinned, [
       { requirementId: 'r1', command: 'git status --short', result: unavailable('wsl missing') },

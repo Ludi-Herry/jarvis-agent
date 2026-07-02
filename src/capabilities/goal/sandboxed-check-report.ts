@@ -68,7 +68,7 @@ function mapSandboxResult(
   observed: string;
   couldNotVerify?: string;
 } {
-  const prefix = `${requirement.id}: ${requirement.text}\ncommand: ${check.command}`;
+  const prefix = `${requirement.id}: ${requirement.text}\ncommand: ${check.command}\n${renderSandboxAudit(check.result.audit)}`;
   if (check.result.status !== 'completed') {
     const reason = `${check.result.status}: ${check.result.reason}`;
     return {
@@ -96,6 +96,19 @@ function mapSandboxResult(
     evidence: `${prefix}\nexitCode: ${check.result.exitCode}\n${output}`,
     observed: `${requirement.id}: sandboxed check failed with exit code ${check.result.exitCode}`,
   };
+}
+
+function renderSandboxAudit(audit: SandboxRunResult['audit']): string {
+  return `sandbox audit:\n${JSON.stringify(
+    {
+      backend: audit.backend,
+      mounts: audit.mounts,
+      networkMode: audit.networkMode,
+      limits: audit.limits,
+    },
+    null,
+    2,
+  )}`;
 }
 
 function compactOutput(stdout: string, stderr: string): string {
