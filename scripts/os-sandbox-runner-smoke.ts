@@ -3,14 +3,15 @@
  *
  * This does not register sandboxed_exec in Jarvis' default tool registry and does not wire the
  * runner into the verifier. It proves the explicit WSL2 runner path directly, including isolation
- * checks that the model-facing sandboxed_exec allow scope intentionally rejects.
+ * checks that the model-facing sandboxed_exec allow scope intentionally rejects. It retains WSL temp
+ * payload folders for manual inspection; production runner calls clean them by default.
  *
  * Run: npm run sandbox:runner-smoke
  */
 import { createWsl2UnshareSandboxRunner, type SandboxRunResult } from '../src/runtime/index.js';
 
 async function main(): Promise<void> {
-  const runner = createWsl2UnshareSandboxRunner();
+  const runner = createWsl2UnshareSandboxRunner({ retainTempDirs: true });
   const prevBashEnv = process.env.BASH_ENV;
   const prevEnv = process.env.ENV;
   const prevSecret = process.env.JARVIS_TEST_SECRET_TOKEN;

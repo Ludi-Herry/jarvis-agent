@@ -92,6 +92,41 @@ describe('Wsl2UnshareSandboxRunner', () => {
     }
   });
 
+  it('cleans WSL temp roots by default and can retain them for smoke debugging', async () => {
+    let defaultInput = '';
+    const defaultRunner = createWsl2UnshareSandboxRunner({
+      spawnSync(_command, _args, options) {
+        defaultInput = options.input;
+        return {
+          status: 0,
+          signal: null,
+          stdout: 'JARVIS_SANDBOX_RESULT\t{"status":"completed","exitCode":0,"stdout":"ok","stderr":"","durationMs":1}\n',
+          stderr: '',
+        };
+      },
+    });
+    await defaultRunner.run(sampleRequest());
+
+    let retainedInput = '';
+    const retainedRunner = createWsl2UnshareSandboxRunner({
+      retainTempDirs: true,
+      spawnSync(_command, _args, options) {
+        retainedInput = options.input;
+        return {
+          status: 0,
+          signal: null,
+          stdout: 'JARVIS_SANDBOX_RESULT\t{"status":"completed","exitCode":0,"stdout":"ok","stderr":"","durationMs":1}\n',
+          stderr: '',
+        };
+      },
+    });
+    await retainedRunner.run(sampleRequest());
+
+    expect(defaultInput).toContain('RETAIN_TEMP_DIR = False');
+    expect(defaultInput).toContain('shutil.rmtree(root, ignore_errors=True)');
+    expect(retainedInput).toContain('RETAIN_TEMP_DIR = True');
+  });
+
   it('fails closed when WSL returns no result marker', async () => {
     const runner = createWsl2UnshareSandboxRunner({
       spawnSync() {

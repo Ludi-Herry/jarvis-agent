@@ -99,6 +99,8 @@ npm run sandbox:goal-smoke # GoalLoop + trusted sandbox check plan + wsl2-unshar
 
 Plan 必须放在仓库 / workspace 外。CLI 会拒绝 repo 内 plan，避免 builder 或仓库内容自己定义验收口径。命令范围也很窄：只允许 `git status`、`git diff`、`git log`、`git ls-files`、`stat`、`wc` 这类简单 inspection command；不支持 shell 组合、重定向、解释器、网络或写入。sandbox 不可用、命令被拒、超时或缺少 requirement check 都会走 `couldNotVerify`，不会回落到 raw bash。
 
+运行时 WSL runner 默认清理 `/tmp/jarvis-wsl2-unshare-*` payload 目录；`sandbox:runner-smoke` / `sandbox:goal-smoke` 显式开启 retain 供检查。trusted JSON plan / map 由调用方放在仓库外，CLI 不自动删除。
+
 最小 plan：
 
 ```json

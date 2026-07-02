@@ -3,7 +3,7 @@
  *
  * It creates a trusted check plan outside the repo, loads it through the same config parser as the
  * CLI, runs a one-round GoalLoop with a fake builder/model, and verifies completion through the real
- * WSL2 sandbox runner. The temp plan is left in place for inspection.
+ * WSL2 sandbox runner. The temp plan and WSL payload folders are left in place for inspection.
  *
  * Run: npm run sandbox:goal-smoke
  */
@@ -123,7 +123,7 @@ async function main(): Promise<void> {
       run: claimingRun(),
       check: passingCheck,
       sandboxedRequirementCommands: plan.commands,
-      sandboxRunner: createWsl2UnshareSandboxRunner(),
+      sandboxRunner: createWsl2UnshareSandboxRunner({ retainTempDirs: true }),
     },
   );
 

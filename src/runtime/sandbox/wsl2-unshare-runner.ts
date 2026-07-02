@@ -33,6 +33,7 @@ export interface Wsl2UnshareSandboxRunnerOptions {
   readonly wslExe?: string;
   readonly spawnSync?: SpawnSyncLike;
   readonly hostTimeoutSlackMs?: number;
+  readonly retainTempDirs?: boolean;
 }
 
 interface InnerResult {
@@ -68,7 +69,7 @@ export function createWsl2UnshareSandboxRunner(options: Wsl2UnshareSandboxRunner
       }
 
       const result = runSpawnSync(wslExe, ['-d', distro, '--', 'python3', '-'], {
-        input: buildWslScript(request),
+        input: buildWslScript(request, options.retainTempDirs ?? false),
         encoding: 'utf8',
         env: sandboxHostEnv(),
         timeout: request.limits.timeoutMs + hostTimeoutSlackMs,
@@ -116,9 +117,9 @@ export function createWsl2UnshareSandboxRunner(options: Wsl2UnshareSandboxRunner
   };
 }
 
-function buildWslScript(request: SandboxRunRequest): string {
+function buildWslScript(request: SandboxRunRequest, retainTempDirs: boolean): string {
   const payload = Buffer.from(JSON.stringify(request), 'utf8').toString('base64');
-  return `${outerPython(payload)}\n`;
+  return `${outerPython(payload, retainTempDirs)}\n`;
 }
 
 function unsupportedWslLimits(limits: SandboxLimits): string[] {
@@ -129,17 +130,20 @@ function unsupportedWslLimits(limits: SandboxLimits): string[] {
   return unsupported;
 }
 
-function outerPython(payloadBase64: string): string {
-  return String.raw`import base64
+function outerPython(payloadBase64: string, retainTempDirs: boolean): string {
+  return String.raw`import atexit
+import base64
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
 
 RESULT_PREFIX = "JARVIS_SANDBOX_RESULT\t"
 PAYLOAD_B64 = "${payloadBase64}"
+RETAIN_TEMP_DIR = ${retainTempDirs ? 'True' : 'False'}
 SECRET_COMPONENT_RE = re.compile(r"(^|_)(KEY|PAT|DSN)($|_)")
 SECRET_CONN_RE = re.compile(r"(^|_)(DATABASE|DB|MONGODB?|REDIS|POSTGRES(QL)?|MYSQL|MARIADB|AMQP|RABBITMQ|CLICKHOUSE|ELASTIC(SEARCH)?|CONNECTION)_(URL|URI|DSN|CONN|CONNECTION|STRING)")
 GIT_ENV = {
@@ -194,6 +198,8 @@ def sandbox_env():
 SAFE_ENV = sandbox_env()
 payload = json.loads(base64.b64decode(PAYLOAD_B64).decode("utf-8"))
 root = tempfile.mkdtemp(prefix="jarvis-wsl2-unshare-")
+if not RETAIN_TEMP_DIR:
+    atexit.register(lambda: shutil.rmtree(root, ignore_errors=True))
 inner_py = os.path.join(root, "inner.py")
 payload_json = os.path.join(root, "payload.json")
 

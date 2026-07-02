@@ -86,7 +86,7 @@ Real runner smoke:
 - Proven in the smoke: command cwd is `/tmp/jarvis-sandbox/project`, `package.json` is visible through the read-only project mount, writing to the project root is denied, `/mnt/c` and `/mnt/h` are hidden, outbound socket connect is blocked, a forced long command returns `timed-out`, and the result reports `[sandbox backend: wsl2-unshare]` with exit code 0.
 - Security hardening: the WSL wrapper starts with `python3 -` rather than an outer bash, strips `BASH_ENV`, `ENV`, credential-shaped env vars, and inherited `GIT_*` values before launch, then gives inner commands a scrubbed env with fixed Git config to disable pager, external diff, fsmonitor, hooks path, and interactive diff filter. Sandboxed bash commands use `bash --noprofile --norc -c`, so they do not load login profiles or rc files.
 - Current WSL limit support is intentionally narrow: `timeoutMs` and `outputBytes` are enforced; `maxProcesses`, `memoryBytes`, and `cpuMillis` fail closed with `failed-to-start` until a real cgroup/job-control implementation exists.
-- Caveat: the WSL runner leaves `/tmp/jarvis-wsl2-unshare.*` payload folders and the `/tmp/jarvis-sandbox/project` mount target directory for inspection. It does not auto-delete temp directories.
+- Temp policy: the WSL runner cleans `/tmp/jarvis-wsl2-unshare-*` payload folders by default. Smoke/debug callers can pass `retainTempDirs: true` to keep WSL payload folders for inspection.
 
 GoalLoop sandbox smoke:
 
@@ -95,7 +95,7 @@ GoalLoop sandbox smoke:
 - Path: creates a trusted sandbox check plan outside the repository, loads it through `loadSandboxedCheckPlan()`, runs `runGoal()` with a fake builder/model and real `createWsl2UnshareSandboxRunner()`, then verifies completion through `decideVerdict`.
 - 2026-07-02 result on this machine: passed.
 - Scope: proves the opt-in goal verifier path can produce a runtime-proof `verified` verdict without calling an external model. It does not register `sandboxed_exec` in the default tool registry and does not make the normal verifier execute arbitrary commands.
-- Caveat: the script leaves `%TEMP%\jarvis-sandbox-goal-plan-*` plus the WSL runner temp folders in place for inspection. It does not auto-delete temp directories.
+- Caveat: the script leaves `%TEMP%\jarvis-sandbox-goal-plan-*` in place for inspection and explicitly asks the runner to retain WSL payload folders. Production callers use the runner default cleanup path.
 
 ## External source notes
 
@@ -173,10 +173,10 @@ Status on 2026-07-02:
 - `src/core/tools/sandboxed-inspection-command.ts` restricts `sandboxed_exec` to one simple inspection command: no pipes, redirects, control flow, variables, command substitution, globs, absolute paths, parent traversal, or sensitive paths. Current programs are intentionally narrow: `git status`, `git diff`, `git log`, `git ls-files`, `stat`, and `wc`.
 - The default sandbox cwd is `/tmp/jarvis-sandbox/project` so the WSL2 unprivileged namespace can create the mount target without sudo.
 - With `createUnavailableSandboxRunner()`, the tool returns `Sandbox unavailable: ...` and never falls back to raw bash.
-- `src/runtime/sandbox/wsl2-unshare-runner.ts` adds an opt-in `createWsl2UnshareSandboxRunner()` implementation using `wsl.exe`, Linux `unshare -Urnmpf --mount-proc`, read-only bind mounts, tmpfs shadows over `/mnt` and `/home`, no network namespace, timeout, process group kill, output cap, scrubbed env, fixed Git inspection config, and fail-closed rejection for unsupported resource limits.
+- `src/runtime/sandbox/wsl2-unshare-runner.ts` adds an opt-in `createWsl2UnshareSandboxRunner()` implementation using `wsl.exe`, Linux `unshare -Urnmpf --mount-proc`, read-only bind mounts, tmpfs shadows over `/mnt` and `/home`, no network namespace, timeout, process group kill, output cap, scrubbed env, fixed Git inspection config, default cleanup for WSL payload temp roots, an explicit `retainTempDirs` smoke/debug option, and fail-closed rejection for unsupported resource limits.
 - `test/tools/sandboxed-exec.test.ts` covers default-registry absence, request shape, network mode, read-only mount, and unavailable no-exec behavior.
 - `test/tools/sandboxed-inspection-command.test.ts` covers allowed inspection commands and rejects interpreters, writes, file listing, network-adjacent Git actions, shell composition, redirects, sensitive paths, and absolute paths.
-- `test/runtime/wsl2-unshare-runner.test.ts` covers WSL spawn shape, scrubbed shell startup hooks and credential-shaped env, structured marker parsing, no-marker fail closed, spawn timeout mapping, and network mode rejection before spawn.
+- `test/runtime/wsl2-unshare-runner.test.ts` covers WSL spawn shape, scrubbed shell startup hooks and credential-shaped env, default temp cleanup plus explicit retain, structured marker parsing, no-marker fail closed, spawn timeout mapping, and network mode rejection before spawn.
 
 Allowed early scope:
 
