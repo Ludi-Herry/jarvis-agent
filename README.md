@@ -66,8 +66,8 @@ cp .env.example .env   # 然后编辑 .env 填 ARK_API_KEY
 npm run dev         # 终端 REPL：带权限闸门 + bash + 交互审批 + 会话落盘（需 ARK_API_KEY）。Ctrl-C 中断 / /exit 退出
 npm run resume      # 恢复 data/sessions/ 最近一个会话继续跑
 npm run goal        # goal 模式：npm run goal -- "<objective>" 自主跑到达标自停（确定性两腿；JARVIS_HELDOUT_CHECKS_FILE 加 held-out 隐藏断言；ARK_VERIFIER_MODEL=不同模型 启用腿3 独立裁判）
-npm run loop        # loop 模式（Phase E）：npm run loop -- <objectives-file> 多 goal 队列顺序排空、崩溃安全 resume；默认 attended / --unattended fail-closed / --resume(+--force)；可 --parallel 2..4 用 cwd 外 worktree 并行跑，parallel resume 必须显式带 --worktree-root（与任何 hooks 配置互斥）；可 --hook-map <trusted-json> 给串行 goal 配 cwd 外 hook 覆盖；可 --sandbox-check-map <trusted-json> 给每个 goal 配 repo/worktree 外 sandbox checks
-npm run resume:loop -- --verifier-map <trusted-json> --hook-map <trusted-json> --sandbox-check-map <trusted-json> # 恢复最近 loop：恢复模式来自 cwd 外可信 map；无 per-goal verifier / hooks / sandbox checks 时各用 {"goals":[]}；原 loop 若带任一 map，恢复必须传同一个可信 map
+npm run loop        # loop 模式（Phase E）：npm run loop -- <objectives-file> 多 goal 队列顺序排空、崩溃安全 resume；默认 attended / --unattended fail-closed / --resume(+--force)；可 --parallel 2..4 用 cwd 外 worktree 并行跑，parallel resume 必须显式带 --worktree-root（与任何 hooks 配置互斥）；可 --hook-map <trusted-json> 给串行 goal 配 cwd 外 hook 覆盖；可 --sandbox-check-map <trusted-json> 给每个 goal 配 repo/worktree 外 sandbox checks；可 --goal-setter-requirements-map <trusted-json> 给每个 goal 配 repo/worktree 外 requirement route map
+npm run resume:loop -- --verifier-map <trusted-json> --hook-map <trusted-json> --sandbox-check-map <trusted-json> # 恢复最近 loop：恢复模式来自 cwd 外可信 map；无 per-goal verifier / hooks / sandbox checks 时各用 {"goals":[]}；原 loop 若带任一 map，恢复必须传同一个可信 map；若原 loop 使用 goal-setter requirements map，恢复也必须传同一路径和哈希的 --goal-setter-requirements-map
 npm run loop:finalize -- --loop <id> # 只读 finalize report：汇总 parallel worktree 的 logged verdict / status / diff，生成人工审阅 merge proposal；不 cleanup
 npm run loop:finalize -- --loop <id> --merge # 交互式 apply：必须输入 merge <loopId>；只合入 verified + tracked diff proposal，untracked/conflict/缺 verdict 停下；不 cleanup
 npm run loop:finalize -- --loop <id> --cleanup # 交互式清理：必须输入 cleanup <loopId>；只移除有 merge-applied 审计且当前 clean 的 worktree；使用 git worktree remove，不强删、不删日志
@@ -193,6 +193,8 @@ npm run resume:loop -- --verifier-map <trusted-empty-or-full-map> --hook-map <tr
 ```
 
 The loop header records the canonical requirements map path and SHA-256 hash. Resume requires the same path and hash, and the CLI rejects maps inside the current cwd, detected repo/workspace root, or parallel worktree root.
+
+真实 loop CLI route-map smoke 已在 2026-07-02 跑通：`npm run loop -- <temp-objectives> --goal-setter-requirements-map <temp-map> --unattended` 输出 `Goal-setter requirements: per-goal route-map overrides 1/1 goals` 和 `sandboxed verifier...`，最终 `verified`、`complete`、`queue-empty`。该 smoke 使用 repo/worktree 外 map，两个 `sandbox-command` requirements 分别通过 WSL2 read-only sandbox 内的 `stat package.json` / `stat README.md` 验证。
 
 `JARVIS_SANDBOX_CHECKS_FILE` 只接入单目标 `npm run goal`。它让 GoalLoop 在确定性四关卡通过后，用 WSL2 sandbox 运行一组可信的只读检查命令，并把结果映射成 verifier report；此时 LLM 腿3裁判会跳过。
 

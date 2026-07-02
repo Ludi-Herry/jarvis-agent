@@ -229,6 +229,7 @@ Status on 2026-07-02:
 - `test/cli/loop-cli-goal-setter-requirements.test.ts`, `test/cli/loop-args.test.ts`, and `test/capabilities/goal/loop-store.test.ts` cover loop CLI route-map wiring, args parsing, and loop-created path/hash replay.
 - `test/capabilities/goal/goal-loop-sandboxed-checks.test.ts` covers legacy sandbox-only checks, mixed sandbox+LLM routes, missing LLM provider parking, human route parking, missing runner parking, and unsafe configured commands being rejected before runner invocation.
 - A real loop CLI smoke ran on 2026-07-02 with `npm run loop -- <temp-objectives> --sandbox-check-map <temp-map> --unattended`. The run used a trusted map outside repo/worktree, reached `sandboxed verifier...`, and finished `verified` / `complete` / `queue-empty`.
+- A real loop CLI route-map smoke ran on 2026-07-02 with `npm run loop -- <temp-objectives> --goal-setter-requirements-map <temp-map> --unattended`. The run used a trusted map outside repo/worktree, showed `Goal-setter requirements: per-goal route-map overrides 1/1 goals`, reached `sandboxed verifier...`, recorded `wsl2-unshare` read-only audit evidence for `stat package.json` and `stat README.md`, and finished `verified` / `complete` / `queue-empty`.
 
 Trusted single-goal plan shape:
 

@@ -1,6 +1,6 @@
 # OS Sandbox Phase 3 Design Slice
 
-> Status: design slice, 2026-07-02. No implementation in this document.
+> Status: implemented slice, 2026-07-02. Parser/loader, composite report, goal CLI, loop CLI, resume matching, docs, tests, and a real loop CLI route-map smoke have landed.
 
 ## Goal
 
@@ -169,26 +169,27 @@ Resume rules:
 
 ## Implementation Slice
 
-Recommended file-level plan:
+Implemented file-level slice:
 
-1. Add `src/capabilities/goal/goal-setter-requirements.ts`.
+1. Added `src/capabilities/goal/goal-setter-requirements.ts`.
    - Parser, loader, SHA-256 hash, path boundary checks, route validation, loop map builder, resume path/hash matcher.
    - Keep current `sandboxed-check-config.ts` as compatibility or have it delegate to the new parser.
-2. Add `src/capabilities/goal/composite-verifier-report.ts`.
+2. Added `src/capabilities/goal/composite-verifier-report.ts`.
    - Merge sandbox command results, LLM verifier report for `llm` routes, and human-only `cannotVerify` rows.
    - Enforce exact pinned coverage.
-3. Update `goal-cli.ts`.
+3. Updated `goal-cli.ts`.
    - Decision landed in slice 4: use launch-captured `JARVIS_GOAL_SETTER_REQUIREMENTS_FILE` for the new route contract; keep `JARVIS_SANDBOX_CHECKS_FILE` for legacy sandbox-only compatibility.
    - When a goal-setter contract is present, derive `pinned` from it and skip LLM-derived requirements.
-4. Update `loop-cli.ts`.
+4. Updated `loop-cli.ts`.
    - Decision landed in slice 5: add `--goal-setter-requirements-map <trusted-json>` for the new route contract; keep `--sandbox-check-map` sandbox-only.
    - Store path/hash in loop header and require same path/hash on resume.
-5. Update `runGoal`.
+5. Updated `runGoal`.
    - Accept a route plan instead of only `sandboxedRequirementCommands`.
    - Run sandbox and LLM routes separately, then merge into one report.
-6. Update docs and smoke scripts.
+6. Updated docs and ran real smoke coverage.
    - README minimal example.
    - `docs/os-sandbox-research.md` Phase 3 status.
+   - Real loop CLI route-map smoke: `npm run loop -- <temp-objectives> --goal-setter-requirements-map <temp-map> --unattended` reached `sandboxed verifier...` and finished `verified` / `complete` / `queue-empty`.
 
 ## Test Matrix
 
