@@ -29,7 +29,7 @@ export interface LoadedSandboxedCheckPlan {
 export function parseSandboxedCheckPlan(text: string): SandboxedCheckPlan {
   let raw: unknown;
   try {
-    raw = JSON.parse(text);
+    raw = JSON.parse(stripUtf8Bom(text));
   } catch (err) {
     throw new Error(`sandbox check plan is not valid JSON: ${message(err)}`, { cause: err });
   }
@@ -111,6 +111,10 @@ function isInsideRoot(absPath: string, root: string): boolean {
 function asNonEmptyString(value: unknown, label: string): string {
   if (typeof value !== 'string' || value.trim() === '') throw new Error(`${label} must be a non-empty string`);
   return value.trim();
+}
+
+function stripUtf8Bom(text: string): string {
+  return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
 }
 
 function message(err: unknown): string {

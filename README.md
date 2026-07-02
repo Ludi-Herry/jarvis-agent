@@ -93,6 +93,58 @@ npm run sandbox:runner-smoke # sandboxed_exec + wsl2-unshare 真实链路探针�
 npm run sandbox:goal-smoke # GoalLoop + trusted sandbox check plan + wsl2-unshare 端到端 smoke（opt-in）
 ```
 
+## OS sandbox trusted checks
+
+`JARVIS_SANDBOX_CHECKS_FILE` 只接入单目标 `npm run goal`。它让 GoalLoop 在确定性四关卡通过后，用 WSL2 sandbox 运行一组可信的只读检查命令，并把结果映射成 verifier report；此时 LLM 腿3裁判会跳过。
+
+Plan 必须放在仓库 / workspace 外。CLI 会拒绝 repo 内 plan，避免 builder 或仓库内容自己定义验收口径。命令范围也很窄：只允许 `git status`、`git diff`、`git log`、`git ls-files`、`stat`、`wc` 这类简单 inspection command；不支持 shell 组合、重定向、解释器、网络或写入。sandbox 不可用、命令被拒、超时或缺少 requirement check 都会走 `couldNotVerify`，不会回落到 raw bash。
+
+最小 plan：
+
+```json
+{
+  "requirements": [
+    {
+      "id": "r1",
+      "text": "The repository package manifest exists and can be inspected inside the OS sandbox.",
+      "command": "stat package.json"
+    },
+    {
+      "id": "r2",
+      "text": "The README can be inspected inside the OS sandbox.",
+      "command": "wc -l README.md"
+    }
+  ]
+}
+```
+
+PowerShell 最小运行方式：
+
+```powershell
+$plan = Join-Path $env:TEMP 'jarvis-sandbox-checks.json'
+@'
+{
+  "requirements": [
+    {
+      "id": "r1",
+      "text": "The repository package manifest exists and can be inspected inside the OS sandbox.",
+      "command": "stat package.json"
+    },
+    {
+      "id": "r2",
+      "text": "The README can be inspected inside the OS sandbox.",
+      "command": "wc -l README.md"
+    }
+  ]
+}
+'@ | Set-Content -Path $plan -Encoding utf8NoBOM
+
+$env:JARVIS_SANDBOX_CHECKS_FILE = $plan
+npm run goal -- "Sandbox CLI smoke: do not edit files. Confirm the existing package manifest and README are present, then call update_goal complete. No source changes are required."
+```
+
+真实 CLI smoke 已在 2026-07-02 跑通：`JARVIS_SANDBOX_CHECKS_FILE=<temp-plan> npm run goal -- "<objective>"` 输出 `sandboxed verifier...`，最终 `goal complete (rounds=1, verdict=verified)`。运行时 builder 曾尝试 `ls -la`，非交互审批 fail-closed 拒绝，之后通过 read/grep 完成，说明 sandbox checks 没有绕开 PermissionGate。
+
 ## 目录
 
 ```

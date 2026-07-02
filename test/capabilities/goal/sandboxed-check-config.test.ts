@@ -20,6 +20,16 @@ describe('parseSandboxedCheckPlan', () => {
     ]);
   });
 
+  it('accepts a UTF-8 BOM prefix from Windows-authored JSON files', () => {
+    const plan = parseSandboxedCheckPlan(
+      `\uFEFF${JSON.stringify({
+        requirements: [{ id: 'r1', text: 'shows status', command: 'git status --short' }],
+      })}`,
+    );
+
+    expect(plan.requirements).toEqual([{ id: 'r1', text: 'shows status', command: 'git status --short' }]);
+  });
+
   it('rejects unknown keys, duplicate ids, and commands outside the inspection scope', () => {
     expect(() => parseSandboxedCheckPlan(JSON.stringify({ requirements: [], extra: true }))).toThrow(/unknown/);
     expect(() =>
