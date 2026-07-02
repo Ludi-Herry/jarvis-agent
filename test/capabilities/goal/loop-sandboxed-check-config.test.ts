@@ -129,6 +129,9 @@ describe('loop sandbox check map', () => {
     expect(() => assertResumeSandboxCheckMapMatches(undefined, undefined)).toThrow(/resume requires --sandbox-check-map/);
     expect(() => assertResumeSandboxCheckMapMatches('C:\\trusted\\map.json', undefined)).toThrow(/requires --sandbox-check-map/);
     expect(() => assertResumeSandboxCheckMapMatches('C:\\trusted\\map-a.json', 'C:\\trusted\\map-b.json')).toThrow(/does not match/);
-    expect(() => assertResumeSandboxCheckMapMatches(undefined, 'C:\\trusted\\empty-map.json')).not.toThrow();
+    expect(() => assertResumeSandboxCheckMapMatches(undefined, 'C:\\trusted\\empty-map.json')).toThrow(
+      /missing original sandbox-check-map/,
+    );
+    expect(() => assertResumeSandboxCheckMapMatches('C:\\trusted\\map.json', 'C:\\trusted\\map.json')).not.toThrow();
   });
 });

@@ -144,9 +144,20 @@ describe('Wsl2UnshareSandboxRunner', () => {
   });
 
   it('maps spawn timeout errors to timed-out', async () => {
+    const calls: string[] = [];
     const runner = createWsl2UnshareSandboxRunner({
-      spawnSync() {
-        return { status: null, signal: null, stdout: '', stderr: '', error: new Error('ETIMEDOUT') };
+      spawnSync(_command, _args, options) {
+        calls.push(options.input);
+        if (calls.length === 1) {
+          return {
+            status: null,
+            signal: null,
+            stdout: '',
+            stderr: '',
+            error: new Error('ETIMEDOUT'),
+          };
+        }
+        return { status: 0, signal: null, stdout: '', stderr: '' };
       },
     });
 
@@ -155,6 +166,31 @@ describe('Wsl2UnshareSandboxRunner', () => {
     expect(result.status).toBe('timed-out');
     if (result.status !== 'timed-out') throw new Error(`Expected timed-out, got ${result.status}`);
     expect(result.reason).toBe('ETIMEDOUT');
+    expect(calls).toHaveLength(2);
+    expect(calls[1]).toContain('"/tmp/jarvis-wsl2-unshare-');
+    expect(calls[1]).toContain('shutil.rmtree(root, ignore_errors=True)');
+  });
+
+  it('retains WSL temp roots after host timeout when retainTempDirs is enabled', async () => {
+    let calls = 0;
+    const runner = createWsl2UnshareSandboxRunner({
+      retainTempDirs: true,
+      spawnSync() {
+        calls += 1;
+        return {
+          status: null,
+          signal: null,
+          stdout: '',
+          stderr: '',
+          error: new Error('ETIMEDOUT'),
+        };
+      },
+    });
+
+    const result = await runner.run(sampleRequest());
+
+    expect(result.status).toBe('timed-out');
+    expect(calls).toBe(1);
   });
 
   it('rejects unsupported network modes before spawning WSL', async () => {

@@ -185,7 +185,11 @@ export function assertResumeSandboxCheckMapMatches(recordedPath: string | undefi
     }
     throw new Error(`this loop was created with sandbox-check-map ${recordedPath}; resume requires --sandbox-check-map with the same trusted file`);
   }
-  if (recordedPath === undefined) return;
+  if (recordedPath === undefined) {
+    throw new Error(
+      `resume loop log is missing original sandbox-check-map path; refusing current sandbox-check-map ${currentPath} because the original trusted file cannot be proven`,
+    );
+  }
   if (currentPath !== recordedPath) {
     throw new Error(`resume sandbox-check-map ${currentPath} does not match the original sandbox-check-map ${recordedPath}`);
   }

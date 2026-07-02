@@ -95,6 +95,8 @@ npm run sandbox:goal-smoke # GoalLoop + trusted sandbox check plan + wsl2-unshar
 
 ## OS sandbox trusted checks
 
+Runtime temp cleanup: the WSL runner creates host-known `/tmp/jarvis-wsl2-unshare-*` payload roots and cleans them by default, including a best-effort host-side cleanup after WSL spawn errors or host-side timeouts. `retainTempDirs: true` is reserved for smoke/debug inspection.
+
 `JARVIS_SANDBOX_CHECKS_FILE` 只接入单目标 `npm run goal`。它让 GoalLoop 在确定性四关卡通过后，用 WSL2 sandbox 运行一组可信的只读检查命令，并把结果映射成 verifier report；此时 LLM 腿3裁判会跳过。
 
 Plan 必须放在仓库 / workspace 外。CLI 会拒绝 repo 内 plan，避免 builder 或仓库内容自己定义验收口径。命令范围也很窄：只允许 `git status`、`git diff`、`git log`、`git ls-files`、`stat`、`wc` 这类简单 inspection command；不支持 shell 组合、重定向、解释器、网络或写入。sandbox 不可用、命令被拒、超时或缺少 requirement check 都会走 `couldNotVerify`，不会回落到 raw bash。
@@ -172,6 +174,8 @@ npm run resume:loop -- --verifier-map <trusted-empty-or-full-map> --hook-map <tr
 ```
 
 配置了 sandbox checks 的 goal 会用 runtime-proof report 接管该 goal 的腿3结果；未配置的 goal 继续走普通 verifier / deterministic-only 路径。`--sandbox-check-map` 路径会写入 loop header 供 resume 校验，但实际配置内容每次都从当前命令传入的 repo/worktree 外 trusted map 读取。
+
+Resume is fail-closed: if the original loop header is missing `sandboxCheckMapPath`, the current `--sandbox-check-map` is rejected because the original trusted file cannot be proven.
 
 真实 loop CLI smoke 已在 2026-07-02 跑通：`npm run loop -- <temp-objectives> --sandbox-check-map <temp-map> --unattended` 输出 `sandboxed verifier...`，最终 `verified`、`complete`、`queue-empty`。该 smoke 使用 repo/worktree 外 map，builder 只通过 read 工具确认 `package.json` / `README.md`，sandbox checks 接管该 goal 的腿3结果。
 

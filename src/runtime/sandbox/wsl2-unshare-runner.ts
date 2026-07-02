@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import type { SandboxLimits, SandboxRunRequest, SandboxRunResult, SandboxRunner } from './sandbox-runner.js';
 import { auditSandboxRequest } from './sandbox-runner.js';
 
@@ -6,6 +7,7 @@ const RESULT_PREFIX = 'JARVIS_SANDBOX_RESULT\t';
 const DEFAULT_DISTRO = 'Ubuntu-24.04';
 const DEFAULT_WSL_EXE = 'wsl.exe';
 const HOST_TIMEOUT_SLACK_MS = 5_000;
+const HOST_CLEANUP_TIMEOUT_MS = 5_000;
 
 interface SpawnResult {
   readonly status: number | null;
@@ -68,8 +70,10 @@ export function createWsl2UnshareSandboxRunner(options: Wsl2UnshareSandboxRunner
         };
       }
 
+      const retainTempDirs = options.retainTempDirs ?? false;
+      const tempRoot = newWslTempRoot();
       const result = runSpawnSync(wslExe, ['-d', distro, '--', 'python3', '-'], {
-        input: buildWslScript(request, options.retainTempDirs ?? false),
+        input: buildWslScript(request, retainTempDirs, tempRoot),
         encoding: 'utf8',
         env: sandboxHostEnv(),
         timeout: request.limits.timeoutMs + hostTimeoutSlackMs,
@@ -77,14 +81,22 @@ export function createWsl2UnshareSandboxRunner(options: Wsl2UnshareSandboxRunner
         maxBuffer: Math.max(request.limits.outputBytes * 4, 1024 * 1024),
       });
 
+      const stdout = cleanOutput(result.stdout);
+      const stderr = cleanOutput(result.stderr);
       if (result.error !== undefined) {
+        if (!retainTempDirs) {
+          cleanupWslTempRoot({
+            tempRoot,
+            runSpawnSync,
+            wslExe,
+            distro,
+          });
+        }
         const reason = result.error.message;
         const status = /timed out|ETIMEDOUT/i.test(reason) ? 'timed-out' : 'failed-to-start';
         return { status, backend: 'wsl2-unshare', audit, reason };
       }
 
-      const stdout = cleanOutput(result.stdout);
-      const stderr = cleanOutput(result.stderr);
       const inner = parseInnerResult(stdout);
       if (inner === undefined) {
         return {
@@ -117,9 +129,13 @@ export function createWsl2UnshareSandboxRunner(options: Wsl2UnshareSandboxRunner
   };
 }
 
-function buildWslScript(request: SandboxRunRequest, retainTempDirs: boolean): string {
+function newWslTempRoot(): string {
+  return `/tmp/jarvis-wsl2-unshare-${randomUUID()}`;
+}
+
+function buildWslScript(request: SandboxRunRequest, retainTempDirs: boolean, tempRoot: string): string {
   const payload = Buffer.from(JSON.stringify(request), 'utf8').toString('base64');
-  return `${outerPython(payload, retainTempDirs)}\n`;
+  return `${outerPython(payload, retainTempDirs, tempRoot)}\n`;
 }
 
 function unsupportedWslLimits(limits: SandboxLimits): string[] {
@@ -130,7 +146,7 @@ function unsupportedWslLimits(limits: SandboxLimits): string[] {
   return unsupported;
 }
 
-function outerPython(payloadBase64: string, retainTempDirs: boolean): string {
+function outerPython(payloadBase64: string, retainTempDirs: boolean, tempRoot: string): string {
   return String.raw`import atexit
 import base64
 import json
@@ -139,10 +155,10 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 
 RESULT_PREFIX = "JARVIS_SANDBOX_RESULT\t"
 PAYLOAD_B64 = "${payloadBase64}"
+TEMP_ROOT = ${JSON.stringify(tempRoot)}
 RETAIN_TEMP_DIR = ${retainTempDirs ? 'True' : 'False'}
 SECRET_COMPONENT_RE = re.compile(r"(^|_)(KEY|PAT|DSN)($|_)")
 SECRET_CONN_RE = re.compile(r"(^|_)(DATABASE|DB|MONGODB?|REDIS|POSTGRES(QL)?|MYSQL|MARIADB|AMQP|RABBITMQ|CLICKHOUSE|ELASTIC(SEARCH)?|CONNECTION)_(URL|URI|DSN|CONN|CONNECTION|STRING)")
@@ -197,7 +213,14 @@ def sandbox_env():
 
 SAFE_ENV = sandbox_env()
 payload = json.loads(base64.b64decode(PAYLOAD_B64).decode("utf-8"))
-root = tempfile.mkdtemp(prefix="jarvis-wsl2-unshare-")
+root = os.path.realpath(TEMP_ROOT)
+tmp = os.path.realpath("/tmp")
+if os.path.dirname(root) != tmp or not os.path.basename(root).startswith("jarvis-wsl2-unshare-"):
+    fail(f"unsafe sandbox temp root: {TEMP_ROOT}")
+try:
+    os.makedirs(root, mode=0o700, exist_ok=False)
+except FileExistsError:
+    fail(f"sandbox temp root already exists: {TEMP_ROOT}")
 if not RETAIN_TEMP_DIR:
     atexit.register(lambda: shutil.rmtree(root, ignore_errors=True))
 inner_py = os.path.join(root, "inner.py")
@@ -363,6 +386,30 @@ if completed.stderr:
     sys.stderr.write(completed.stderr)
 if completed.returncode != 0 and RESULT_PREFIX not in completed.stdout:
     fail(f"unshare exited {completed.returncode}: {completed.stderr.strip()}")`;
+}
+
+function cleanupWslTempRoot(input: {
+  tempRoot: string;
+  runSpawnSync: SpawnSyncLike;
+  wslExe: string;
+  distro: string;
+}): void {
+  try {
+    input.runSpawnSync(input.wslExe, ['-d', input.distro, '--', 'python3', '-'], {
+      input: buildWslCleanupScript(input.tempRoot),
+      encoding: 'utf8',
+      env: sandboxHostEnv(),
+      timeout: HOST_CLEANUP_TIMEOUT_MS,
+      windowsHide: true,
+      maxBuffer: 128 * 1024,
+    });
+  } catch {
+    // Keep the original sandbox failure as the user-facing result; cleanup is best-effort.
+  }
+}
+
+function buildWslCleanupScript(tempRoot: string): string {
+  return `import os\nimport shutil\nimport sys\n\nroot = os.path.realpath(${JSON.stringify(tempRoot)})\ntmp = os.path.realpath("/tmp")\nif os.path.dirname(root) != tmp or not os.path.basename(root).startswith("jarvis-wsl2-unshare-"):\n    sys.exit(0)\nshutil.rmtree(root, ignore_errors=True)\n`;
 }
 
 function parseInnerResult(stdout: string): InnerResult | undefined {

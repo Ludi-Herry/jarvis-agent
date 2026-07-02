@@ -34,7 +34,16 @@ describe('loop CLI parallel resume smoke', () => {
       await mkdir(loopsDir, { recursive: true });
       const loopPath = join(loopsDir, `${loopId}.jsonl`);
       const original =
-        serializeLoopRecord({ t: 'loop-created', id: loopId, contract, objectives: ['inspect README'], createdAt: 't0' }) +
+        serializeLoopRecord({
+          t: 'loop-created',
+          id: loopId,
+          contract,
+          objectives: ['inspect README'],
+          verifierMapPath: resolve(verifierMap),
+          hookMapPath: resolve(hookMap),
+          sandboxCheckMapPath: resolve(sandboxCheckMap),
+          createdAt: 't0',
+        }) +
         serializeLoopRecord({ t: 'goal-started', index: 0, goalId: `${loopId}-g0-old`, at: 't1' });
       await writeFile(loopPath, original, 'utf8');
 
