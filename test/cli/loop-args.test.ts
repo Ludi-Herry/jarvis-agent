@@ -73,6 +73,18 @@ describe('parseLoopArgs', () => {
     });
   });
 
+  it('parses the explicit fail-on-worktree-change policy', () => {
+    expect(parseLoopArgs(['objectives.txt', '--fail-on-worktree-change'])).toEqual({
+      resume: false,
+      force: false,
+      unattended: false,
+      noVerifierMap: false,
+      parallel: 1,
+      failOnWorktreeChange: true,
+      positional: ['objectives.txt'],
+    });
+  });
+
   it('rejects a missing verifier-map value', () => {
     expect(() => parseLoopArgs(['objectives.txt', '--verifier-map'])).toThrow(/requires a path/);
   });

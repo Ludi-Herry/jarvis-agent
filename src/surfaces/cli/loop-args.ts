@@ -3,6 +3,7 @@ export interface LoopCliArgs {
   force: boolean;
   unattended: boolean;
   noVerifierMap: boolean;
+  failOnWorktreeChange?: boolean;
   parallel: number;
   verifierMapPath?: string;
   hookMapPath?: string;
@@ -36,6 +37,10 @@ export function parseLoopArgs(argv: string[]): LoopCliArgs {
     }
     if (arg === '--unattended') {
       parsed.unattended = true;
+      continue;
+    }
+    if (arg === '--fail-on-worktree-change') {
+      parsed.failOnWorktreeChange = true;
       continue;
     }
     if (arg === '--verifier-map') {

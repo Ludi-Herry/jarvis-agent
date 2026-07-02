@@ -84,6 +84,7 @@ import {
   runGoal,
   runLoop,
   runParallelLoop,
+  snapshotWorktreeStatus,
   type LoadedLoopVerifierMap,
   type LoadedLoopHookMap,
   type LoadedLoopSandboxCheckMap,
@@ -160,6 +161,7 @@ async function main(): Promise<void> {
     goalSetterRequirementsMapPath,
     parallel,
     worktreeRootPath,
+    failOnWorktreeChange,
   } = args;
   const parallelMode = parallel > 1;
   if (noVerifierMap) {
@@ -522,6 +524,7 @@ async function main(): Promise<void> {
   console.log(`Queue: ${objectives.length} goals${resume ? ` (resume, recheck ${seedInFlight?.size ?? 0} logged attempts)` : ''}`);
   console.log(parallelMode ? `Parallel: ${parallel} worktree goals, root ${safeInline(worktreeRoot)}` : 'Parallel: disabled');
   console.log(`Approval: ${unattended ? 'unattended (fail-closed)' : 'attended (interactive)'}`);
+  console.log(`Worktree baseline: ${failOnWorktreeChange ? 'forbid changes' : 'audit changes'}`);
   const enabledVerifierCount = verifierPlan.decisions.filter(
     (decision, index) =>
       decision.enabled &&
@@ -641,6 +644,7 @@ async function main(): Promise<void> {
     }
 
     const baseline = await snapshotBaseline(shellPath, goalCwd);
+    const worktreeBaseline = await snapshotWorktreeStatus(shellPath, goalCwd);
     const goalStore = new FileGoalStore(goalPath);
     const sessionStore = new FileSessionStore(sessionPath, loadedResume?.initialCursor ?? 0);
     if (!attempt.resumed) {
@@ -669,7 +673,7 @@ async function main(): Promise<void> {
         : sandboxCommands;
     try {
       result = await runGoal(
-        { id: goalId, objective, sessionId: goalId, budget: contract.perGoalBudget, baseline, pinned, resume: resumeState },
+        { id: goalId, objective, sessionId: goalId, budget: contract.perGoalBudget, baseline, worktreeBaseline, pinned, resume: resumeState },
         {
           model: provider,
           tools,
@@ -684,6 +688,7 @@ async function main(): Promise<void> {
           builderSystemPrompt: BUILDER_PROMPT,
           perRoundMaxTurns: PER_ROUND_MAX_TURNS,
           checkCommands: DEFAULT_CHECK_COMMANDS,
+          worktreeChangePolicy: failOnWorktreeChange ? 'forbid' : 'audit',
           verifierProvider,
           sandboxedRequirementCommands,
           goalSetterRequirementRoutes: goalSetterRoutes,

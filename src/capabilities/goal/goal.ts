@@ -54,9 +54,26 @@ export interface DeterministicChecks {
   testTamper: 'clean' | 'weakened-or-deleted';
   /** Why leg 2 fired (for the continuation / verdict rationale), or '' when clean. */
   tamperReason: string;
+  /** Worktree audit: status before the goal run vs status at verification time. */
+  worktreeStatus?: WorktreeStatusCheck;
   /** Held-out leg: secret hidden assertions the builder never sees. `undefined` = leg not configured
    *  (absent — a known weaker-confidence state, surfaced explicitly; NOT treated as a pass). */
   heldOut?: HeldOutResult;
+}
+
+export type WorktreeChangePolicy = 'audit' | 'forbid';
+
+export interface WorktreeStatusBaseline {
+  command: 'git status --porcelain --untracked-files=all';
+  baseline: string;
+}
+
+export interface WorktreeStatusCheck extends WorktreeStatusBaseline {
+  policy: WorktreeChangePolicy;
+  current: string;
+  changed: boolean;
+  changedEntries: string[];
+  error?: string;
 }
 
 // ── Leg 3 vocabulary (the independent LLM judge — landed this batch) ──
@@ -129,6 +146,8 @@ export interface Goal {
   state: GoalState;
   budget: GoalBudget;
   testBaseline?: TestBaseline;
+  /** Worktree status before this run; used for audit and optional no-change enforcement. */
+  worktreeBaseline?: WorktreeStatusBaseline;
   /** Harness-pinned requirement list (leg 3), derived once at creation then immutable. Empty when no
    *  verifier is configured (batch-1 deterministic-only fallback) — the verifier scores each entry. */
   pinned: PinnedRequirement[];

@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
+  classifyWorktreeStatusChange,
   classifyTestDiff,
   runDeterministicChecks,
+  snapshotWorktreeStatus,
 } from '../../../src/capabilities/goal/checks.js';
-import { defaultShellPath } from '../../../src/core/tools/run-command.js';
+import { defaultShellPath, runCommand } from '../../../src/core/tools/run-command.js';
 
 describe('classifyTestDiff (pure)', () => {
   it('clean when a test file only ADDS cases', () => {
@@ -94,6 +99,26 @@ describe('classifyTestDiff (pure)', () => {
   });
 });
 
+describe('classifyWorktreeStatusChange (pure)', () => {
+  it('reports unchanged when porcelain status matches the baseline', () => {
+    const r = classifyWorktreeStatusChange(' M README.md\n?? docs/note.md\n', ' M README.md\n?? docs/note.md\n');
+    expect(r.changed).toBe(false);
+    expect(r.changedEntries).toEqual([]);
+  });
+
+  it('reports tracked and untracked entries that appeared after the baseline', () => {
+    const r = classifyWorktreeStatusChange('', ' M README.md\n?? docs/new.md\n');
+    expect(r.changed).toBe(true);
+    expect(r.changedEntries).toEqual([' M README.md', '?? docs/new.md']);
+  });
+
+  it('reports status disappearing after the baseline as a change too', () => {
+    const r = classifyWorktreeStatusChange('?? scratch.txt\n', '');
+    expect(r.changed).toBe(true);
+    expect(r.changedEntries).toEqual(['removed since baseline: ?? scratch.txt']);
+  });
+});
+
 describe('runDeterministicChecks — leg 1 trusts the real exit code', () => {
   const shellPath = defaultShellPath();
 
@@ -131,6 +156,54 @@ describe('runDeterministicChecks — leg 1 trusts the real exit code', () => {
   it('fails closed when there are no check commands (a vacuous AND must not pass)', async () => {
     const r = await runDeterministicChecks({ shellPath, cwd: process.cwd(), checkCommands: [] });
     expect(r.objectiveChecksPassed).toBe(false);
+  });
+
+  it('records real git porcelain status drift against the pre-run worktree baseline', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'jarvis-worktree-status-'));
+    try {
+      const init = await runCommand(shellPath, 'git init', dir, 10_000, 20_000);
+      expect(init.code).toBe(0);
+      const baseline = await snapshotWorktreeStatus(shellPath, dir);
+      expect(baseline).toEqual({ command: 'git status --porcelain --untracked-files=all', baseline: '' });
+
+      await writeFile(join(dir, 'new.txt'), 'new file\n', 'utf8');
+      const r = await runDeterministicChecks({
+        shellPath,
+        cwd: dir,
+        checkCommands: ['exit 0'],
+        worktreeBaseline: baseline,
+        worktreeChangePolicy: 'forbid',
+      });
+
+      expect(r.worktreeStatus?.changed).toBe(true);
+      expect(r.worktreeStatus?.changedEntries).toEqual(['?? new.txt']);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not run project or held-out commands after a forbidden worktree status change is detected', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'jarvis-worktree-status-'));
+    try {
+      const init = await runCommand(shellPath, 'git init', dir, 10_000, 20_000);
+      expect(init.code).toBe(0);
+      const baseline = await snapshotWorktreeStatus(shellPath, dir);
+      await writeFile(join(dir, 'new.txt'), 'new file\n', 'utf8');
+
+      const r = await runDeterministicChecks({
+        shellPath,
+        cwd: dir,
+        checkCommands: ['exit 3'],
+        heldOutCommands: ['exit 3'],
+        worktreeBaseline: baseline,
+        worktreeChangePolicy: 'forbid',
+      });
+      expect(r.worktreeStatus?.changed).toBe(true);
+      expect(r.results).toEqual([]);
+      expect(r.heldOut).toBeUndefined();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
 

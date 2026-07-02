@@ -42,11 +42,13 @@ import {
   derivePinnedRequirements,
   resolveHooks,
   runGoal,
+  snapshotWorktreeStatus,
   type PinnedRequirement,
   type TestBaseline,
 } from '../../capabilities/index.js';
 import type { ModelProvider } from '../../core/index.js';
 import { safeInline } from './approval.js';
+import { parseGoalArgs } from './goal-args.js';
 import { createInteractiveApprover, readlineApproverIo } from './interactive-approver.js';
 import { loadGoalCliTrustedRequirements } from './goal-trusted-requirements.js';
 import { initialRenderState, renderEvent } from './render.js';
@@ -72,7 +74,15 @@ const BUILDER_PROMPT = [
 ].join('\n');
 
 async function main(): Promise<void> {
-  const objective = process.argv.slice(2).join(' ').trim();
+  let args;
+  try {
+    args = parseGoalArgs(process.argv.slice(2));
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exitCode = 1;
+    return;
+  }
+  const { objective } = args;
   if (objective === '') {
     console.error('用法: npm run goal -- "<objective>"');
     process.exitCode = 1;
@@ -152,6 +162,7 @@ async function main(): Promise<void> {
   });
 
   const baseline = await snapshotBaseline(shellPath, cwd); // leg-2 baseline; undefined if not a git repo
+  const worktreeBaseline = await snapshotWorktreeStatus(shellPath, cwd);
   const id = new Date().toISOString().replace(/[:.]/g, '-');
   const sessionId = `goal-${id}`;
   const goalStore = new FileGoalStore(join(cwd, 'data', 'goals', `${id}.jsonl`));
@@ -203,6 +214,11 @@ async function main(): Promise<void> {
   console.log(`目标: ${objective}`);
   console.log(baseline ? `验收: 四关卡 + 测试篡改检测(baseline ${baseline.headSha.slice(0, 8)})` : '验收: 四关卡(非 git 仓,跳过篡改检测)');
   console.log(
+    worktreeBaseline
+      ? `worktree: ${args.failOnWorktreeChange ? 'forbid changes' : 'audit changes'} (${safeInline(worktreeBaseline.command)})`
+      : 'worktree: status audit unavailable',
+  );
+  console.log(
     heldOutCommands.length > 0
       ? `held-out: 已配置 ${heldOutCommands.length} 条隐藏校验(builder 看不到)`
       : 'held-out: 未配置 —— 缺这条腿,verified 置信偏弱,建议加权人工抽查(设 JARVIS_HELDOUT_CHECKS_FILE 启用)',
@@ -244,7 +260,7 @@ async function main(): Promise<void> {
     : sandboxCheckPlan?.commands;
   try {
     result = await runGoal(
-      { id, objective, sessionId, budget: { maxRounds: 8 }, baseline, pinned },
+      { id, objective, sessionId, budget: { maxRounds: 8 }, baseline, worktreeBaseline, pinned },
       {
         model: provider,
         tools,
@@ -260,6 +276,7 @@ async function main(): Promise<void> {
         perRoundMaxTurns: 16,
         checkCommands: DEFAULT_CHECK_COMMANDS,
         heldOutCommands: heldOutCommands.length > 0 ? heldOutCommands : undefined,
+        worktreeChangePolicy: args.failOnWorktreeChange ? 'forbid' : 'audit',
         verifierProvider,
         sandboxedRequirementCommands,
         goalSetterRequirementRoutes: goalSetterRequirements?.routes,

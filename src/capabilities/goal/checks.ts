@@ -16,7 +16,14 @@
  * is the impure shell that runs the commands + git and feeds the pure classifier.
  */
 import { runCommand } from '../../core/tools/run-command.js';
-import type { DeterministicChecks, HeldOutResult, TestBaseline } from './goal.js';
+import type {
+  DeterministicChecks,
+  HeldOutResult,
+  TestBaseline,
+  WorktreeChangePolicy,
+  WorktreeStatusBaseline,
+  WorktreeStatusCheck,
+} from './goal.js';
 
 /** Slow enough for a real build/test. */
 const CHECK_TIMEOUT_MS = 300_000;
@@ -24,6 +31,8 @@ const CHECK_TIMEOUT_MS = 300_000;
 const CHECK_OUTPUT_CHARS = 20_000;
 /** git diff can be large; cap high so a real tamper deep in the diff isn't truncated away. */
 const DIFF_OUTPUT_CHARS = 500_000;
+const WORKTREE_STATUS_COMMAND = 'git status --porcelain --untracked-files=all' as const;
+const WORKTREE_STATUS_OUTPUT_CHARS = 200_000;
 
 /** Project canonical checks when a goal doesn't override (Jarvis's own four gates). */
 export const DEFAULT_CHECK_COMMANDS = ['npm run typecheck', 'npm run lint', 'npm test', 'npm run build'];
@@ -56,6 +65,10 @@ export interface CheckDeps {
    *  the claim, and (unlike checkCommands) never surfaced back to the builder. Absent/empty → no
    *  held-out leg (it stays `undefined` on the result; decideVerdict treats absence as "leg not run"). */
   heldOutCommands?: string[];
+  /** Worktree status captured before the goal/loop run. Absent -> no worktree audit leg. */
+  worktreeBaseline?: WorktreeStatusBaseline;
+  /** `audit` records changes only; `forbid` makes any baseline drift reject. */
+  worktreeChangePolicy?: WorktreeChangePolicy;
   signal?: AbortSignal;
 }
 
@@ -69,6 +82,19 @@ export async function runDeterministicChecks(
   deps: CheckDeps,
   baseline?: TestBaseline,
 ): Promise<DeterministicChecks> {
+  const worktreeStatus = deps.worktreeBaseline
+    ? await scanWorktreeStatus(deps, deps.worktreeBaseline, deps.worktreeChangePolicy ?? 'audit')
+    : undefined;
+  if (worktreeStatus?.policy === 'forbid' && worktreeStatus.changed) {
+    return {
+      objectiveChecksPassed: false,
+      results: [],
+      testTamper: 'clean',
+      tamperReason: '',
+      worktreeStatus,
+    };
+  }
+
   const results: DeterministicChecks['results'] = [];
   // No check commands → nothing was actually verified → fail closed (a vacuous AND must not pass).
   let objectiveChecksPassed = deps.checkCommands.length > 0;
@@ -97,7 +123,33 @@ export async function runDeterministicChecks(
       ? await runHeldOut(deps, deps.heldOutCommands)
       : undefined;
 
-  return { objectiveChecksPassed, results, ...tamper, ...(heldOut ? { heldOut } : {}) };
+  return { objectiveChecksPassed, results, ...tamper, ...(worktreeStatus ? { worktreeStatus } : {}), ...(heldOut ? { heldOut } : {}) };
+}
+
+export async function snapshotWorktreeStatus(
+  shellPath: string,
+  cwd: string,
+  signal?: AbortSignal,
+): Promise<WorktreeStatusBaseline | undefined> {
+  const res = await runCommand(shellPath, WORKTREE_STATUS_COMMAND, cwd, 30_000, WORKTREE_STATUS_OUTPUT_CHARS, signal);
+  if (res.code !== 0) return undefined;
+  return { command: WORKTREE_STATUS_COMMAND, baseline: normalizePorcelainStatus(res.output) };
+}
+
+export function classifyWorktreeStatusChange(
+  baseline: string,
+  current: string,
+): Pick<WorktreeStatusCheck, 'changed' | 'changedEntries'> {
+  const baselineEntries = porcelainEntries(baseline);
+  const currentEntries = porcelainEntries(current);
+  const baselineSet = new Set(baselineEntries);
+  const currentSet = new Set(currentEntries);
+  const added = currentEntries.filter((entry) => !baselineSet.has(entry));
+  const removed = baselineEntries
+    .filter((entry) => !currentSet.has(entry))
+    .map((entry) => `removed since baseline: ${entry}`);
+  const changedEntries = [...added, ...removed];
+  return { changed: changedEntries.length > 0, changedEntries };
 }
 
 /** Run the secret held-out commands and AND their real exit codes. Same trust model as leg 1 (the real
@@ -153,6 +205,51 @@ async function scanTestTamper(
     };
   }
   return classifyTestDiff(res.output);
+}
+
+async function scanWorktreeStatus(
+  deps: CheckDeps,
+  baseline: WorktreeStatusBaseline,
+  policy: WorktreeChangePolicy,
+): Promise<WorktreeStatusCheck> {
+  const res = await runCommand(
+    deps.shellPath,
+    WORKTREE_STATUS_COMMAND,
+    deps.cwd,
+    30_000,
+    WORKTREE_STATUS_OUTPUT_CHARS,
+    deps.signal,
+  );
+  if (res.code !== 0) {
+    return {
+      ...baseline,
+      policy,
+      current: '',
+      changed: true,
+      changedEntries: [],
+      error: `git status failed (code ${res.code ?? 'killed'})`,
+    };
+  }
+  if (res.truncated) {
+    return {
+      ...baseline,
+      policy,
+      current: normalizePorcelainStatus(res.output),
+      changed: true,
+      changedEntries: [],
+      error: `git status exceeded the ${WORKTREE_STATUS_OUTPUT_CHARS}-char cap`,
+    };
+  }
+  const current = normalizePorcelainStatus(res.output);
+  return { ...baseline, policy, current, ...classifyWorktreeStatusChange(baseline.baseline, current) };
+}
+
+function normalizePorcelainStatus(text: string): string {
+  return porcelainEntries(text).join('\n');
+}
+
+function porcelainEntries(text: string): string[] {
+  return text.split(/\r?\n/).filter((line) => line !== '');
 }
 
 /**

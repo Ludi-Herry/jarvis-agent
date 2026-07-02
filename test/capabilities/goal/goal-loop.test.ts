@@ -12,6 +12,7 @@ import {
   FileGoalStore,
   assertObjectiveUnchanged,
   hashObjective,
+  parseGoalLog,
   type GoalRoundRecord,
 } from '../../../src/capabilities/goal/goal-store.js';
 import { InMemoryToolRegistry } from '../../../src/core/tools/registry.js';
@@ -72,6 +73,20 @@ const tamperCheck: NonNullable<GoalRunDeps['check']> = async () => ({
   testTamper: 'weakened-or-deleted',
   tamperReason: 'test file deleted: test/x.test.ts',
 });
+const dirtyWorktreeCheck: NonNullable<GoalRunDeps['check']> = async () => ({
+  objectiveChecksPassed: true,
+  results: [],
+  testTamper: 'clean',
+  tamperReason: '',
+  worktreeStatus: {
+    command: 'git status --porcelain --untracked-files=all',
+    policy: 'forbid',
+    baseline: '',
+    current: '?? docs/new.md',
+    changed: true,
+    changedEntries: ['?? docs/new.md'],
+  },
+});
 
 function record(bus: InMemoryEventBus): Event[] {
   const events: Event[] = [];
@@ -117,6 +132,27 @@ describe('runGoal — verification gates completion', () => {
     const result = await runGoal(spec({ budget: { maxRounds: 10 } }), baseDeps({ run, check: tamperCheck }));
     expect(result.state).not.toBe('complete');
     expect(result.finalVerdict?.outcome).toBe('rejected');
+  });
+
+  it('a completion claim does NOT complete when the no-change worktree baseline is violated, and records the status diff', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'harness-goal-worktree-status-'));
+    const path = join(dir, 'goal.jsonl');
+    try {
+      const { run } = claimingRun('complete');
+      const result = await runGoal(
+        spec({ budget: { maxRounds: 10 } }),
+        baseDeps({ run, check: dirtyWorktreeCheck, goalStore: new FileGoalStore(path) }),
+      );
+
+      expect(result.state).not.toBe('complete');
+      expect(result.finalVerdict?.outcome).toBe('rejected');
+      expect(result.finalVerdict?.rationale).toContain('worktree changed');
+
+      const rounds = parseGoalLog(await readFile(path, 'utf8')).filter((record) => record.t === 'goal-round');
+      expect(rounds[0].checks?.worktreeStatus?.changedEntries).toEqual(['?? docs/new.md']);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it('a blocked claim hands the goal to a human without verifying', async () => {
@@ -750,6 +786,17 @@ describe('runGoal — leg 3 (independent judge) wiring', () => {
       baseDeps({ run, check: failingCheck, verifierProvider: dummyProvider(), runVerifier: spy.fn }),
     );
     expect(spy.calls()).toBe(0); // leg 1 failed → judge never spawned
+    expect(result.finalVerdict?.outcome).toBe('rejected');
+  });
+
+  it('short-circuits without spawning the judge when forbidden worktree status changed', async () => {
+    const { run } = claimingRun('complete');
+    const spy = verifierSpy(perfectReport());
+    const result = await runGoal(
+      spec({ pinned: PINNED, budget: { maxRounds: 1 } }),
+      baseDeps({ run, check: dirtyWorktreeCheck, verifierProvider: dummyProvider(), runVerifier: spy.fn }),
+    );
+    expect(spy.calls()).toBe(0);
     expect(result.finalVerdict?.outcome).toBe('rejected');
   });
 

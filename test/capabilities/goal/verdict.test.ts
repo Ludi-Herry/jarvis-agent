@@ -48,6 +48,43 @@ describe('decideVerdict — deterministic two legs (unbypassable, decided first)
     expect(v.outcome).toBe('rejected');
     expect(v.rationale).toContain('objective checks failed');
   });
+
+  it('rejected when worktree changes are forbidden and status changed after the baseline', () => {
+    const v = decideVerdict(
+      checks({
+        worktreeStatus: {
+          command: 'git status --porcelain --untracked-files=all',
+          policy: 'forbid',
+          baseline: '',
+          current: '?? docs/new.md',
+          changed: true,
+          changedEntries: ['?? docs/new.md'],
+        },
+      }),
+    );
+    expect(v.outcome).toBe('rejected');
+    expect(v.rationale).toContain('worktree changed');
+    expect(v.rationale).toContain('docs/new.md');
+  });
+
+  it('worktree forbid is reported before routine check failures', () => {
+    const v = decideVerdict(
+      checks({
+        objectiveChecksPassed: false,
+        results: [{ command: 'npm test', code: 1, output: 'red' }],
+        worktreeStatus: {
+          command: 'git status --porcelain --untracked-files=all',
+          policy: 'forbid',
+          baseline: '',
+          current: '?? docs/new.md',
+          changed: true,
+          changedEntries: ['?? docs/new.md'],
+        },
+      }),
+    );
+    expect(v.outcome).toBe('rejected');
+    expect(v.rationale).toContain('worktree changed');
+  });
 });
 
 describe('decideVerdict — batch-1 fallback (no verifier report)', () => {
@@ -194,6 +231,22 @@ describe('decideVerdict — fail-closed property (verified ⇒ a provable, clean
         }
       }
     }
+  });
+
+  it('with no report, verified ⇒ forbidden worktree status did not change', () => {
+    const v = decideVerdict(
+      checks({
+        worktreeStatus: {
+          command: 'git status --porcelain --untracked-files=all',
+          policy: 'forbid',
+          baseline: '',
+          current: '?? leaked.txt',
+          changed: true,
+          changedEntries: ['?? leaked.txt'],
+        },
+      }),
+    );
+    expect(v.outcome).not.toBe('verified');
   });
 
   it('with a report, verified ⇒ legs clean AND feature works AND every requirement proves+matched AND list non-empty AND cnv empty', () => {

@@ -32,6 +32,12 @@ export function decideVerdict(
   report?: VerifierReport,
   pinned: PinnedRequirement[] = [],
 ): Verdict {
+  if (checks.worktreeStatus?.policy === 'forbid' && checks.worktreeStatus.changed) {
+    return {
+      outcome: 'rejected',
+      rationale: `worktree changed after baseline: ${worktreeStatusReason(checks.worktreeStatus)}`,
+    };
+  }
   // Leg 1 — harness re-ran the objective checks; a non-zero exit anywhere → rejected (deterministic,
   // unbypassable by injection). Builder's self-reported status was never consulted. (Part7 §4 step 1.)
   if (!checks.objectiveChecksPassed) {
@@ -44,7 +50,6 @@ export function decideVerdict(
       rationale: `tests tampered to go green: ${checks.tamperReason || 'weakened/deleted/skipped'}`,
     };
   }
-
   // Held-out leg — the goal-setter's SECRET hidden assertions (the builder never sees them) failed.
   // This is the "feature faked + self-written weak tests pass leg 1" catch. The rationale is DELIBERATELY
   // generic: it must not name the held-out command/assertion, or the builder could special-case it.
@@ -156,4 +161,12 @@ export function decideVerdict(
 /** A pinned requirement's text by id (for a readable rationale), or the bare id if not found. */
 function reqText(pinned: PinnedRequirement[], id: string): string {
   return pinned.find((p) => p.id === id)?.text ?? id;
+}
+
+function worktreeStatusReason(status: NonNullable<DeterministicChecks['worktreeStatus']>): string {
+  if (status.error) return status.error;
+  if (status.changedEntries.length === 0) return 'status changed but no entry details were available';
+  const shown = status.changedEntries.slice(0, 10).join('; ');
+  const suffix = status.changedEntries.length > 10 ? `; ... ${status.changedEntries.length - 10} more` : '';
+  return `${shown}${suffix}`;
 }

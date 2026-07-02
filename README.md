@@ -97,6 +97,12 @@ npm run sandbox:goal-smoke # GoalLoop + trusted sandbox check plan + wsl2-unshar
 
 Runtime temp cleanup: the WSL runner creates host-known `/tmp/jarvis-wsl2-unshare-*` payload roots and cleans them by default, including a best-effort host-side cleanup after WSL spawn errors or host-side timeouts. `retainTempDirs: true` is reserved for smoke/debug inspection.
 
+### Worktree status baseline
+
+`npm run goal` and `npm run loop` capture `git status --porcelain --untracked-files=all` before each goal run and record the current status again inside `goal-round.checks.worktreeStatus`. Default policy is audit-only, so normal coding goals can finish with expected tracked changes.
+
+Use `--fail-on-worktree-change` for read-only or no-edit goals. With that flag, any tracked or untracked status drift after the baseline becomes a deterministic reject before sandbox/LLM verifier routes run.
+
 ### Goal-setter requirements contract
 
 `JARVIS_GOAL_SETTER_REQUIREMENTS_FILE` is the newer single-goal route contract for `npm run goal`. Set it in the launch environment and keep the JSON file outside the repository / workspace. `goal-cli` captures this variable before loading `.env`, then deletes it from `process.env`, so repo-authored `.env` cannot select verifier routes and the builder cannot read the path back through bash.

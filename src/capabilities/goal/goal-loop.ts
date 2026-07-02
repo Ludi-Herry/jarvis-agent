@@ -43,6 +43,8 @@ import type {
   TestBaseline,
   Verdict,
   VerifierReport,
+  WorktreeChangePolicy,
+  WorktreeStatusBaseline,
 } from './goal.js';
 
 /** Consecutive rejects before the breaker halts the loop (borrowed A=3; Part7 §6.1). The sliding
@@ -83,6 +85,8 @@ export interface GoalSpec {
   budget: GoalBudget;
   /** Leg-2 baseline, snapshotted by the caller at creation (undefined → leg 2 inert). */
   baseline?: TestBaseline;
+  /** Worktree status captured before the goal run for audit/no-change enforcement. */
+  worktreeBaseline?: WorktreeStatusBaseline;
   /** Harness-pinned requirement list (leg 3), derived by the caller at creation. Omitted/empty →
    *  batch-1 deterministic-only (no verifier). The caller fail-closes on empty WHEN it configures a
    *  verifier, since decideVerdict step 5 makes verified unreachable for an empty list. */
@@ -135,6 +139,8 @@ export interface GoalRunDeps {
    *  Absent/empty → no held-out leg. The harness runs them and trusts the real exit codes, but never
    *  surfaces them to the builder — see {@link continuationFromVerdict}. */
   heldOutCommands?: string[];
+  /** `audit` records worktree status drift; `forbid` rejects if status changes after the baseline. */
+  worktreeChangePolicy?: WorktreeChangePolicy;
   /** Leg 3: the SECOND (independent, different-model) provider. Present → leg 3 runs after the
    *  deterministic legs pass; absent → batch-1 deterministic-only (decideVerdict's no-report path). */
   verifierProvider?: ModelProvider;
@@ -189,13 +195,14 @@ export async function runGoal(spec: GoalSpec, deps: GoalRunDeps): Promise<GoalRu
       state: 'active',
       budget: spec.budget,
       testBaseline: spec.baseline,
+      worktreeBaseline: spec.worktreeBaseline,
       pinned,
       sessionId: spec.sessionId,
       createdAt: stamp(),
     };
   if (resume) {
     assertResumeMatchesSpec(spec, goal);
-    goal = { ...goal, budget: spec.budget, testBaseline: spec.baseline, pinned };
+    goal = { ...goal, budget: spec.budget, testBaseline: spec.baseline, worktreeBaseline: spec.worktreeBaseline ?? goal.worktreeBaseline, pinned };
   }
 
   if (resume && goal.state !== 'active') {
@@ -239,6 +246,7 @@ export async function runGoal(spec: GoalSpec, deps: GoalRunDeps): Promise<GoalRu
       objectiveHash,
       budget: goal.budget,
       testBaseline: goal.testBaseline,
+      worktreeBaseline: goal.worktreeBaseline,
       pinned,
       sessionId: goal.sessionId,
       createdAt: goal.createdAt,
@@ -406,6 +414,8 @@ async function verifyGoalCompletion(
       cwd: deps.cwd,
       checkCommands: deps.checkCommands ?? DEFAULT_CHECK_COMMANDS, // from config, NEVER the claim
       heldOutCommands: deps.heldOutCommands, // secret hidden assertions; from config, NEVER the claim
+      worktreeBaseline: goal.worktreeBaseline,
+      worktreeChangePolicy: deps.worktreeChangePolicy ?? 'audit',
       signal: deps.signal,
     },
     goal.testBaseline,
@@ -413,8 +423,9 @@ async function verifyGoalCompletion(
 
   // All deterministic legs clean (leg 1 + leg 2 + held-out) before spawning the judge. A held-out
   // failure short-circuits leg 3 too (`heldOut?.passed ?? true` — absent held-out is not a failure).
+  const worktreeClean = !(checks.worktreeStatus?.policy === 'forbid' && checks.worktreeStatus.changed);
   const legsClean =
-    checks.objectiveChecksPassed && checks.testTamper === 'clean' && (checks.heldOut?.passed ?? true);
+    checks.objectiveChecksPassed && checks.testTamper === 'clean' && worktreeClean && (checks.heldOut?.passed ?? true);
   let report: VerifierReport | undefined;
 
   if (legsClean && deps.goalSetterRequirementRoutes !== undefined) {

@@ -40,7 +40,7 @@ export function createUpdateGoalTool(
       'Update the goal status. Set `complete` ONLY when the objective is genuinely achieved and no',
       'required work remains; put in `verification` a note of what you checked. Do NOT mark complete',
       'merely because the budget is nearly exhausted or you want to stop — the harness will',
-      'INDEPENDENTLY re-run the project checks and scan for test tampering, and will reject a false',
+      'INDEPENDENTLY re-run the project checks, scan for test tampering, and compare worktree status; it will reject a false',
       'claim. Set `blocked` if you are genuinely stuck and need a human. After calling this, STOP and',
       'end your turn so the harness can verify. You cannot pause, resume, or change the budget.',
     ].join(' '),
@@ -57,7 +57,7 @@ export function createUpdateGoalTool(
       return {
         content:
           status === 'complete'
-            ? 'Completion claim recorded. The harness will now INDEPENDENTLY verify (re-run checks + tamper scan). End your turn.'
+            ? 'Completion claim recorded. The harness will now INDEPENDENTLY verify (re-run checks + tamper scan + worktree status audit). End your turn.'
             : 'Blocked recorded; the goal will be handed to a human. End your turn.',
       };
     },
