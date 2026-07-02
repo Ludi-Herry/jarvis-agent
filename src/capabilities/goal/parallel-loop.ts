@@ -1,6 +1,7 @@
 import type { EventBus } from '../../runtime/event-bus.js';
 import type { VerdictOutcome } from './goal.js';
 import {
+  freshLoopGoalId,
   VerifierHealthMonitor,
   type GoalRunSummary,
   type LoopDeps,
@@ -119,7 +120,7 @@ export async function runParallelLoop(spec: LoopSpec, deps: ParallelLoopDeps): P
   const launch = (index: number): void => {
     const promise = (async () => {
       const resumedGoalId = deps.inFlight?.get(index);
-      const goalId = resumedGoalId ?? `${spec.id}-g${index}-${stamp()}`;
+      const goalId = resumedGoalId ?? freshLoopGoalId(spec.id, index, stamp());
       await deps.loopStore.recordStarted({ index, goalId, at: stamp() });
       deps.bus.emit({ type: 'state', phase: `loop goal ${index + 1}/${spec.objectives.length}` });
       started++;

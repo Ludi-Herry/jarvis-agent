@@ -57,6 +57,25 @@ const verified: ParallelGoalRunSummary = { state: 'complete', outcome: 'verified
 const blockedCnv: ParallelGoalRunSummary = { state: 'blocked', outcome: 'couldNotVerify', verifierKey: 'model:a', rounds: 1, tokens: 10 };
 
 describe('runParallelLoop', () => {
+  it('creates fresh goal ids with filesystem-safe timestamps', async () => {
+    const bus = new InMemoryEventBus();
+    const { store, records } = fakeStore();
+
+    await runParallelLoop(
+      { id: 'L', objectives: ['a'], contract: contract() },
+      {
+        bus,
+        loopStore: store,
+        maxParallel: 1,
+        runOne: async () => verified,
+        stamp: () => '2026-07-02T11:52:46.399Z',
+      },
+    );
+
+    const started = records.find((record) => record.t === 'goal-started');
+    expect(started?.goalId).toBe('L-g0-2026-07-02T11-52-46-399Z');
+  });
+
   it('never runs more than maxParallel goals at once', async () => {
     const bus = new InMemoryEventBus();
     const { store } = fakeStore();

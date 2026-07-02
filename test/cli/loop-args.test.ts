@@ -2,8 +2,18 @@ import { describe, expect, it } from 'vitest';
 import { parseLoopArgs } from '../../src/surfaces/cli/loop-args.js';
 
 describe('parseLoopArgs', () => {
-  it('parses the objective file and verifier map without treating the map path as positional', () => {
-    expect(parseLoopArgs(['objectives.txt', '--verifier-map', 'C:\\trusted\\loop-verifiers.json', '--hook-map', 'C:\\trusted\\loop-hooks.json'])).toEqual({
+  it('parses the objective file and trusted maps without treating map paths as positional', () => {
+    expect(
+      parseLoopArgs([
+        'objectives.txt',
+        '--verifier-map',
+        'C:\\trusted\\loop-verifiers.json',
+        '--hook-map',
+        'C:\\trusted\\loop-hooks.json',
+        '--sandbox-check-map',
+        'C:\\trusted\\loop-sandbox-checks.json',
+      ]),
+    ).toEqual({
       resume: false,
       force: false,
       unattended: false,
@@ -11,6 +21,7 @@ describe('parseLoopArgs', () => {
       parallel: 1,
       verifierMapPath: 'C:\\trusted\\loop-verifiers.json',
       hookMapPath: 'C:\\trusted\\loop-hooks.json',
+      sandboxCheckMapPath: 'C:\\trusted\\loop-sandbox-checks.json',
       positional: ['objectives.txt'],
     });
   });
@@ -56,6 +67,10 @@ describe('parseLoopArgs', () => {
 
   it('rejects a missing hook-map value', () => {
     expect(() => parseLoopArgs(['objectives.txt', '--hook-map'])).toThrow(/requires a path/);
+  });
+
+  it('rejects a missing sandbox-check-map value', () => {
+    expect(() => parseLoopArgs(['objectives.txt', '--sandbox-check-map'])).toThrow(/requires a path/);
   });
 
   it('rejects conflicting verifier map decisions', () => {

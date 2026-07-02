@@ -14,9 +14,11 @@ describe('loop CLI parallel resume smoke', () => {
       await writeFile(join(cwd, '.env'), 'ARK_API_KEY=test-key\n', 'utf8');
       const verifierMap = join(configDir, 'loop-verifiers.json');
       const hookMap = join(configDir, 'loop-hooks.json');
+      const sandboxCheckMap = join(configDir, 'loop-sandbox-checks.json');
       const worktreeRoot = join(configDir, 'worktrees');
       await writeFile(verifierMap, JSON.stringify({ goals: [] }), 'utf8');
       await writeFile(hookMap, JSON.stringify({ goals: [] }), 'utf8');
+      await writeFile(sandboxCheckMap, JSON.stringify({ goals: [] }), 'utf8');
 
       const loopId = 'parallel-resume-missing-worktree';
       const contract: LoopContract = {
@@ -37,7 +39,20 @@ describe('loop CLI parallel resume smoke', () => {
       await writeFile(loopPath, original, 'utf8');
 
       const result = await runLoopCli(
-        ['--resume', '--parallel', '2', '--worktree-root', worktreeRoot, '--verifier-map', verifierMap, '--hook-map', hookMap, '--unattended'],
+        [
+          '--resume',
+          '--parallel',
+          '2',
+          '--worktree-root',
+          worktreeRoot,
+          '--verifier-map',
+          verifierMap,
+          '--hook-map',
+          hookMap,
+          '--sandbox-check-map',
+          sandboxCheckMap,
+          '--unattended',
+        ],
         cwd,
         home,
       );

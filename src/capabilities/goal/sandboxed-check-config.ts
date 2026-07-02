@@ -26,6 +26,25 @@ export interface LoadedSandboxedCheckPlan {
   readonly commands: SandboxedRequirementCommand[];
 }
 
+export interface LoopSandboxCheckMapEntry {
+  readonly index: number;
+  readonly requirements: SandboxedCheckPlanRequirement[];
+}
+
+export interface LoopSandboxCheckMap {
+  readonly goals: LoopSandboxCheckMapEntry[];
+}
+
+export interface LoadedLoopSandboxCheckMap extends LoopSandboxCheckMap {
+  readonly path: string;
+}
+
+export interface LoopSandboxCheckPlan {
+  readonly pinnedByIndex: Map<number, PinnedRequirement[]>;
+  readonly commandsByIndex: Map<number, SandboxedRequirementCommand[]>;
+  readonly overrideCount: number;
+}
+
 export function parseSandboxedCheckPlan(text: string): SandboxedCheckPlan {
   let raw: unknown;
   try {
@@ -97,6 +116,102 @@ export async function loadSandboxedCheckPlan(deps: {
       .filter((requirement): requirement is SandboxedCheckPlanRequirement & { command: string } => requirement.command !== undefined)
       .map((requirement) => ({ requirementId: requirement.id, command: requirement.command })),
   };
+}
+
+export function parseLoopSandboxCheckMap(text: string): LoopSandboxCheckMap {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(stripUtf8Bom(text));
+  } catch (err) {
+    throw new Error(`sandbox check map is not valid JSON: ${message(err)}`, { cause: err });
+  }
+
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error('sandbox check map must be a JSON object');
+  }
+
+  const obj = raw as Record<string, unknown>;
+  const unknownTop = Object.keys(obj).filter((key) => key !== 'goals');
+  if (unknownTop.length > 0) throw new Error(`unknown sandbox check map keys: ${unknownTop.join(', ')}`);
+  if (!Array.isArray(obj.goals)) throw new Error('sandbox check map .goals must be an array');
+
+  const seen = new Set<number>();
+  const goals = obj.goals.map((item, index): LoopSandboxCheckMapEntry => {
+    if (item === null || typeof item !== 'object' || Array.isArray(item)) {
+      throw new Error(`goals[${index}] must be an object`);
+    }
+    const entry = item as Record<string, unknown>;
+    const unknown = Object.keys(entry).filter((key) => key !== 'index' && key !== 'requirements');
+    if (unknown.length > 0) throw new Error(`goals[${index}] has unknown keys: ${unknown.join(', ')}`);
+    if (typeof entry.index !== 'number' || !Number.isInteger(entry.index) || entry.index < 0) {
+      throw new Error(`goals[${index}].index must be a non-negative integer`);
+    }
+    if (seen.has(entry.index)) throw new Error(`duplicate sandbox check map index: ${entry.index}`);
+    seen.add(entry.index);
+    const plan = parseSandboxedCheckPlan(JSON.stringify({ requirements: entry.requirements }));
+    return { index: entry.index, requirements: plan.requirements };
+  });
+
+  return { goals };
+}
+
+export async function loadLoopSandboxCheckMap(deps: {
+  path: string;
+  cwd: string;
+  forbiddenRoots?: readonly string[];
+  readText: ReadText;
+  realpath?: SandboxedCheckRealPath;
+}): Promise<LoadedLoopSandboxCheckMap> {
+  const source = deps.path.trim();
+  if (source === '') throw new Error('sandbox check map path is blank');
+
+  const canonPath = deps.realpath ? await deps.realpath(source) : resolve(source);
+  if (canonPath === null) throw new Error(`sandbox check map cannot be read: ${source}`);
+  const roots = deps.forbiddenRoots && deps.forbiddenRoots.length > 0 ? deps.forbiddenRoots : [deps.cwd];
+  const canonRoots = await Promise.all(roots.map((root) => canonicalizeRoot(root, deps.realpath)));
+  if (canonRoots.some((root) => isInsideRoot(canonPath, root))) {
+    throw new Error(`sandbox check map is inside a forbidden working tree (${canonPath}); refusing repo-controlled sandbox check config`);
+  }
+
+  const text = await deps.readText(canonPath);
+  if (text === null) throw new Error(`sandbox check map cannot be read: ${canonPath}`);
+  return { ...parseLoopSandboxCheckMap(text), path: canonPath };
+}
+
+export function assertResumeSandboxCheckMapMatches(recordedPath: string | undefined, currentPath: string | undefined): void {
+  if (currentPath === undefined) {
+    if (recordedPath === undefined) {
+      throw new Error('resume requires --sandbox-check-map <path> so per-goal sandbox checks come from a trusted file; use a trusted empty map for no sandbox checks');
+    }
+    throw new Error(`this loop was created with sandbox-check-map ${recordedPath}; resume requires --sandbox-check-map with the same trusted file`);
+  }
+  if (recordedPath === undefined) return;
+  if (currentPath !== recordedPath) {
+    throw new Error(`resume sandbox-check-map ${currentPath} does not match the original sandbox-check-map ${recordedPath}`);
+  }
+}
+
+export function buildLoopSandboxCheckPlan(input: {
+  objectivesCount: number;
+  map?: LoopSandboxCheckMap;
+}): LoopSandboxCheckPlan {
+  const pinnedByIndex = new Map<number, PinnedRequirement[]>();
+  const commandsByIndex = new Map<number, SandboxedRequirementCommand[]>();
+
+  for (const goal of input.map?.goals ?? []) {
+    if (goal.index >= input.objectivesCount) {
+      throw new Error(`sandbox check map index ${goal.index} is out of range for ${input.objectivesCount} objectives`);
+    }
+    pinnedByIndex.set(goal.index, goal.requirements.map((requirement) => ({ id: requirement.id, text: requirement.text })));
+    commandsByIndex.set(
+      goal.index,
+      goal.requirements
+        .filter((requirement): requirement is SandboxedCheckPlanRequirement & { command: string } => requirement.command !== undefined)
+        .map((requirement) => ({ requirementId: requirement.id, command: requirement.command })),
+    );
+  }
+
+  return { pinnedByIndex, commandsByIndex, overrideCount: pinnedByIndex.size };
 }
 
 async function canonicalizeRoot(path: string, realpath: SandboxedCheckRealPath | undefined): Promise<string> {

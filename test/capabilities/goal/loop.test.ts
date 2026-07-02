@@ -288,6 +288,24 @@ describe('runLoop — anti-cheat: the loop has zero completion authority', () =>
 });
 
 describe('runLoop — resume', () => {
+  it('creates fresh goal ids with filesystem-safe timestamps', async () => {
+    const bus = new InMemoryEventBus();
+    const { store, records } = fakeStore();
+
+    await runLoop(
+      { id: 'L', objectives: ['a'], contract: contract() },
+      {
+        bus,
+        loopStore: store,
+        runOne: async () => verified,
+        stamp: () => '2026-07-02T11:52:46.399Z',
+      },
+    );
+
+    const started = records.find((record) => record.t === 'goal-started');
+    expect(started?.goalId).toBe('L-g0-2026-07-02T11-52-46-399Z');
+  });
+
   it('never re-runs a finished goal and continues the unfinished tail', async () => {
     const bus = new InMemoryEventBus();
     const { store } = fakeStore();

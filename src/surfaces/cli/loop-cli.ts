@@ -38,7 +38,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { readFile, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { basename, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { createInterface, type Interface } from 'node:readline';
 import {
   DefaultContextManager,
@@ -55,21 +55,24 @@ import {
   runCommand,
   scrubProviderKeyFromEnv,
 } from '../../core/index.js';
-import { DefaultPermissionGate, FileSessionStore, InMemoryEventBus, type Approver, type Event } from '../../runtime/index.js';
+import { DefaultPermissionGate, FileSessionStore, InMemoryEventBus, createWsl2UnshareSandboxRunner, type Approver, type Event } from '../../runtime/index.js';
 import {
   DEFAULT_CHECK_COMMANDS,
   FileGoalStore,
   FileLoopStore,
   ShadowGit,
   assertResumeHookMapMatches,
+  assertResumeSandboxCheckMapMatches,
   assertResumeVerifierMapMatches,
   assertWorktreeRootOutsideCwd,
   buildLoopHookPlan,
+  buildLoopSandboxCheckPlan,
   buildLoopVerifierPlan,
   createGoalWorktree,
   derivePinnedRequirements,
   latestLoopPath,
   loadLoopHookMap,
+  loadLoopSandboxCheckMap,
   loadLoopVerifierMap,
   loadLoop,
   loopWorktreeRoot,
@@ -80,6 +83,7 @@ import {
   runParallelLoop,
   type LoadedLoopVerifierMap,
   type LoadedLoopHookMap,
+  type LoadedLoopSandboxCheckMap,
   type LoopContract,
   type ParallelGoalRunSummary,
   type LoopVerifierDecision,
@@ -140,7 +144,7 @@ async function main(): Promise<void> {
     process.exitCode = 1;
     return;
   }
-  const { resume, force, unattended, noVerifierMap, positional, verifierMapPath, hookMapPath, parallel, worktreeRootPath } = args;
+  const { resume, force, unattended, noVerifierMap, positional, verifierMapPath, hookMapPath, sandboxCheckMapPath, parallel, worktreeRootPath } = args;
   const parallelMode = parallel > 1;
   if (noVerifierMap) {
     console.error('--no-verifier-map is unsafe for resume; use --verifier-map <trusted empty map>');
@@ -164,6 +168,10 @@ async function main(): Promise<void> {
   const cwd = process.cwd();
   const shellPath = defaultShellPath();
   const loopsDir = join(cwd, 'data', 'loops');
+  const worktreeBaseRoot = worktreeRootPath ?? join(homedir(), '.jarvis', 'worktrees', basename(cwd));
+  const forbiddenSandboxCheckMapRoots = Array.from(
+    new Set([cwd, findWorkspaceRoot(cwd), ...(parallelMode ? [worktreeBaseRoot] : [])]),
+  );
 
   let verifierMap: LoadedLoopVerifierMap | undefined;
   if (verifierMapPath !== undefined) {
@@ -197,6 +205,23 @@ async function main(): Promise<void> {
     }
   }
 
+  let sandboxCheckMap: LoadedLoopSandboxCheckMap | undefined;
+  if (sandboxCheckMapPath !== undefined) {
+    try {
+      sandboxCheckMap = await loadLoopSandboxCheckMap({
+        path: sandboxCheckMapPath,
+        cwd,
+        forbiddenRoots: forbiddenSandboxCheckMapRoots,
+        readText: async (p) => readFile(p, 'utf8').catch(() => null),
+        realpath: async (p) => realpath(p).catch(() => null),
+      });
+    } catch (err) {
+      console.error(`[loop sandbox checks] ${err instanceof Error ? err.message : String(err)}`);
+      process.exitCode = 1;
+      return;
+    }
+  }
+
   // Resolve the loop: a fresh queue from a file, or a replayed one to resume.
   let loopId: string;
   let objectives: string[];
@@ -212,6 +237,7 @@ async function main(): Promise<void> {
   let seedHalted: string | undefined;
   let replayVerifierMapPath: string | undefined;
   let replayHookMapPath: string | undefined;
+  let replaySandboxCheckMapPath: string | undefined;
 
   if (resume) {
     const latest = await latestLoopPath(loopsDir);
@@ -232,6 +258,7 @@ async function main(): Promise<void> {
     loopPath = latest;
     replayVerifierMapPath = replay.verifierMapPath;
     replayHookMapPath = replay.hookMapPath;
+    replaySandboxCheckMapPath = replay.sandboxCheckMapPath;
     seedFinished = replay.finished;
     seedOutcomes = replay.outcomes;
     seedInFlight = replay.inFlight;
@@ -278,10 +305,18 @@ async function main(): Promise<void> {
     process.exitCode = 1;
     return;
   }
+  try {
+    if (resume) assertResumeSandboxCheckMapMatches(replaySandboxCheckMapPath, sandboxCheckMap?.path);
+  } catch (err) {
+    console.error(`[loop sandbox checks] ${err instanceof Error ? err.message : String(err)}`);
+    process.exitCode = 1;
+    return;
+  }
 
   const verifier = resolveVerifierConfig(process.env, config);
   let verifierPlan;
   let hookPlan;
+  let sandboxCheckPlan;
   try {
     verifierPlan = buildLoopVerifierPlan({
       objectivesCount: objectives.length,
@@ -292,6 +327,10 @@ async function main(): Promise<void> {
     hookPlan = buildLoopHookPlan({
       objectivesCount: objectives.length,
       map: hookMap,
+    });
+    sandboxCheckPlan = buildLoopSandboxCheckPlan({
+      objectivesCount: objectives.length,
+      map: sandboxCheckMap,
     });
   } catch (err) {
     console.error(`[loop config] ${err instanceof Error ? err.message : String(err)}`);
@@ -326,7 +365,6 @@ async function main(): Promise<void> {
   };
 
   const loopStore = new FileLoopStore(loopPath);
-  const worktreeBaseRoot = worktreeRootPath ?? join(homedir(), '.jarvis', 'worktrees', basename(cwd));
   const worktreeRoot = loopWorktreeRoot(worktreeBaseRoot, loopId);
   if (parallelMode) {
     try {
@@ -366,6 +404,7 @@ async function main(): Promise<void> {
       createdAt: new Date().toISOString(),
       verifierMapPath: verifierMap?.path,
       hookMapPath: hookMap?.path,
+      sandboxCheckMapPath: sandboxCheckMap?.path,
     });
   }
 
@@ -422,7 +461,9 @@ async function main(): Promise<void> {
   console.log(`Queue: ${objectives.length} goals${resume ? ` (resume, recheck ${seedInFlight?.size ?? 0} logged attempts)` : ''}`);
   console.log(parallelMode ? `Parallel: ${parallel} worktree goals, root ${safeInline(worktreeRoot)}` : 'Parallel: disabled');
   console.log(`Approval: ${unattended ? 'unattended (fail-closed)' : 'attended (interactive)'}`);
-  const enabledVerifierCount = verifierPlan.decisions.filter((decision) => decision.enabled).length;
+  const enabledVerifierCount = verifierPlan.decisions.filter(
+    (decision, index) => decision.enabled && !sandboxCheckPlan.pinnedByIndex.has(index),
+  ).length;
   const disabledVerifierReason = verifier.enabled ? 'verifier plan has no enabled objectives' : verifier.reason;
   console.log(
     enabledVerifierCount > 0
@@ -436,6 +477,11 @@ async function main(): Promise<void> {
       : hooks
         ? 'Hooks: global trusted hooks enabled'
         : 'Hooks: disabled',
+  );
+  console.log(
+    sandboxCheckPlan.overrideCount > 0
+      ? `Sandbox checks: per-goal sandbox-check-map overrides ${sandboxCheckPlan.overrideCount}/${objectives.length} goals`
+      : 'Sandbox checks: disabled',
   );
   console.log(
     vision.enabled
@@ -492,10 +538,14 @@ async function main(): Promise<void> {
     if (verifierDecision === undefined) {
       throw new Error(`missing verifier decision for objective index ${attempt.index}`);
     }
-    const verifierProvider = providerForVerifier(verifierDecision);
+    const sandboxPinned = sandboxCheckPlan.pinnedByIndex.get(attempt.index);
+    const sandboxCommands = sandboxCheckPlan.commandsByIndex.get(attempt.index);
+    const verifierProvider = sandboxPinned === undefined ? providerForVerifier(verifierDecision) : undefined;
 
     let pinned: PinnedRequirement[] = [];
-    if (verifierProvider) {
+    if (sandboxPinned !== undefined) {
+      pinned = sandboxPinned;
+    } else if (verifierProvider) {
       pinned = await derivePinnedRequirements(objective, provider);
       if (pinned.length === 0) {
         // Verifier on but no pinned list makes `verified` unreachable, so running would
@@ -548,6 +598,8 @@ async function main(): Promise<void> {
           perRoundMaxTurns: PER_ROUND_MAX_TURNS,
           checkCommands: DEFAULT_CHECK_COMMANDS,
           verifierProvider,
+          sandboxedRequirementCommands: sandboxCommands,
+          sandboxRunner: sandboxPinned !== undefined ? createWsl2UnshareSandboxRunner() : undefined,
           shadowGit: goalShadowGit,
         },
       );
@@ -557,7 +609,7 @@ async function main(): Promise<void> {
     return {
       state: result.state,
       outcome: result.finalVerdict?.outcome,
-      verifierKey: verifierDecision.enabled ? verifierDecision.key : undefined,
+      verifierKey: sandboxPinned !== undefined ? 'sandbox:wsl2-unshare' : verifierDecision.enabled ? verifierDecision.key : undefined,
       rounds: result.rounds,
       tokens: result.tokens,
     };
@@ -620,6 +672,16 @@ function loadObjectives(path: string): string[] {
       .filter((line) => line !== '' && !line.startsWith('#'));
   } catch {
     return [];
+  }
+}
+
+function findWorkspaceRoot(cwd: string): string {
+  let cursor = cwd;
+  while (true) {
+    if (existsSync(join(cursor, '.git'))) return cursor;
+    const parent = dirname(cursor);
+    if (parent === cursor) return cwd;
+    cursor = parent;
   }
 }
 

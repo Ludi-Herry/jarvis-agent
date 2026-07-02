@@ -6,6 +6,7 @@ export interface LoopCliArgs {
   parallel: number;
   verifierMapPath?: string;
   hookMapPath?: string;
+  sandboxCheckMapPath?: string;
   worktreeRootPath?: string;
   positional: string[];
 }
@@ -50,6 +51,14 @@ export function parseLoopArgs(argv: string[]): LoopCliArgs {
         throw new Error('--hook-map requires a path');
       }
       parsed.hookMapPath = value;
+      continue;
+    }
+    if (arg === '--sandbox-check-map') {
+      const value = argv[++i];
+      if (value === undefined || value.startsWith('--') || value.trim() === '') {
+        throw new Error('--sandbox-check-map requires a path');
+      }
+      parsed.sandboxCheckMapPath = value;
       continue;
     }
     if (arg === '--parallel') {

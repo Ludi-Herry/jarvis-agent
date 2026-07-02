@@ -175,6 +175,10 @@ export class VerifierHealthMonitor {
 
 const DEFAULT_VERIFIER_HEALTH_KEY = '__default__';
 
+export function freshLoopGoalId(loopId: string, index: number, stamp: string): string {
+  return `${loopId}-g${index}-${stamp.replace(/[:.]/g, '-')}`;
+}
+
 function sampleOutcome(sample: VerdictOutcome | VerifierOutcomeSample): VerdictOutcome {
   return typeof sample === 'string' ? sample : sample.outcome;
 }
@@ -255,7 +259,7 @@ export async function runLoop(spec: LoopSpec, deps: LoopDeps): Promise<LoopRunRe
       }
 
       const resumedGoalId = deps.inFlight?.get(i);
-      const goalId = resumedGoalId ?? `${spec.id}-g${i}-${stamp()}`;
+      const goalId = resumedGoalId ?? freshLoopGoalId(spec.id, i, stamp());
       await deps.loopStore.recordStarted({ index: i, goalId, at: stamp() });
       deps.bus.emit({ type: 'state', phase: `loop · goal ${i + 1}/${spec.objectives.length}` });
       started++;
