@@ -88,6 +88,9 @@ npm run demo:c2     # C2：视角评审面板（六顶帽并行评审同一产�
 npm run demo:d1     # D1：自主跑一个 goal 到达标自停（确定性两条腿验收，真连 Doubao）
 npm run demo:d2     # D2：腿3 独立裁判（双模型，第二模型读文件逐条打分 → verdict；需 ARK_VERIFIER_MODEL）
 npm run demo:d3     # D3：held-out 隐藏断言腿（真活被秘密校验 verified / 伪造实现被同一秘密校验 rejected）
+npm run sandbox:smoke # OS sandbox 无下载 WSL2 能力探针（不接入生产运行时）
+npm run sandbox:runner-smoke # sandboxed_exec + wsl2-unshare 真实链路探针（显式注入，不默认启用）
+npm run sandbox:goal-smoke # GoalLoop + trusted sandbox check plan + wsl2-unshare 端到端 smoke（opt-in）
 ```
 
 ## 目录
@@ -126,6 +129,7 @@ data/            # 运行期会话日志（gitignore）
 - `docs/handoff-D.md` — **Phase D（GoalLoop 自主验收，全部完成）接手入口**；`docs/handoff-next.md` — 之后待办 + GUI 就绪盘点。
 - `docs/handoff-loop-remaining.md` — **Loop 重项收口记录**：parallel resume、finalize apply/cleanup、cron daemon 的边界与测试证据。
 - `docs/handoff-codex.md` — **codex 自主接手宪法**（Claude 不可用后：硬不变量 + 同族自审盲区 + 边界钉死 + backlog）。
+- `docs/os-sandbox-research.md` — **OS sandbox 调研与无下载 smoke 结果**：`SandboxRunner` 合同、WSL2 `unshare` 探针、后续 verifier exec 路线。
 - `docs/handoff-C.md` — Phase C（多 agent / SubagentManager）接手入口。
 - `docs/handoff-B.md` — B 阶段 + 当前安全态（顶部「当前状态更新」段是接手入口）。
 - `docs/handoff-persistence.md` — 持久化段（JSONL + 断点续跑）。

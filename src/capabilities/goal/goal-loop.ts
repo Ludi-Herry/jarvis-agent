@@ -20,7 +20,9 @@ import type { EventBus } from '../../runtime/event-bus.js';
 import type { SessionStore } from '../../runtime/session/session-store.js';
 import type { Message } from '../../core/types.js';
 import type { HookRunner } from '../hooks/index.js';
+import type { SandboxLimits, SandboxRunRequest, SandboxRunResult, SandboxRunner } from '../../runtime/sandbox/index.js';
 import { type AgentContext, type RunOutcome, runAgent } from '../../core/loop/run-agent.js';
+import { validateSandboxInspectionCommand } from '../../core/tools/sandboxed-inspection-command.js';
 import { redactSecrets } from '../../core/model/errors.js';
 import { decideVerdict } from './verdict.js';
 import { advanceGoalState } from './state.js';
@@ -28,6 +30,8 @@ import { DEFAULT_CHECK_COMMANDS, runDeterministicChecks, type CheckDeps } from '
 import { FileGoalStore, assertObjectiveUnchanged, hashObjective, type GoalRoundRecord } from './goal-store.js';
 import { createUpdateGoalTool, takeClaim, type ClaimSlot } from './update-goal-tool.js';
 import { couldNotVerifyReport, runVerifier as defaultRunVerifier } from './verifier.js';
+import { reportFromSandboxedRequirementChecks, type SandboxedRequirementCheck } from './sandboxed-check-report.js';
+import type { SandboxedRequirementCommand } from './sandboxed-check-config.js';
 import type {
   DeterministicChecks,
   Goal,
@@ -43,6 +47,8 @@ import type {
  *  window is intentionally dropped this batch — in this state machine only rejected→active resets
  *  the counter, so the consecutive latch fires first anyway (Part7 §6.1 window-reachability note). */
 const MAX_CONSECUTIVE_REJECTS = 3;
+const SANDBOX_CHECK_CWD = '/tmp/jarvis-sandbox/project';
+const SANDBOX_CHECK_LIMITS: SandboxLimits = { timeoutMs: 30_000, outputBytes: 32_768 };
 
 /** A pure-ish breaker: count rejects → halt + latch at {@link MAX_CONSECUTIVE_REJECTS}. The count is
  *  consecutive IN THE WIRING — a non-reject verdict (verified/couldNotVerify) ends the loop (break), so
@@ -130,6 +136,10 @@ export interface GoalRunDeps {
   /** Leg 3: the SECOND (independent, different-model) provider. Present → leg 3 runs after the
    *  deterministic legs pass; absent → batch-1 deterministic-only (decideVerdict's no-report path). */
   verifierProvider?: ModelProvider;
+  /** Trusted per-requirement inspection commands. These must come from a trusted source outside cwd,
+   *  never from the builder/model. Present -> run through sandboxRunner and map to a VerifierReport. */
+  sandboxedRequirementCommands?: SandboxedRequirementCommand[];
+  sandboxRunner?: SandboxRunner;
   /** The judge's per-run turn ceiling (read a few files, then report). Defaults to {@link DEFAULT_VERIFIER_MAX_TURNS}. */
   verifierMaxTurns?: number;
   signal?: AbortSignal;
@@ -403,7 +413,26 @@ async function verifyGoalCompletion(
     checks.objectiveChecksPassed && checks.testTamper === 'clean' && (checks.heldOut?.passed ?? true);
   let report: VerifierReport | undefined;
 
-  if (legsClean && deps.verifierProvider) {
+  if (legsClean && deps.sandboxedRequirementCommands !== undefined) {
+    deps.bus.emit({ type: 'state', phase: 'sandboxed verifier...' });
+    if (deps.sandboxRunner === undefined) {
+      report = reportFromSandboxedRequirementChecks(
+        goal.pinned,
+        deps.sandboxedRequirementCommands.map((command) => ({
+          requirementId: command.requirementId,
+          command: command.command,
+          result: sandboxUnavailableForCommand(deps.cwd, command.command),
+        })),
+      );
+    } else {
+      const sandboxChecks = await runSandboxedRequirementChecks({
+        cwd: deps.cwd,
+        runner: deps.sandboxRunner,
+        commands: deps.sandboxedRequirementCommands,
+      });
+      report = reportFromSandboxedRequirementChecks(goal.pinned, sandboxChecks);
+    }
+  } else if (legsClean && deps.verifierProvider) {
     deps.bus.emit({ type: 'state', phase: 'leg-3 verifier…' });
     report = await runVerifierFn(goal.objective, goal.pinned, {
       verifierProvider: deps.verifierProvider,
@@ -413,7 +442,7 @@ async function verifyGoalCompletion(
     });
   }
 
-  if (legsClean && strictPinnedVerifier && !deps.verifierProvider && goal.pinned.length > 0) {
+  if (legsClean && strictPinnedVerifier && !deps.verifierProvider && report === undefined && goal.pinned.length > 0) {
     report = couldNotVerifyReport('resumed goal has pinned requirements but no verifier provider is configured');
   }
 
@@ -429,6 +458,63 @@ async function verifyGoalCompletion(
   const verdict = decideVerdict(checks, report, goal.pinned);
   const persistedChecks = persistableChecks(checks);
   return { checks, persistedChecks, verdict };
+}
+
+async function runSandboxedRequirementChecks(input: {
+  cwd: string;
+  runner: SandboxRunner;
+  commands: readonly SandboxedRequirementCommand[];
+}): Promise<SandboxedRequirementCheck[]> {
+  const out: SandboxedRequirementCheck[] = [];
+  for (const command of input.commands) {
+    const request = sandboxRequestForCommand(input.cwd, command.command);
+    const decision = validateSandboxInspectionCommand(command.command);
+    const result: SandboxRunResult = decision.ok
+      ? await input.runner.run(request)
+      : {
+          status: 'failed-to-start',
+          backend: input.runner.backend,
+          audit: {
+            backend: input.runner.backend,
+            command: request.command,
+            cwd: request.cwd,
+            mounts: request.mounts,
+            networkMode: request.networkMode,
+            limits: request.limits,
+          },
+          reason: `sandboxed requirement command rejected: ${decision.reason ?? 'not allowed'}`,
+        };
+    out.push({ requirementId: command.requirementId, command: command.command, result });
+  }
+  return out;
+}
+
+function sandboxRequestForCommand(cwd: string, command: string): SandboxRunRequest {
+  return {
+    command: ['bash', '--noprofile', '--norc', '-c', command],
+    cwd: SANDBOX_CHECK_CWD,
+    mounts: [{ hostPath: cwd, sandboxPath: SANDBOX_CHECK_CWD, access: 'read-only' }],
+    networkMode: 'none',
+    limits: SANDBOX_CHECK_LIMITS,
+    reason: 'trusted per-requirement sandbox check',
+  };
+}
+
+function sandboxUnavailableForCommand(cwd: string, command: string): SandboxRunResult {
+  const request = sandboxRequestForCommand(cwd, command);
+  return {
+    status: 'unavailable',
+    backend: 'unavailable',
+    audit: {
+      backend: 'unavailable',
+      command: request.command,
+      cwd: request.cwd,
+      mounts: request.mounts,
+      networkMode: request.networkMode,
+      limits: request.limits,
+    },
+    reason: 'sandboxed requirement checks configured but no sandbox runner is configured',
+  };
 }
 
 function persistableChecks(checks: DeterministicChecks): DeterministicChecks {

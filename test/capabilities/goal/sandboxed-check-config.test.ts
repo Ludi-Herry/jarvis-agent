@@ -1,0 +1,84 @@
+import { describe, expect, it } from 'vitest';
+import { loadSandboxedCheckPlan, parseSandboxedCheckPlan } from '../../../src/capabilities/goal/sandboxed-check-config.js';
+
+describe('parseSandboxedCheckPlan', () => {
+  it('parses trusted requirements and validates inspection commands', () => {
+    const plan = parseSandboxedCheckPlan(
+      JSON.stringify({
+        requirements: [
+          { id: 'r1', text: 'shows status', command: 'git status --short' },
+          { id: 'r2', text: 'counts README lines', command: 'wc -l README.md' },
+          { id: 'r3', text: 'human-only requirement' },
+        ],
+      }),
+    );
+
+    expect(plan.requirements).toEqual([
+      { id: 'r1', text: 'shows status', command: 'git status --short' },
+      { id: 'r2', text: 'counts README lines', command: 'wc -l README.md' },
+      { id: 'r3', text: 'human-only requirement' },
+    ]);
+  });
+
+  it('rejects unknown keys, duplicate ids, and commands outside the inspection scope', () => {
+    expect(() => parseSandboxedCheckPlan(JSON.stringify({ requirements: [], extra: true }))).toThrow(/unknown/);
+    expect(() =>
+      parseSandboxedCheckPlan(
+        JSON.stringify({
+          requirements: [
+            { id: 'r1', text: 'a', command: 'git status --short' },
+            { id: 'r1', text: 'b', command: 'git diff --stat' },
+          ],
+        }),
+      ),
+    ).toThrow(/duplicate/);
+    expect(() =>
+      parseSandboxedCheckPlan(
+        JSON.stringify({
+          requirements: [{ id: 'r1', text: 'unsafe', command: 'touch proof' }],
+        }),
+      ),
+    ).toThrow(/outside sandbox inspection scope/);
+  });
+});
+
+describe('loadSandboxedCheckPlan', () => {
+  it('loads a trusted file outside cwd', async () => {
+    const loaded = await loadSandboxedCheckPlan({
+      path: 'C:\\trusted\\sandbox-plan.json',
+      cwd: 'H:\\jarvis-agent',
+      readText: async () =>
+        JSON.stringify({
+          requirements: [{ id: 'r1', text: 'shows status', command: 'git status --short' }],
+        }),
+      realpath: async (path) => path,
+    });
+
+    expect(loaded.path).toBe('C:\\trusted\\sandbox-plan.json');
+    expect(loaded.pinned).toEqual([{ id: 'r1', text: 'shows status' }]);
+    expect(loaded.commands).toEqual([{ requirementId: 'r1', command: 'git status --short' }]);
+  });
+
+  it('refuses repo-controlled sandbox check config', async () => {
+    await expect(
+      loadSandboxedCheckPlan({
+        path: 'H:\\jarvis-agent\\sandbox-plan.json',
+        cwd: 'H:\\jarvis-agent',
+        readText: async () => '{"requirements":[]}',
+        realpath: async (path) => path,
+      }),
+    ).rejects.toThrow(/forbidden working tree/);
+  });
+
+  it('refuses repo-controlled config even when cwd is a subdirectory', async () => {
+    await expect(
+      loadSandboxedCheckPlan({
+        path: 'H:\\jarvis-agent\\sandbox-plan.json',
+        cwd: 'H:\\jarvis-agent\\src',
+        forbiddenRoots: ['H:\\jarvis-agent'],
+        readText: async () => '{"requirements":[]}',
+        realpath: async (path) => path,
+      }),
+    ).rejects.toThrow(/forbidden working tree/);
+  });
+});

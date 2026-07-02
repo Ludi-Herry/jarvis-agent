@@ -9,7 +9,8 @@
  * Run:  npm run goal -- "<objective>"   (needs ARK_API_KEY)
  */
 import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFile, realpath } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import {
   DefaultContextManager,
@@ -30,6 +31,7 @@ import {
   DefaultPermissionGate,
   FileSessionStore,
   InMemoryEventBus,
+  createWsl2UnshareSandboxRunner,
   type Approver,
   type Event,
 } from '../../runtime/index.js';
@@ -38,8 +40,10 @@ import {
   FileGoalStore,
   ShadowGit,
   derivePinnedRequirements,
+  loadSandboxedCheckPlan,
   resolveHooks,
   runGoal,
+  type LoadedSandboxedCheckPlan,
   type PinnedRequirement,
   type TestBaseline,
 } from '../../capabilities/index.js';
@@ -90,6 +94,26 @@ async function main(): Promise<void> {
   scrubProviderKeyFromEnv();
   const cwd = process.cwd();
   const shellPath = defaultShellPath();
+  const sandboxCheckPlanPath = process.env.JARVIS_SANDBOX_CHECKS_FILE?.trim();
+  delete process.env.JARVIS_SANDBOX_CHECKS_FILE;
+  const forbiddenSandboxPlanRoots = Array.from(new Set([cwd, findWorkspaceRoot(cwd)]));
+
+  let sandboxCheckPlan: LoadedSandboxedCheckPlan | undefined;
+  if (sandboxCheckPlanPath) {
+    try {
+      sandboxCheckPlan = await loadSandboxedCheckPlan({
+        path: sandboxCheckPlanPath,
+        cwd,
+        forbiddenRoots: forbiddenSandboxPlanRoots,
+        readText: async (p) => readFile(p, 'utf8').catch(() => null),
+        realpath: async (p) => realpath(p).catch(() => null),
+      });
+    } catch (err) {
+      console.error(`[sandbox checks] ${err instanceof Error ? err.message : String(err)}`);
+      process.exitCode = 1;
+      return;
+    }
+  }
 
   const tools = buildDefaultRegistry();
   tools.register(createBashTool()); // safe to register: every call runs behind the gate below
@@ -136,7 +160,9 @@ async function main(): Promise<void> {
   let verifierProvider: ModelProvider | undefined;
   let pinned: PinnedRequirement[] = [];
   const verifier = resolveVerifierConfig(process.env, config);
-  if (verifier.enabled) {
+  if (sandboxCheckPlan) {
+    pinned = sandboxCheckPlan.pinned;
+  } else if (verifier.enabled) {
     verifierProvider = createProvider(verifier.config).withThinking('off');
     pinned = await derivePinnedRequirements(objective, provider);
     if (pinned.length === 0) {
@@ -173,9 +199,16 @@ async function main(): Promise<void> {
       : 'held-out: 未配置 —— 缺这条腿,verified 置信偏弱,建议加权人工抽查(设 JARVIS_HELDOUT_CHECKS_FILE 启用)',
   );
   console.log(
-    verifier.enabled
+    sandboxCheckPlan
+      ? `腿3: sandbox runtime proof 已启用,固定验收清单 ${pinned.length} 条; LLM 裁判跳过(${verifier.enabled ? safeInline(verifier.config.model) : safeInline(verifier.reason)})`
+      : verifier.enabled
       ? `腿3: 独立裁判已启用(${safeInline(verifier.config.model)}),固定验收清单 ${pinned.length} 条`
       : `腿3: 未启用(${safeInline(verifier.reason)})`,
+  );
+  console.log(
+    sandboxCheckPlan
+      ? `sandbox checks: enabled from trusted file (${sandboxCheckPlan.commands.length}/${sandboxCheckPlan.pinned.length} requirements have commands); runtime-proof report takes precedence`
+      : 'sandbox checks: disabled',
   );
   console.log(
     vision.enabled
@@ -209,6 +242,8 @@ async function main(): Promise<void> {
         checkCommands: DEFAULT_CHECK_COMMANDS,
         heldOutCommands: heldOutCommands.length > 0 ? heldOutCommands : undefined,
         verifierProvider,
+        sandboxedRequirementCommands: sandboxCheckPlan?.commands,
+        sandboxRunner: sandboxCheckPlan ? createWsl2UnshareSandboxRunner() : undefined,
         shadowGit,
       },
     );
@@ -244,6 +279,16 @@ function loadHeldOutCommands(): string[] {
       .filter((line) => line !== '' && !line.startsWith('#'));
   } catch {
     return [];
+  }
+}
+
+function findWorkspaceRoot(cwd: string): string {
+  let cursor = cwd;
+  while (true) {
+    if (existsSync(join(cursor, '.git'))) return cursor;
+    const parent = dirname(cursor);
+    if (parent === cursor) return cwd;
+    cursor = parent;
   }
 }
 
