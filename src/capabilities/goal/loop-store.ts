@@ -36,6 +36,8 @@ export type LoopRecord =
       verifierMapPath?: string;
       hookMapPath?: string;
       sandboxCheckMapPath?: string;
+      goalSetterRequirementsMapPath?: string;
+      goalSetterRequirementsMapHash?: string;
     }
   | { t: 'goal-started'; index: number; goalId: string; at: string }
   | {
@@ -61,6 +63,8 @@ export interface LoopReplay {
   verifierMapPath?: string;
   hookMapPath?: string;
   sandboxCheckMapPath?: string;
+  goalSetterRequirementsMapPath?: string;
+  goalSetterRequirementsMapHash?: string;
   objectives: string[];
   /** Trusted finished seeds. File replay leaves this empty; callers may pass a trusted set. */
   finished: Set<number>;
@@ -110,6 +114,8 @@ export function replayLoop(records: LoopRecord[]): LoopReplay {
   let verifierMapPath: string | undefined;
   let hookMapPath: string | undefined;
   let sandboxCheckMapPath: string | undefined;
+  let goalSetterRequirementsMapPath: string | undefined;
+  let goalSetterRequirementsMapHash: string | undefined;
   let objectives: string[] = [];
   const finished = new Set<number>();
   const inFlight = new Map<number, string>();
@@ -126,6 +132,8 @@ export function replayLoop(records: LoopRecord[]): LoopReplay {
         verifierMapPath = record.verifierMapPath;
         hookMapPath = record.hookMapPath;
         sandboxCheckMapPath = record.sandboxCheckMapPath;
+        goalSetterRequirementsMapPath = record.goalSetterRequirementsMapPath;
+        goalSetterRequirementsMapHash = record.goalSetterRequirementsMapHash;
         objectives = record.objectives;
         break;
       case 'goal-started':
@@ -145,6 +153,8 @@ export function replayLoop(records: LoopRecord[]): LoopReplay {
     verifierMapPath,
     hookMapPath,
     sandboxCheckMapPath,
+    goalSetterRequirementsMapPath,
+    goalSetterRequirementsMapHash,
     objectives,
     finished,
     inFlight,

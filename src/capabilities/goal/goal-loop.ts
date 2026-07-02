@@ -32,6 +32,8 @@ import { createUpdateGoalTool, takeClaim, type ClaimSlot } from './update-goal-t
 import { couldNotVerifyReport, runVerifier as defaultRunVerifier } from './verifier.js';
 import { reportFromSandboxedRequirementChecks, type SandboxedRequirementCheck } from './sandboxed-check-report.js';
 import type { SandboxedRequirementCommand } from './sandboxed-check-config.js';
+import { composeVerifierReport } from './composite-verifier-report.js';
+import type { GoalSetterRequirementRoute } from './goal-setter-requirements.js';
 import type {
   DeterministicChecks,
   Goal,
@@ -139,6 +141,8 @@ export interface GoalRunDeps {
   /** Trusted per-requirement inspection commands. These must come from a trusted source outside cwd,
    *  never from the builder/model. Present -> run through sandboxRunner and map to a VerifierReport. */
   sandboxedRequirementCommands?: SandboxedRequirementCommand[];
+  /** Trusted goal-setter route map. Present -> compose sandbox, LLM, and human per-requirement reports. */
+  goalSetterRequirementRoutes?: ReadonlyMap<string, GoalSetterRequirementRoute>;
   sandboxRunner?: SandboxRunner;
   /** The judge's per-run turn ceiling (read a few files, then report). Defaults to {@link DEFAULT_VERIFIER_MAX_TURNS}. */
   verifierMaxTurns?: number;
@@ -413,25 +417,28 @@ async function verifyGoalCompletion(
     checks.objectiveChecksPassed && checks.testTamper === 'clean' && (checks.heldOut?.passed ?? true);
   let report: VerifierReport | undefined;
 
-  if (legsClean && deps.sandboxedRequirementCommands !== undefined) {
-    deps.bus.emit({ type: 'state', phase: 'sandboxed verifier...' });
-    if (deps.sandboxRunner === undefined) {
-      report = reportFromSandboxedRequirementChecks(
-        goal.pinned,
-        deps.sandboxedRequirementCommands.map((command) => ({
-          requirementId: command.requirementId,
-          command: command.command,
-          result: sandboxUnavailableForCommand(deps.cwd, command.command),
-        })),
-      );
-    } else {
-      const sandboxChecks = await runSandboxedRequirementChecks({
+  if (legsClean && deps.goalSetterRequirementRoutes !== undefined) {
+    const sandboxChecks = await runConfiguredSandboxChecks(deps);
+    const llmPinned = goal.pinned.filter((requirement) => deps.goalSetterRequirementRoutes?.get(requirement.id) === 'llm');
+    let llmReport: VerifierReport | undefined;
+    if (llmPinned.length > 0 && deps.verifierProvider) {
+      deps.bus.emit({ type: 'state', phase: 'leg-3 verifier…' });
+      llmReport = (await runVerifierFn(goal.objective, llmPinned, {
+        verifierProvider: deps.verifierProvider,
         cwd: deps.cwd,
-        runner: deps.sandboxRunner,
-        commands: deps.sandboxedRequirementCommands,
-      });
-      report = reportFromSandboxedRequirementChecks(goal.pinned, sandboxChecks);
+        maxTurns: deps.verifierMaxTurns ?? DEFAULT_VERIFIER_MAX_TURNS,
+        signal: deps.signal,
+      })) as VerifierReport | undefined;
+      if (llmReport === undefined) llmReport = couldNotVerifyReport('leg 3 enabled but the verifier returned no report');
     }
+    report = composeVerifierReport({
+      pinned: goal.pinned,
+      routes: deps.goalSetterRequirementRoutes,
+      sandboxChecks,
+      llmReport,
+    });
+  } else if (legsClean && deps.sandboxedRequirementCommands !== undefined) {
+    report = reportFromSandboxedRequirementChecks(goal.pinned, await runConfiguredSandboxChecks(deps));
   } else if (legsClean && deps.verifierProvider) {
     deps.bus.emit({ type: 'state', phase: 'leg-3 verifier…' });
     report = await runVerifierFn(goal.objective, goal.pinned, {
@@ -458,6 +465,23 @@ async function verifyGoalCompletion(
   const verdict = decideVerdict(checks, report, goal.pinned);
   const persistedChecks = persistableChecks(checks);
   return { checks, persistedChecks, verdict };
+}
+
+async function runConfiguredSandboxChecks(deps: GoalRunDeps): Promise<SandboxedRequirementCheck[]> {
+  if (deps.sandboxedRequirementCommands === undefined) return [];
+  deps.bus.emit({ type: 'state', phase: 'sandboxed verifier...' });
+  if (deps.sandboxRunner === undefined) {
+    return deps.sandboxedRequirementCommands.map((command) => ({
+      requirementId: command.requirementId,
+      command: command.command,
+      result: sandboxUnavailableForCommand(deps.cwd, command.command),
+    }));
+  }
+  return runSandboxedRequirementChecks({
+    cwd: deps.cwd,
+    runner: deps.sandboxRunner,
+    commands: deps.sandboxedRequirementCommands,
+  });
 }
 
 async function runSandboxedRequirementChecks(input: {

@@ -63,6 +63,65 @@ describe('loop CLI sandbox-check-map trust boundary', () => {
   });
 });
 
+describe('loop CLI goal-setter requirements map trust boundary', () => {
+  it('refuses a goal-setter requirements map inside the repository root when launched from a subdirectory', async () => {
+    const repo = await mkFixtureDir('jarvis-loop-requirements-repo-');
+    const home = await mkFixtureDir('jarvis-loop-requirements-home-');
+    try {
+      const cwd = join(repo, 'nested');
+      await mkdir(join(repo, '.git'), { recursive: true });
+      await mkdir(cwd, { recursive: true });
+      await writeFile(join(cwd, '.env'), 'ARK_API_KEY=test-key\n', 'utf8');
+      const mapPath = join(repo, 'loop-goal-setter-requirements.json');
+      const objectives = join(home, 'empty-objectives.txt');
+      await writeFile(mapPath, JSON.stringify({ version: 1, goals: [] }), 'utf8');
+      await writeFile(objectives, '', 'utf8');
+
+      const result = await runLoopCli([objectives, '--goal-setter-requirements-map', mapPath, '--unattended'], cwd, home);
+
+      expect(result.code).toBe(1);
+      const output = `${result.stdout}\n${result.stderr}`;
+      expect(output).toContain('[loop goal-setter requirements]');
+      expect(output).toContain('forbidden working tree');
+      await expectNoLoopCreated(cwd);
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a goal-setter requirements map inside the parallel worktree root', async () => {
+    const cwd = await mkFixtureDir('jarvis-loop-requirements-cwd-');
+    const home = await mkFixtureDir('jarvis-loop-requirements-home-');
+    const config = await mkFixtureDir('jarvis-loop-requirements-config-');
+    try {
+      await writeFile(join(cwd, '.env'), 'ARK_API_KEY=test-key\n', 'utf8');
+      const worktreeRoot = join(config, 'worktrees');
+      await mkdir(worktreeRoot, { recursive: true });
+      const mapPath = join(worktreeRoot, 'loop-goal-setter-requirements.json');
+      const objectives = join(config, 'empty-objectives.txt');
+      await writeFile(mapPath, JSON.stringify({ version: 1, goals: [] }), 'utf8');
+      await writeFile(objectives, '', 'utf8');
+
+      const result = await runLoopCli(
+        [objectives, '--parallel', '2', '--worktree-root', worktreeRoot, '--goal-setter-requirements-map', mapPath, '--unattended'],
+        cwd,
+        home,
+      );
+
+      expect(result.code).toBe(1);
+      const output = `${result.stdout}\n${result.stderr}`;
+      expect(output).toContain('[loop goal-setter requirements]');
+      expect(output).toContain('forbidden working tree');
+      await expectNoLoopCreated(cwd);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+      await rm(home, { recursive: true, force: true });
+      await rm(config, { recursive: true, force: true });
+    }
+  });
+});
+
 async function mkFixtureDir(prefix: string): Promise<string> {
   return mkdtemp(join(tmpdir(), prefix));
 }

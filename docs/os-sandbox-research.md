@@ -198,7 +198,9 @@ Required tests:
 
 ### Phase 3 - verifier exec and objective routing
 
-Only after Phase 2 passes:
+Design entry: `docs/superpowers/plans/2026-07-02-os-sandbox-phase3-design.md`.
+
+Only after Phase 2 passes and the goal-setter-authored requirements contract is accepted:
 
 - Give the verifier sandboxed exec for clearly declared requirements.
 - Keep requirement scoring deterministic: runtime-backed evidence can prove an item only when the sandboxed command is tied to that requirement.
@@ -214,12 +216,18 @@ Status on 2026-07-02:
 - Verifier evidence for sandbox checks now includes the sandbox audit context (`backend`, `mounts`, `networkMode`, `limits`) beside the trusted command and stdout/stderr, so later reviews can reconstruct the execution boundary used for each requirement.
 - This mapper is only valid for trusted per-requirement commands authored outside the builder. It is not a way to let the model generate its own proof commands.
 - `src/capabilities/goal/sandboxed-check-config.ts` adds a trusted JSON plan loader. The plan file must live outside the working directory and, from the CLI path, outside the detected repository/workspace root. It uses a top-level `requirements` array and validates each command with the same sandboxed inspection allow scope.
-- `src/capabilities/goal/goal-loop.ts` now accepts optional `sandboxedRequirementCommands` plus `sandboxRunner`. When present and deterministic legs are clean, it runs those commands through the sandbox runner and builds the verifier report through the mapper. If the runner is missing or a command is rejected, the result parks through `couldNotVerify`; it never falls back to raw bash.
+- `src/capabilities/goal/goal-setter-requirements.ts` adds the Phase 3 route contract loader: `version: 1`, per-requirement `route`, SHA-256 hash, forbidden working-tree boundary checks, loop map builder, and resume path/hash matcher.
+- `src/capabilities/goal/composite-verifier-report.ts` merges `sandbox-command`, `llm`, and `human` per-requirement outcomes into one `VerifierReport`. LLM reports cannot score command-backed or human-routed requirements.
+- `src/capabilities/goal/goal-loop.ts` now accepts optional `sandboxedRequirementCommands` plus `sandboxRunner`, and optional `goalSetterRequirementRoutes`. With a route map, it runs sandbox and LLM routes separately, then composes the report. If the runner is missing, a command is rejected, a route is missing, or a route result is absent, the result parks through `couldNotVerify`; it never falls back to raw bash.
 - `src/surfaces/cli/goal-cli.ts` supports `JARVIS_SANDBOX_CHECKS_FILE=<trusted-json-outside-repo>` for single-goal runs. The path is deleted from `process.env` after loading so the builder cannot read it back via bash.
+- `src/surfaces/cli/goal-cli.ts` supports launch-captured `JARVIS_GOAL_SETTER_REQUIREMENTS_FILE=<trusted-json-outside-repo>` for single-goal route contracts. The variable is captured before `.env` loads, deleted from `process.env`, and rejected if combined with `JARVIS_SANDBOX_CHECKS_FILE`.
 - `src/surfaces/cli/loop-cli.ts` supports `--sandbox-check-map <trusted-json-outside-repo-and-worktree>` for multi-goal runs. The map is keyed by objective index, stored in the loop header for resume path matching, and reloaded from the current trusted file on every resume. Resume rejects any current `--sandbox-check-map` when the original loop header is missing `sandboxCheckMapPath`, because the original trusted file cannot be proven. CLI loading refuses maps inside the current cwd, detected repository/workspace root, and parallel worktree base root. Use `{"goals":[]}` as the trusted empty map.
+- `src/surfaces/cli/loop-cli.ts` supports `--goal-setter-requirements-map <trusted-json-outside-repo-and-worktree>` for multi-goal route contracts. The loop header records the canonical path plus SHA-256 hash, and resume requires the same path/hash before rebuilding the route plan from the current trusted file.
 - `test/capabilities/goal/sandboxed-check-config.test.ts` covers trusted-file parsing, cwd-outside enforcement, duplicate ids, unknown keys, and command-scope rejection.
-- `test/capabilities/goal/loop-sandboxed-check-config.test.ts` covers per-index trusted sandbox maps, cwd-outside enforcement, resume path matching, and out-of-range indexes. `test/cli/loop-cli-sandbox-map-boundary.test.ts` covers the CLI-only repository root and parallel worktree root forbidden boundaries.
-- `test/capabilities/goal/goal-loop-sandboxed-checks.test.ts` covers sandbox checks taking precedence over the LLM verifier, missing runner parking, and unsafe configured commands being rejected before runner invocation.
+- `test/capabilities/goal/goal-setter-requirements.test.ts`, `test/capabilities/goal/composite-verifier-report.test.ts`, and `test/cli/goal-trusted-requirements.test.ts` cover the route contract parser/loader, composite report trust boundary, and single-goal CLI trusted-source loading.
+- `test/capabilities/goal/loop-sandboxed-check-config.test.ts` covers per-index trusted sandbox maps, cwd-outside enforcement, resume path matching, and out-of-range indexes. `test/cli/loop-cli-sandbox-map-boundary.test.ts` covers the CLI-only repository root and parallel worktree root forbidden boundaries for sandbox-only maps and goal-setter requirements maps.
+- `test/cli/loop-cli-goal-setter-requirements.test.ts`, `test/cli/loop-args.test.ts`, and `test/capabilities/goal/loop-store.test.ts` cover loop CLI route-map wiring, args parsing, and loop-created path/hash replay.
+- `test/capabilities/goal/goal-loop-sandboxed-checks.test.ts` covers legacy sandbox-only checks, mixed sandbox+LLM routes, missing LLM provider parking, human route parking, missing runner parking, and unsafe configured commands being rejected before runner invocation.
 - A real loop CLI smoke ran on 2026-07-02 with `npm run loop -- <temp-objectives> --sandbox-check-map <temp-map> --unattended`. The run used a trusted map outside repo/worktree, reached `sandboxed verifier...`, and finished `verified` / `complete` / `queue-empty`.
 
 Trusted single-goal plan shape:

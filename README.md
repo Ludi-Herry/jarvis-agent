@@ -97,6 +97,103 @@ npm run sandbox:goal-smoke # GoalLoop + trusted sandbox check plan + wsl2-unshar
 
 Runtime temp cleanup: the WSL runner creates host-known `/tmp/jarvis-wsl2-unshare-*` payload roots and cleans them by default, including a best-effort host-side cleanup after WSL spawn errors or host-side timeouts. `retainTempDirs: true` is reserved for smoke/debug inspection.
 
+### Goal-setter requirements contract
+
+`JARVIS_GOAL_SETTER_REQUIREMENTS_FILE` is the newer single-goal route contract for `npm run goal`. Set it in the launch environment and keep the JSON file outside the repository / workspace. `goal-cli` captures this variable before loading `.env`, then deletes it from `process.env`, so repo-authored `.env` cannot select verifier routes and the builder cannot read the path back through bash.
+
+Do not set `JARVIS_GOAL_SETTER_REQUIREMENTS_FILE` together with `JARVIS_SANDBOX_CHECKS_FILE`; the CLI rejects the ambiguous configuration. Use the old `JARVIS_SANDBOX_CHECKS_FILE` only for legacy sandbox-only plans.
+
+```json
+{
+  "version": 1,
+  "requirements": [
+    {
+      "id": "r1",
+      "text": "The package manifest can be inspected inside the OS sandbox.",
+      "route": "sandbox-command",
+      "command": "stat package.json"
+    },
+    {
+      "id": "r2",
+      "text": "README documents the goal-setter requirements entry point.",
+      "route": "llm"
+    },
+    {
+      "id": "r3",
+      "text": "A human checks whether the CLI wording is clear.",
+      "route": "human"
+    }
+  ]
+}
+```
+
+Route behavior:
+
+- `sandbox-command`: command is required and must pass the narrow inspection allow scope. The WSL2 sandbox result maps to `proves`, `contradicts`, or `cannotVerify`.
+- `llm`: only these requirements are sent to the independent LLM verifier. Command-backed and human-routed requirements are not in that prompt.
+- `human`: always parks as `cannotVerify` for manual review.
+
+PowerShell example:
+
+```powershell
+$plan = Join-Path $env:TEMP 'jarvis-goal-setter-requirements.json'
+@'
+{
+  "version": 1,
+  "requirements": [
+    {
+      "id": "r1",
+      "text": "The package manifest can be inspected inside the OS sandbox.",
+      "route": "sandbox-command",
+      "command": "stat package.json"
+    },
+    {
+      "id": "r2",
+      "text": "README documents the goal-setter requirements entry point.",
+      "route": "llm"
+    }
+  ]
+}
+'@ | Set-Content -Path $plan -Encoding utf8NoBOM
+
+$env:JARVIS_GOAL_SETTER_REQUIREMENTS_FILE = $plan
+$env:ARK_VERIFIER_MODEL = '<different-verifier-model>'
+npm run goal -- "Update README so the goal-setter requirements entry point is documented, then call update_goal complete."
+```
+
+Loop uses the same route contract with a `goals` array keyed by objective index:
+
+```json
+{
+  "version": 1,
+  "goals": [
+    {
+      "index": 0,
+      "requirements": [
+        {
+          "id": "r1",
+          "text": "The package manifest can be inspected inside the OS sandbox.",
+          "route": "sandbox-command",
+          "command": "stat package.json"
+        },
+        {
+          "id": "r2",
+          "text": "README documents the goal-setter requirements loop map.",
+          "route": "llm"
+        }
+      ]
+    }
+  ]
+}
+```
+
+```bash
+npm run loop -- objectives.txt --goal-setter-requirements-map <trusted-json-outside-repo-and-worktree>
+npm run resume:loop -- --verifier-map <trusted-empty-or-full-map> --hook-map <trusted-empty-or-full-map> --goal-setter-requirements-map <same-trusted-json>
+```
+
+The loop header records the canonical requirements map path and SHA-256 hash. Resume requires the same path and hash, and the CLI rejects maps inside the current cwd, detected repo/workspace root, or parallel worktree root.
+
 `JARVIS_SANDBOX_CHECKS_FILE` 只接入单目标 `npm run goal`。它让 GoalLoop 在确定性四关卡通过后，用 WSL2 sandbox 运行一组可信的只读检查命令，并把结果映射成 verifier report；此时 LLM 腿3裁判会跳过。
 
 Plan 必须放在仓库 / workspace 外。CLI 会拒绝 repo 内 plan，避免 builder 或仓库内容自己定义验收口径。命令范围也很窄：只允许 `git status`、`git diff`、`git log`、`git ls-files`、`stat`、`wc` 这类简单 inspection command；不支持 shell 组合、重定向、解释器、网络或写入。sandbox 不可用、命令被拒、超时或缺少 requirement check 都会走 `couldNotVerify`，不会回落到 raw bash。

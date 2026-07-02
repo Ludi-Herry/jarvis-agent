@@ -7,6 +7,10 @@ import type { ModelDelta, ModelProvider, ModelResult } from '../../../src/core/m
 import type { SandboxRunRequest, SandboxRunResult, SandboxRunner } from '../../../src/runtime/index.js';
 
 const PINNED: PinnedRequirement[] = [{ id: 'r1', text: 'shows git status' }];
+const MIXED_PINNED: PinnedRequirement[] = [
+  { id: 'r1', text: 'shows git status' },
+  { id: 'r2', text: 'README documents the sandbox option' },
+];
 
 function dummyProvider(): ModelProvider {
   const provider: ModelProvider = {
@@ -132,6 +136,100 @@ describe('runGoal sandboxed requirement checks', () => {
     expect(result.state).toBe('blocked');
     expect(result.finalVerdict?.outcome).toBe('couldNotVerify');
     expect(result.finalVerdict?.report?.couldNotVerify[0]).toContain('command rejected');
+  });
+
+  it('combines sandbox and LLM route results when goal-setter routes are configured', async () => {
+    const requests: SandboxRunRequest[] = [];
+    let verifierPinned: PinnedRequirement[] = [];
+    const runner: SandboxRunner = {
+      backend: 'wsl2-unshare',
+      async run(request) {
+        requests.push(request);
+        return completed(0, 'ok', '', request);
+      },
+    };
+    const runVerifier: NonNullable<GoalRunDeps['runVerifier']> = async (_objective, pinned): Promise<VerifierReport> => {
+      verifierPinned = pinned;
+      return {
+        feature: 'works',
+        expected: 'LLM verifier checks documentation.',
+        observed: 'r2: docs mention the sandbox option',
+        evidence: 'README contains --sandbox-check-map.',
+        perRequirement: [{ requirementId: 'r2', strength: 'proves', scope: 'matched' }],
+        couldNotVerify: [],
+        rationale: 'LLM route verified.',
+      };
+    };
+
+    const result = await runGoal(
+      spec({ pinned: MIXED_PINNED }),
+      baseDeps({
+        sandboxRunner: runner,
+        sandboxedRequirementCommands: [{ requirementId: 'r1', command: 'git status --short' }],
+        goalSetterRequirementRoutes: new Map([
+          ['r1', 'sandbox-command'],
+          ['r2', 'llm'],
+        ]),
+        verifierProvider: dummyProvider(),
+        runVerifier,
+      }),
+    );
+
+    expect(result.state).toBe('complete');
+    expect(result.finalVerdict?.outcome).toBe('verified');
+    expect(requests).toHaveLength(1);
+    expect(verifierPinned).toEqual([{ id: 'r2', text: 'README documents the sandbox option' }]);
+    expect(result.finalVerdict?.report?.perRequirement).toEqual([
+      { requirementId: 'r1', strength: 'proves', scope: 'matched' },
+      { requirementId: 'r2', strength: 'proves', scope: 'matched' },
+    ]);
+  });
+
+  it('parks an LLM-routed requirement when no verifier provider is configured', async () => {
+    const runner: SandboxRunner = {
+      backend: 'wsl2-unshare',
+      async run(request) {
+        return completed(0, 'ok', '', request);
+      },
+    };
+
+    const result = await runGoal(
+      spec({ pinned: MIXED_PINNED, budget: { maxRounds: 1 } }),
+      baseDeps({
+        sandboxRunner: runner,
+        sandboxedRequirementCommands: [{ requirementId: 'r1', command: 'git status --short' }],
+        goalSetterRequirementRoutes: new Map([
+          ['r1', 'sandbox-command'],
+          ['r2', 'llm'],
+        ]),
+      }),
+    );
+
+    expect(result.state).toBe('blocked');
+    expect(result.finalVerdict?.outcome).toBe('couldNotVerify');
+    expect(result.finalVerdict?.report?.couldNotVerify.join('\n')).toContain('no LLM verifier report configured for r2');
+  });
+
+  it('parks human-routed requirements without spawning the LLM verifier', async () => {
+    let verifierCalls = 0;
+    const runVerifier: NonNullable<GoalRunDeps['runVerifier']> = async () => {
+      verifierCalls++;
+      throw new Error('human route should not call the LLM verifier');
+    };
+
+    const result = await runGoal(
+      spec({ pinned: [{ id: 'r1', text: 'Human checks the copy' }], budget: { maxRounds: 1 } }),
+      baseDeps({
+        goalSetterRequirementRoutes: new Map([['r1', 'human']]),
+        verifierProvider: dummyProvider(),
+        runVerifier,
+      }),
+    );
+
+    expect(verifierCalls).toBe(0);
+    expect(result.state).toBe('blocked');
+    expect(result.finalVerdict?.outcome).toBe('couldNotVerify');
+    expect(result.finalVerdict?.report?.couldNotVerify[0]).toContain('human verification required for r1');
   });
 });
 

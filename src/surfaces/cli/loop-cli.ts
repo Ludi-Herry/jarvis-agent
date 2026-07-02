@@ -62,15 +62,18 @@ import {
   FileLoopStore,
   ShadowGit,
   assertResumeHookMapMatches,
+  assertResumeGoalSetterRequirementsMatch,
   assertResumeSandboxCheckMapMatches,
   assertResumeVerifierMapMatches,
   assertWorktreeRootOutsideCwd,
+  buildLoopGoalSetterRequirementsPlan,
   buildLoopHookPlan,
   buildLoopSandboxCheckPlan,
   buildLoopVerifierPlan,
   createGoalWorktree,
   derivePinnedRequirements,
   latestLoopPath,
+  loadLoopGoalSetterRequirementsMap,
   loadLoopHookMap,
   loadLoopSandboxCheckMap,
   loadLoopVerifierMap,
@@ -84,6 +87,7 @@ import {
   type LoadedLoopVerifierMap,
   type LoadedLoopHookMap,
   type LoadedLoopSandboxCheckMap,
+  type LoadedLoopGoalSetterRequirementsMap,
   type LoopContract,
   type ParallelGoalRunSummary,
   type LoopVerifierDecision,
@@ -144,7 +148,19 @@ async function main(): Promise<void> {
     process.exitCode = 1;
     return;
   }
-  const { resume, force, unattended, noVerifierMap, positional, verifierMapPath, hookMapPath, sandboxCheckMapPath, parallel, worktreeRootPath } = args;
+  const {
+    resume,
+    force,
+    unattended,
+    noVerifierMap,
+    positional,
+    verifierMapPath,
+    hookMapPath,
+    sandboxCheckMapPath,
+    goalSetterRequirementsMapPath,
+    parallel,
+    worktreeRootPath,
+  } = args;
   const parallelMode = parallel > 1;
   if (noVerifierMap) {
     console.error('--no-verifier-map is unsafe for resume; use --verifier-map <trusted empty map>');
@@ -222,6 +238,23 @@ async function main(): Promise<void> {
     }
   }
 
+  let goalSetterRequirementsMap: LoadedLoopGoalSetterRequirementsMap | undefined;
+  if (goalSetterRequirementsMapPath !== undefined) {
+    try {
+      goalSetterRequirementsMap = await loadLoopGoalSetterRequirementsMap({
+        path: goalSetterRequirementsMapPath,
+        cwd,
+        forbiddenRoots: forbiddenSandboxCheckMapRoots,
+        readText: async (p) => readFile(p, 'utf8').catch(() => null),
+        realpath: async (p) => realpath(p).catch(() => null),
+      });
+    } catch (err) {
+      console.error(`[loop goal-setter requirements] ${err instanceof Error ? err.message : String(err)}`);
+      process.exitCode = 1;
+      return;
+    }
+  }
+
   // Resolve the loop: a fresh queue from a file, or a replayed one to resume.
   let loopId: string;
   let objectives: string[];
@@ -238,6 +271,8 @@ async function main(): Promise<void> {
   let replayVerifierMapPath: string | undefined;
   let replayHookMapPath: string | undefined;
   let replaySandboxCheckMapPath: string | undefined;
+  let replayGoalSetterRequirementsMapPath: string | undefined;
+  let replayGoalSetterRequirementsMapHash: string | undefined;
 
   if (resume) {
     const latest = await latestLoopPath(loopsDir);
@@ -259,6 +294,8 @@ async function main(): Promise<void> {
     replayVerifierMapPath = replay.verifierMapPath;
     replayHookMapPath = replay.hookMapPath;
     replaySandboxCheckMapPath = replay.sandboxCheckMapPath;
+    replayGoalSetterRequirementsMapPath = replay.goalSetterRequirementsMapPath;
+    replayGoalSetterRequirementsMapHash = replay.goalSetterRequirementsMapHash;
     seedFinished = replay.finished;
     seedOutcomes = replay.outcomes;
     seedInFlight = replay.inFlight;
@@ -312,11 +349,29 @@ async function main(): Promise<void> {
     process.exitCode = 1;
     return;
   }
+  try {
+    if (resume) {
+      assertResumeGoalSetterRequirementsMatch(
+        replayGoalSetterRequirementsMapPath === undefined && replayGoalSetterRequirementsMapHash === undefined
+          ? undefined
+          : {
+              path: replayGoalSetterRequirementsMapPath ?? '(missing path)',
+              hash: replayGoalSetterRequirementsMapHash ?? '(missing hash)',
+            },
+        goalSetterRequirementsMap,
+      );
+    }
+  } catch (err) {
+    console.error(`[loop goal-setter requirements] ${err instanceof Error ? err.message : String(err)}`);
+    process.exitCode = 1;
+    return;
+  }
 
   const verifier = resolveVerifierConfig(process.env, config);
   let verifierPlan;
   let hookPlan;
   let sandboxCheckPlan;
+  let goalSetterRequirementsPlan;
   try {
     verifierPlan = buildLoopVerifierPlan({
       objectivesCount: objectives.length,
@@ -331,6 +386,10 @@ async function main(): Promise<void> {
     sandboxCheckPlan = buildLoopSandboxCheckPlan({
       objectivesCount: objectives.length,
       map: sandboxCheckMap,
+    });
+    goalSetterRequirementsPlan = buildLoopGoalSetterRequirementsPlan({
+      objectivesCount: objectives.length,
+      map: goalSetterRequirementsMap,
     });
   } catch (err) {
     console.error(`[loop config] ${err instanceof Error ? err.message : String(err)}`);
@@ -405,6 +464,8 @@ async function main(): Promise<void> {
       verifierMapPath: verifierMap?.path,
       hookMapPath: hookMap?.path,
       sandboxCheckMapPath: sandboxCheckMap?.path,
+      goalSetterRequirementsMapPath: goalSetterRequirementsMap?.path,
+      goalSetterRequirementsMapHash: goalSetterRequirementsMap?.hash,
     });
   }
 
@@ -462,7 +523,10 @@ async function main(): Promise<void> {
   console.log(parallelMode ? `Parallel: ${parallel} worktree goals, root ${safeInline(worktreeRoot)}` : 'Parallel: disabled');
   console.log(`Approval: ${unattended ? 'unattended (fail-closed)' : 'attended (interactive)'}`);
   const enabledVerifierCount = verifierPlan.decisions.filter(
-    (decision, index) => decision.enabled && !sandboxCheckPlan.pinnedByIndex.has(index),
+    (decision, index) =>
+      decision.enabled &&
+      !sandboxCheckPlan.pinnedByIndex.has(index) &&
+      (!goalSetterRequirementsPlan.routesByIndex.has(index) || goalSetterRoutesNeedLlm(goalSetterRequirementsPlan.routesByIndex.get(index))),
   ).length;
   const disabledVerifierReason = verifier.enabled ? 'verifier plan has no enabled objectives' : verifier.reason;
   console.log(
@@ -482,6 +546,11 @@ async function main(): Promise<void> {
     sandboxCheckPlan.overrideCount > 0
       ? `Sandbox checks: per-goal sandbox-check-map overrides ${sandboxCheckPlan.overrideCount}/${objectives.length} goals`
       : 'Sandbox checks: disabled',
+  );
+  console.log(
+    goalSetterRequirementsPlan.overrideCount > 0
+      ? `Goal-setter requirements: per-goal route-map overrides ${goalSetterRequirementsPlan.overrideCount}/${objectives.length} goals`
+      : 'Goal-setter requirements: disabled',
   );
   console.log(
     vision.enabled
@@ -540,10 +609,22 @@ async function main(): Promise<void> {
     }
     const sandboxPinned = sandboxCheckPlan.pinnedByIndex.get(attempt.index);
     const sandboxCommands = sandboxCheckPlan.commandsByIndex.get(attempt.index);
-    const verifierProvider = sandboxPinned === undefined ? providerForVerifier(verifierDecision) : undefined;
+    const goalSetterPinned = goalSetterRequirementsPlan.pinnedByIndex.get(attempt.index);
+    const goalSetterRoutes = goalSetterRequirementsPlan.routesByIndex.get(attempt.index);
+    const goalSetterCommands = goalSetterRequirementsPlan.commandsByIndex.get(attempt.index);
+    const verifierProvider =
+      goalSetterPinned !== undefined
+        ? goalSetterRoutesNeedLlm(goalSetterRoutes)
+          ? providerForVerifier(verifierDecision)
+          : undefined
+        : sandboxPinned === undefined
+          ? providerForVerifier(verifierDecision)
+          : undefined;
 
     let pinned: PinnedRequirement[] = [];
-    if (sandboxPinned !== undefined) {
+    if (goalSetterPinned !== undefined) {
+      pinned = goalSetterPinned;
+    } else if (sandboxPinned !== undefined) {
       pinned = sandboxPinned;
     } else if (verifierProvider) {
       pinned = await derivePinnedRequirements(objective, provider);
@@ -580,6 +661,12 @@ async function main(): Promise<void> {
 
     await runAdvisoryHook(goalHookOverride ? goalHooks?.sessionStart : undefined);
     let result;
+    const sandboxedRequirementCommands =
+      goalSetterPinned !== undefined
+        ? goalSetterCommands && goalSetterCommands.length > 0
+          ? goalSetterCommands
+          : undefined
+        : sandboxCommands;
     try {
       result = await runGoal(
         { id: goalId, objective, sessionId: goalId, budget: contract.perGoalBudget, baseline, pinned, resume: resumeState },
@@ -598,8 +685,9 @@ async function main(): Promise<void> {
           perRoundMaxTurns: PER_ROUND_MAX_TURNS,
           checkCommands: DEFAULT_CHECK_COMMANDS,
           verifierProvider,
-          sandboxedRequirementCommands: sandboxCommands,
-          sandboxRunner: sandboxPinned !== undefined ? createWsl2UnshareSandboxRunner() : undefined,
+          sandboxedRequirementCommands,
+          goalSetterRequirementRoutes: goalSetterRoutes,
+          sandboxRunner: sandboxedRequirementCommands && sandboxedRequirementCommands.length > 0 ? createWsl2UnshareSandboxRunner() : undefined,
           shadowGit: goalShadowGit,
         },
       );
@@ -609,7 +697,14 @@ async function main(): Promise<void> {
     return {
       state: result.state,
       outcome: result.finalVerdict?.outcome,
-      verifierKey: sandboxPinned !== undefined ? 'sandbox:wsl2-unshare' : verifierDecision.enabled ? verifierDecision.key : undefined,
+      verifierKey:
+        goalSetterPinned !== undefined
+          ? `goal-setter-requirements:${goalSetterRequirementsMap?.hash ?? 'unknown'}`
+          : sandboxPinned !== undefined
+            ? 'sandbox:wsl2-unshare'
+            : verifierDecision.enabled
+              ? verifierDecision.key
+              : undefined,
       rounds: result.rounds,
       tokens: result.tokens,
     };
@@ -738,6 +833,14 @@ function replayVerifierHealthTripped(
     if (window.length > windowSize) window.shift();
     windows.set(key, window);
     if (window.filter(Boolean).length >= threshold) return true;
+  }
+  return false;
+}
+
+function goalSetterRoutesNeedLlm(routes: ReadonlyMap<string, string> | undefined): boolean {
+  if (routes === undefined) return false;
+  for (const route of routes.values()) {
+    if (route === 'llm') return true;
   }
   return false;
 }

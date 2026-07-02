@@ -7,6 +7,7 @@ export interface LoopCliArgs {
   verifierMapPath?: string;
   hookMapPath?: string;
   sandboxCheckMapPath?: string;
+  goalSetterRequirementsMapPath?: string;
   worktreeRootPath?: string;
   positional: string[];
 }
@@ -61,6 +62,14 @@ export function parseLoopArgs(argv: string[]): LoopCliArgs {
       parsed.sandboxCheckMapPath = value;
       continue;
     }
+    if (arg === '--goal-setter-requirements-map') {
+      const value = argv[++i];
+      if (value === undefined || value.startsWith('--') || value.trim() === '') {
+        throw new Error('--goal-setter-requirements-map requires a path');
+      }
+      parsed.goalSetterRequirementsMapPath = value;
+      continue;
+    }
     if (arg === '--parallel') {
       const value = argv[++i];
       if (value === undefined || value.startsWith('--')) throw new Error('--parallel requires a positive integer');
@@ -85,6 +94,9 @@ export function parseLoopArgs(argv: string[]): LoopCliArgs {
 
   if (parsed.verifierMapPath !== undefined && parsed.noVerifierMap) {
     throw new Error('--verifier-map and --no-verifier-map cannot be combined');
+  }
+  if (parsed.sandboxCheckMapPath !== undefined && parsed.goalSetterRequirementsMapPath !== undefined) {
+    throw new Error('--sandbox-check-map and --goal-setter-requirements-map cannot be combined');
   }
   if (parsed.resume && parsed.parallel > 1 && parsed.worktreeRootPath === undefined) {
     throw new Error('--worktree-root is required for parallel resume');

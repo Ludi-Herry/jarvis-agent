@@ -61,6 +61,18 @@ describe('parseLoopArgs', () => {
     });
   });
 
+  it('parses a trusted goal-setter requirements map path', () => {
+    expect(parseLoopArgs(['objectives.txt', '--goal-setter-requirements-map', 'C:\\trusted\\loop-requirements.json'])).toEqual({
+      resume: false,
+      force: false,
+      unattended: false,
+      noVerifierMap: false,
+      parallel: 1,
+      goalSetterRequirementsMapPath: 'C:\\trusted\\loop-requirements.json',
+      positional: ['objectives.txt'],
+    });
+  });
+
   it('rejects a missing verifier-map value', () => {
     expect(() => parseLoopArgs(['objectives.txt', '--verifier-map'])).toThrow(/requires a path/);
   });
@@ -71,6 +83,22 @@ describe('parseLoopArgs', () => {
 
   it('rejects a missing sandbox-check-map value', () => {
     expect(() => parseLoopArgs(['objectives.txt', '--sandbox-check-map'])).toThrow(/requires a path/);
+  });
+
+  it('rejects a missing goal-setter-requirements-map value', () => {
+    expect(() => parseLoopArgs(['objectives.txt', '--goal-setter-requirements-map'])).toThrow(/requires a path/);
+  });
+
+  it('rejects ambiguous sandbox-only and goal-setter requirements maps', () => {
+    expect(() =>
+      parseLoopArgs([
+        'objectives.txt',
+        '--sandbox-check-map',
+        '/trusted/sandbox.json',
+        '--goal-setter-requirements-map',
+        '/trusted/requirements.json',
+      ]),
+    ).toThrow(/cannot be combined/);
   });
 
   it('rejects conflicting verifier map decisions', () => {

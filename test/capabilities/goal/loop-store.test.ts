@@ -143,6 +143,24 @@ describe('FileLoopStore round-trip', () => {
     expect((replay as { sandboxCheckMapPath?: string }).sandboxCheckMapPath).toBe('C:\\Users\\Luis\\.jarvis\\loop-sandbox-checks.json');
   });
 
+  it('replays the trusted goal-setter requirements map path and hash metadata from loop-created', async () => {
+    const path = join(dir, 'L-goal-setter-requirements-map.jsonl');
+    const store = new FileLoopStore(path);
+    await store.writeCreated({
+      id: 'L',
+      contract: CONTRACT,
+      objectives: ['a'],
+      createdAt: 't0',
+      goalSetterRequirementsMapPath: 'C:\\Users\\Luis\\.jarvis\\loop-goal-setter-requirements.json',
+      goalSetterRequirementsMapHash: 'sha256:abc',
+    });
+
+    const replay = await loadLoop(path);
+
+    expect(replay.goalSetterRequirementsMapPath).toBe('C:\\Users\\Luis\\.jarvis\\loop-goal-setter-requirements.json');
+    expect(replay.goalSetterRequirementsMapHash).toBe('sha256:abc');
+  });
+
   it('replays the latest started-without-finished goal as an in-flight resume attempt', async () => {
     const path = join(dir, 'L-inflight.jsonl');
     const store = new FileLoopStore(path);

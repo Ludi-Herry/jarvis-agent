@@ -40,16 +40,15 @@ import {
   FileGoalStore,
   ShadowGit,
   derivePinnedRequirements,
-  loadSandboxedCheckPlan,
   resolveHooks,
   runGoal,
-  type LoadedSandboxedCheckPlan,
   type PinnedRequirement,
   type TestBaseline,
 } from '../../capabilities/index.js';
 import type { ModelProvider } from '../../core/index.js';
 import { safeInline } from './approval.js';
 import { createInteractiveApprover, readlineApproverIo } from './interactive-approver.js';
+import { loadGoalCliTrustedRequirements } from './goal-trusted-requirements.js';
 import { initialRenderState, renderEvent } from './render.js';
 
 // Capture BEFORE the runtime .env load: a key present here came from the shell LAUNCH env (it is in
@@ -59,6 +58,8 @@ const ARK_KEY_IN_LAUNCH_ENV = process.env.ARK_API_KEY !== undefined;
 // JARVIS_HOOKS is a TRUSTED, launch-controlled source: capture BEFORE .env so an in-repo .env can't
 // set it and enable repo-authored hook commands.
 const JARVIS_HOOKS_LAUNCH = process.env.JARVIS_HOOKS;
+// Goal-setter requirements are trusted launch input; repo-authored .env cannot select verifier routes.
+const JARVIS_GOAL_SETTER_REQUIREMENTS_LAUNCH = process.env.JARVIS_GOAL_SETTER_REQUIREMENTS_FILE;
 if (existsSync('.env')) process.loadEnvFile('.env');
 
 const OUTPUT_RESERVE_TOKENS = 16_384;
@@ -96,24 +97,27 @@ async function main(): Promise<void> {
   const shellPath = defaultShellPath();
   const sandboxCheckPlanPath = process.env.JARVIS_SANDBOX_CHECKS_FILE?.trim();
   delete process.env.JARVIS_SANDBOX_CHECKS_FILE;
-  const forbiddenSandboxPlanRoots = Array.from(new Set([cwd, findWorkspaceRoot(cwd)]));
+  const goalSetterRequirementsPath = JARVIS_GOAL_SETTER_REQUIREMENTS_LAUNCH?.trim();
+  delete process.env.JARVIS_GOAL_SETTER_REQUIREMENTS_FILE;
+  const forbiddenRequirementRoots = Array.from(new Set([cwd, findWorkspaceRoot(cwd)]));
 
-  let sandboxCheckPlan: LoadedSandboxedCheckPlan | undefined;
-  if (sandboxCheckPlanPath) {
-    try {
-      sandboxCheckPlan = await loadSandboxedCheckPlan({
-        path: sandboxCheckPlanPath,
-        cwd,
-        forbiddenRoots: forbiddenSandboxPlanRoots,
-        readText: async (p) => readFile(p, 'utf8').catch(() => null),
-        realpath: async (p) => realpath(p).catch(() => null),
-      });
-    } catch (err) {
-      console.error(`[sandbox checks] ${err instanceof Error ? err.message : String(err)}`);
-      process.exitCode = 1;
-      return;
-    }
+  let trustedRequirements;
+  try {
+    trustedRequirements = await loadGoalCliTrustedRequirements({
+      sandboxCheckPlanPath,
+      goalSetterRequirementsPath,
+      cwd,
+      forbiddenRoots: forbiddenRequirementRoots,
+      readText: async (p) => readFile(p, 'utf8').catch(() => null),
+      realpath: async (p) => realpath(p).catch(() => null),
+    });
+  } catch (err) {
+    console.error(`[trusted requirements] ${err instanceof Error ? err.message : String(err)}`);
+    process.exitCode = 1;
+    return;
   }
+  const sandboxCheckPlan = trustedRequirements.kind === 'sandbox-checks' ? trustedRequirements.plan : undefined;
+  const goalSetterRequirements = trustedRequirements.kind === 'goal-setter-requirements' ? trustedRequirements.plan : undefined;
 
   const tools = buildDefaultRegistry();
   tools.register(createBashTool()); // safe to register: every call runs behind the gate below
@@ -160,7 +164,12 @@ async function main(): Promise<void> {
   let verifierProvider: ModelProvider | undefined;
   let pinned: PinnedRequirement[] = [];
   const verifier = resolveVerifierConfig(process.env, config);
-  if (sandboxCheckPlan) {
+  const goalSetterNeedsLlm =
+    goalSetterRequirements !== undefined && [...goalSetterRequirements.routes.values()].some((route) => route === 'llm');
+  if (goalSetterRequirements) {
+    pinned = goalSetterRequirements.pinned;
+    if (goalSetterNeedsLlm && verifier.enabled) verifierProvider = createProvider(verifier.config).withThinking('off');
+  } else if (sandboxCheckPlan) {
     pinned = sandboxCheckPlan.pinned;
   } else if (verifier.enabled) {
     verifierProvider = createProvider(verifier.config).withThinking('off');
@@ -210,6 +219,11 @@ async function main(): Promise<void> {
       ? `sandbox checks: enabled from trusted file (${sandboxCheckPlan.commands.length}/${sandboxCheckPlan.pinned.length} requirements have commands); runtime-proof report takes precedence`
       : 'sandbox checks: disabled',
   );
+  if (goalSetterRequirements) {
+    console.log(
+      `goal-setter requirements: enabled; routes=${formatGoalSetterRouteCounts(goalSetterRequirements.routes)}; LLM=${goalSetterNeedsLlm ? (verifier.enabled ? safeInline(verifier.config.model) : `unavailable:${safeInline(verifier.reason)}`) : 'not-needed'}`,
+    );
+  }
   console.log(
     vision.enabled
       ? `vision: 已启用(${safeInline(vision.config.model)}) —— builder 可看图(发图出网,受闸 ask 批准)`
@@ -223,6 +237,11 @@ async function main(): Promise<void> {
 
   await runAdvisoryHook(hooks?.sessionStart);
   let result;
+  const sandboxedRequirementCommands = goalSetterRequirements
+    ? goalSetterRequirements.commands.length > 0
+      ? goalSetterRequirements.commands
+      : undefined
+    : sandboxCheckPlan?.commands;
   try {
     result = await runGoal(
       { id, objective, sessionId, budget: { maxRounds: 8 }, baseline, pinned },
@@ -242,8 +261,9 @@ async function main(): Promise<void> {
         checkCommands: DEFAULT_CHECK_COMMANDS,
         heldOutCommands: heldOutCommands.length > 0 ? heldOutCommands : undefined,
         verifierProvider,
-        sandboxedRequirementCommands: sandboxCheckPlan?.commands,
-        sandboxRunner: sandboxCheckPlan ? createWsl2UnshareSandboxRunner() : undefined,
+        sandboxedRequirementCommands,
+        goalSetterRequirementRoutes: goalSetterRequirements?.routes,
+        sandboxRunner: sandboxedRequirementCommands && sandboxedRequirementCommands.length > 0 ? createWsl2UnshareSandboxRunner() : undefined,
         shadowGit,
       },
     );
@@ -290,6 +310,18 @@ function findWorkspaceRoot(cwd: string): string {
     if (parent === cursor) return cwd;
     cursor = parent;
   }
+}
+
+function formatGoalSetterRouteCounts(routes: ReadonlyMap<string, string>): string {
+  return `sandbox-command:${countRoutes(routes, 'sandbox-command')},llm:${countRoutes(routes, 'llm')},human:${countRoutes(routes, 'human')}`;
+}
+
+function countRoutes(routes: ReadonlyMap<string, string>, route: string): number {
+  let count = 0;
+  for (const value of routes.values()) {
+    if (value === route) count++;
+  }
+  return count;
 }
 
 /** Snapshot the leg-2 baseline: the current HEAD sha. Undefined when not a git repo (leg 2 inert). */

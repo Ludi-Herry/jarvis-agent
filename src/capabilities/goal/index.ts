@@ -14,6 +14,8 @@ export * from './goal-loop.js';
 export * from './verifier.js';
 export * from './sandboxed-check-report.js';
 export * from './sandboxed-check-config.js';
+export * from './goal-setter-requirements.js';
+export * from './composite-verifier-report.js';
 export * from './requirements.js';
 export * from './loop.js';
 export * from './parallel-loop.js';
