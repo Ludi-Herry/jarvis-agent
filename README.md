@@ -16,12 +16,12 @@
 | Phase D 自主（GoalLoop + 确定性三腿〔canonical 重跑 + 篡改检测 + held-out 隐藏断言〕+ 独立 LLM 裁判） | ✅ 完成（D1–D9 + held-out） |
 | Phase E 多能力（多 goal Loop 调度 + 外置 vision + 命令级 bash session-allow + shadow-git 旁路历史） | ✅ 完成（4 切片合入 main） |
 | Hooks（PreToolUse 阻断 + PostToolUse 咨询/反馈；tool result env；per-hook timeout；round/session lifecycle；多来源；loop per-goal hook-map） | ✅ 完成，剩余仅保留 defer |
-| **GUI 第一版（看得懂 + 急停）** | ✅ 最小晴天模式外壳：observe 时间线 + emergency stop；human-review 裁决流仍 defer |
-| OS sandbox Phase 3 v1 + builder sandboxed checks + browser smoke feedback + 只读观测层 | ✅ 完成（trusted requirements / route map / composite verifier / `sandboxed_check` / `browser_smoke(static-dist)` / round budget events / `npm run observe`）；未覆盖范围：通用 app/browser/network verifier、GUI human-review |
+| **GUI 第一版（看得懂 + 急停 + human-review MVP）** | ✅ observe 时间线 + emergency stop + human route 人工裁决闭环 |
+| OS sandbox Phase 3 v1 + builder sandboxed checks + browser smoke feedback + 只读观测层 | ✅ 完成（trusted requirements / route map / composite verifier / `sandboxed_check` / `browser_smoke(static-dist)` / round budget events / `npm run observe`）；未覆盖范围：通用 app/browser/network verifier |
 | propose_skill | ⛔ 已拍板 defer（投机性、判定偏弱、无证实复用场景） |
 | 新增 verifier / route / scheduler 抽象 | ⛔ 已拍板不做；现有四套 map 足够（`verifier` / `hook` / `sandbox-check` / `goal-setter-requirements`） |
 
-`npm run typecheck / lint / test / build` 全绿（**1007 passed / 1 skipped**，Windows 下 1 个 POSIX SIGINT smoke 跳过）。命令安全根（PermissionGate + 命令解析器 + bash 审批）经**六轮独立 codex 对抗核查**确认无破闸 HIGH；goal 验收子系统（确定性三腿 + 腿3 裁判 + bash/Linux 密钥加固）经**多轮多裁判对抗核查**（codex + 独立 Claude 子代理，含一轮 4 裁判收尾）。Phase E 各切片与 Hooks slice-1/2 均经 **codex 跨模型对抗审查逐层加固**（vision 四轮 / bash 白名单 Path A 经 7 HIGH 撤回、保留命令级 Path B / Hooks 信任边界修 HIGH / slice-2 每切片 2 轮 SHIP）。方法 / 严重度基线 / 历史见 `docs/security-review-baseline.md`。
+`npm run typecheck / lint / test / build` 全绿（**1041 passed / 1 skipped**，Windows 下 1 个 POSIX SIGINT smoke 跳过）。命令安全根（PermissionGate + 命令解析器 + bash 审批）经**六轮独立 codex 对抗核查**确认无破闸 HIGH；goal 验收子系统（确定性三腿 + 腿3 裁判 + bash/Linux 密钥加固）经**多轮多裁判对抗核查**（codex + 独立 Claude 子代理，含一轮 4 裁判收尾）。Phase E 各切片与 Hooks slice-1/2 均经 **codex 跨模型对抗审查逐层加固**（vision 四轮 / bash 白名单 Path A 经 7 HIGH 撤回、保留命令级 Path B / Hooks 信任边界修 HIGH / slice-2 每切片 2 轮 SHIP）。方法 / 严重度基线 / 历史见 `docs/security-review-baseline.md`。
 
 接手入口：
 - **Loop primitive 怎么选 → `docs/loop-primitives-guide.md`**；**最新全景 + Phase E/Hooks 现状 + 下一步（GUI 就绪盘点）→ `docs/handoff-next.md`**；**Loop 重项收口记录（parallel resume / finalize / cron daemon）→ `docs/handoff-loop-remaining.md`**；**Phase D（GoalLoop + 三腿 + 腿3 裁判）→ `docs/handoff-D.md`**；**Hooks（tool-call / lifecycle / loop per-goal hook-map）→ `docs/handoff-hooks.md`**；
@@ -64,7 +64,7 @@ cp .env.example .env   # 然后编辑 .env 填 ARK_API_KEY
 | routine / 前台常驻调度 | `npm run cron:daemon` | 前台 daemon，负责锁、JSONL、信号退出 |
 | review / apply / cleanup | `npm run loop:finalize` | 并行 worktree 完成后的只读报告、交互 merge/cleanup |
 | status / usage / audit | `npm run observe` | 只读汇总 JSONL 和 sandbox audit evidence，不给完成授权 |
-| GUI / timeline / stop | `npm run gui` | 本地只读观测面板，复用 observe contract，提供急停控制 |
+| GUI / timeline / stop / review | `npm run gui` | 本地观测面板，复用 observe contract，提供急停控制和 human-review 裁决 |
 
 ```bash
 npm run dev         # 终端 REPL：带权限闸门 + bash + 交互审批 + 会话落盘（需 ARK_API_KEY）。Ctrl-C 中断 / /exit 退出
@@ -78,9 +78,9 @@ npm run loop:finalize -- --loop <id> --cleanup # 交互式清理：必须输入 
 npm run cron -- --cron-map <trusted-json> # cron 单次扫描：可信 cwd 外计划文件，到期任务触发普通 loop；task 必须 unattended:true；带同工作区扫描锁 + stale 回收 + task 前心跳；记录 data/cron/loop-cron.jsonl，不常驻
 npm run cron:daemon -- --cron-map <trusted-json> [--poll-ms <n>] # cron 前台 daemon：可信 cwd 外计划文件；默认 poll=60000；daemon lock + scan lock；写 data/cron/loop-cron-daemon.jsonl；SIGINT/SIGTERM 释放锁退出；不自动 resume/merge/cleanup，不后台 fork
 npm run observe     # 只读观测：汇总 data/sessions|goals|loops|cron|approvals 的 status / usage / audit / latestGoalBudget；--json 输出 schemaVersion=1 给 GUI/脚本
-npm run gui         # 本地 GUI 第一版：http://127.0.0.1:4317 起，只读时间线 + 急停键；若端口占用会自动向后找可用端口
+npm run gui         # 本地 GUI 第一版：http://127.0.0.1:4317 起，时间线 + 急停键 + human-review 裁决；若端口占用会自动向后找可用端口
 npm run typecheck   # tsc --noEmit
-npm test            # vitest（1007 passed / 1 skipped，Windows 下 1 个 POSIX SIGINT smoke 跳过）
+npm test            # vitest（1041 passed / 1 skipped，Windows 下 1 个 POSIX SIGINT smoke 跳过）
 npm run build       # tsc 产出到 dist/
 npm run lint        # eslint
 npm run demo:a1     # A1：调 Doubao 一句话 → 流式增量 + 聚合 ModelResult
@@ -135,15 +135,17 @@ Goal runs emit `goal_round_start` / `goal_round_end` events with round number, m
 
 Attended `goal` and `loop` runs emit `approval_request` / `approval_result` events around the injected human approver and append the same safe details to `data/approvals/*.jsonl`. These records omit write content and remain audit-only; they do not approve `human` verifier requirements or change verdicts.
 
+Human-routed verifier requirements park as `cannotVerify` until a person reviews them in the GUI. The GUI writes a separate `data/human-reviews/<goalId>.jsonl` audit record, appends a new goal round with the merged verifier report, and calls `decideVerdict` to produce the final verdict.
+
 ### GUI first slice
 
-`npm run gui` starts a local HTTP UI on `127.0.0.1:4317` by default. It serves a compact timeline built from the same `loadWorkspaceObservation` contract behind `npm run observe -- --json`, including `activity.recent` event rows and aggregate status cards, plus a visible emergency stop control.
+`npm run gui` starts a local HTTP UI on `127.0.0.1:4317` by default. It serves a compact timeline built from the same `loadWorkspaceObservation` contract behind `npm run observe -- --json`, including `activity.recent` event rows and aggregate status cards, plus a visible emergency stop control and a human-review queue for parked verifier requirements.
 
 The GUI server only accepts loopback `Host` headers (`127.0.0.1`, `localhost`, `[::1]`, with optional port). Emergency-stop POSTs require `x-jarvis-gui: 1`, and binding `--host` to a non-loopback address prints an unauthenticated-control warning.
 
 The stop control writes `data/control/emergency-stop.json` and appends `data/control/emergency-stop.jsonl`. Running `goal`, `loop`, `cron`, and `cron:daemon` watch that file and only honor stop requests newer than their own process start time. When honored, the shared `AbortSignal` is passed into model streams, bash, deterministic checks, sandbox checks, and loop scheduling so new agent actions stop promptly while existing JSONL logs remain available for review.
 
-The GUI is observation/control only. It does not start goals, approve verifier `human` requirements, merge reports, complete loops, edit trusted maps, or create connector / identity / team-collaboration state.
+The GUI control surface is intentionally narrow. It does not start goals, create trusted requirements, run verifiers, merge code, edit maps, or create connector / identity / team-collaboration state. Its human-review action only records a person’s decision as verifier evidence; final goal state still comes from `decideVerdict`.
 
 ### Worktree status baseline
 
@@ -186,7 +188,7 @@ Route behavior:
 
 - `sandbox-command`: command is required and must pass the narrow inspection allow scope. The WSL2 sandbox result maps to `proves`, `contradicts`, or `cannotVerify`.
 - `llm`: only these requirements are sent to the independent LLM verifier. Command-backed and human-routed requirements are not in that prompt.
-- `human`: always parks as `cannotVerify` for manual review.
+- `human`: parks as `cannotVerify`; the GUI human-review flow can later record approve/reject evidence, append an audit record, and let `decideVerdict` recompute the goal verdict.
 - `heldOutCommands`: optional hidden assertions from the same cwd-outside trusted JSON. They run as the deterministic held-out leg, stay out of builder feedback, and are not written into cwd goal logs.
 
 PowerShell example:
@@ -359,7 +361,7 @@ src/
 skills/          # git-commit/SKILL.md
 agents/          # researcher/ROLE.md（子 agent 角色花名册）
 scripts/         # a1/a2/a3/a5 + b1/b3 + c1/c2 + d1 demo（真连 Doubao / 真跑 bash）
-test/            # vitest 单测（1007 passed / 1 skipped，Windows 下 1 个 POSIX SIGINT smoke 跳过）
+test/            # vitest 单测（1041 passed / 1 skipped，Windows 下 1 个 POSIX SIGINT smoke 跳过）
 docs/            # 各阶段 plan + handoff + security-review-baseline
 data/            # 运行期会话日志（gitignore）
 ```

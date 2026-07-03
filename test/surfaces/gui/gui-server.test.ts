@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,6 +10,13 @@ import {
   isAllowedGuiHostHeader,
   isLoopbackBindHost,
 } from '../../../src/surfaces/gui/gui-server.js';
+import {
+  composeVerifierReport,
+  decideVerdict,
+  serializeGoalRecord,
+  type DeterministicChecks,
+  type PinnedRequirement,
+} from '../../../src/capabilities/goal/index.js';
 
 let dir: string;
 
@@ -95,6 +102,96 @@ describe('GUI server security guard', () => {
       await close(server);
     }
   });
+
+  it('returns an empty favicon response instead of a noisy browser 404', async () => {
+    const server = createGuiServer({ cwd: dir, dataDir: join(dir, 'data') });
+    const base = await listen(server);
+    try {
+      const result = await httpJson(base.port, {
+        path: '/favicon.ico',
+        method: 'GET',
+        headers: { host: `127.0.0.1:${base.port}` },
+      });
+
+      expect(result.status).toBe(204);
+      expect(result.body).toBeUndefined();
+    } finally {
+      await close(server);
+    }
+  });
+
+  it('lists and applies human-review decisions through the GUI control API', async () => {
+    await writeParkedHumanGoal('g-human');
+    const server = createGuiServer({ cwd: dir, dataDir: join(dir, 'data') });
+    const base = await listen(server);
+    try {
+      const list = await httpJson(base.port, {
+        path: '/api/human-reviews',
+        method: 'GET',
+        headers: { host: `127.0.0.1:${base.port}` },
+      });
+
+      expect(list.status).toBe(200);
+      expect(list.body).toMatchObject({
+        reviews: [{ goalId: 'g-human', requirements: [{ requirementId: 'r1' }] }],
+      });
+
+      const missingHeader = await httpJson(base.port, {
+        path: '/api/human-reviews/g-human/decide',
+        method: 'POST',
+        headers: { host: `127.0.0.1:${base.port}`, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          decisions: [{ requirementId: 'r1', decision: 'approve', note: 'Looks good.' }],
+        }),
+      });
+      expect(missingHeader.status).toBe(403);
+
+      const decided = await httpJson(base.port, {
+        path: '/api/human-reviews/g-human/decide',
+        method: 'POST',
+        headers: {
+          host: `127.0.0.1:${base.port}`,
+          'content-type': 'application/json',
+          'x-jarvis-gui': '1',
+        },
+        body: JSON.stringify({
+          reviewer: 'Luis',
+          decisions: [{ requirementId: 'r1', decision: 'approve', note: 'Looks good.' }],
+        }),
+      });
+
+      expect(decided.status).toBe(200);
+      expect(decided.body).toMatchObject({
+        result: { state: 'complete', verdict: { outcome: 'verified' } },
+      });
+    } finally {
+      await close(server);
+    }
+  });
+
+  it('rejects encoded path traversal in human-review goal ids', async () => {
+    const server = createGuiServer({ cwd: dir, dataDir: join(dir, 'data') });
+    const base = await listen(server);
+    try {
+      const result = await httpJson(base.port, {
+        path: '/api/human-reviews/%2e%2e%2fg-human/decide',
+        method: 'POST',
+        headers: {
+          host: `127.0.0.1:${base.port}`,
+          'content-type': 'application/json',
+          'x-jarvis-gui': '1',
+        },
+        body: JSON.stringify({
+          decisions: [{ requirementId: 'r1', decision: 'approve', note: 'Looks good.' }],
+        }),
+      });
+
+      expect(result.status).toBe(400);
+      expect(result.body).toEqual({ error: 'goal id must be a safe log filename' });
+    } finally {
+      await close(server);
+    }
+  });
 });
 
 describe('GUI server pure guards', () => {
@@ -163,4 +260,45 @@ function httpJson(
     if (options.body !== undefined) req.end(options.body);
     else req.end();
   });
+}
+
+const cleanChecks: DeterministicChecks = {
+  objectiveChecksPassed: true,
+  results: [{ command: 'npm test', code: 0, output: 'green' }],
+  testTamper: 'clean',
+  tamperReason: '',
+};
+
+async function writeParkedHumanGoal(goalId: string): Promise<void> {
+  await mkdir(join(dir, 'data', 'goals'), { recursive: true });
+  const pinned: PinnedRequirement[] = [{ id: 'r1', text: 'Luis confirms the GUI copy reads naturally' }];
+  const report = composeVerifierReport({
+    pinned,
+    routes: new Map([['r1', 'human']]),
+  });
+  const verdict = decideVerdict(cleanChecks, report, pinned);
+  await writeFile(
+    join(dir, 'data', 'goals', `${goalId}.jsonl`),
+    serializeGoalRecord({
+      t: 'goal-created',
+      id: goalId,
+      objective: 'Polish GUI copy.',
+      objectiveHash: 'hash',
+      budget: { maxRounds: 2 },
+      pinned,
+      sessionId: goalId,
+      createdAt: '2026-07-03T17:00:00.000Z',
+    }) +
+      serializeGoalRecord({
+        t: 'goal-round',
+        round: 1,
+        turns: 1,
+        tokens: 1,
+        checks: cleanChecks,
+        verdict,
+        at: '2026-07-03T17:01:00.000Z',
+      }) +
+      serializeGoalRecord({ t: 'goal-state', state: 'blocked', at: '2026-07-03T17:01:01.000Z' }),
+    'utf8',
+  );
 }

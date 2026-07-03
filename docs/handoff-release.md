@@ -6,10 +6,10 @@
 
 ## 0. 拍板背景（2026-07-03，为什么是这个顺序）
 
-- 验收侧已全线就绪：确定性三腿 + trusted requirements（sandbox-command/llm/human）+ held-out + `decideVerdict` 零信任链，1034 测试全绿。
+- 验收侧已全线就绪：确定性三腿 + trusted requirements（sandbox-command/llm/human）+ held-out + `decideVerdict` 零信任链，1041 测试全绿。
 - 切片 2 前，行动侧的 write 结构性封死：`--unattended` 无 approver，gate 对一切 `ask` fail-closed deny；goal/loop CLI 不加载 RuleResolver（`loop-cli.ts` 用裸 `defaultPolicy()`），所以无人值守下 builder 写不了任何文件。2026-07-03 已补一条收窄例外：`--unattended --parallel` 的 per-goal gate 只自动放行落在该 goal worktree 内的 built-in `write`。
-- GUI 的下一大块（human-review 裁决流）需要真实 parked goals 驱动设计；真实 parked goals 只能来自跑起来的无人值守 loop。**先搭完 GUI 是顺序做反**。
-- 结论：先用只读任务把无人值守链路在真实负载下淬火，同时把「worktree 隔离写」作为解锁无人值守写码的下一个开发切片；GUI 等真实案例出现再做裁决流，最后统一打磨。
+- GUI human-review MVP 已按真实 parked sample 的需求落地，R5 仍要求再跑一次真实 parked goal 端到端演示。
+- 结论：只读巡检和 worktree 隔离写已先后落地；接下来补 GUI 裁决流真实演示、codex 审查和 UI/UX 打磨。
 
 ## 1. 发布定义（Definition of Done，全局终线）
 
@@ -21,7 +21,7 @@ v1 可发布 = 以下每条都有**可验证证据**（跑过的命令 / 截图 
 | R2 | 无人值守只读巡检在真实任务上连续 ≥5 次 cron 运行：0 false-verified、0 失控（每次要么正常完成要么 park/halt 且原因可解释） | `data/` JSONL + `npm run observe` 报告逐次核对 |
 | R3 | 急停演练 ≥1 次：GUI 按钮按下后，运行中的 loop 在一个轮询周期内中断且审计留痕 | `data/control/emergency-stop.jsonl` + loop halt 记录 |
 | R4 | 无人值守写码切片（worktree 隔离 write）落地并通过 codex 对抗审查（无未缓解 HIGH） | 审查记录追加进 `security-review-baseline.md` |
-| R5 | GUI human-review 裁决流可用：human route 的 parked requirement 能被人工裁决、回写 verifier report、留 audit trail | 端到端真实 goal 演示一次 |
+| R5 | GUI human-review 裁决流可用：human route 的 parked requirement 能被人工裁决、回写 verifier report、留 audit trail | 端到端真实 goal 演示一次（MVP 代码已落地，真实演示待补） |
 | R6 | GUI UI/UX 打磨完成且 Luis 逐节验收通过（视觉层级、文案、空态/错误态、响应式） | 每节验收记录（见切片 4） |
 | R7 | GUI server 安全修复落地（Host 校验等，见切片 0），且对 GUI 控制面做过一轮 codex 安全审查 | 同 R4 |
 | R8 | 文档一致：README、`docs/handoff-next.md`、本文状态段与实际行为无出入 | neat-freak 式核对 |
@@ -110,7 +110,7 @@ v1 可发布 = 以下每条都有**可验证证据**（跑过的命令 / 截图 
 
 **验收状态**：R4 已达标。权限实现、codex 审查、宿主零漂移、无人值守 worktree write all-goal green smoke 均已有真实证据；后续只剩 LOW 级 finalize + `node_modules` link patch fixture 可补。
 
-### 切片 3：GUI human-review 裁决流
+### 切片 3：GUI human-review 裁决流（MVP 已实现 2026-07-03）
 
 **目标**：把 `human` route 的 park 变成闭环——人工在 GUI 裁决 parked requirement，结果回写 verifier report，留完整 audit trail。这是 handoff-next.md 明确的产品流缺口，R5 的来源。
 
@@ -118,15 +118,23 @@ v1 可发布 = 以下每条都有**可验证证据**（跑过的命令 / 截图 
 
 **硬边界（安全不变量）**：
 - 人工裁决是**新证据来源**，汇入 verifier report 后仍由 `decideVerdict` 纯函数出 verdict；GUI 自己永远不产生 verified/complete。
-- 裁决动作必须有身份/时间/理由三要素落 JSONL 审计；裁决展示给人的内容走 `safeInline` + tool-aware `detailOf` 三件套（防注入/bidi，vision 轮的复用模板）。
+- 裁决动作必须有身份/时间/理由三要素落 JSONL 审计；裁决展示给人的字段必须剥控制字符、换行和 bidi 控制符，审批工具详情继续沿用 `safeInline` + tool-aware `detailOf` 三件套。
 - 裁决接口在 GUI server 上属于控制面：切片 0 的 Host/CSRF 防线必须先落地；裁决 POST 同样要求自定义头。
 - resume/重跑语义想清楚：已裁决的 requirement 在 goal 重跑后是否复用？（建议：不复用，重跑重裁，宁可多问不静默继承。）
 
-**待办**：产品流程草图（parked 列表 → 单条详情含证据 → 裁决 pass/fail + 理由 → report merge → verdict 重算）→ 与 Luis 过一次交互稿再动代码 → 实现 + 单测 + 端到端演示 → codex 审查（控制面 + 注入面）。
+**已完成**：
+1. 能力层：新增 `src/capabilities/goal/human-review.ts`，扫描 parked `human` requirements，校验 goalId 安全文件名，裁决展示字段剥控制/bidi，裁决备注做 secret redaction，并追加 `data/human-reviews/<goalId>.jsonl` 审计。
+2. Verifier report 闭环：人工 approve/reject 会写入新的 verifier evidence，更新对应 requirement score，追加新的 `goal-round` + `goal-state`，最终 verdict 只由 `decideVerdict` 产生。
+3. Loop finalize 可见：若 parked goal 属于 loop，会补写新的 `goal-finished` 记录，`loop:finalize` 可看到 reviewed 后的 latest finish state/outcome。
+4. GUI API：`GET /api/human-reviews` 列表；`POST /api/human-reviews/:goalId/decide` 复用切片 0 的 loopback Host 校验，并要求 `x-jarvis-gui: 1`。
+5. GUI UI：首版人工裁决队列展示 goal / requirement / reason，支持单条通过或驳回并填写备注。
+6. 测试：`test/capabilities/goal/human-review.test.ts` 覆盖列表、approve、reject、audit、loop finish；`test/surfaces/gui/gui-server.test.ts` 覆盖 API、CSRF 和编码路径穿越拒绝。
+
+**仍待补**：真实 parked goal 的 R5 端到端演示；codex 控制面 + 注入面审查；切片 4 中继续打磨裁决表单体验、键盘可达性、错误态和证据详情密度。
 
 **边界**：单用户本地场景；不做多人协作、不做 agent identity、不做通知系统。
 
-**验收**：R5 端到端演示（真实 parked goal 被裁决后 goal 走到正确终态）；篡改测试——伪造/重放裁决请求被拒；audit trail 完整可回放。
+**验收状态**：单元/API 层已证明 parked requirement 可裁决、report 可回写、audit trail 可回放、伪造 CSRF 与编码路径穿越被拒；R5 还需要用真实 parked goal 演示一次，并补 codex 对抗审查记录。
 
 ### 切片 4：GUI UI/UX 打磨
 

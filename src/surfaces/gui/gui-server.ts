@@ -3,6 +3,12 @@ import { readFile } from 'node:fs/promises';
 import { extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadWorkspaceObservation } from '../../capabilities/index.js';
+import {
+  applyHumanReviewDecision,
+  HumanReviewError,
+  listPendingHumanReviews,
+  type HumanReviewDecisionInput,
+} from '../../capabilities/goal/index.js';
 import { readEmergencyStop, requestEmergencyStop } from '../../runtime/index.js';
 import { buildGuiTimeline, type GuiStatusPayload } from './timeline.js';
 
@@ -62,8 +68,28 @@ async function handleRequest(
       json(res, 200, await loadWorkspaceObservation(context.dataDir));
       return;
     }
+    if (req.method === 'GET' && url.pathname === '/api/human-reviews') {
+      json(res, 200, { reviews: await listPendingHumanReviews(context.dataDir) });
+      return;
+    }
     if (req.method === 'GET' && url.pathname === '/api/emergency-stop') {
       json(res, 200, await readEmergencyStop(context.cwd));
+      return;
+    }
+    const humanReviewDecision = matchHumanReviewDecisionPath(url.pathname);
+    if (req.method === 'POST' && humanReviewDecision !== undefined) {
+      if (!hasGuiCsrfHeader(req.headers)) {
+        json(res, 403, { error: `missing ${GUI_CSRF_HEADER} header` });
+        return;
+      }
+      const body = await readJsonBody(req);
+      const result = await applyHumanReviewDecision({
+        dataDir: context.dataDir,
+        goalId: humanReviewDecision.goalId,
+        reviewer: typeof body.reviewer === 'string' ? body.reviewer : undefined,
+        decisions: parseHumanReviewDecisionInputs(body.decisions),
+      });
+      json(res, 200, { result });
       return;
     }
     if (req.method === 'POST' && url.pathname === '/api/emergency-stop') {
@@ -78,12 +104,18 @@ async function handleRequest(
       return;
     }
     if (req.method === 'GET') {
+      if (url.pathname === '/favicon.ico') {
+        res.writeHead(204, { 'cache-control': 'no-store' });
+        res.end();
+        return;
+      }
       await serveAsset(url.pathname, res);
       return;
     }
     json(res, 405, { error: 'method not allowed' });
   } catch (err) {
-    json(res, 500, { error: err instanceof Error ? err.message : String(err) });
+    const status = err instanceof HumanReviewError ? err.status : err instanceof SyntaxError ? 400 : 500;
+    json(res, status, { error: err instanceof Error ? err.message : String(err) });
   }
 }
 
@@ -119,6 +151,33 @@ async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknow
   if (text === '') return {};
   const parsed = JSON.parse(text) as unknown;
   return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+}
+
+function matchHumanReviewDecisionPath(pathname: string): { goalId: string } | undefined {
+  const match = /^\/api\/human-reviews\/([^/]+)\/decide$/.exec(pathname);
+  if (match === null) return undefined;
+  return { goalId: decodeURIComponent(match[1]) };
+}
+
+function parseHumanReviewDecisionInputs(value: unknown): HumanReviewDecisionInput[] {
+  if (!Array.isArray(value)) throw new HumanReviewError(400, 'decisions must be an array');
+  return value.map((item) => {
+    if (typeof item !== 'object' || item === null || Array.isArray(item)) {
+      throw new HumanReviewError(400, 'decision must be an object');
+    }
+    const record = item as Record<string, unknown>;
+    const decision = record.decision;
+    if (decision !== 'approve' && decision !== 'reject') {
+      throw new HumanReviewError(400, 'decision must be approve or reject');
+    }
+    if (typeof record.requirementId !== 'string') {
+      throw new HumanReviewError(400, 'requirementId is required');
+    }
+    if (typeof record.note !== 'string') {
+      throw new HumanReviewError(400, 'note is required');
+    }
+    return { requirementId: record.requirementId, decision, note: record.note };
+  });
 }
 
 function contentType(path: string): string {
