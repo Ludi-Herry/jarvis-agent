@@ -104,11 +104,11 @@ v1 可发布 = 以下每条都有**可验证证据**（跑过的命令 / 截图 
 5. worktree 运行可用性：goal worktree 创建 / resume 时，如果宿主有 `node_modules`，会在 worktree 内创建 `node_modules` junction/symlink 指向宿主依赖，供 deterministic checks 使用；read/write/grep 通过 realpath 仍不能跟随该链接读写宿主依赖。
 6. 测试：新增 worktree gate、runAgent 真实接线、loop-cli 布线、safe-path、builtins、loop-worktree 触发测试。最终四关卡：`npm run typecheck`、`npm run lint`、`npm test`（101 files, 1034 passed, 1 skipped）、`npm run build` 全绿。
 7. codex 对抗审查：两轮 gpt-5.5 xhigh，只读。第一轮覆盖 worktree write auto-allow，no HIGH；第二轮覆盖 `node_modules` dependency bridge，no HIGH。第二轮 LOW 的 write/grep bridge-specific 测试已补；finalize + `node_modules` link patch fixture 仍为 LOW 待补。
-8. 真实模型 smoke：`npm run loop -- <temp-objectives> --unattended --parallel 2 --worktree-root <temp>` 两次。证据：built-in `write` 在两个 goal worktree 内成功；bash 请求被无 approver 拒绝；宿主 `git status --short` 前后一致。第一次暴露新 worktree 缺 `node_modules`，已补 dependency bridge；第二次 1/2 goal verified complete，另 1/2 被模型排查绕行后 hit maxTurns/blocked，所以 R4 的“全量 autonomous worktree smoke 全绿”仍需再跑一轮更稳定目标或单独脚本化。
+8. 真实模型 smoke：`npm run loop -- <temp-objectives> --unattended --parallel 2 --worktree-root <temp>` 已跑多轮。证据：built-in `write` 在 goal worktree 内成功；bash 请求被无 approver 拒绝；宿主 `git status --short` 前后一致。第一轮暴露新 worktree 缺 `node_modules`，已补 dependency bridge；第二轮 1/2 goal verified complete，另 1/2 被模型排查绕行后 blocked；第三轮未限制 Vitest worker，两个 worktree 同时跑全量 `npm test` 触发 CLI smoke 5s 超时，单独在失败 worktree 重跑 `npm test` 通过。稳定全绿轮：`2026-07-03T17-06-40-512Z` 使用同一 loop 形态并设 `VITEST_MAX_WORKERS=1`，2/2 goals `verified` + `complete`，每个 worktree 的 `typecheck/lint/test/build` 均 code 0，宿主零漂移。
 
 **边界**：不做通用规则引擎、不接 RuleResolver 进 loop-cli（那是另一个信任面）、不放开 worktree 外任何路径、不自动 merge。
 
-**验收状态**：权限实现与审查达标；宿主零漂移已由真实 smoke 证明；R4 的“无人值守 worktree autonomous coding smoke 全绿”还差一次稳定全绿记录。
+**验收状态**：R4 已达标。权限实现、codex 审查、宿主零漂移、无人值守 worktree write all-goal green smoke 均已有真实证据；后续只剩 LOW 级 finalize + `node_modules` link patch fixture 可补。
 
 ### 切片 3：GUI human-review 裁决流
 
