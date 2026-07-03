@@ -7,6 +7,7 @@
  * crash/exit (docs/persistence-plan.md §3.1).
  */
 export { InMemoryEventBus, type EventBus, type Event, type Subscriber } from './event-bus.js';
+export * from './control/index.js';
 export * from './permission/index.js';
 export * from './sandbox/index.js';
 export * from './session/index.js';

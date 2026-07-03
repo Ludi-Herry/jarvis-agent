@@ -4,7 +4,7 @@ import {
   parseSessionLog,
   type SessionRecord,
 } from '../../runtime/session/session-store.js';
-import { parseApprovalAuditLog, type ApprovalAuditRecord } from '../../runtime/permission/index.js';
+import { parseApprovalAuditLog, type ApprovalAuditDecision, type ApprovalAuditRecord } from '../../runtime/permission/index.js';
 import {
   parseLoopCronDaemonLog,
   type LoopCronDaemonRecord,
@@ -90,6 +90,23 @@ export interface ObservationReport {
     sandboxEvidence: SandboxAuditSummary[];
     approvals: ApprovalAuditSummary;
   };
+  activity: {
+    recent: ObservationActivityItem[];
+  };
+}
+
+export type ObservationActivityKind = 'session' | 'goal' | 'loop' | 'cron' | 'cron-daemon' | 'approval';
+export type ObservationActivityTone = 'neutral' | 'info' | 'good' | 'warn' | 'danger';
+
+export interface ObservationActivityItem {
+  id: string;
+  kind: ObservationActivityKind;
+  title: string;
+  detail: string;
+  tone: ObservationActivityTone;
+  at?: string;
+  source: string;
+  meta: string[];
 }
 
 export interface SessionSummary {
@@ -239,6 +256,9 @@ export function buildObservationReport(input: ObservationInput, options: Observa
       sandboxEvidence: goals.flatMap((log) => sandboxEvidenceFromGoal(log.records)),
       approvals: summarizeApprovals(approvalRecords),
     },
+    activity: {
+      recent: recentActivity(input),
+    },
   };
 }
 
@@ -294,6 +314,12 @@ export function formatObservationReport(report: ObservationReport): string {
   if (report.status.cron.lastAttempt) {
     const cron = report.status.cron.lastAttempt;
     lines.push(`latest cron: ${cron.taskId} exit=${cron.exitCode ?? 'null'}${cron.loopId ? ` loop=${cron.loopId}` : ''}`);
+  }
+  if (report.activity.recent.length > 0) {
+    lines.push('recent activity:');
+    for (const item of report.activity.recent.slice(0, 5)) {
+      lines.push(`- ${item.at ?? '-'} ${item.kind}: ${item.title} - ${clip(item.detail, 120)}`);
+    }
   }
 
   return `${lines.join('\n')}\n`;
@@ -494,6 +520,249 @@ function summarizeApprovals(records: ApprovalAuditRecord[]): ApprovalAuditSummar
     errors: results.filter((record) => record.decision === 'error').length,
     sessionIds: [...sessionIds].sort(),
   };
+}
+
+function recentActivity(input: ObservationInput): ObservationActivityItem[] {
+  const items: ObservationActivityItem[] = [];
+
+  for (const log of input.sessions ?? []) {
+    const header = log.records.find((record) => record.t === 'session');
+    if (header === undefined) continue;
+    items.push({
+      id: activityId('session', log.path, 'created'),
+      kind: 'session',
+      title: `Session ${header.id}`,
+      detail: `${header.model} started`,
+      tone: 'neutral',
+      at: header.startedAt,
+      source: log.path,
+      meta: [`messages ${log.records.filter((record) => record.t === 'message').length}`, header.cwd],
+    });
+  }
+
+  for (const log of input.goals ?? []) {
+    const created = log.records.find((record) => record.t === 'goal-created');
+    const goalId = created?.id ?? 'unknown-goal';
+    for (const [index, record] of log.records.entries()) {
+      if (record.t === 'goal-created') {
+        items.push({
+          id: activityId('goal', log.path, index),
+          kind: 'goal',
+          title: `Goal ${record.id}`,
+          detail: record.objective,
+          tone: 'info',
+          at: record.createdAt,
+          source: log.path,
+          meta: [`max rounds ${record.budget.maxRounds}`, `session ${record.sessionId}`],
+        });
+      } else if (record.t === 'goal-round') {
+        const outcome = record.verdict?.outcome;
+        items.push({
+          id: activityId('goal-round', log.path, index),
+          kind: 'goal',
+          title: `Goal round ${record.round}`,
+          detail: outcome === undefined ? 'builder round recorded' : `verdict ${outcome}`,
+          tone: verdictTone(outcome),
+          at: record.at,
+          source: log.path,
+          meta: [`goal ${goalId}`, `turns ${record.turns ?? 0}`, `tokens ${record.tokens ?? 0}`],
+        });
+      } else if (record.t === 'goal-state') {
+        items.push({
+          id: activityId('goal-state', log.path, index),
+          kind: 'goal',
+          title: `Goal ${record.state}`,
+          detail: goalId,
+          tone: goalStateTone(record.state),
+          at: record.at,
+          source: log.path,
+          meta: [],
+        });
+      }
+    }
+  }
+
+  for (const log of input.loops ?? []) {
+    const created = log.records.find((record) => record.t === 'loop-created');
+    const loopId = created?.id ?? 'unknown-loop';
+    for (const [index, record] of log.records.entries()) {
+      if (record.t === 'loop-created') {
+        items.push({
+          id: activityId('loop', log.path, index),
+          kind: 'loop',
+          title: `Loop ${record.id}`,
+          detail: `${record.objectives.length} objectives queued`,
+          tone: 'info',
+          at: record.createdAt,
+          source: log.path,
+          meta: contractMeta(record),
+        });
+      } else if (record.t === 'goal-started') {
+        items.push({
+          id: activityId('loop-started', log.path, index),
+          kind: 'loop',
+          title: `Loop goal ${record.index + 1} started`,
+          detail: record.goalId,
+          tone: 'info',
+          at: record.at,
+          source: log.path,
+          meta: [`loop ${loopId}`],
+        });
+      } else if (record.t === 'goal-finished') {
+        items.push({
+          id: activityId('loop-finished', log.path, index),
+          kind: 'loop',
+          title: `Loop goal ${record.index + 1} finished`,
+          detail: `${record.state}${record.outcome === undefined ? '' : ` / ${record.outcome}`}`,
+          tone: goalStateTone(record.state),
+          at: record.at,
+          source: log.path,
+          meta: [`rounds ${record.rounds}`, `tokens ${record.tokens}`],
+        });
+      } else if (record.t === 'loop-halted') {
+        items.push({
+          id: activityId('loop-halted', log.path, index),
+          kind: 'loop',
+          title: 'Loop halted',
+          detail: record.reason,
+          tone: haltTone(record.reason),
+          at: record.at,
+          source: log.path,
+          meta: [`loop ${loopId}`],
+        });
+      }
+    }
+  }
+
+  const cron = input.cron;
+  if (cron !== undefined) {
+    for (const [index, record] of cron.records.entries()) {
+      items.push({
+        id: activityId('cron', cron.path, index),
+        kind: 'cron',
+        title: `Cron ${record.taskId}`,
+        detail: `exit ${record.exitCode ?? 'null'}`,
+        tone: record.exitCode === 0 ? 'good' : 'warn',
+        at: record.finishedAt,
+        source: cron.path,
+        meta: record.loopId === undefined ? [`next ${record.nextRunAt}`] : [`loop ${record.loopId}`, `next ${record.nextRunAt}`],
+      });
+    }
+  }
+
+  const daemon = input.cronDaemon;
+  if (daemon !== undefined) {
+    for (const [index, record] of daemon.records.entries()) {
+      items.push(cronDaemonActivity(daemon.path, index, record));
+    }
+  }
+
+  for (const log of input.approvals ?? []) {
+    for (const [index, record] of log.records.entries()) {
+      if (record.t === 'approval-request') {
+        items.push({
+          id: activityId('approval-request', log.path, index),
+          kind: 'approval',
+          title: `Approval request ${record.toolName}`,
+          detail: record.detail,
+          tone: 'warn',
+          at: record.at,
+          source: log.path,
+          meta: compactMeta([record.sessionId === undefined ? undefined : `session ${record.sessionId}`, record.capability, record.reason]),
+        });
+      } else {
+        items.push({
+          id: activityId('approval-result', log.path, index),
+          kind: 'approval',
+          title: `Approval ${record.decision}`,
+          detail: record.toolName,
+          tone: approvalTone(record.decision),
+          at: record.at,
+          source: log.path,
+          meta: compactMeta([record.sessionId === undefined ? undefined : `session ${record.sessionId}`, record.error]),
+        });
+      }
+    }
+  }
+
+  return items
+    .sort((a, b) => timestamp(b.at) - timestamp(a.at))
+    .slice(0, 20);
+}
+
+function cronDaemonActivity(path: string, index: number, record: LoopCronDaemonRecord): ObservationActivityItem {
+  const base = {
+    id: activityId('cron-daemon', path, index),
+    kind: 'cron-daemon' as const,
+    source: path,
+  };
+  switch (record.t) {
+    case 'daemon-started':
+      return { ...base, title: 'Cron daemon started', detail: record.cronMapPath, tone: 'info', at: record.startedAt, meta: [`pid ${record.pid}`, `poll ${record.pollMs}ms`] };
+    case 'daemon-heartbeat':
+      return { ...base, title: 'Cron daemon heartbeat', detail: `next wake ${record.nextWakeAt}`, tone: 'neutral', at: record.at, meta: [] };
+    case 'daemon-stopped':
+      return { ...base, title: 'Cron daemon stopped', detail: record.reason, tone: record.reason === 'completed' ? 'good' : 'warn', at: record.at, meta: [] };
+    case 'scan-started':
+      return { ...base, title: 'Cron scan started', detail: 'checking scheduled tasks', tone: 'info', at: record.at, meta: [] };
+    case 'scan-finished':
+      return { ...base, title: 'Cron scan finished', detail: `${record.triggered} triggered, ${record.skipped} skipped`, tone: record.parked > 0 ? 'warn' : 'good', at: record.at, meta: [`parked ${record.parked}`] };
+    case 'scan-skipped':
+      return { ...base, title: 'Cron scan skipped', detail: record.reason, tone: 'warn', at: record.at, meta: [] };
+    case 'task-started':
+      return { ...base, title: `Cron task ${record.taskId} started`, detail: record.command ?? record.scheduledFor, tone: 'info', at: record.startedAt, meta: [] };
+    case 'task-finished':
+      return { ...base, title: `Cron task ${record.taskId} finished`, detail: `exit ${record.exitCode ?? 'null'}`, tone: record.exitCode === 0 ? 'good' : 'warn', at: record.finishedAt, meta: record.loopId === undefined ? [] : [`loop ${record.loopId}`] };
+    case 'task-parked':
+      return { ...base, title: `Cron task ${record.taskId} parked`, detail: record.reason, tone: 'warn', at: record.at, meta: [] };
+  }
+}
+
+function contractMeta(record: LoopCreatedRecord): string[] {
+  return compactMeta([
+    record.goalSetterRequirementsMapPath === undefined ? undefined : 'requirements map',
+    record.sandboxCheckMapPath === undefined ? undefined : 'sandbox check map',
+    record.hookMapPath === undefined ? undefined : 'hook map',
+    record.verifierMapPath === undefined ? undefined : 'verifier map',
+  ]);
+}
+
+function goalStateTone(state: GoalState): ObservationActivityTone {
+  return state === 'complete' ? 'good' : state === 'blocked' ? 'warn' : 'info';
+}
+
+function verdictTone(outcome: VerdictOutcome | undefined): ObservationActivityTone {
+  if (outcome === 'verified') return 'good';
+  if (outcome === 'rejected' || outcome === 'couldNotVerify') return 'warn';
+  return 'info';
+}
+
+function haltTone(reason: LoopHaltReason): ObservationActivityTone {
+  return reason === 'queue-empty' ? 'good' : 'warn';
+}
+
+function approvalTone(decision: ApprovalAuditDecision): ObservationActivityTone {
+  if (decision === 'allow-once' || decision === 'allow-session') return 'good';
+  if (decision === 'error') return 'danger';
+  return 'warn';
+}
+
+function compactMeta(values: Array<string | undefined>): string[] {
+  return values.filter((value): value is string => value !== undefined && value !== '');
+}
+
+function activityId(scope: string, path: string, part: string | number): string {
+  return `${scope}:${path}:${part}`;
+}
+
+function timestamp(value: string | undefined): number {
+  if (value === undefined) return 0;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function clip(value: string, max: number): string {
+  return value.length <= max ? value : `${value.slice(0, max - 1)}...`;
 }
 
 function balancedJsonObject(text: string, start: number): string | undefined {

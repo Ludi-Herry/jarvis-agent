@@ -15,7 +15,7 @@
 - **Phase 3 v1 边界**：trusted verifier route 仍只覆盖 goal-setter 预声明的窄 read-only inspection command（`git status/diff/log/ls-files`、`stat`、`wc`）。`sandboxed_check` 和 `browser_smoke` 都是 builder 反馈工具，不能证明 trusted requirement、不能改写 verdict、不能给 goal/loop 完成授权。通用 app / browser / network verifier 不在当前抽象范围；`local-preview` browser smoke 仍等 loopback-only sandbox proof；`human` route 仍然 `cannotVerify→park`；GUI human-review flow 未实现。`npm run observe` 只能汇总 JSONL 和 audit evidence，不能给 goal/loop 完成授权。
 - **skill 自动沉淀（`propose_skill`）：不做**（投机性、判定偏弱、无证实的复用场景）。下文该节仅作设计存档。
 - **新增 verifier / route / scheduler 抽象：不做**。现有 `--verifier-map`、`--hook-map`、`--sandbox-check-map`、`--goal-setter-requirements-map` 四套 map 已足够；后续只允许修 bug、收窄边界、同步文档，不能再加第 5 套 map 或新调度/路由层。
-- **只读观测层已落地**：`goal_round_start` / `goal_round_end` 提供实时轮次、turn/token、预算上限、claim/verdict/state 进度事件；`npm run observe` 读取 session / goal / loop / cron / approval JSONL 与 sandbox audit evidence，输出运行态摘要、`latestGoalBudget`、trusted contract metadata、worktree status、approval counts 和 sandbox backend/mount/network/limits；`--json` 给 GUI/脚本消费，当前 `ObservationReport` 为 `schemaVersion: 1`，带 `meta.source.dataDir` 与 `authority.mode: "observation-only"`。`--data-dir <path>` 可看非默认 `data/`。完成授权仍只来自 `decideVerdict`、deterministic checks、trusted requirement routes 和人工确认。
+- **只读观测层已落地**：`goal_round_start` / `goal_round_end` 提供实时轮次、turn/token、预算上限、claim/verdict/state 进度事件；`npm run observe` 读取 session / goal / loop / cron / approval JSONL 与 sandbox audit evidence，输出运行态摘要、`latestGoalBudget`、trusted contract metadata、worktree status、approval counts、sandbox backend/mount/network/limits，以及 `activity.recent` 最近事件流；`--json` 给 GUI/脚本消费，当前 `ObservationReport` 为 `schemaVersion: 1`，带 `meta.source.dataDir` 与 `authority.mode: "observation-only"`。`--data-dir <path>` 可看非默认 `data/`。完成授权仍只来自 `decideVerdict`、deterministic checks、trusted requirement routes 和人工确认。
 - **已完成的 Phase E/loop 收口**：接 vision 进 goal/loop、shadow restore 确认、shadow snapshot 异步化、vision MIME sniff + 活体验证、loop mid-goal resume、per-goal verifier、per-goal hook runner、并行目标/worktree first slice、parallel resume 最小 slice、loop finalize 只读报告、loop finalize `--merge` 交互 apply、loop finalize `--cleanup` 交互清理、cron first slice（含同工作区扫描锁 + stale 回收 + task 前心跳）、cron foreground daemon 均已完成；loop 重项收口记录见 `docs/handoff-loop-remaining.md`。
 
 ## GUI 就绪盘点（更新至 2026-07-03）
@@ -31,9 +31,16 @@ CLI 功能已实质收尾（A→E + Hooks slice-1/slice-2 follow-up）。GUI（�
 **GUI 前唯一的真前置（发现的缺口，均「加事件成员」级小改，不碰 core 逻辑）**：
 - **审批事件前置已补**：attended `goal` / `loop` 的 injected approver 已由 `createApprovalEventApprover(...)` 包装，审批前后 emit `approval_request` / `approval_result`，并写入 `data/approvals/*.jsonl`。记录只包含 safe detail（如 write path、bash command preview），不记录 write content。GUI 可先展示审批历史；`human` route 的人工裁决、report merge、audit trail 仍未做。
 - **round / budget 事件已补**：`runGoal` 每轮 emit `goal_round_start` / `goal_round_end`，包含当前 round、maxRounds、累计 turns/tokens、可选总预算、claim status、verdict 和 resulting state。事件只给 GUI 进度条 / 状态面板消费，不进入 verifier report。
-- **usage/status/audit 只读入口已补**：`npm run observe` 按 primitive 汇总 turns、tokens、`latestGoalBudget`、halt reason、verdict、trusted contract path/hash、approval counts、sandbox backend/mount/network/limits。JSON 输出已有 versioned contract 与 explicit authority 字段，GUI 可以先接展示层；该视图只能做观测，不能给 goal/loop 完成授权。
+- **usage/status/audit 只读入口已补**：`npm run observe` 按 primitive 汇总 turns、tokens、`latestGoalBudget`、halt reason、verdict、trusted contract path/hash、approval counts、sandbox backend/mount/network/limits，并输出 `activity.recent` 给 GUI 时间线。JSON 输出已有 versioned contract 与 explicit authority 字段；该视图只能做观测，不能给 goal/loop 完成授权。
 
-**结论**：GUI 可开工。前置 = 本页 + README 已同步（done），审批历史事件、round/budget 事件、只读 observe JSON contract 均可先接展示层。loop primitive 选择入口见 `docs/loop-primitives-guide.md`。loop 重项已收口，记录见 `docs/handoff-loop-remaining.md`；`human` route 的 GUI review flow 仍是产品流缺口，通用 app/browser/network 运行态检查保持范围外。
+**结论**：GUI 已开工并完成第一版晴天模式外壳。前置 = 审批历史事件、round/budget 事件、只读 observe JSON contract 已接展示层；`npm run gui` 提供 observe 时间线与 emergency stop。loop primitive 选择入口见 `docs/loop-primitives-guide.md`。loop 重项已收口，记录见 `docs/handoff-loop-remaining.md`；`human` route 的 GUI review flow 仍是产品流缺口，通用 app/browser/network 运行态检查保持范围外。
+
+### GUI 第一版（2026-07-03）
+
+- `npm run gui` 启动本地 HTTP UI（默认 `127.0.0.1:4317`，端口占用时向后探测）。
+- UI 数据来自 `loadWorkspaceObservation`，与 `npm run observe -- --json` 同源；时间线展示 `activity.recent` 最近事件，并保留 session / goal / loop / cron / approvals / sandbox / worktree / authority 摘要。
+- 急停按钮写 `data/control/emergency-stop.json`，并追加 `data/control/emergency-stop.jsonl` 审计。`goal`、`loop`、`cron`、`cron:daemon` 只响应晚于自身启动时间的停机请求，并把同一个 `AbortSignal` 传给模型流、bash、deterministic checks、sandbox checks 与 loop 调度。
+- GUI 保持 observation/control only：不启动 goal、不裁决 `human` requirement、不 merge verifier report、不做 agent identity / connector / team collaboration。
 
 ## vision→goal/loop 接线（2026-06-30，方向决策 ① 完成）
 
@@ -84,7 +91,7 @@ Phase 3 v1 已解决早前「#2 客观路由」和「#6 裁判只读命令取证
 - **无通用 app/browser/network verifier**：builder 已能通过 `sandboxed_check` 跑固定项目检查脚本并读取失败输出，也能通过 `browser_smoke(static-dist)` 做固定静态页面 smoke feedback。trusted verifier route 仍没有解释器、任意 browser driving、GUI app、network check 或完整 runtime command 路线。运行态需求如果超出窄 inspection scope，继续靠 LLM route 的文本证据或 `human` route park。
 - **human route 仍 park**：`human` requirement 只会生成 `cannotVerify`，没有 CLI/GUI 审批结果回写 verifier report 的闭环。
 - **无 GUI human-review 裁决流**：GUI 可接 Approver，审批 request/result 已有事件和日志；还没有把 `human` verifier requirement 变成人工裁决、report merge、audit trail 的产品流程。
-- **status/usage/audit 入口只有只读版**：`npm run observe` 已能汇总最新 goal/loop/cron 状态、tokens、rounds、`latestGoalBudget`、halt reason、trusted contract metadata、approval counts、sandbox evidence，并通过 `schemaVersion: 1` JSON contract 暴露给 GUI/脚本。它只负责观察和复核辅助，不能改变 verdict。
+- **status/usage/audit 入口只有只读版**：`npm run observe` 已能汇总最新 goal/loop/cron 状态、tokens、rounds、`latestGoalBudget`、halt reason、trusted contract metadata、approval counts、sandbox evidence、`activity.recent` 最近事件流，并通过 `schemaVersion: 1` JSON contract 暴露给 GUI/脚本。它只负责观察和复核辅助，不能改变 verdict。
 
 ## 第二类：Phase E 切片现状 + 剩余
 

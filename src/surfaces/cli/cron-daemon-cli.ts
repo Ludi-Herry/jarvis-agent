@@ -1,5 +1,6 @@
 import { readFile, realpath } from 'node:fs/promises';
 import { basename, join } from 'node:path';
+import { createEmergencyStopSignal } from '../../runtime/index.js';
 import {
   FileLoopCronDaemonStore,
   FileLoopCronLock,
@@ -69,6 +70,14 @@ async function main(): Promise<void> {
   }
 
   const stop = createLoopCronDaemonSignalState();
+  const emergencyStop = createEmergencyStopSignal({
+    cwd,
+    onStop: (state) => {
+      console.error(`\n[emergency-stop] ${safeInline(state.record?.reason ?? state.error ?? 'stop requested')}`);
+      stop.requested = true;
+      stop.onSignal?.();
+    },
+  });
   const shellPath = defaultShellPath();
   const cronLogPath = join(cronDir, 'loop-cron.jsonl');
   const scanLockPath = join(cronDir, 'loop-cron.lock');
@@ -83,7 +92,7 @@ async function main(): Promise<void> {
       startedAt: new Date().toISOString(),
     });
 
-    while (!stop.requested) {
+    while (!stop.requested && !emergencyStop.signal.aborted) {
       await daemonLock.renew();
       await runDaemonScan({
         cwd,
@@ -93,10 +102,11 @@ async function main(): Promise<void> {
         scanLockPath,
         daemonLogPath,
         daemonStore,
-        shouldStop: () => stop.requested,
+        shouldStop: () => stop.requested || emergencyStop.signal.aborted,
+        signal: emergencyStop.signal,
       });
 
-      if (stop.requested) break;
+      if (stop.requested || emergencyStop.signal.aborted) break;
       const nextWakeAt = new Date(Date.now() + args.pollMs).toISOString();
       await daemonStore.append({ t: 'daemon-heartbeat', at: new Date().toISOString(), nextWakeAt });
       console.log(`[cron:daemon] sleeping until ${safeInline(nextWakeAt)}`);
@@ -109,6 +119,7 @@ async function main(): Promise<void> {
     console.error(`[cron:daemon] ${err instanceof Error ? err.message : String(err)}`);
     process.exitCode = 1;
   } finally {
+    emergencyStop.dispose();
     stop.dispose();
     await daemonLock.release();
   }
@@ -123,6 +134,7 @@ async function runDaemonScan(opts: {
   daemonLogPath: string;
   daemonStore: FileLoopCronDaemonStore;
   shouldStop: () => boolean;
+  signal?: AbortSignal;
 }): Promise<void> {
   const scanLock = await new FileLoopCronLock(opts.scanLockPath, { staleMs: LOOP_CRON_LOCK_STALE_MS }).tryAcquire();
   if (scanLock === null) {
@@ -144,7 +156,7 @@ async function runDaemonScan(opts: {
       commandForTask: buildLoopCronCommand,
       beforeRunTask: async () => scanLock.renew(),
       shouldStop: opts.shouldStop,
-      runTask: async (task) => runCronTask(task, opts.shellPath, opts.cwd),
+      runTask: async (task) => runCronTask(task, opts.shellPath, opts.cwd, opts.signal),
     });
     await opts.daemonStore.append({ t: 'scan-finished', at: new Date().toISOString(), ...result });
     console.log(`cron daemon scan complete: triggered=${result.triggered} skipped=${result.skipped} parked=${result.parked}`);
@@ -153,11 +165,11 @@ async function runDaemonScan(opts: {
   }
 }
 
-async function runCronTask(task: LoopCronTask, shellPath: string, cwd: string): Promise<{ exitCode: number | null; loopId?: string }> {
+async function runCronTask(task: LoopCronTask, shellPath: string, cwd: string, signal?: AbortSignal): Promise<{ exitCode: number | null; loopId?: string }> {
   const command = buildLoopCronCommand(task);
   console.log(`[cron:daemon] running ${safeInline(task.id)}: ${safeInline(command)}`);
   const before = await latestLoopPath(join(cwd, 'data', 'loops'));
-  const res = await runCommand(shellPath, command, cwd, LOOP_CRON_TIMEOUT_MS, LOOP_CRON_OUTPUT_LIMIT);
+  const res = await runCommand(shellPath, command, cwd, LOOP_CRON_TIMEOUT_MS, LOOP_CRON_OUTPUT_LIMIT, signal);
   if (res.output.trim()) process.stdout.write(res.output);
   const after = await latestLoopPath(join(cwd, 'data', 'loops'));
   const loopId = after !== null && after !== before ? basename(after, '.jsonl') : undefined;

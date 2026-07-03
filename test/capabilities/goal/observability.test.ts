@@ -237,12 +237,15 @@ describe('buildObservationReport', () => {
       errors: 0,
       sessionIds: ['goal-1'],
     });
+    expect(report.activity.recent[0]).toMatchObject({ kind: 'loop', title: 'Loop halted', detail: 'queue-empty' });
+    expect(report.activity.recent).toContainEqual(expect.objectContaining({ kind: 'approval', title: 'Approval deny', detail: 'write' }));
 
     expect(formatObservationReport(report)).toContain('Observation: status/usage/audit (read-only)');
     expect(formatObservationReport(report)).toContain('completion authority: none');
     expect(formatObservationReport(report)).toContain('latest goal: g1 complete verdict=verified rounds=1');
     expect(formatObservationReport(report)).toContain('latest goal budget: g1 rounds=1/3 turns=2 tokens=42');
     expect(formatObservationReport(report)).toContain('sandbox evidence: 1');
+    expect(formatObservationReport(report)).toContain('recent activity:');
   });
 });
 
@@ -280,5 +283,6 @@ describe('loadWorkspaceObservation', () => {
     expect(report.status.latestGoal).toMatchObject({ id: 'g1', state: 'blocked' });
     expect(report.usage.sessionMessages).toBe(1);
     expect(report.audit.approvals.denied).toBe(1);
+    expect(report.activity.recent).toContainEqual(expect.objectContaining({ kind: 'approval', title: 'Approval deny' }));
   });
 });

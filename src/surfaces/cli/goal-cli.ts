@@ -31,6 +31,7 @@ import {
   DefaultPermissionGate,
   FileSessionStore,
   InMemoryEventBus,
+  createEmergencyStopSignal,
   createWsl2UnshareSandboxRunner,
   type Approver,
   type Event,
@@ -109,6 +110,12 @@ async function main(): Promise<void> {
   scrubProviderKeyFromEnv();
   const cwd = process.cwd();
   const shellPath = defaultShellPath();
+  const emergencyStop = createEmergencyStopSignal({
+    cwd,
+    onStop: (state) => {
+      console.error(`\n[emergency-stop] ${safeInline(state.record?.reason ?? state.error ?? 'stop requested')}`);
+    },
+  });
   const sandboxCheckPlanPath = process.env.JARVIS_SANDBOX_CHECKS_FILE?.trim();
   delete process.env.JARVIS_SANDBOX_CHECKS_FILE;
   const goalSetterRequirementsPath = JARVIS_GOAL_SETTER_REQUIREMENTS_LAUNCH?.trim();
@@ -175,8 +182,8 @@ async function main(): Promise<void> {
     maxOutputTokens: OUTPUT_RESERVE_TOKENS,
   });
 
-  const baseline = await snapshotBaseline(shellPath, cwd); // leg-2 baseline; undefined if not a git repo
-  const worktreeBaseline = await snapshotWorktreeStatus(shellPath, cwd);
+  const baseline = await snapshotBaseline(shellPath, cwd, emergencyStop.signal); // leg-2 baseline; undefined if not a git repo
+  const worktreeBaseline = await snapshotWorktreeStatus(shellPath, cwd, emergencyStop.signal);
   const goalStore = new FileGoalStore(join(cwd, 'data', 'goals', `${id}.jsonl`));
   const sessionStore = new FileSessionStore(join(cwd, 'data', 'sessions', `${sessionId}.jsonl`));
   await sessionStore.writeHeader({ id: sessionId, model: config.model, cwd, startedAt: new Date().toISOString() });
@@ -196,13 +203,21 @@ async function main(): Promise<void> {
     pinned = sandboxCheckPlan.pinned;
   } else if (verifier.enabled) {
     verifierProvider = createProvider(verifier.config).withThinking('off');
-    pinned = await derivePinnedRequirements(objective, provider);
+    pinned = await derivePinnedRequirements(objective, provider, emergencyStop.signal);
+    if (emergencyStop.signal.aborted) {
+      console.error('[goal] emergency stop requested before builder started; no new agent action will run.');
+      rl.close();
+      emergencyStop.dispose();
+      process.exitCode = 1;
+      return;
+    }
     if (pinned.length === 0) {
       console.error(
         '[goal] 腿3 已启用但未能从目标推导出验收清单(pinned requirements 为空)。\n' +
           '没有可逐条打分的清单,verified 不可达——拒绝启动,避免空烧预算。请把目标写得更具体后重试。',
       );
       rl.close();
+      emergencyStop.dispose();
       process.exitCode = 1;
       return;
     }
@@ -299,9 +314,19 @@ async function main(): Promise<void> {
         goalSetterRequirementRoutes: goalSetterRequirements?.routes,
         sandboxRunner: sandboxedRequirementCommands && sandboxedRequirementCommands.length > 0 ? builderSandboxRunner : undefined,
         shadowGit,
+        signal: emergencyStop.signal,
       },
     );
+  } catch (err) {
+    if (emergencyStop.signal.aborted) {
+      bus.emit({ type: 'halt', reason: 'emergency-stop' });
+      console.error('\n[goal] emergency stop requested; run aborted and JSONL logs were left in place.');
+      process.exitCode = 1;
+      return;
+    }
+    throw err;
   } finally {
+    emergencyStop.dispose();
     await runAdvisoryHook(hooks?.sessionEnd);
     rl.close();
   }
@@ -364,8 +389,8 @@ function countRoutes(routes: ReadonlyMap<string, string>, route: string): number
 }
 
 /** Snapshot the leg-2 baseline: the current HEAD sha. Undefined when not a git repo (leg 2 inert). */
-async function snapshotBaseline(shellPath: string, cwd: string): Promise<TestBaseline | undefined> {
-  const res = await runCommand(shellPath, 'git rev-parse HEAD', cwd, 10_000, 1_000);
+async function snapshotBaseline(shellPath: string, cwd: string, signal?: AbortSignal): Promise<TestBaseline | undefined> {
+  const res = await runCommand(shellPath, 'git rev-parse HEAD', cwd, 10_000, 1_000, signal);
   if (res.code !== 0) return undefined;
   return { headSha: res.output.trim(), testFiles: [] };
 }

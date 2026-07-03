@@ -1,5 +1,6 @@
 import { readFile, realpath } from 'node:fs/promises';
 import { basename, join } from 'node:path';
+import { createEmergencyStopSignal } from '../../runtime/index.js';
 import {
   FileLoopCronLock,
   FileLoopCronStore,
@@ -61,6 +62,12 @@ async function main(): Promise<void> {
     return;
   }
   const store = new FileLoopCronStore(cronLogPath);
+  const emergencyStop = createEmergencyStopSignal({
+    cwd,
+    onStop: (state) => {
+      console.error(`\n[emergency-stop] ${safeInline(state.record?.reason ?? state.error ?? 'stop requested')}`);
+    },
+  });
   try {
     const state = await loadLoopCronState(cronLogPath);
     const shellPath = defaultShellPath();
@@ -70,19 +77,21 @@ async function main(): Promise<void> {
       store,
       state,
       beforeRunTask: async () => lock.renew(),
-      runTask: async (task) => runCronTask(task, shellPath, cwd),
+      shouldStop: () => emergencyStop.signal.aborted,
+      runTask: async (task) => runCronTask(task, shellPath, cwd, emergencyStop.signal),
     });
     console.log(`cron scan complete: triggered=${result.triggered} skipped=${result.skipped}`);
   } finally {
+    emergencyStop.dispose();
     await lock.release();
   }
 }
 
-async function runCronTask(task: LoopCronTask, shellPath: string, cwd: string): Promise<{ exitCode: number | null; loopId?: string }> {
+async function runCronTask(task: LoopCronTask, shellPath: string, cwd: string, signal?: AbortSignal): Promise<{ exitCode: number | null; loopId?: string }> {
   const command = buildLoopCronCommand(task);
   console.log(`[cron] running ${safeInline(task.id)}: ${safeInline(command)}`);
   const before = await latestLoopPath(join(cwd, 'data', 'loops'));
-  const res = await runCommand(shellPath, command, cwd, LOOP_CRON_TIMEOUT_MS, LOOP_CRON_OUTPUT_LIMIT);
+  const res = await runCommand(shellPath, command, cwd, LOOP_CRON_TIMEOUT_MS, LOOP_CRON_OUTPUT_LIMIT, signal);
   if (res.output.trim()) process.stdout.write(res.output);
   const after = await latestLoopPath(join(cwd, 'data', 'loops'));
   const loopId = after !== null && after !== before ? basename(after, '.jsonl') : undefined;

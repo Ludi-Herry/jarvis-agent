@@ -36,7 +36,7 @@ Jarvis 已经有只读 `npm run observe` 入口。它读取 session / goal / loo
 - 事件：attended `goal` / `loop` 已 emit `approval_request` / `approval_result`，并写入 `data/approvals/*.jsonl`，用于审批历史可观测和审计。
 - 事件：`runGoal` 已 emit `goal_round_start` / `goal_round_end`，包含轮次、turn/token 累计、可选总预算、claim/verdict/state，供 GUI 展示进度。
 - CLI：`npm run observe -- --data-dir <path>` 可看非默认 data 目录；`npm run observe -- --json` 用于机器读取。
-- GUI：下一步只需接展示层和筛选入口；`human` verifier requirement 的人工裁决回写仍需单独产品流。
+- GUI：`npm run gui` 已接 `ObservationReport.activity.recent` 最近事件流、聚合状态摘要和急停控制；`human` verifier requirement 的人工裁决回写仍需单独产品流。
 - 约束：observe 视图只读，不给完成授权；goal/loop 完成仍只看 `runGoal` / `decideVerdict`。
 
 ## skill 沉淀规则

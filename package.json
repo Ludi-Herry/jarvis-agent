@@ -17,6 +17,7 @@
     "cron": "tsx src/surfaces/cli/cron-cli.ts",
     "cron:daemon": "tsx src/surfaces/cli/cron-daemon-cli.ts",
     "observe": "tsx src/surfaces/cli/observe-cli.ts",
+    "gui": "tsx src/surfaces/gui/gui-server.ts",
     "shadow": "tsx src/surfaces/cli/shadow-cli.ts",
     "demo:a1": "tsx scripts/a1-demo.ts",
     "demo:a2": "tsx scripts/a2-demo.ts",

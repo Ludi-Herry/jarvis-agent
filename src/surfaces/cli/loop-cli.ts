@@ -55,7 +55,15 @@ import {
   runCommand,
   scrubProviderKeyFromEnv,
 } from '../../core/index.js';
-import { DefaultPermissionGate, FileSessionStore, InMemoryEventBus, createWsl2UnshareSandboxRunner, type Approver, type Event } from '../../runtime/index.js';
+import {
+  DefaultPermissionGate,
+  FileSessionStore,
+  InMemoryEventBus,
+  createEmergencyStopSignal,
+  createWsl2UnshareSandboxRunner,
+  type Approver,
+  type Event,
+} from '../../runtime/index.js';
 import {
   DEFAULT_CHECK_COMMANDS,
   FileGoalStore,
@@ -475,6 +483,13 @@ async function main(): Promise<void> {
     });
   }
 
+  const emergencyStop = createEmergencyStopSignal({
+    cwd,
+    onStop: (state) => {
+      console.error(`\n[emergency-stop] ${safeInline(state.record?.reason ?? state.error ?? 'stop requested')}`);
+    },
+  });
+
   // Shared once: bus + render, context, gate (+ optional interactive approver), verifier provider.
   const bus = new InMemoryEventBus();
   let rstate = initialRenderState();
@@ -647,8 +662,12 @@ async function main(): Promise<void> {
     } else if (sandboxPinned !== undefined) {
       pinned = sandboxPinned;
     } else if (verifierProvider) {
-      pinned = await derivePinnedRequirements(objective, provider);
+      pinned = await derivePinnedRequirements(objective, provider, emergencyStop.signal);
       if (pinned.length === 0) {
+        if (emergencyStop.signal.aborted) {
+          bus.emit({ type: 'halt', reason: 'emergency-stop' });
+          return { state: 'blocked', rounds: resumeState?.rounds.length ?? 0, tokens: sumRoundTokens(resumeState?.rounds ?? []) };
+        }
         // Verifier on but no pinned list makes `verified` unreachable, so running would
         // only burn budget to a block. Block this goal immediately and let the loop continue. No outcome
         // Not a verifier-health sample because the judge never ran.
@@ -660,8 +679,8 @@ async function main(): Promise<void> {
       return { state: 'blocked', rounds: resumeState.rounds.length, tokens: sumRoundTokens(resumeState.rounds) };
     }
 
-    const baseline = await snapshotBaseline(shellPath, goalCwd);
-    const worktreeBaseline = await snapshotWorktreeStatus(shellPath, goalCwd);
+    const baseline = await snapshotBaseline(shellPath, goalCwd, emergencyStop.signal);
+    const worktreeBaseline = await snapshotWorktreeStatus(shellPath, goalCwd, emergencyStop.signal);
     const goalStore = new FileGoalStore(goalPath);
     const sessionStore = new FileSessionStore(sessionPath, loadedResume?.initialCursor ?? 0);
     if (!attempt.resumed) {
@@ -712,6 +731,7 @@ async function main(): Promise<void> {
           goalSetterRequirementRoutes: goalSetterRoutes,
           sandboxRunner: sandboxedRequirementCommands && sandboxedRequirementCommands.length > 0 ? goalSandboxRunner : undefined,
           shadowGit: goalShadowGit,
+          signal: emergencyStop.signal,
         },
       );
     } finally {
@@ -741,6 +761,7 @@ async function main(): Promise<void> {
       }
     } catch (err) {
       console.error(`[loop resume] ${err instanceof Error ? err.message : String(err)}`);
+      emergencyStop.dispose();
       rl?.close();
       process.exitCode = 1;
       return;
@@ -761,6 +782,7 @@ async function main(): Promise<void> {
       inFlight: seedInFlight,
       consecutiveBlocked: seedConsecutiveBlocked,
       cumulativeTokens: seedCumulativeTokens,
+      signal: emergencyStop.signal,
     };
     const result = parallelMode
       ? await runParallelLoop({ id: loopId, objectives, contract }, { ...loopDeps, maxParallel: parallel })
@@ -771,7 +793,17 @@ async function main(): Promise<void> {
     );
     if (parallelMode) console.log(`Worktrees kept for inspection: ${safeInline(worktreeRoot)}`);
     if (NEEDS_HUMAN.has(result.reason)) process.exitCode = 1;
+  } catch (err) {
+    if (emergencyStop.signal.aborted) {
+      bus.emit({ type: 'loop_halt', loopId, reason: 'wall-clock' });
+      bus.emit({ type: 'halt', reason: 'emergency-stop' });
+      console.error('\n[loop] emergency stop requested; no new goals will launch and JSONL logs were left in place.');
+      process.exitCode = 1;
+      return;
+    }
+    throw err;
   } finally {
+    emergencyStop.dispose();
     await runAdvisoryHook(hooks?.sessionEnd);
     rl?.close();
   }
@@ -804,8 +836,8 @@ function findWorkspaceRoot(cwd: string): string {
 }
 
 /** Snapshot the leg-2 baseline (current HEAD sha). Undefined when not a git repo (leg 2 inert). */
-async function snapshotBaseline(shellPath: string, cwd: string): Promise<TestBaseline | undefined> {
-  const res = await runCommand(shellPath, 'git rev-parse HEAD', cwd, 10_000, 1_000);
+async function snapshotBaseline(shellPath: string, cwd: string, signal?: AbortSignal): Promise<TestBaseline | undefined> {
+  const res = await runCommand(shellPath, 'git rev-parse HEAD', cwd, 10_000, 1_000, signal);
   if (res.code !== 0) return undefined;
   return { headSha: res.output.trim(), testFiles: [] };
 }

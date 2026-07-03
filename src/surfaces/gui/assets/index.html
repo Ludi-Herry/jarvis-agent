@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Jarvis Console</title>
+    <link rel="stylesheet" href="/app.css">
+  </head>
+  <body>
+    <main class="shell">
+      <aside class="rail" aria-label="Jarvis status">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <div>
+            <h1>Jarvis</h1>
+            <p>Control Console</p>
+          </div>
+        </div>
+
+        <section class="summary" aria-label="Runtime summary">
+          <div>
+            <span class="label">Authority</span>
+            <strong id="authority">read-only</strong>
+          </div>
+          <div>
+            <span class="label">Goals</span>
+            <strong id="goals">0</strong>
+          </div>
+          <div>
+            <span class="label">Loops</span>
+            <strong id="loops">0</strong>
+          </div>
+          <div>
+            <span class="label">Approvals</span>
+            <strong id="approvals">0/0</strong>
+          </div>
+        </section>
+
+        <section class="stop-panel" aria-label="Emergency stop">
+          <div>
+            <span class="label">Run Control</span>
+            <strong id="stop-state">Armed</strong>
+          </div>
+          <button id="stop-button" class="stop-button" type="button">
+            <span class="stop-icon" aria-hidden="true"></span>
+            急停
+          </button>
+        </section>
+      </aside>
+
+      <section class="workspace" aria-label="Timeline">
+        <header class="topbar">
+          <div>
+            <span class="eyebrow">observe / timeline</span>
+            <h2>运行时间线</h2>
+          </div>
+          <div class="top-actions">
+            <span id="updated-at" class="updated">waiting</span>
+          </div>
+        </header>
+
+        <section class="meters" aria-label="Current run meters">
+          <div class="meter">
+            <span>Latest goal</span>
+            <strong id="latest-goal">-</strong>
+          </div>
+          <div class="meter">
+            <span>Budget</span>
+            <strong id="budget">-</strong>
+          </div>
+          <div class="meter">
+            <span>Tokens</span>
+            <strong id="tokens">0</strong>
+          </div>
+        </section>
+
+        <ol id="timeline" class="timeline" aria-live="polite"></ol>
+      </section>
+    </main>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

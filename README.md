@@ -16,7 +16,7 @@
 | Phase D 自主（GoalLoop + 确定性三腿〔canonical 重跑 + 篡改检测 + held-out 隐藏断言〕+ 独立 LLM 裁判） | ✅ 完成（D1–D9 + held-out） |
 | Phase E 多能力（多 goal Loop 调度 + 外置 vision + 命令级 bash session-allow + shadow-git 旁路历史） | ✅ 完成（4 切片合入 main） |
 | Hooks（PreToolUse 阻断 + PostToolUse 咨询/反馈；tool result env；per-hook timeout；round/session lifecycle；多来源；loop per-goal hook-map） | ✅ 完成，剩余仅保留 defer |
-| **下一步：GUI（晴天模式外壳）** | ⏭️ GUI 可开工；loop 重项已收口 |
+| **GUI 第一版（看得懂 + 急停）** | ✅ 最小晴天模式外壳：observe 时间线 + emergency stop；human-review 裁决流仍 defer |
 | OS sandbox Phase 3 v1 + builder sandboxed checks + browser smoke feedback + 只读观测层 | ✅ 完成（trusted requirements / route map / composite verifier / `sandboxed_check` / `browser_smoke(static-dist)` / round budget events / `npm run observe`）；未覆盖范围：通用 app/browser/network verifier、GUI human-review |
 | propose_skill | ⛔ 已拍板 defer（投机性、判定偏弱、无证实复用场景） |
 | 新增 verifier / route / scheduler 抽象 | ⛔ 已拍板不做；现有四套 map 足够（`verifier` / `hook` / `sandbox-check` / `goal-setter-requirements`） |
@@ -64,6 +64,7 @@ cp .env.example .env   # 然后编辑 .env 填 ARK_API_KEY
 | routine / 前台常驻调度 | `npm run cron:daemon` | 前台 daemon，负责锁、JSONL、信号退出 |
 | review / apply / cleanup | `npm run loop:finalize` | 并行 worktree 完成后的只读报告、交互 merge/cleanup |
 | status / usage / audit | `npm run observe` | 只读汇总 JSONL 和 sandbox audit evidence，不给完成授权 |
+| GUI / timeline / stop | `npm run gui` | 本地只读观测面板，复用 observe contract，提供急停控制 |
 
 ```bash
 npm run dev         # 终端 REPL：带权限闸门 + bash + 交互审批 + 会话落盘（需 ARK_API_KEY）。Ctrl-C 中断 / /exit 退出
@@ -77,6 +78,7 @@ npm run loop:finalize -- --loop <id> --cleanup # 交互式清理：必须输入 
 npm run cron -- --cron-map <trusted-json> # cron 单次扫描：可信 cwd 外计划文件，到期任务触发普通 loop；task 必须 unattended:true；带同工作区扫描锁 + stale 回收 + task 前心跳；记录 data/cron/loop-cron.jsonl，不常驻
 npm run cron:daemon -- --cron-map <trusted-json> [--poll-ms <n>] # cron 前台 daemon：可信 cwd 外计划文件；默认 poll=60000；daemon lock + scan lock；写 data/cron/loop-cron-daemon.jsonl；SIGINT/SIGTERM 释放锁退出；不自动 resume/merge/cleanup，不后台 fork
 npm run observe     # 只读观测：汇总 data/sessions|goals|loops|cron|approvals 的 status / usage / audit / latestGoalBudget；--json 输出 schemaVersion=1 给 GUI/脚本
+npm run gui         # 本地 GUI 第一版：http://127.0.0.1:4317 起，只读时间线 + 急停键；若端口占用会自动向后找可用端口
 npm run typecheck   # tsc --noEmit
 npm test            # vitest（1007 passed / 1 skipped，Windows 下 1 个 POSIX SIGINT smoke 跳过）
 npm run build       # tsc 产出到 dist/
@@ -125,13 +127,21 @@ Browser smoke output is feedback for the builder or a human smoke pass. It canno
 
 ### Read-only observation contract
 
-`npm run observe -- --json` emits `ObservationReport` schema version 1. The report includes `meta.generatedAt`, `meta.source.dataDir`, the fixed log scope (`sessions/goals/loops/cron/cronDaemon/approvals`), `status.latestGoalBudget`, `usage`, and audit summaries for trusted contracts, worktree status, sandbox evidence, and approval request/result counts.
+`npm run observe -- --json` emits `ObservationReport` schema version 1. The report includes `meta.generatedAt`, `meta.source.dataDir`, the fixed log scope (`sessions/goals/loops/cron/cronDaemon/approvals`), `status.latestGoalBudget`, `usage`, audit summaries for trusted contracts, worktree status, sandbox evidence, approval request/result counts, and `activity.recent` with the latest session / goal / loop / cron / approval records in display order.
 
 The report also includes `authority: { mode: "observation-only", canCompleteGoals: false, canCompleteLoops: false }`. GUI or scripts can display and filter it, but they must not treat it as completion evidence.
 
 Goal runs emit `goal_round_start` / `goal_round_end` events with round number, max rounds, total turns/tokens, optional total limits, claim status, verdict, and resulting state. These events are read-only telemetry for GUI progress bars and status panes; they cannot update verifier reports or mark a goal complete.
 
 Attended `goal` and `loop` runs emit `approval_request` / `approval_result` events around the injected human approver and append the same safe details to `data/approvals/*.jsonl`. These records omit write content and remain audit-only; they do not approve `human` verifier requirements or change verdicts.
+
+### GUI first slice
+
+`npm run gui` starts a local HTTP UI on `127.0.0.1:4317` by default. It serves a compact timeline built from the same `loadWorkspaceObservation` contract behind `npm run observe -- --json`, including `activity.recent` event rows and aggregate status cards, plus a visible emergency stop control.
+
+The stop control writes `data/control/emergency-stop.json` and appends `data/control/emergency-stop.jsonl`. Running `goal`, `loop`, `cron`, and `cron:daemon` watch that file and only honor stop requests newer than their own process start time. When honored, the shared `AbortSignal` is passed into model streams, bash, deterministic checks, sandbox checks, and loop scheduling so new agent actions stop promptly while existing JSONL logs remain available for review.
+
+The GUI is observation/control only. It does not start goals, approve verifier `human` requirements, merge reports, complete loops, edit trusted maps, or create connector / identity / team-collaboration state.
 
 ### Worktree status baseline
 
