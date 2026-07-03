@@ -27,3 +27,4 @@ export * from './loop-cron-config.js';
 export * from './loop-cron.js';
 export * from './loop-cron-daemon.js';
 export * from './loop-finalize.js';
+export * from './observability.js';

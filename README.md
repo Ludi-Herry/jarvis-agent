@@ -19,7 +19,7 @@
 | **下一步：GUI（晴天模式外壳）** | ⏭️ GUI 可开工；loop 重项已收口 |
 | 沙箱两件（#2 客观路由 / #6 裁判 exec）+ propose_skill | ⛔ 已拍板 defer（能力天花板：`cannotVerify→park` 是正确 fail-closed） |
 
-`npm run typecheck / lint / test / build` 全绿（**870 测试，Windows 下 1 个 POSIX SIGINT smoke 跳过**）。命令安全根（PermissionGate + 命令解析器 + bash 审批）经**六轮独立 codex 对抗核查**确认无破闸 HIGH；goal 验收子系统（确定性三腿 + 腿3 裁判 + bash/Linux 密钥加固）经**多轮多裁判对抗核查**（codex + 独立 Claude 子代理，含一轮 4 裁判收尾）。Phase E 各切片与 Hooks slice-1/2 均经 **codex 跨模型对抗审查逐层加固**（vision 四轮 / bash 白名单 Path A 经 7 HIGH 撤回、保留命令级 Path B / Hooks 信任边界修 HIGH / slice-2 每切片 2 轮 SHIP）。方法 / 严重度基线 / 历史见 `docs/security-review-baseline.md`。
+`npm run typecheck / lint / test / build` 全绿（**974 passed / 1 skipped**，Windows 下 1 个 POSIX SIGINT smoke 跳过）。命令安全根（PermissionGate + 命令解析器 + bash 审批）经**六轮独立 codex 对抗核查**确认无破闸 HIGH；goal 验收子系统（确定性三腿 + 腿3 裁判 + bash/Linux 密钥加固）经**多轮多裁判对抗核查**（codex + 独立 Claude 子代理，含一轮 4 裁判收尾）。Phase E 各切片与 Hooks slice-1/2 均经 **codex 跨模型对抗审查逐层加固**（vision 四轮 / bash 白名单 Path A 经 7 HIGH 撤回、保留命令级 Path B / Hooks 信任边界修 HIGH / slice-2 每切片 2 轮 SHIP）。方法 / 严重度基线 / 历史见 `docs/security-review-baseline.md`。
 
 接手入口：
 - **Loop primitive 怎么选 → `docs/loop-primitives-guide.md`**；**最新全景 + Phase E/Hooks 现状 + 下一步（GUI 就绪盘点）→ `docs/handoff-next.md`**；**Loop 重项收口记录（parallel resume / finalize / cron daemon）→ `docs/handoff-loop-remaining.md`**；**Phase D（GoalLoop + 三腿 + 腿3 裁判）→ `docs/handoff-D.md`**；**Hooks（tool-call / lifecycle / loop per-goal hook-map）→ `docs/handoff-hooks.md`**；
@@ -61,6 +61,7 @@ cp .env.example .env   # 然后编辑 .env 填 ARK_API_KEY
 | trigger / 计划触发 | `npm run cron` | 可信 cwd 外 cron map，单次 due scan |
 | routine / 前台常驻调度 | `npm run cron:daemon` | 前台 daemon，负责锁、JSONL、信号退出 |
 | review / apply / cleanup | `npm run loop:finalize` | 并行 worktree 完成后的只读报告、交互 merge/cleanup |
+| status / usage / audit | `npm run observe` | 只读汇总 JSONL 和 sandbox audit evidence，不给完成授权 |
 
 ```bash
 npm run dev         # 终端 REPL：带权限闸门 + bash + 交互审批 + 会话落盘（需 ARK_API_KEY）。Ctrl-C 中断 / /exit 退出
@@ -73,8 +74,9 @@ npm run loop:finalize -- --loop <id> --merge # 交互式 apply：必须输入 me
 npm run loop:finalize -- --loop <id> --cleanup # 交互式清理：必须输入 cleanup <loopId>；只移除有 merge-applied 审计且当前 clean 的 worktree；使用 git worktree remove，不强删、不删日志
 npm run cron -- --cron-map <trusted-json> # cron 单次扫描：可信 cwd 外计划文件，到期任务触发普通 loop；task 必须 unattended:true；带同工作区扫描锁 + stale 回收 + task 前心跳；记录 data/cron/loop-cron.jsonl，不常驻
 npm run cron:daemon -- --cron-map <trusted-json> [--poll-ms <n>] # cron 前台 daemon：可信 cwd 外计划文件；默认 poll=60000；daemon lock + scan lock；写 data/cron/loop-cron-daemon.jsonl；SIGINT/SIGTERM 释放锁退出；不自动 resume/merge/cleanup，不后台 fork
+npm run observe     # 只读观测：汇总 data/sessions|goals|loops|cron 的 status / usage / audit；--json 输出给 GUI/脚本
 npm run typecheck   # tsc --noEmit
-npm test            # vitest（870 测试，Windows 下 1 个 POSIX SIGINT smoke 跳过）
+npm test            # vitest（974 passed / 1 skipped，Windows 下 1 个 POSIX SIGINT smoke 跳过）
 npm run build       # tsc 产出到 dist/
 npm run lint        # eslint
 npm run demo:a1     # A1：调 Doubao 一句话 → 流式增量 + 聚合 ModelResult
@@ -308,7 +310,7 @@ src/
 skills/          # git-commit/SKILL.md
 agents/          # researcher/ROLE.md（子 agent 角色花名册）
 scripts/         # a1/a2/a3/a5 + b1/b3 + c1/c2 + d1 demo（真连 Doubao / 真跑 bash）
-test/            # vitest 单测（870，Windows 下 1 个 POSIX SIGINT smoke 跳过）
+test/            # vitest 单测（974 passed / 1 skipped，Windows 下 1 个 POSIX SIGINT smoke 跳过）
 docs/            # 各阶段 plan + handoff + security-review-baseline
 data/            # 运行期会话日志（gitignore）
 ```

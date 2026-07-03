@@ -12,6 +12,7 @@
 | 外部节奏触发 | trigger | `npm run cron -- --cron-map <trusted-json>` | 到期扫描一次，触发普通 loop | cron map realpath 后拒 cwd 内；scan lock；task 必须 `unattended:true` |
 | 前台常驻调度 | trigger + routine | `npm run cron:daemon -- --cron-map <trusted-json>` | 本机打开时持续轮询计划任务 | daemon lock + scan lock；JSONL；SIGINT/SIGTERM 释放锁；不后台 fork |
 | loop 后人工收口 | review / apply / cleanup | `npm run loop:finalize -- --loop <id>`，按需 `--merge` / `--cleanup` | 并行 worktree 跑完后审阅、合入、清理 | 交互确认完整短语；blocked/parked/rejected/missing verdict/conflict/dirty 停下 |
+| 运行态观察 | status / usage / audit | `npm run observe`，按需 `--json` | 汇总 session / goal / loop / cron JSONL 和 sandbox audit evidence | 只读；不能给 goal/loop 完成授权 |
 
 ## 判断顺序
 
@@ -28,14 +29,14 @@
 - 运行态验收需要执行未知代码，当前裁判会 `cannotVerify→park`。这属于 OS sandbox 能力天花板，先交人。
 - 想让无人值守 bash 自治时先停下。当前 unattended bash 仍 fail-closed，不能用 allow-list 或 cwd 配置绕开。
 
-## usage / budget 观测 backlog
+## usage / budget 观测
 
-Jarvis 已经记录 session / goal / loop / cron JSONL，也通过 bus 订阅累计 usage。后续 GUI 或 CLI 可以补一个轻量观测层：
+Jarvis 已经有只读 `npm run observe` 入口。它读取 session / goal / loop / cron JSONL，并从 verifier report evidence 里提取 sandbox audit 摘要；默认输出文本，`--json` 输出给 GUI 或脚本使用。
 
 - GUI：补 `approval_request` / `approval_result` 事件，用于审批历史可观测和审计。
 - GUI：补 `round` / `budget` 事件，或提供查询接口，让界面显示第几轮、剩余 token、停止原因。
-- CLI：后续可加只读 `status` / `usage` 摘要，读取 session / goal / loop / cron JSONL，按 primitive 汇总 turns、tokens、halt reason、verdict。
-- 约束：usage 视图只读，不给完成授权；loop 完成仍只看 `runGoal` / `decideVerdict`。
+- CLI：`npm run observe -- --data-dir <path>` 可看非默认 data 目录；`npm run observe -- --json` 用于机器读取。
+- 约束：observe 视图只读，不给完成授权；goal/loop 完成仍只看 `runGoal` / `decideVerdict`。
 
 ## skill 沉淀规则
 
@@ -51,4 +52,4 @@ Jarvis 已经记录 session / goal / loop / cron JSONL，也通过 bus 订阅累
 - `README.md`：命令入口和快速选择表。
 - `docs/handoff-D.md`：GoalLoop、三腿验收、`decideVerdict` 不变量。
 - `docs/handoff-loop-remaining.md`：parallel resume、finalize、cron daemon 的边界和失败模式。
-- `docs/handoff-next.md`：GUI 就绪、usage/budget/approval 事件 backlog、skill 自动沉淀决策。
+- `docs/handoff-next.md`：GUI 就绪、observe 入口、usage/budget/approval 事件 backlog、skill 自动沉淀决策。
