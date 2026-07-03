@@ -152,6 +152,20 @@ describe('buildObservationReport', () => {
 
     const report = buildObservationReport(input);
 
+    expect(report).toMatchObject({
+      meta: {
+        schemaVersion: 1,
+        generatedAt: expect.any(String),
+        source: {},
+        scope: {
+          sessions: true,
+          goals: true,
+          loops: true,
+          cron: true,
+          cronDaemon: true,
+        },
+      },
+    });
     expect(report.authority).toEqual({ canCompleteGoals: false, canCompleteLoops: false, mode: 'observation-only' });
     expect(report.status.latestGoal).toMatchObject({ id: 'g1', state: 'complete', verdict: 'verified', rounds: 1 });
     expect(report.status.latestLoop).toMatchObject({ id: 'L1', completed: 1, blocked: 1, halted: 'queue-empty' });
@@ -203,6 +217,7 @@ describe('loadWorkspaceObservation', () => {
 
     const report = await loadWorkspaceObservation(join(dir, 'data'));
 
+    expect(report.meta.source).toEqual({ dataDir: join(dir, 'data') });
     expect(report.status.sessions.total).toBe(1);
     expect(report.status.goals.total).toBe(1);
     expect(report.status.latestGoal).toMatchObject({ id: 'g1', state: 'blocked' });

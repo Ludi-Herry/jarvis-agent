@@ -37,7 +37,26 @@ export interface ObservationInput {
   cronDaemon?: ObservationLog<LoopCronDaemonRecord>;
 }
 
+export interface ObservationReportOptions {
+  sourceDataDir?: string;
+  generatedAt?: string;
+}
+
 export interface ObservationReport {
+  meta: {
+    schemaVersion: 1;
+    generatedAt: string;
+    source: {
+      dataDir?: string;
+    };
+    scope: {
+      sessions: true;
+      goals: true;
+      loops: true;
+      cron: true;
+      cronDaemon: true;
+    };
+  };
   authority: {
     mode: 'observation-only';
     canCompleteGoals: false;
@@ -132,7 +151,7 @@ export interface SandboxAuditSummary {
   limits?: unknown;
 }
 
-export function buildObservationReport(input: ObservationInput): ObservationReport {
+export function buildObservationReport(input: ObservationInput, options: ObservationReportOptions = {}): ObservationReport {
   const sessions = input.sessions ?? [];
   const goals = input.goals ?? [];
   const loops = input.loops ?? [];
@@ -148,6 +167,20 @@ export function buildObservationReport(input: ObservationInput): ObservationRepo
   const loopFinished = loops.flatMap((log) => log.records.filter((record) => record.t === 'goal-finished'));
 
   return {
+    meta: {
+      schemaVersion: 1,
+      generatedAt: options.generatedAt ?? new Date().toISOString(),
+      source: {
+        ...optional('dataDir', options.sourceDataDir),
+      },
+      scope: {
+        sessions: true,
+        goals: true,
+        loops: true,
+        cron: true,
+        cronDaemon: true,
+      },
+    },
     authority: { mode: 'observation-only', canCompleteGoals: false, canCompleteLoops: false },
     status: {
       sessions: { total: sessionSummaries.length },
@@ -193,7 +226,7 @@ export async function loadWorkspaceObservation(dataDir: string): Promise<Observa
     loops,
     ...(cron === undefined ? {} : { cron }),
     ...(cronDaemon === undefined ? {} : { cronDaemon }),
-  });
+  }, { sourceDataDir: dataDir });
 }
 
 export function formatObservationReport(report: ObservationReport): string {

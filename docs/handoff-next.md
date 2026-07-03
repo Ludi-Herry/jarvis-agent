@@ -15,7 +15,7 @@
 - **Phase 3 v1 边界**：trusted verifier route 仍只覆盖 goal-setter 预声明的窄 read-only inspection command（`git status/diff/log/ls-files`、`stat`、`wc`）。`sandboxed_check` 和 `browser_smoke` 都是 builder 反馈工具，不能证明 trusted requirement、不能改写 verdict、不能给 goal/loop 完成授权。通用 app / browser / network verifier 不在当前抽象范围；`local-preview` browser smoke 仍等 loopback-only sandbox proof；`human` route 仍然 `cannotVerify→park`；GUI human-review flow 未实现。`npm run observe` 只能汇总 JSONL 和 audit evidence，不能给 goal/loop 完成授权。
 - **skill 自动沉淀（`propose_skill`）：不做**（投机性、判定偏弱、无证实的复用场景）。下文该节仅作设计存档。
 - **新增 verifier / route / scheduler 抽象：不做**。现有 `--verifier-map`、`--hook-map`、`--sandbox-check-map`、`--goal-setter-requirements-map` 四套 map 已足够；后续只允许修 bug、收窄边界、同步文档，不能再加第 5 套 map 或新调度/路由层。
-- **只读观测层已落地**：`npm run observe` 读取 session / goal / loop / cron JSONL 与 sandbox audit evidence，输出运行态摘要、成本/轮次摘要、trusted contract metadata、worktree status 和 sandbox backend/mount/network/limits；`--json` 给 GUI/脚本消费；`--data-dir <path>` 可看非默认 `data/`。完成授权仍只来自 `decideVerdict`、deterministic checks、trusted requirement routes 和人工确认。
+- **只读观测层已落地**：`npm run observe` 读取 session / goal / loop / cron JSONL 与 sandbox audit evidence，输出运行态摘要、成本/轮次摘要、trusted contract metadata、worktree status 和 sandbox backend/mount/network/limits；`--json` 给 GUI/脚本消费，当前 `ObservationReport` 为 `schemaVersion: 1`，带 `meta.source.dataDir` 与 `authority.mode: "observation-only"`。`--data-dir <path>` 可看非默认 `data/`。完成授权仍只来自 `decideVerdict`、deterministic checks、trusted requirement routes 和人工确认。
 - **已完成的 Phase E/loop 收口**：接 vision 进 goal/loop、shadow restore 确认、shadow snapshot 异步化、vision MIME sniff + 活体验证、loop mid-goal resume、per-goal verifier、per-goal hook runner、并行目标/worktree first slice、parallel resume 最小 slice、loop finalize 只读报告、loop finalize `--merge` 交互 apply、loop finalize `--cleanup` 交互清理、cron first slice（含同工作区扫描锁 + stale 回收 + task 前心跳）、cron foreground daemon 均已完成；loop 重项收口记录见 `docs/handoff-loop-remaining.md`。
 
 ## GUI 就绪盘点（2026-07-01）
@@ -31,7 +31,7 @@ CLI 功能已实质收尾（A→E + Hooks slice-1/slice-2 follow-up）。GUI（�
 **GUI 前唯一的真前置（发现的缺口，均「加事件成员」级小改，不碰 core 逻辑）**：
 - **审批不在事件流**（最值得先定）：Approver 是请求-响应回调，审批发生时**不 emit 事件、不进持久化**（CLI 靠 approver 内 render 显示）。GUI 必须注入自己的 Approver（这是注入式设计意图）；但若要**审批历史可观测 / 可审计**，需加 `approval_request`/`approval_result` 事件（emit 在 gate.check 前后或 approver 包装层）+ 落盘。做不做是 GUI 前的第一个选择。
 - **round / budget 无专门事件**：GUI 想显示「第几轮 / token 预算条」，round 可从 goal_state 推、或随 slice-2 ⑤ round-hook 顺带加 round 事件；budget 剩余需加 budget 事件或查询接口。按 GUI 实际需求补，非阻塞。
-- **usage/status/audit 只读入口已补**：`npm run observe` 按 primitive 汇总 turns、tokens、halt reason、verdict、trusted contract path/hash、sandbox backend/mount/network/limits。该视图只能做观测，不能给 goal/loop 完成授权。
+- **usage/status/audit 只读入口已补**：`npm run observe` 按 primitive 汇总 turns、tokens、halt reason、verdict、trusted contract path/hash、sandbox backend/mount/network/limits。JSON 输出已有 versioned contract 与 explicit authority 字段，GUI 可以先接展示层；该视图只能做观测，不能给 goal/loop 完成授权。
 
 **结论**：GUI 可开工。前置 = ①本页 + README 已同步（done）+ ②上面「审批事件」取舍 + 按需补 round/budget 事件。loop primitive 选择入口见 `docs/loop-primitives-guide.md`。loop 重项已收口，记录见 `docs/handoff-loop-remaining.md`；`human` route 的 GUI review flow 仍是产品流缺口，通用 app/browser/network 运行态检查保持范围外。
 
@@ -83,7 +83,7 @@ Phase 3 v1 已解决早前「#2 客观路由」和「#6 裁判只读命令取证
 - **无通用 app/browser/network verifier**：builder 已能通过 `sandboxed_check` 跑固定项目检查脚本并读取失败输出，也能通过 `browser_smoke(static-dist)` 做固定静态页面 smoke feedback。trusted verifier route 仍没有解释器、任意 browser driving、GUI app、network check 或完整 runtime command 路线。运行态需求如果超出窄 inspection scope，继续靠 LLM route 的文本证据或 `human` route park。
 - **human route 仍 park**：`human` requirement 只会生成 `cannotVerify`，没有 CLI/GUI 审批结果回写 verifier report 的闭环。
 - **无 GUI human-review flow**：GUI 可接 Approver，但还没有把 human review 变成持久化事件、人工裁决、report merge、audit trail 的产品流程。
-- **status/usage/audit 入口只有只读版**：`npm run observe` 已能汇总最新 goal/loop/cron 状态、tokens、rounds、halt reason、trusted contract metadata、sandbox evidence。它只负责观察和复核辅助，不能改变 verdict。
+- **status/usage/audit 入口只有只读版**：`npm run observe` 已能汇总最新 goal/loop/cron 状态、tokens、rounds、halt reason、trusted contract metadata、sandbox evidence，并通过 `schemaVersion: 1` JSON contract 暴露给 GUI/脚本。它只负责观察和复核辅助，不能改变 verdict。
 
 ## 第二类：Phase E 切片现状 + 剩余
 

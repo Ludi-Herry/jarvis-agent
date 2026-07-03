@@ -76,7 +76,7 @@ npm run loop:finalize -- --loop <id> --merge # 交互式 apply：必须输入 me
 npm run loop:finalize -- --loop <id> --cleanup # 交互式清理：必须输入 cleanup <loopId>；只移除有 merge-applied 审计且当前 clean 的 worktree；使用 git worktree remove，不强删、不删日志
 npm run cron -- --cron-map <trusted-json> # cron 单次扫描：可信 cwd 外计划文件，到期任务触发普通 loop；task 必须 unattended:true；带同工作区扫描锁 + stale 回收 + task 前心跳；记录 data/cron/loop-cron.jsonl，不常驻
 npm run cron:daemon -- --cron-map <trusted-json> [--poll-ms <n>] # cron 前台 daemon：可信 cwd 外计划文件；默认 poll=60000；daemon lock + scan lock；写 data/cron/loop-cron-daemon.jsonl；SIGINT/SIGTERM 释放锁退出；不自动 resume/merge/cleanup，不后台 fork
-npm run observe     # 只读观测：汇总 data/sessions|goals|loops|cron 的 status / usage / audit；--json 输出给 GUI/脚本
+npm run observe     # 只读观测：汇总 data/sessions|goals|loops|cron 的 status / usage / audit；--json 输出 schemaVersion=1 给 GUI/脚本
 npm run typecheck   # tsc --noEmit
 npm test            # vitest（1003 passed / 1 skipped，Windows 下 1 个 POSIX SIGINT smoke 跳过）
 npm run build       # tsc 产出到 dist/
@@ -122,6 +122,12 @@ Browser smoke output is feedback for the builder or a human smoke pass. It canno
 `test/capabilities/goal/autonomous-coding-smoke.test.ts` is the CI-safe smoke for the autonomous coding loop: a scripted builder writes a bad fix, reads `sandboxed_check(test)` red output, repairs it, gets green feedback, then completion still flows through `update_goal(complete)` plus the independent deterministic checks.
 
 `npm run sandbox:autonomous-model-smoke` is the opt-in real-model version. It creates a temp fixture outside this repo, gives the builder only normal file tools plus `sandboxed_check(test)`, and requires red-to-green evidence before `update_goal(complete)`. It needs a model key and is intentionally absent from the default test suite.
+
+### Read-only observation contract
+
+`npm run observe -- --json` emits `ObservationReport` schema version 1. The report includes `meta.generatedAt`, `meta.source.dataDir`, the fixed log scope (`sessions/goals/loops/cron/cronDaemon`), `status`, `usage`, and audit summaries for trusted contracts, worktree status, and sandbox evidence.
+
+The report also includes `authority: { mode: "observation-only", canCompleteGoals: false, canCompleteLoops: false }`. GUI or scripts can display and filter it, but they must not treat it as completion evidence.
 
 ### Worktree status baseline
 
