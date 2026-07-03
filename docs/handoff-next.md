@@ -1,4 +1,4 @@
-# 交接：Phase D 之后 + Phase E 第一切片收口（给新会话）
+# 交接：Phase D 之后 + GUI 前收口（给新会话）
 
 > Phase D 腿3 整套**已全部落地 + 经 5 轮多裁判对抗核查 + 诚实文档化**——背景见 `docs/handoff-D.md`（主交接）、`docs/phase-D-leg3-checklist.md`（5 条全收口）、`docs/security-review-baseline.md`（审查历史 + 元教训）、memory `phase-d-goalloop-deterministic-legs`。
 > Phase E 四条独立第一切片（vision / bash-allow / loop / shadow-git）**已全部合进本地 main**（见下「合并收口」）。
@@ -18,7 +18,7 @@
 - **只读观测层已落地**：`goal_round_start` / `goal_round_end` 提供实时轮次、turn/token、预算上限、claim/verdict/state 进度事件；`npm run observe` 读取 session / goal / loop / cron / approval JSONL 与 sandbox audit evidence，输出运行态摘要、`latestGoalBudget`、trusted contract metadata、worktree status、approval counts 和 sandbox backend/mount/network/limits；`--json` 给 GUI/脚本消费，当前 `ObservationReport` 为 `schemaVersion: 1`，带 `meta.source.dataDir` 与 `authority.mode: "observation-only"`。`--data-dir <path>` 可看非默认 `data/`。完成授权仍只来自 `decideVerdict`、deterministic checks、trusted requirement routes 和人工确认。
 - **已完成的 Phase E/loop 收口**：接 vision 进 goal/loop、shadow restore 确认、shadow snapshot 异步化、vision MIME sniff + 活体验证、loop mid-goal resume、per-goal verifier、per-goal hook runner、并行目标/worktree first slice、parallel resume 最小 slice、loop finalize 只读报告、loop finalize `--merge` 交互 apply、loop finalize `--cleanup` 交互清理、cron first slice（含同工作区扫描锁 + stale 回收 + task 前心跳）、cron foreground daemon 均已完成；loop 重项收口记录见 `docs/handoff-loop-remaining.md`。
 
-## GUI 就绪盘点（2026-07-01）
+## GUI 就绪盘点（更新至 2026-07-03）
 
 CLI 功能已实质收尾（A→E + Hooks slice-1/slice-2 follow-up）。GUI（晴天模式外壳，见 memory `ai-presence-intervention-levels`）接入的**三根架构支柱已就位**（day-1 解耦的回报），**不被剩余 CLI 小尾巴阻塞**：
 
