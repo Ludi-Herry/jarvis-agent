@@ -67,4 +67,15 @@ describe('safeResolve — multi-hop symlink resolution (codex HIGH2: write punch
     const res = await safeResolve(ROOT, 'g1');
     expect(res.ok).toBe(true);
   });
+
+  it('blocks a symlink that lands on the worktree .git file', async () => {
+    const gitFile = resolve(ROOT, '.git');
+    topo.realDirs.add(gitFile);
+    topo.links.set(link1, gitFile);
+
+    const res = await safeResolve(ROOT, 'link1');
+
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.reason).toMatch(/git metadata/);
+  });
 });

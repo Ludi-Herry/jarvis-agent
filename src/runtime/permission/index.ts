@@ -27,6 +27,12 @@ export {
   type PermissionRule,
 } from './decide.js';
 export { isSensitivePath, SENSITIVE_PATHS, globMatchesSecret } from './sensitive.js';
+export {
+  evaluateGoalWorktreeWrite,
+  isGitMetadataPath,
+  type GoalWorktreeWriteDecision,
+  type GoalWorktreeWriteRequest,
+} from './worktree-write-policy.js';
 export { analyzeCommand, type CommandAnalysis } from './command.js';
 export {
   FileApprovalAuditStore,

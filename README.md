@@ -70,7 +70,7 @@ cp .env.example .env   # 然后编辑 .env 填 ARK_API_KEY
 npm run dev         # 终端 REPL：带权限闸门 + bash + 交互审批 + 会话落盘（需 ARK_API_KEY）。Ctrl-C 中断 / /exit 退出
 npm run resume      # 恢复 data/sessions/ 最近一个会话继续跑
 npm run goal        # goal 模式：npm run goal -- "<objective>" 自主跑到达标自停（确定性两腿；JARVIS_HELDOUT_CHECKS_FILE 或 trusted requirements 的 heldOutCommands 加隐藏断言；ARK_VERIFIER_MODEL=不同模型 启用腿3 独立裁判）
-npm run loop        # loop 模式（Phase E）：npm run loop -- <objectives-file> 多 goal 队列顺序排空、崩溃安全 resume；默认 attended / --unattended fail-closed / --resume(+--force)；可 --parallel 2..4 用 cwd 外 worktree 并行跑，parallel resume 必须显式带 --worktree-root（与任何 hooks 配置互斥）；可 --hook-map <trusted-json> 给串行 goal 配 cwd 外 hook 覆盖；可 --sandbox-check-map <trusted-json> 给每个 goal 配 repo/worktree 外 sandbox checks；可 --goal-setter-requirements-map <trusted-json> 给每个 goal 配 repo/worktree 外 requirement route map 和 per-goal held-out checks
+npm run loop        # loop 模式（Phase E）：npm run loop -- <objectives-file> 多 goal 队列顺序排空、崩溃安全 resume；默认 attended / plain --unattended write+bash fail-closed / --unattended --parallel 2..4 仅自动放行对应 goal worktree 内 built-in write / --resume(+--force)；parallel resume 必须显式带 --worktree-root（与任何 hooks 配置互斥）；可 --hook-map <trusted-json> 给串行 goal 配 cwd 外 hook 覆盖；可 --sandbox-check-map <trusted-json> 给每个 goal 配 repo/worktree 外 sandbox checks；可 --goal-setter-requirements-map <trusted-json> 给每个 goal 配 repo/worktree 外 requirement route map 和 per-goal held-out checks
 npm run resume:loop -- --verifier-map <trusted-json> --hook-map <trusted-json> --sandbox-check-map <trusted-json> # 恢复最近 loop：恢复模式来自 cwd 外可信 map；无 per-goal verifier / hooks / sandbox checks 时各用 {"goals":[]}；原 loop 若带任一 map，恢复必须传同一个可信 map；若原 loop 使用 goal-setter requirements map，恢复也必须传同一路径和哈希的 --goal-setter-requirements-map
 npm run loop:finalize -- --loop <id> # 只读 finalize report：汇总 parallel worktree 的 logged verdict / status / diff，生成人工审阅 merge proposal；不 cleanup
 npm run loop:finalize -- --loop <id> --merge # 交互式 apply：必须输入 merge <loopId>；只合入 verified + tracked diff proposal，untracked/conflict/缺 verdict 停下；不 cleanup
@@ -138,6 +138,8 @@ Attended `goal` and `loop` runs emit `approval_request` / `approval_result` even
 ### GUI first slice
 
 `npm run gui` starts a local HTTP UI on `127.0.0.1:4317` by default. It serves a compact timeline built from the same `loadWorkspaceObservation` contract behind `npm run observe -- --json`, including `activity.recent` event rows and aggregate status cards, plus a visible emergency stop control.
+
+The GUI server only accepts loopback `Host` headers (`127.0.0.1`, `localhost`, `[::1]`, with optional port). Emergency-stop POSTs require `x-jarvis-gui: 1`, and binding `--host` to a non-loopback address prints an unauthenticated-control warning.
 
 The stop control writes `data/control/emergency-stop.json` and appends `data/control/emergency-stop.jsonl`. Running `goal`, `loop`, `cron`, and `cron:daemon` watch that file and only honor stop requests newer than their own process start time. When honored, the shared `AbortSignal` is passed into model streams, bash, deterministic checks, sandbox checks, and loop scheduling so new agent actions stop promptly while existing JSONL logs remain available for review.
 

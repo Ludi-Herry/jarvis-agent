@@ -45,6 +45,15 @@ codex exec -s danger-full-access --skip-git-repo-check -m gpt-5.5 \
 
 ## 历史
 
+### 2026-07-03 · unattended worktree write + dependency bridge 轮
+切片 2 解锁无人值守写码：`--unattended --parallel` 的 per-goal gate 注入 `goalWorktreeWriteRoot`，只自动放行 built-in `write`，且 literal/effective realpath 都必须留在该 goal worktree 内；`.git`、sensitive path、symlink/junction/`..`/absolute/Windows namespaced escape 全拒绝。loop-cli 只给 parallel per-goal gate 注 root，shared gate / goal-cli / REPL 不拿该权限；bash / vision / network / unknown write-like tools 继续 fail-closed。执行层同步加固：`safeResolve` 拒绝 git metadata，`writeTool` 兜底拒写 `.git`。真实 smoke 首轮暴露新 worktree 缺 `node_modules` 导致 deterministic checks 找不到 `tsc/vitest/eslint`；随后补 dependency bridge：worktree 创建 / resume 时把宿主 `node_modules` 以 junction/symlink 暴露给 checks，文件工具因 realpath outside root 仍不能读写该链接。
+
+**codex 审查两轮（gpt-5.5 xhigh，只读）均 no HIGH**：
+- 轮 1 范围：`permission-gate.ts`、`worktree-write-policy.ts`、`safe-path.ts`、`builtins.ts`、`loop-cli.ts` 与新增测试。结论：no HIGH。LOW：loop-cli 布线测试偏源码字符串；缺 vision/network/unknown write-like fail-closed 覆盖；缺 symlink 指向 `.git` 文件测试。已补：network/unknown write-like gate 测试、safe-path mocked symlink→`.git` 文件测试。
+- 轮 2 范围：`loop-worktree.ts` dependency bridge、file tools、finalize 影响。结论：no HIGH。LOW：bridge-specific `writeTool`/`grepTool` 测试不足；finalize patch fixture 未显式带 `node_modules` junction。已补：read/write/grep 通过 bridged `node_modules` 访问宿主依赖均被拒。剩余 LOW：finalize + `node_modules` link patch fixture 可后续补。
+
+**验证证据**：四关卡全绿（`npm run typecheck`、`npm run lint`、`npm test` = 101 files / 1034 passed / 1 skipped、`npm run build`）。真实 model smoke 两次：built-in `write` 在两个 goal worktree 内成功，bash 请求被无 approver 拒绝，宿主 `git status --short` 前后一致；第二次 1/2 goal verified complete，另 1/2 因模型排查绕行 hit maxTurns/blocked，R4 的 full autonomous worktree smoke 仍需再跑稳定全绿记录。
+
 ### 2026-06-30 · bash 无人值守白名单轮(对抗,**撤回 Path A**)
 为「无人值守 bash 自治」加了两条:Path A = 配置白名单(`decide.ts` 让 `allow` 规则把分析器-clean 的 bash 命令从 ask 升 allow + `isOverbroadBashPattern` 挡纯 `*` + goal-cli 加载仓库 AGENTS.md 规则);Path B = 命令级 session-allow(`permission-gate.ts` 按精确命令串记授权)。落地后开 **ultracode 编排对抗审查**(6 个发现者各一攻击镜头 + 每候选 2 个对抗镜头**经验性**复核——真写 `zz-probe.ts` 跑 `analyzeCommand`+`decide`,只有「analyze clean 且 decide allow」才算数 + 完备性批评者)。**54 agent / 23 候选 / 20 CONFIRMED(7 HIGH)**,收敛到 4 个根因:
 - **① glob 逻辑 bug**:`globMatch` 拿原始命令串字面匹配,bash 折叠空白 → `git  push origin`(双空格)/裸 `git push`/`git push\t-q` 绕过 `deny:git push *` 被 `allow:git *` 静默放行;**「deny 永远赢」被攻破**。

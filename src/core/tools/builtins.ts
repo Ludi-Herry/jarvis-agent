@@ -15,7 +15,7 @@
 import { readFile, writeFile, mkdir, readdir, stat } from 'node:fs/promises';
 import { dirname, relative, join } from 'node:path';
 import { z } from 'zod';
-import { isSensitivePath } from '../../runtime/permission/index.js';
+import { isGitMetadataPath, isSensitivePath } from '../../runtime/permission/index.js';
 import { safeResolve } from './safe-path.js';
 import type { ToolDefinition } from './types.js';
 
@@ -57,6 +57,9 @@ export const writeTool: ToolDefinition<{ path: string; content: string }> = {
   run: async ({ path, content }, ctx) => {
     const safe = await safeResolve(ctx.cwd, path);
     if (!safe.ok) return { content: '', error: `Cannot write ${path}: ${safe.reason}` };
+    if (isGitMetadataPath(ctx.cwd, safe.abs)) {
+      return { content: '', error: `Cannot write ${path}: refusing to mutate git metadata` };
+    }
     try {
       await mkdir(dirname(safe.abs), { recursive: true });
       await writeFile(safe.abs, content, 'utf8');

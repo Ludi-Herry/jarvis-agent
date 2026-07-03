@@ -50,6 +50,25 @@ describe('writeTool', () => {
     const written = await readFile(join(dir, 'sub/deep/out.txt'), 'utf8');
     expect(written).toBe('data');
   });
+
+  it('refuses to mutate git metadata', async () => {
+    await writeFile(join(dir, '.git'), 'gitdir: original', 'utf8');
+    const out = await writeTool.run({ path: '.git', content: 'gitdir: pwned' }, ctx);
+
+    expect(out.error).toMatch(/git metadata/);
+    expect(await readFile(join(dir, '.git'), 'utf8')).toBe('gitdir: original');
+  });
+
+  it('refuses to mutate git metadata through a symlinked directory', async () => {
+    await mkdir(join(dir, '.git'), { recursive: true });
+    await writeFile(join(dir, '.git', 'config'), 'original', 'utf8');
+    await symlink(join(dir, '.git'), join(dir, 'safe_dir'), 'junction');
+
+    const out = await writeTool.run({ path: 'safe_dir/config', content: 'pwned' }, ctx);
+
+    expect(out.error).toMatch(/git metadata/);
+    expect(await readFile(join(dir, '.git', 'config'), 'utf8')).toBe('original');
+  });
 });
 
 describe('grepTool', () => {

@@ -9,14 +9,15 @@
  *
  * Two checks, both anchored to `cwd` (the project root the loop injects):
  *  1. Literal containment + secrecy — a pure, disk-free reject of absolute/`..` escapes and
- *     obvious secret shapes, before any I/O.
+ *     obvious secret shapes, and git metadata, before any I/O.
  *  2. Symlink-aware re-check — follow the path to where a read/write would REALLY land
  *     (tolerant of a not-yet-created leaf) and reject if that target escapes `cwd` or is
- *     secret-bearing. This is what catches `safe.txt -> .env` and `dir -> /etc`.
+ *     secret-bearing or git metadata. This is what catches `safe.txt -> .env`, `dir -> /etc`,
+ *     and `link -> .git`.
  */
 import { realpath, readlink } from 'node:fs/promises';
 import { resolve, relative, isAbsolute, dirname, basename, sep } from 'node:path';
-import { isSensitivePath } from '../../runtime/permission/index.js';
+import { isGitMetadataPath, isSensitivePath } from '../../runtime/permission/index.js';
 
 /** Pure: is `child` inside `parent` (or equal to it)? Compares the normalized relative path —
  *  it must not climb out with `..` and must not be absolute (a different Windows drive). Touches
@@ -31,8 +32,8 @@ export type SafePath = { ok: true; abs: string } | { ok: false; reason: string }
 
 /**
  * Resolve `path` against `cwd` and confirm it is safe to read or write: contained within `cwd`
- * even after following symlinks, and never resolving to a secret. Returns the absolute path to
- * use, or a human-readable reason to refuse (surfaced to the model as a tool error).
+ * even after following symlinks, and never resolving to a secret or git metadata. Returns the
+ * absolute path to use, or a human-readable reason to refuse (surfaced to the model as a tool error).
  */
 export async function safeResolve(cwd: string, path: string): Promise<SafePath> {
   const abs = resolve(cwd, path);
@@ -41,6 +42,7 @@ export async function safeResolve(cwd: string, path: string): Promise<SafePath> 
   //     and a direct `.env` before we follow anything.
   if (!isWithin(cwd, abs)) return { ok: false, reason: `path escapes the project root: ${path}` };
   if (isSensitivePath(abs)) return { ok: false, reason: `refusing to access a sensitive path: ${path}` };
+  if (isGitMetadataPath(cwd, abs)) return { ok: false, reason: `refusing to access git metadata: ${path}` };
 
   // (2) Follow symlinks to the real target (even if the leaf doesn't exist yet) and re-check.
   const realRoot = await realpath(cwd).catch(() => cwd);
@@ -53,6 +55,7 @@ export async function safeResolve(cwd: string, path: string): Promise<SafePath> 
   }
   if (!isWithin(realRoot, real)) return { ok: false, reason: `path resolves outside the project root: ${path}` };
   if (isSensitivePath(real)) return { ok: false, reason: `path resolves to a sensitive file: ${path}` };
+  if (isGitMetadataPath(realRoot, real)) return { ok: false, reason: `path resolves to git metadata: ${path}` };
 
   return { ok: true, abs };
 }

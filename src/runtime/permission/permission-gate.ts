@@ -20,6 +20,7 @@
 import type { ToolCall } from '../../core/types.js';
 import type { ToolCapability } from '../../core/tools/types.js';
 import { decide, defaultPolicy, type DecisionSource, type PermissionPolicy } from './decide.js';
+import { evaluateGoalWorktreeWrite } from './worktree-write-policy.js';
 
 /** A human's answer to an `ask`. `allow-session` also grants the tool for the rest of the run. */
 export type Approval = 'allow-once' | 'allow-session' | 'deny';
@@ -40,7 +41,7 @@ export type Approver = (req: ApprovalRequest) => Promise<Approval>;
 export interface GateOutcome {
   allowed: boolean;
   reason: string;
-  source: DecisionSource | 'user' | 'fail-closed';
+  source: DecisionSource | 'user' | 'fail-closed' | 'goal-worktree';
 }
 
 export interface PermissionGate {
@@ -54,11 +55,14 @@ export interface GateOptions {
   approver?: Approver;
   /** The risk matrix; defaults to {@link defaultPolicy}. The B5 RuleResolver supplies richer ones. */
   policy?: PermissionPolicy;
+  /** Auto-allow the built-in write tool only when its effective target stays inside this goal worktree. */
+  goalWorktreeWriteRoot?: string;
 }
 
 export class DefaultPermissionGate implements PermissionGate {
   private readonly approver?: Approver;
   private readonly policy: PermissionPolicy;
+  private readonly goalWorktreeWriteRoot?: string;
   /** Tool names the user has approved for the rest of this session (`allow-session`). Keyed by
    *  tool name — "you allowed `write` this session". It only ever short-circuits the `ask` lane;
    *  a `deny` is decided before this is read, so a session grant can never override one.
@@ -74,6 +78,7 @@ export class DefaultPermissionGate implements PermissionGate {
   constructor(opts: GateOptions = {}) {
     this.approver = opts.approver;
     this.policy = opts.policy ?? defaultPolicy();
+    this.goalWorktreeWriteRoot = opts.goalWorktreeWriteRoot;
   }
 
   async check(call: ToolCall, capability: ToolCapability | undefined): Promise<GateOutcome> {
@@ -102,6 +107,22 @@ export class DefaultPermissionGate implements PermissionGate {
     // COMMAND-scoped (the exact command string), not tool-scoped: approving `git status` once does
     // not unlock every future shell command — that blanket grant is the silent-exec hole B closed
     // (memory restore-bash-session-allow). For non-exec tools the grant stays tool-scoped.
+    if (this.goalWorktreeWriteRoot !== undefined) {
+      const worktreeDecision = await evaluateGoalWorktreeWrite({
+        toolName: call.name,
+        capability,
+        args,
+        root: this.goalWorktreeWriteRoot,
+      });
+      if (worktreeDecision !== undefined) {
+        return {
+          allowed: worktreeDecision.allowed,
+          reason: worktreeDecision.reason,
+          source: 'goal-worktree',
+        };
+      }
+    }
+
     const command = capability === 'executes-code' ? (typeof args.command === 'string' ? args.command : '') : undefined;
     if (command !== undefined) {
       if (this.bashCommandGrants.has(command)) {

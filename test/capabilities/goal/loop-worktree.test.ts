@@ -1,8 +1,9 @@
-import { mkdtemp, mkdir, symlink } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, realpath, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { assertWorktreeRootOutsideCwd, createGoalWorktree, resolveExistingGoalWorktree } from '../../../src/capabilities/goal/index.js';
+import { grepTool, readTool, writeTool } from '../../../src/core/tools/builtins.js';
 import type { ExecResult } from '../../../src/core/tools/run-command.js';
 
 const ok: ExecResult = { output: '', code: 0, timedOut: false, aborted: false, truncated: false };
@@ -47,6 +48,60 @@ describe('loop worktree helpers', () => {
     expect(path).toBe(join(root, 'loop_one', 'g2'));
     expect(calls).toEqual([{ cwd: repo, command: expect.stringContaining('git worktree add --detach') }]);
     expect(calls[0].command).toContain('HEAD');
+  });
+
+  it('links host node_modules into a newly created goal worktree when dependencies exist', async () => {
+    const base = await mkdtemp(join(tmpdir(), 'jarvis-worktree-'));
+    const repo = join(base, 'repo');
+    const root = join(base, 'worktrees');
+    const expected = join(root, 'loop_one', 'g2');
+    await mkdir(join(repo, 'node_modules'), { recursive: true });
+
+    const path = await createGoalWorktree({
+      shellPath: 'bash',
+      cwd: repo,
+      root,
+      loopId: 'loop:one',
+      index: 2,
+      runCommand: async (): Promise<ExecResult> => {
+        await mkdir(expected, { recursive: true });
+        return ok;
+      },
+    });
+
+    const linked = join(path, 'node_modules');
+    expect((await lstat(linked)).isSymbolicLink()).toBe(true);
+    expect(await realpath(linked)).toBe(await realpath(join(repo, 'node_modules')));
+  });
+
+  it('does not let file tools follow the dependency link back into the host checkout', async () => {
+    const base = await mkdtemp(join(tmpdir(), 'jarvis-worktree-'));
+    const repo = join(base, 'repo');
+    const root = join(base, 'worktrees');
+    const expected = join(root, 'loop_one', 'g2');
+    await mkdir(join(repo, 'node_modules'), { recursive: true });
+    await writeFile(join(repo, 'node_modules', 'host-only.txt'), 'host dependency data', 'utf8');
+
+    const path = await createGoalWorktree({
+      shellPath: 'bash',
+      cwd: repo,
+      root,
+      loopId: 'loop:one',
+      index: 2,
+      runCommand: async (): Promise<ExecResult> => {
+        await mkdir(expected, { recursive: true });
+        return ok;
+      },
+    });
+
+    const read = await readTool.run({ path: 'node_modules/host-only.txt' }, { cwd: path });
+    const write = await writeTool.run({ path: 'node_modules/host-only.txt', content: 'pwned' }, { cwd: path });
+    const grep = await grepTool.run({ pattern: 'host', path: 'node_modules' }, { cwd: path });
+
+    expect(read.error).toMatch(/outside the project root/);
+    expect(read.content).toBe('');
+    expect(write.error).toMatch(/outside the project root/);
+    expect(grep.error).toMatch(/outside the project root/);
   });
 
   it('resolves an existing goal worktree without creating a replacement on resume', async () => {

@@ -1,4 +1,4 @@
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { createServer, type IncomingHttpHeaders, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,26 +14,45 @@ interface GuiArgs {
 
 const DEFAULT_PORT = 4317;
 const ASSET_DIR = fileURLToPath(new URL('./assets/', import.meta.url));
+const GUI_CSRF_HEADER = 'x-jarvis-gui';
+const GUI_CSRF_VALUE = '1';
+
+interface GuiServerContext {
+  cwd: string;
+  dataDir: string;
+}
 
 async function main(): Promise<void> {
   const args = parseGuiArgs(process.argv.slice(2));
   const cwd = process.cwd();
   const dataDir = resolve(cwd, args.dataDir);
-  const server = createServer((req, res) => {
-    void handleRequest(req, res, { cwd, dataDir });
-  });
+  const server = createGuiServer({ cwd, dataDir });
   const port = await listenWithFallback(server, args.host, args.port);
   console.log(`Jarvis GUI listening on http://${args.host}:${port}`);
   console.log(`observe source: npm run observe -- --json --data-dir ${dataDir}`);
+  if (!isLoopbackBindHost(args.host)) {
+    console.warn('[gui] warning: non-loopback host binding exposes this unauthenticated observation/control server to the network.');
+  }
+}
+
+export function createGuiServer(context: GuiServerContext): Server {
+  return createServer((req, res) => {
+    void handleRequest(req, res, context);
+  });
 }
 
 async function handleRequest(
   req: IncomingMessage,
   res: ServerResponse,
-  context: { cwd: string; dataDir: string },
+  context: GuiServerContext,
 ): Promise<void> {
   try {
-    const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+    if (!isAllowedGuiHostHeader(req.headers.host)) {
+      json(res, 403, { error: 'forbidden host' });
+      return;
+    }
+
+    const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
     if (req.method === 'GET' && url.pathname === '/api/status') {
       const payload = await statusPayload(context.cwd, context.dataDir);
       json(res, 200, payload);
@@ -48,6 +67,10 @@ async function handleRequest(
       return;
     }
     if (req.method === 'POST' && url.pathname === '/api/emergency-stop') {
+      if (!hasGuiCsrfHeader(req.headers)) {
+        json(res, 403, { error: `missing ${GUI_CSRF_HEADER} header` });
+        return;
+      }
       const body = await readJsonBody(req);
       const reason = typeof body.reason === 'string' && body.reason.trim() !== '' ? body.reason.trim() : 'GUI emergency stop';
       const record = await requestEmergencyStop({ cwd: context.cwd, source: 'gui', reason });
@@ -137,6 +160,31 @@ function parsePort(value: string): number {
   return port;
 }
 
+export function isAllowedGuiHostHeader(value: string | undefined): boolean {
+  if (value === undefined) return false;
+  const host = value.trim().toLowerCase();
+  if (['localhost', '127.0.0.1', '[::1]'].includes(host)) return true;
+  for (const prefix of ['localhost:', '127.0.0.1:', '[::1]:']) {
+    if (host.startsWith(prefix)) return isValidPortText(host.slice(prefix.length));
+  }
+  return false;
+}
+
+export function hasGuiCsrfHeader(headers: IncomingHttpHeaders): boolean {
+  const value = headers[GUI_CSRF_HEADER];
+  return Array.isArray(value) ? value.includes(GUI_CSRF_VALUE) : value === GUI_CSRF_VALUE;
+}
+
+export function isLoopbackBindHost(host: string): boolean {
+  return ['127.0.0.1', 'localhost', '::1', '[::1]'].includes(host.trim().toLowerCase());
+}
+
+function isValidPortText(value: string): boolean {
+  if (!/^\d{1,5}$/.test(value)) return false;
+  const port = Number.parseInt(value, 10);
+  return port >= 1 && port <= 65535;
+}
+
 function listenWithFallback(server: ReturnType<typeof createServer>, host: string, startPort: number): Promise<number> {
   return new Promise((resolveListen, reject) => {
     let port = startPort;
@@ -162,7 +210,14 @@ function listenWithFallback(server: ReturnType<typeof createServer>, host: strin
   });
 }
 
-main().catch((err: unknown) => {
-  console.error('[gui] fatal:', err instanceof Error ? err.message : err);
-  process.exitCode = 1;
-});
+if (isMainModule(import.meta.url)) {
+  main().catch((err: unknown) => {
+    console.error('[gui] fatal:', err instanceof Error ? err.message : err);
+    process.exitCode = 1;
+  });
+}
+
+function isMainModule(metaUrl: string): boolean {
+  const entry = process.argv[1];
+  return entry !== undefined && fileURLToPath(metaUrl) === resolve(entry);
+}

@@ -10,10 +10,10 @@
  *
  * Approver modes (the honest sandbox boundary): `--attended` (default) uses an interactive readline
  * approver, so a human approves each gated write/bash across the queue. `--unattended` injects NO
- * approver, so the gate fail-closes every `ask` to deny, and the default policy has NO write-allowing
- * rule, so EVERY write and bash is `ask` and thus denied. Only read/grep-only goals complete
- * unattended; everything that writes blocks safely. Truly unattended bash autonomy waits for the OS
- * sandbox (a config bash allow-list is unsafe); this entry adds no bash auto-allow.
+ * approver. In the plain loop, every `ask` still fail-closes to deny. In `--unattended --parallel`,
+ * each goal gate auto-allows only the built-in `write` tool whose effective target stays inside that
+ * goal's worktree; bash, vision, unknown write-like tools, secrets, git metadata, and path escapes
+ * still fail closed. Host integration stays manual through `loop:finalize --merge`.
  *
  * Vision (opt-in via ARK_VISION_MODEL) is a BUILDER tool only, with capability=network (it sends a
  * local image to a remote VLM). The gate routes it to `ask` like write/bash: attended it is approved,
@@ -517,7 +517,7 @@ async function main(): Promise<void> {
       sessionId: `loop-${loopId}`,
     });
   }
-  // --unattended means no approver, so the gate fail-closes every `ask` to deny.
+  // Plain --unattended still has no approver, so the shared gate fail-closes every `ask` to deny.
   const gate = new DefaultPermissionGate({ approver });
   const parallelApprover = parallelMode ? serializeApprover(approver) : approver;
   const context = new DefaultContextManager({
@@ -686,7 +686,12 @@ async function main(): Promise<void> {
     if (!attempt.resumed) {
       await sessionStore.writeHeader({ id: goalId, model: config.model, cwd: goalCwd, startedAt: new Date().toISOString() });
     }
-    const goalGate = parallelMode ? new DefaultPermissionGate({ approver: parallelApprover }) : gate;
+    const goalGate = parallelMode
+      ? new DefaultPermissionGate({
+          approver: parallelApprover,
+          goalWorktreeWriteRoot: unattended ? goalCwd : undefined,
+        })
+      : gate;
     const goalContext = parallelMode
       ? new DefaultContextManager({
           summarizer: provider,

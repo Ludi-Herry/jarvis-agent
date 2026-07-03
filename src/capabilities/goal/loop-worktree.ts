@@ -1,4 +1,4 @@
-import { mkdir, realpath, stat } from 'node:fs/promises';
+import { mkdir, realpath, stat, symlink } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { runCommand, type ExecResult } from '../../core/tools/run-command.js';
 
@@ -55,6 +55,7 @@ export async function createGoalWorktree(options: CreateGoalWorktreeOptions): Pr
     const details = result.output.trim() || result.spawnError || `exit code ${String(result.code)}`;
     throw new Error(`git worktree add failed for ${worktreePath}: ${details}`);
   }
+  await linkHostNodeModules(options.cwd, worktreePath);
   return worktreePath;
 }
 
@@ -75,6 +76,7 @@ export async function resolveExistingGoalWorktree(options: ResolveExistingGoalWo
   if (isInsideOrSame(worktreeReal, cwdPath)) {
     throw new Error(`resumed worktree must stay outside the repository cwd: ${worktreePath}`);
   }
+  await linkHostNodeModules(options.cwd, worktreePath);
   return worktreePath;
 }
 
@@ -114,6 +116,16 @@ async function exists(path: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+async function linkHostNodeModules(cwd: string, worktreePath: string): Promise<void> {
+  const hostNodeModules = join(cwd, 'node_modules');
+  const hostInfo = await stat(hostNodeModules).catch(() => null);
+  if (hostInfo === null || !hostInfo.isDirectory()) return;
+
+  const worktreeNodeModules = join(worktreePath, 'node_modules');
+  if (await exists(worktreeNodeModules)) return;
+  await symlink(hostNodeModules, worktreeNodeModules, process.platform === 'win32' ? 'junction' : 'dir');
 }
 
 function isInsideOrSame(candidate: string, parent: string): boolean {

@@ -582,6 +582,55 @@ describe('runAgent — permission gate (B1)', () => {
     const toolResult = events.find((e) => e.type === 'tool_result');
     expect(toolResult?.type === 'tool_result' && toolResult.out.error).toMatch(/Permission denied/);
   });
+
+  it('allows a worktree-scoped write with no approver when the goal gate injects a write root', async () => {
+    const tools = new InMemoryToolRegistry();
+    tools.register(writeTool);
+    const { provider } = scriptedModel([
+      { toolCalls: [{ id: 'c1', name: 'write', arguments: '{"path":"src/worktree.txt","content":"ok"}' }] },
+      { text: 'done' },
+    ]);
+    const bus = new InMemoryEventBus();
+    const events = record(bus);
+
+    await runAgent({
+      model: provider,
+      tools,
+      bus,
+      messages: [{ role: 'user', content: 'write in this goal worktree' }],
+      toolCtx: { cwd: dir },
+      budget: { maxTurns: 5 },
+      gate: new DefaultPermissionGate({ goalWorktreeWriteRoot: dir }),
+    });
+
+    expect(await readFile(join(dir, 'src', 'worktree.txt'), 'utf8')).toBe('ok');
+    const toolResult = events.find((e) => e.type === 'tool_result');
+    expect(toolResult?.type === 'tool_result' && toolResult.out.error).toBeUndefined();
+  });
+
+  it('keeps bash denied with the same worktree-scoped unattended gate', async () => {
+    const tools = new InMemoryToolRegistry();
+    tools.register(createBashTool({ shellPath: defaultShellPath(), defaultTimeoutMs: 10_000 }));
+    const { provider } = scriptedModel([
+      { toolCalls: [{ id: 'c1', name: 'bash', arguments: '{"command":"echo should-not-run"}' }] },
+      { text: 'understood' },
+    ]);
+    const bus = new InMemoryEventBus();
+    const events = record(bus);
+
+    await runAgent({
+      model: provider,
+      tools,
+      bus,
+      messages: [{ role: 'user', content: 'run bash' }],
+      toolCtx: { cwd: dir },
+      budget: { maxTurns: 5 },
+      gate: new DefaultPermissionGate({ goalWorktreeWriteRoot: dir }),
+    });
+
+    const toolResult = events.find((e) => e.type === 'tool_result');
+    expect(toolResult?.type === 'tool_result' && toolResult.out.error).toMatch(/Permission denied/);
+  });
 });
 
 describe('runAgent — bash through the gate (B3, full closed loop)', () => {

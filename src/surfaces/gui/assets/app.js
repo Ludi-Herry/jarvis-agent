@@ -26,7 +26,7 @@ nodes.stopButton.addEventListener('click', async () => {
   try {
     await fetch('/api/emergency-stop', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', 'x-jarvis-gui': '1' },
       body: JSON.stringify({ reason: 'GUI emergency stop' }),
     });
     await refresh();
