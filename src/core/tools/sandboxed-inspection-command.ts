@@ -31,10 +31,18 @@ export function hardenSandboxInspectionCommand(command: string): string {
   if (!parsed.ok) return command;
 
   const [program, subcommand, ...rest] = parsed.words;
-  if (program === 'git' && subcommand === 'diff' && !rest.includes('--no-ext-diff')) {
+  if (program === 'git' && subcommand === 'diff' && !hasGitDiffNoExtDiffFlag(rest)) {
     return shellWords(['git', 'diff', '--no-ext-diff', ...rest]);
   }
   return command;
+}
+
+function hasGitDiffNoExtDiffFlag(args: readonly string[]): boolean {
+  for (const arg of args) {
+    if (arg === '--') return false;
+    if (arg === '--no-ext-diff') return true;
+  }
+  return false;
 }
 
 function parseInspectionWords(command: string): { readonly ok: true; readonly words: string[] } | { readonly ok: false; readonly reason: string } {
@@ -209,5 +217,19 @@ function str(value: unknown): string {
 }
 
 function message(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
+  if (err instanceof Error) return err.message;
+  if (typeof err === 'string') return err;
+  if (err && typeof err === 'object') {
+    const record = err as Record<string, unknown>;
+    const goError = record.Error;
+    if (typeof goError === 'function') {
+      try {
+        const text = (goError as () => unknown).call(err);
+        if (typeof text === 'string' && text.trim() !== '' && text !== '[object Object]') return text;
+      } catch {
+        // Fall through to generic formatting.
+      }
+    }
+  }
+  return String(err);
 }
