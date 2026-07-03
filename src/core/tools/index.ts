@@ -17,6 +17,7 @@ export {
   type SandboxedBuilderCheckName,
   type SandboxedBuilderCheckToolOptions,
 } from './sandboxed-builder-check.js';
+export { createBrowserSmokeTool, type BrowserSmokeProfile, type BrowserSmokeToolOptions } from './browser-smoke.js';
 export { createSandboxedExecTool, type SandboxedExecToolOptions } from './sandboxed-exec.js';
 export { createVisionTool } from './vision-tool.js';
 export { runCommand, defaultShellPath, type ExecResult } from './run-command.js';

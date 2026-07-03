@@ -1,6 +1,6 @@
 # Fixed Browser Smoke Feedback Design
 
-> Status: design only, 2026-07-03. This is a narrow builder feedback and manual smoke plan. It does not add a verifier route, a fifth map, networked trusted proof, GUI app automation, or unattended generic bash.
+> Status: `static-dist` MVP implemented, 2026-07-03. This remains a narrow builder feedback and manual smoke surface. It does not add a verifier route, a fifth map, networked trusted proof, GUI app automation, or unattended generic bash.
 
 ## Decision
 
@@ -28,14 +28,14 @@ The risk is also clear: browser checks combine project code execution, an app pr
 
 ## MVP Contract
 
-Candidate tool name: `browser_smoke`.
+Tool name: `browser_smoke`.
 
-Candidate manual entry: `npm run sandbox:browser-smoke`.
+Manual entry: `npm run sandbox:browser-smoke`.
 
-Candidate input:
+Current input:
 
 ```ts
-type BrowserSmokeProfile = 'static-dist' | 'local-preview';
+type BrowserSmokeProfile = 'static-dist';
 
 interface BrowserSmokeInput {
   readonly profile: BrowserSmokeProfile;
@@ -119,19 +119,21 @@ MVP checks should stay boring and deterministic:
 
 The smoke result is still feedback. A passing smoke can never mark the goal complete.
 
-## Implementation Order
+## Implemented Slice
 
-1. Add unit tests for the schema and registry boundary:
-   - absent from `buildDefaultRegistry()`;
-   - present only in goal/loop builder registries;
-   - rejects arbitrary command, arbitrary URL, host, port, and browser path;
-   - result cannot be passed into `reportFromSandboxedRequirementChecks()`.
-2. Add a small pure report mapper for browser smoke summaries.
-3. Add a sandbox helper that builds the fixed script for `static-dist` only.
-4. Add a fake-browser test harness before using any real browser.
-5. Add a real smoke only if a local browser runtime is available without download.
-6. Add `local-preview` after loopback-only sandbox proof lands.
-7. Add manual `sandbox:browser-smoke` only after the builder tool path is covered.
+- `src/core/tools/browser-smoke.ts` implements `browser_smoke` for `static-dist`.
+- `src/surfaces/cli/builder-sandbox-tools.ts` registers it only in goal/loop builder registries, parallel to `sandboxed_check`.
+- `scripts/browser-smoke.ts` exposes the manual `npm run sandbox:browser-smoke` entry.
+- The tool rejects arbitrary command, URL, host, port, browser path, and `local-preview` input before runner invocation.
+- The sandbox request uses a read-only host mount, sandbox-local copy, secret-shaped path excludes, independent HOME/cache/temp, fixed output cap, timeout, and `networkMode: "none"`.
+- Browser selection is fixed to preinstalled sandbox-local candidates or an operator-provided trusted launch env in the manual script. The builder input cannot set it.
+- Results render `[completion authority: none]` and are not imported by verifier/completion code.
+
+## Remaining Implementation Order
+
+1. Add a real smoke only when a local browser runtime is available without download.
+2. Add `local-preview` after loopback-only sandbox proof lands.
+3. Add any screenshot persistence only after artifact path, size cap, and retention policy are explicit.
 
 ## Required Tests
 
@@ -149,7 +151,8 @@ Security tests:
 
 Behavior tests:
 
-- A tiny static fixture with visible text passes.
+- Current unit coverage uses a fake sandbox runner to assert result mapping and completion authority.
+- A tiny static fixture with visible text can pass when an approved browser exists.
 - A blank page fails non-blank threshold.
 - A page with `console.error` fails and reports capped error text.
 - A page with an unhandled exception fails and reports capped page error.
@@ -176,17 +179,16 @@ Regression tests:
 - No cron auto-resume, auto-merge, or auto-cleanup behavior.
 - No local model routing, cost routing, enterprise connector, or automatic skill sedimentation.
 
-## Open Decisions Before Code
+## Open Decisions
 
 - Browser source: preinstalled Chromium/Chrome path supplied by the operator, a checked-in test browser, or a devDependency with a no-download install policy.
 - Artifact policy: whether screenshots are persisted, and if so under which audit directory and retention rule.
 - Loopback proof: whether WSL2 can bring up loopback inside the current user/network namespace without exposing host or external routes.
-- Profile naming: whether the builder-facing tool should be `browser_smoke` or a new `sandboxed_check` enum value. Prefer a separate builder-only tool if the output shape differs from project checks.
 - Failure severity: whether `console.error` always fails, or whether fixed profiles can define known benign messages.
 
-## Stop Condition For The Future Slice
+## Stop Condition For This Slice
 
-The future implementation slice is done only when:
+This implementation slice is done only when:
 
 - `static-dist` runs in a sandbox-local copy with no network and no user profile.
 - The builder receives useful failure output for blank page, console error, page error, missing browser, and timeout.

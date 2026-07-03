@@ -1,7 +1,7 @@
 # OS sandbox research
 
 > Snapshot: 2026-07-02. Scope: unblock the two deferred items in `docs/handoff-next.md`: #2 objective routing and #6 verifier exec.
-> Update 2026-07-03: a minimal builder-facing `sandboxed_check` path now runs fixed project checks in the OS sandbox and returns stdout/stderr to the builder. It is a feedback channel for self-iteration, with no verdict or completion authority.
+> Update 2026-07-03: minimal builder-facing `sandboxed_check` and `browser_smoke(static-dist)` paths now run fixed feedback checks in the OS sandbox and return output to the builder. They are self-iteration feedback channels with no verdict or completion authority.
 
 ## Decision summary
 
@@ -219,28 +219,41 @@ Acceptance:
 - The tool cannot prove trusted requirements, merge verifier reports, or mark a goal complete.
 - Host project writes from build artifacts stay outside the working tree unless the builder separately edits files through gated tools.
 
-### Phase 2.6 - fixed browser smoke feedback design
+### Phase 2.6 - fixed browser smoke feedback
 
 Status on 2026-07-03:
 
 - Design doc: `docs/superpowers/plans/2026-07-03-fixed-browser-smoke-feedback-design.md`.
-- Scope is builder feedback and manual smoke only.
-- Candidate future tool is `browser_smoke`, registered only into goal/loop builder registries or exposed through a manual `sandbox:browser-smoke` script.
-- Candidate input stays fixed: `profile: "static-dist" | "local-preview"`, with no model-authored command, arbitrary URL, host, port, browser path, or extra env.
-- `static-dist` is the only first implementation candidate because it can run with `networkMode: "none"` against a built local artifact.
+- `src/core/tools/browser-smoke.ts` adds `createBrowserSmokeTool({ runner })`.
+- The tool is named `browser_smoke` and is registered only into goal/loop builder registries through `registerBuilderSandboxTools(...)`.
+- Manual entry: `npm run sandbox:browser-smoke`.
+- Current input is fixed to `profile: "static-dist"`, with no model-authored command, arbitrary URL, host, port, browser path, or extra env. Requests for `local-preview` are rejected before runner invocation.
+- `static-dist` opens `dist/index.html` from a sandbox-local copy with `networkMode: "none"`.
 - `local-preview` remains blocked until the sandbox backend proves loopback-only networking with no external route and no host service access.
 - Browser smoke output cannot prove trusted requirements, cannot merge into `VerifierReport`, and cannot mark a goal complete.
 - Browser runtime must be preapproved and local. The smoke must not download browsers, inherit the user's browser profile, read cookies, use shell startup files, or reuse real home/cache directories.
+- If no approved browser is available, the smoke returns an `unavailable` feedback result. This is a skipped manual smoke, not a fallback to host bash or a verifier proof.
 
-Acceptance before any implementation:
+Acceptance:
 
 - Arbitrary URL/command schema rejection.
 - Default registry and verifier registry absence.
 - Read-only host mount plus sandbox-local copy with secret-shaped paths excluded.
 - Independent browser profile/cache/temp.
-- External request block/fail evidence.
-- Timeout kills both server and browser process tree.
-- Regression tests showing `decideVerdict`, `human` route, and inspection-only `sandbox-command` behavior are unchanged.
+- External request report evidence for static artifacts.
+- Timeout is enforced by sandbox limits and browser subprocess timeout.
+- No verifier route, route map, or completion path consumes `browser_smoke` output.
+- Regression tests show `decideVerdict`, `human` route, and inspection-only `sandbox-command` behavior are unchanged.
+
+### Phase 2.7 - manual real-model autonomous coding smoke
+
+Status on 2026-07-03:
+
+- CI-safe autonomous coding coverage remains in `test/capabilities/goal/autonomous-coding-smoke.test.ts`.
+- `scripts/autonomous-coding-model-smoke.ts` adds an opt-in real-model smoke: temp fixture outside this repo, broken `add(a, b)` implementation, builder sees `sandboxed_check(test)` red output, edits only fixture code, reruns until green, then calls `update_goal(complete)`.
+- The script registers `sandboxed_check` but does not register browser smoke, bash, network, cron, merge, or cleanup tools.
+- It needs a model key and is not part of the default test suite.
+- The completion boundary stays unchanged: red/green sandbox feedback is only builder input, while final completion still needs `runGoal` / `decideVerdict`, deterministic checks, and held-out coverage.
 
 ### Phase 3 - verifier exec and objective routing
 
