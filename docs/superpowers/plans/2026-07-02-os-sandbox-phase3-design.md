@@ -1,6 +1,6 @@
 # OS Sandbox Phase 3 Design Slice
 
-> Status: implemented slice, 2026-07-02. Parser/loader, composite report, goal CLI, loop CLI, resume matching, docs, tests, and a real loop CLI route-map smoke have landed.
+> Status: implemented slice, 2026-07-02. Parser/loader, composite report, goal CLI, loop CLI, resume matching, docs, tests, and a real loop CLI route-map smoke have landed. 2026-07-03 follow-up: builder-only `sandboxed_check` landed for fixed `typecheck/lint/test/build` feedback; it has no verifier or completion authority.
 
 ## Goal
 
@@ -101,7 +101,7 @@ Route rules:
 - Missing `route` is a schema error in the new contract. Legacy `requirements[].command` without `route` can remain supported only through the existing `sandbox-check` loader during migration.
 - `id` is unique per goal, non-empty, stable, and used as the only join key between requirement, command result, LLM score, and final verdict.
 
-Command scope for v1 stays narrow: `git status`, `git diff`, `git log`, `git ls-files`, `stat`, and `wc`. App runners, interpreters, package scripts, browser driving, and networked checks need a later `sandbox-runtime-command` route with a copied Linux-side project snapshot and runtime dependency policy.
+Command scope for trusted verifier v1 stays narrow: `git status`, `git diff`, `git log`, `git ls-files`, `stat`, and `wc`. Package scripts now have a separate builder feedback tool, `sandboxed_check`, which runs fixed `typecheck/lint/test/build` checks in a sandbox-local copy and returns output to the builder. That snapshot excludes secret-shaped paths such as `.env`, `.ssh`, private keys, credentials files, and registry auth files. App runners, interpreters, package scripts as trusted requirement proof, browser driving, and networked checks need a later `sandbox-runtime-command` route with a copied Linux-side project snapshot and runtime dependency policy.
 
 ## Trust Boundary
 
@@ -257,6 +257,7 @@ Security review checklist:
 - No general app runner route in Phase 3 v1.
 - No browser/app driving verifier.
 - No networked verifier command.
+- No use of builder `sandboxed_check` output as trusted verifier proof.
 - No automatic generation of trusted commands by the builder or verifier.
 - No automatic migration of old goal logs into goal-setter contracts.
 - No GUI human-review flow for `human` routes.

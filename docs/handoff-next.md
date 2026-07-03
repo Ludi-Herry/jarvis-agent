@@ -2,13 +2,14 @@
 
 > Phase D 腿3 整套**已全部落地 + 经 5 轮多裁判对抗核查 + 诚实文档化**——背景见 `docs/handoff-D.md`（主交接）、`docs/phase-D-leg3-checklist.md`（5 条全收口）、`docs/security-review-baseline.md`（审查历史 + 元教训）、memory `phase-d-goalloop-deterministic-legs`。
 > Phase E 四条独立第一切片（vision / bash-allow / loop / shadow-git）**已全部合进本地 main**（见下「合并收口」）。
-> OS sandbox Phase 3 v1 **已落地**：可信 goal-setter requirements、单 goal env contract、loop `--goal-setter-requirements-map`、sandbox / LLM / human 组合 verifier report、resume path/hash fail-closed、sandbox audit evidence、runner cleanup、worktree baseline audit 与 `--fail-on-worktree-change` 都已接入并有真实 goal/loop smoke。`npm run observe` 已提供只读 status / usage / audit 入口。当前交接重点改为：① Phase 3 v1 后的收口边界；② GUI human-review / approval / budget 事件；③ Phase E 后续 defer。
+> OS sandbox Phase 3 v1 **已落地**：可信 goal-setter requirements、单 goal env contract、loop `--goal-setter-requirements-map`、sandbox / LLM / human 组合 verifier report、resume path/hash fail-closed、sandbox audit evidence、runner cleanup、worktree baseline audit 与 `--fail-on-worktree-change` 都已接入并有真实 goal/loop smoke。builder 侧 `sandboxed_check` 已能在 OS sandbox 内跑 `typecheck/lint/test/build` 并把输出回灌给 builder；`npm run observe` 已提供只读 status / usage / audit 入口。当前交接重点改为：① Phase 3 v1 后的收口边界；② GUI human-review / approval / budget 事件；③ Phase E 后续 defer。
 
-## 方向决策与当前状态（更新至 2026-07-02）
+## 方向决策与当前状态（更新至 2026-07-03）
 
 - **Hooks 已扩到 slice-2 follow-up**：PreToolUse 阻断、PostToolUse 咨询与反馈回灌、result env、每-hook timeout、round/session lifecycle、多来源合并均已落地。详见 `docs/handoff-hooks.md`。
 - **OS sandbox Phase 3 v1 已落地**：`JARVIS_GOAL_SETTER_REQUIREMENTS_FILE` 提供单 goal 可信 route contract；`npm run loop -- --goal-setter-requirements-map <trusted-json>` 提供 per-goal route map；`sandbox-command` / `llm` / `human` 汇成同一个 verifier report；resume 必须匹配可信文件 path + SHA-256 hash；sandbox evidence 记录 backend、mounts、networkMode、limits、stdout/stderr；runner 默认清理 WSL payload temp roots；goal/loop 会记录 worktree status baseline，`--fail-on-worktree-change` 可把任何 drift 变成 deterministic reject。
-- **Phase 3 v1 边界**：Phase 3 v1 只覆盖 goal-setter 预声明的窄 read-only inspection command（`git status/diff/log/ls-files`、`stat`、`wc`）。通用 app / browser / network 运行态检查不在当前抽象范围；`human` route 仍然 `cannotVerify→park`；GUI human-review flow 未实现。`npm run observe` 只能汇总 JSONL 和 audit evidence，不能给 goal/loop 完成授权。
+- **sandboxed builder checks 已落地**：`goal-cli` / `loop-cli` 的 builder registry 现在注册 `sandboxed_check`，只接受 `typecheck/lint/test/build` 四个枚举，映射到 `npm run typecheck` / `npm run lint` / `npm test` / `npm run build`。host cwd 只读挂载，复制到 sandbox-local work dir 时排除 `.env`、`.ssh`、私钥、credentials、registry auth 等 secret-shaped 路径，再禁网运行；非零 exit code 作为 stdout/stderr 反馈回 builder，帮助无人值守 loop 自我迭代。
+- **Phase 3 v1 边界**：trusted verifier route 仍只覆盖 goal-setter 预声明的窄 read-only inspection command（`git status/diff/log/ls-files`、`stat`、`wc`）。`sandboxed_check` 是 builder 反馈工具，不能证明 trusted requirement、不能改写 verdict、不能给 goal/loop 完成授权。通用 app / browser / network 运行态检查不在当前抽象范围；`human` route 仍然 `cannotVerify→park`；GUI human-review flow 未实现。`npm run observe` 只能汇总 JSONL 和 audit evidence，不能给 goal/loop 完成授权。
 - **skill 自动沉淀（`propose_skill`）：不做**（投机性、判定偏弱、无证实的复用场景）。下文该节仅作设计存档。
 - **新增 verifier / route / scheduler 抽象：不做**。现有 `--verifier-map`、`--hook-map`、`--sandbox-check-map`、`--goal-setter-requirements-map` 四套 map 已足够；后续只允许修 bug、收窄边界、同步文档，不能再加第 5 套 map 或新调度/路由层。
 - **只读观测层已落地**：`npm run observe` 读取 session / goal / loop / cron JSONL 与 sandbox audit evidence，输出运行态摘要、成本/轮次摘要、trusted contract metadata、worktree status 和 sandbox backend/mount/network/limits；`--json` 给 GUI/脚本消费；`--data-dir <path>` 可看非默认 `data/`。完成授权仍只来自 `decideVerdict`、deterministic checks、trusted requirement routes 和人工确认。
@@ -76,7 +77,7 @@ Phase 3 v1 已解决早前「#2 客观路由」和「#6 裁判只读命令取证
 
 ### 仍未覆盖
 
-- **无通用 app/browser/network 运行态检查**：Phase 3 v1 没有 package script、解释器、browser driving、GUI app、network check 或完整 runtime command 路线。运行态需求如果超出窄 inspection scope，继续靠 LLM route 的文本证据或 `human` route park。
+- **无通用 app/browser/network 运行态检查**：builder 已能通过 `sandboxed_check` 跑固定项目检查脚本并读取失败输出；trusted verifier route 仍没有解释器、browser driving、GUI app、network check 或完整 runtime command 路线。运行态需求如果超出窄 inspection scope，继续靠 LLM route 的文本证据或 `human` route park。
 - **human route 仍 park**：`human` requirement 只会生成 `cannotVerify`，没有 CLI/GUI 审批结果回写 verifier report 的闭环。
 - **无 GUI human-review flow**：GUI 可接 Approver，但还没有把 human review 变成持久化事件、人工裁决、report merge、audit trail 的产品流程。
 - **status/usage/audit 入口只有只读版**：`npm run observe` 已能汇总最新 goal/loop/cron 状态、tokens、rounds、halt reason、trusted contract metadata、sandbox evidence。它只负责观察和复核辅助，不能改变 verdict。
@@ -106,7 +107,7 @@ Phase 3 v1 已解决早前「#2 客观路由」和「#6 裁判只读命令取证
 ## 上手顺序（新会话）
 
 1. 读 `docs/handoff-D.md`（Phase D 主交接：架构、两种 verified 模式、最高优先级不变量、gotcha、关键文件）。
-2. 读本页：先看「方向决策与当前状态（更新至 2026-07-02）」+「第一类：Phase 3 v1 后的剩余边界」+「GUI 就绪盘点」。旧的「沙箱跳过」判断已过期。
+2. 读本页：先看「方向决策与当前状态（更新至 2026-07-03）」+「第一类：Phase 3 v1 后的剩余边界」+「GUI 就绪盘点」。旧的「沙箱跳过」判断已过期。
 3. 查 Phase 3 细节：`README.md` 的「OS sandbox trusted checks」、`docs/os-sandbox-research.md` 的「Phase 3 - verifier exec and objective routing / Status on 2026-07-02」、`docs/superpowers/plans/2026-07-02-os-sandbox-phase3-design.md`。
 4. 要查 loop 重项收口边界时读 `docs/handoff-loop-remaining.md`；要查 cron daemon 设计读 `docs/superpowers/plans/2026-07-02-cron-daemon-plan.md`。
 5. memory `phase-d-goalloop-deterministic-legs`（不变量 + 历轮教训）、`restore-bash-session-allow`（白名单）、`phase-e-loop-scheduling`、`openhanako-outer-vision-multimodal`（vision 接线背景）、`hooks-slice-1`、`codex-for-adversarial-review`（对抗审查用 codex）。

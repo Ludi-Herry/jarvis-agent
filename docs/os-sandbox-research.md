@@ -1,10 +1,11 @@
 # OS sandbox research
 
 > Snapshot: 2026-07-02. Scope: unblock the two deferred items in `docs/handoff-next.md`: #2 objective routing and #6 verifier exec.
+> Update 2026-07-03: a minimal builder-facing `sandboxed_check` path now runs fixed project checks in the OS sandbox and returns stdout/stderr to the builder. It is a feedback channel for self-iteration, with no verdict or completion authority.
 
 ## Decision summary
 
-Recommended direction: keep the current `cannotVerify -> park` and unattended `fail-closed deny` boundary until a real sandbox runner exists. The first useful research deliverable is a narrow `SandboxRunner` capability contract plus a local proof of capability. Do not turn the bash analyzer or command allow-list into unattended auto-allow.
+Recommended direction after Phase 3 v1: keep `cannotVerify -> park` and unattended raw bash `fail-closed deny` for generic runtime/app/browser/network work. The useful sandbox surface is a narrow `SandboxRunner` capability contract with fixed callers, visible audit evidence, and no fallback to raw `bash`. Do not turn the bash analyzer or command allow-list into unattended auto-allow.
 
 Best next prototype on Luis' current machine: WSL2-backed Linux sandbox, because WSL2 Ubuntu exists locally and exposes user namespace quota plus cgroup v2. It still needs a deliberate runtime story: run from a copied project snapshot inside the Linux filesystem, keep Windows mounts out of scope, start with network disabled, and install/use a real sandbox primitive only after approval.
 
@@ -195,6 +196,28 @@ Required tests:
 - Output is capped.
 - Backend unavailable routes to `couldNotVerify`.
 - No code path falls back to raw `bash`.
+
+### Phase 2.5 - sandboxed builder project checks
+
+Status on 2026-07-03:
+
+- `src/core/tools/sandboxed-builder-check.ts` adds `createSandboxedBuilderCheckTool({ runner })`.
+- The tool is named `sandboxed_check` and is registered only into goal/loop builder registries, not into `buildDefaultRegistry()`.
+- Input accepts only `check: "typecheck" | "lint" | "test" | "build"`, mapping to `npm run typecheck`, `npm run lint`, `npm test`, and `npm run build`.
+- The tool declares `capability: "read-only"` because the command surface is fixed by the harness, the host project is mounted read-only, writes go to a sandbox-local copy, secret-shaped paths (`.env`, `.ssh`, private keys, credentials, registry auth files) are excluded from the snapshot, and network is disabled.
+- Non-zero check exits return stdout/stderr/exit code as normal builder feedback. Sandbox unavailable, failed-to-start, and timeout are tool errors with audit context.
+- `src/surfaces/cli/goal-cli.ts` and `src/surfaces/cli/loop-cli.ts` register the tool for builders via `registerBuilderSandboxTools(...)`. The verifier registry remains `read`/`grep` only.
+- `test/tools/sandboxed-builder-check.test.ts` and `test/cli/builder-sandbox-tools.test.ts` cover default-registry absence, fixed request shape, read-only host mount, sandbox-local copy, non-zero output feedback, arbitrary command rejection, and builder registry wiring.
+
+Local runtime caveat:
+
+- The WSL backend still depends on Linux-local `node/npm` to run these project checks successfully. If the backend lacks that runtime, the result is a sandbox failure or a non-zero check output that the builder can see. The harness still does not install dependencies, enable network, or fall back to host raw bash.
+
+Acceptance:
+
+- Builder can iterate on `typecheck/lint/test/build` failures without asking for generic bash approval.
+- The tool cannot prove trusted requirements, merge verifier reports, or mark a goal complete.
+- Host project writes from build artifacts stay outside the working tree unless the builder separately edits files through gated tools.
 
 ### Phase 3 - verifier exec and objective routing
 

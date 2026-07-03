@@ -99,6 +99,7 @@ import {
 } from '../../capabilities/index.js';
 import type { ModelProvider } from '../../core/index.js';
 import { safeInline } from './approval.js';
+import { registerBuilderSandboxTools } from './builder-sandbox-tools.js';
 import { createInteractiveApprover, readlineApproverIo } from './interactive-approver.js';
 import { parseLoopArgs } from './loop-args.js';
 import { assertParallelHooksCompatible } from './loop-guards.js';
@@ -133,6 +134,7 @@ const PER_ROUND_MAX_TURNS = 16;
 const BUILDER_PROMPT = [
   'You are an autonomous coding assistant working in a terminal to complete one goal.',
   'Use the read / write / grep / bash tools to make progress. Paths are relative to the project root. Dangerous or secret-touching actions may be blocked or require approval.',
+  'You may call sandboxed_check with check=typecheck|lint|test|build to run project checks inside an OS sandbox. Use its stdout/stderr to keep fixing failures.',
   'When you believe the goal is complete, call update_goal(complete) and end the round; the harness will independently rerun project checks to verify it.',
   'Do not weaken or delete tests to get green; that will be detected and rejected. If you are stuck, call update_goal(blocked).',
 ].join('\n');
@@ -600,6 +602,8 @@ async function main(): Promise<void> {
     const goalHookOverride = hookPlan.hookPathByIndex.has(attempt.index);
     const tools = buildDefaultRegistry();
     tools.register(createBashTool());
+    const goalSandboxRunner = createWsl2UnshareSandboxRunner();
+    registerBuilderSandboxTools(tools, goalSandboxRunner);
     if (visionTool) tools.register(visionTool); // opt-in vision (network -> gate ask / unattended deny)
 
     const goalPath = join(cwd, 'data', 'goals', `${goalId}.jsonl`);
@@ -692,7 +696,7 @@ async function main(): Promise<void> {
           verifierProvider,
           sandboxedRequirementCommands,
           goalSetterRequirementRoutes: goalSetterRoutes,
-          sandboxRunner: sandboxedRequirementCommands && sandboxedRequirementCommands.length > 0 ? createWsl2UnshareSandboxRunner() : undefined,
+          sandboxRunner: sandboxedRequirementCommands && sandboxedRequirementCommands.length > 0 ? goalSandboxRunner : undefined,
           shadowGit: goalShadowGit,
         },
       );

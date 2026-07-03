@@ -48,6 +48,7 @@ import {
 } from '../../capabilities/index.js';
 import type { ModelProvider } from '../../core/index.js';
 import { safeInline } from './approval.js';
+import { registerBuilderSandboxTools } from './builder-sandbox-tools.js';
 import { parseGoalArgs } from './goal-args.js';
 import { createInteractiveApprover, readlineApproverIo } from './interactive-approver.js';
 import { loadGoalCliTrustedRequirements } from './goal-trusted-requirements.js';
@@ -69,6 +70,7 @@ const OUTPUT_RESERVE_TOKENS = 16_384;
 const BUILDER_PROMPT = [
   '你是一个在终端里自主工作的编码助手,正在达成一个目标。',
   '用 read / write / grep / bash 工具推进(路径相对项目根)。危险或涉密操作会被权限闸门拦下或需用户批准。',
+  '可调用 sandboxed_check,用 check=typecheck|lint|test|build 在 OS sandbox 里跑项目检查; 根据 stdout/stderr 继续修失败。',
   '你认为目标已达成时,调用 update_goal(complete) 并结束本轮——harness 会独立重跑项目检查来验证;',
   '不要删改测试来凑绿(会被检测并拒绝)。如果卡住无法完成,调用 update_goal(blocked)。',
 ].join('\n');
@@ -131,6 +133,8 @@ async function main(): Promise<void> {
 
   const tools = buildDefaultRegistry();
   tools.register(createBashTool()); // safe to register: every call runs behind the gate below
+  const builderSandboxRunner = createWsl2UnshareSandboxRunner();
+  registerBuilderSandboxTools(tools, builderSandboxRunner);
   // Vision (Phase E multimodal): mirror the REPL — register `vision` ONLY when ARK_VISION_MODEL names a
   // vision model (opt-in, like leg 3). capability=network → the gate routes the call to `ask`, which the
   // goal approver below answers (attended). With no approver it would fail-close to deny — no silent
@@ -282,7 +286,7 @@ async function main(): Promise<void> {
         verifierProvider,
         sandboxedRequirementCommands,
         goalSetterRequirementRoutes: goalSetterRequirements?.routes,
-        sandboxRunner: sandboxedRequirementCommands && sandboxedRequirementCommands.length > 0 ? createWsl2UnshareSandboxRunner() : undefined,
+        sandboxRunner: sandboxedRequirementCommands && sandboxedRequirementCommands.length > 0 ? builderSandboxRunner : undefined,
         shadowGit,
       },
     );

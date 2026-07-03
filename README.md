@@ -17,11 +17,11 @@
 | Phase E 多能力（多 goal Loop 调度 + 外置 vision + 命令级 bash session-allow + shadow-git 旁路历史） | ✅ 完成（4 切片合入 main） |
 | Hooks（PreToolUse 阻断 + PostToolUse 咨询/反馈；tool result env；per-hook timeout；round/session lifecycle；多来源；loop per-goal hook-map） | ✅ 完成，剩余仅保留 defer |
 | **下一步：GUI（晴天模式外壳）** | ⏭️ GUI 可开工；loop 重项已收口 |
-| OS sandbox Phase 3 v1 + 只读观测层 | ✅ 完成（trusted requirements / route map / composite verifier / `npm run observe`）；未覆盖范围：通用 app/browser/network 运行态检查、GUI human-review |
+| OS sandbox Phase 3 v1 + builder sandboxed checks + 只读观测层 | ✅ 完成（trusted requirements / route map / composite verifier / `sandboxed_check` / `npm run observe`）；未覆盖范围：通用 app/browser/network 运行态检查、GUI human-review |
 | propose_skill | ⛔ 已拍板 defer（投机性、判定偏弱、无证实复用场景） |
 | 新增 verifier / route / scheduler 抽象 | ⛔ 已拍板不做；现有四套 map 足够（`verifier` / `hook` / `sandbox-check` / `goal-setter-requirements`） |
 
-`npm run typecheck / lint / test / build` 全绿（**974 passed / 1 skipped**，Windows 下 1 个 POSIX SIGINT smoke 跳过）。命令安全根（PermissionGate + 命令解析器 + bash 审批）经**六轮独立 codex 对抗核查**确认无破闸 HIGH；goal 验收子系统（确定性三腿 + 腿3 裁判 + bash/Linux 密钥加固）经**多轮多裁判对抗核查**（codex + 独立 Claude 子代理，含一轮 4 裁判收尾）。Phase E 各切片与 Hooks slice-1/2 均经 **codex 跨模型对抗审查逐层加固**（vision 四轮 / bash 白名单 Path A 经 7 HIGH 撤回、保留命令级 Path B / Hooks 信任边界修 HIGH / slice-2 每切片 2 轮 SHIP）。方法 / 严重度基线 / 历史见 `docs/security-review-baseline.md`。
+`npm run typecheck / lint / test / build` 全绿（**985 passed / 1 skipped**，Windows 下 1 个 POSIX SIGINT smoke 跳过）。命令安全根（PermissionGate + 命令解析器 + bash 审批）经**六轮独立 codex 对抗核查**确认无破闸 HIGH；goal 验收子系统（确定性三腿 + 腿3 裁判 + bash/Linux 密钥加固）经**多轮多裁判对抗核查**（codex + 独立 Claude 子代理，含一轮 4 裁判收尾）。Phase E 各切片与 Hooks slice-1/2 均经 **codex 跨模型对抗审查逐层加固**（vision 四轮 / bash 白名单 Path A 经 7 HIGH 撤回、保留命令级 Path B / Hooks 信任边界修 HIGH / slice-2 每切片 2 轮 SHIP）。方法 / 严重度基线 / 历史见 `docs/security-review-baseline.md`。
 
 接手入口：
 - **Loop primitive 怎么选 → `docs/loop-primitives-guide.md`**；**最新全景 + Phase E/Hooks 现状 + 下一步（GUI 就绪盘点）→ `docs/handoff-next.md`**；**Loop 重项收口记录（parallel resume / finalize / cron daemon）→ `docs/handoff-loop-remaining.md`**；**Phase D（GoalLoop + 三腿 + 腿3 裁判）→ `docs/handoff-D.md`**；**Hooks（tool-call / lifecycle / loop per-goal hook-map）→ `docs/handoff-hooks.md`**；
@@ -78,7 +78,7 @@ npm run cron -- --cron-map <trusted-json> # cron 单次扫描：可信 cwd 外�
 npm run cron:daemon -- --cron-map <trusted-json> [--poll-ms <n>] # cron 前台 daemon：可信 cwd 外计划文件；默认 poll=60000；daemon lock + scan lock；写 data/cron/loop-cron-daemon.jsonl；SIGINT/SIGTERM 释放锁退出；不自动 resume/merge/cleanup，不后台 fork
 npm run observe     # 只读观测：汇总 data/sessions|goals|loops|cron 的 status / usage / audit；--json 输出给 GUI/脚本
 npm run typecheck   # tsc --noEmit
-npm test            # vitest（974 passed / 1 skipped，Windows 下 1 个 POSIX SIGINT smoke 跳过）
+npm test            # vitest（985 passed / 1 skipped，Windows 下 1 个 POSIX SIGINT smoke 跳过）
 npm run build       # tsc 产出到 dist/
 npm run lint        # eslint
 npm run demo:a1     # A1：调 Doubao 一句话 → 流式增量 + 聚合 ModelResult
@@ -100,6 +100,12 @@ npm run sandbox:goal-smoke # GoalLoop + trusted sandbox check plan + wsl2-unshar
 ## OS sandbox trusted checks
 
 Runtime temp cleanup: the WSL runner creates host-known `/tmp/jarvis-wsl2-unshare-*` payload roots and cleans them by default, including a best-effort host-side cleanup after WSL spawn errors or host-side timeouts. `retainTempDirs: true` is reserved for smoke/debug inspection.
+
+### Builder sandboxed checks
+
+`npm run goal` and `npm run loop` register a builder-only `sandboxed_check` tool. It accepts only `check=typecheck|lint|test|build`, mapping to `npm run typecheck`, `npm run lint`, `npm test`, and `npm run build`.
+
+The tool mounts the current goal cwd read-only, copies it into a sandbox-local work directory while excluding secret-shaped paths such as `.env`, `.ssh`, private keys, credentials files, and registry auth files, disables network, and returns stdout/stderr/exit code to the builder. Non-zero exits are normal feedback so the builder can keep fixing. Completion authority still stays in `runGoal` / `decideVerdict`, deterministic checks, trusted requirement routes, and human review.
 
 ### Worktree status baseline
 
@@ -312,7 +318,7 @@ src/
 skills/          # git-commit/SKILL.md
 agents/          # researcher/ROLE.md（子 agent 角色花名册）
 scripts/         # a1/a2/a3/a5 + b1/b3 + c1/c2 + d1 demo（真连 Doubao / 真跑 bash）
-test/            # vitest 单测（974 passed / 1 skipped，Windows 下 1 个 POSIX SIGINT smoke 跳过）
+test/            # vitest 单测（985 passed / 1 skipped，Windows 下 1 个 POSIX SIGINT smoke 跳过）
 docs/            # 各阶段 plan + handoff + security-review-baseline
 data/            # 运行期会话日志（gitignore）
 ```
