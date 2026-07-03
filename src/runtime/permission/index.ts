@@ -28,3 +28,10 @@ export {
 } from './decide.js';
 export { isSensitivePath, SENSITIVE_PATHS, globMatchesSecret } from './sensitive.js';
 export { analyzeCommand, type CommandAnalysis } from './command.js';
+export {
+  FileApprovalAuditStore,
+  parseApprovalAuditLog,
+  type ApprovalAuditDecision,
+  type ApprovalAuditRecord,
+  type ApprovalAuditStore,
+} from './approval-audit-store.js';

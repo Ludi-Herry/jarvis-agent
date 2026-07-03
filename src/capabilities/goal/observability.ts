@@ -4,6 +4,7 @@ import {
   parseSessionLog,
   type SessionRecord,
 } from '../../runtime/session/session-store.js';
+import { parseApprovalAuditLog, type ApprovalAuditRecord } from '../../runtime/permission/index.js';
 import {
   parseLoopCronDaemonLog,
   type LoopCronDaemonRecord,
@@ -35,6 +36,7 @@ export interface ObservationInput {
   loops?: Array<ObservationLog<LoopRecord>>;
   cron?: ObservationLog<LoopCronRecord>;
   cronDaemon?: ObservationLog<LoopCronDaemonRecord>;
+  approvals?: Array<ObservationLog<ApprovalAuditRecord>>;
 }
 
 export interface ObservationReportOptions {
@@ -55,6 +57,7 @@ export interface ObservationReport {
       loops: true;
       cron: true;
       cronDaemon: true;
+      approvals: true;
     };
   };
   authority: {
@@ -84,6 +87,7 @@ export interface ObservationReport {
     trustedContracts: TrustedContractSummary[];
     worktreeStatus: WorktreeStatusSummary[];
     sandboxEvidence: SandboxAuditSummary[];
+    approvals: ApprovalAuditSummary;
   };
 }
 
@@ -151,12 +155,22 @@ export interface SandboxAuditSummary {
   limits?: unknown;
 }
 
+export interface ApprovalAuditSummary {
+  requests: number;
+  results: number;
+  allowed: number;
+  denied: number;
+  errors: number;
+  sessionIds: string[];
+}
+
 export function buildObservationReport(input: ObservationInput, options: ObservationReportOptions = {}): ObservationReport {
   const sessions = input.sessions ?? [];
   const goals = input.goals ?? [];
   const loops = input.loops ?? [];
   const cronRecords = input.cron?.records ?? [];
   const daemonRecords = input.cronDaemon?.records ?? [];
+  const approvalRecords = (input.approvals ?? []).flatMap((log) => log.records);
 
   const sessionSummaries = sessions.map(summarizeSession).filter((summary): summary is SessionSummary => summary !== undefined);
   const goalSummaries = goals.map(summarizeGoal).filter((summary): summary is GoalSummary => summary !== undefined);
@@ -179,6 +193,7 @@ export function buildObservationReport(input: ObservationInput, options: Observa
         loops: true,
         cron: true,
         cronDaemon: true,
+        approvals: true,
       },
     },
     authority: { mode: 'observation-only', canCompleteGoals: false, canCompleteLoops: false },
@@ -207,17 +222,19 @@ export function buildObservationReport(input: ObservationInput, options: Observa
       trustedContracts: loops.flatMap((log) => trustedContractsFromLoop(log.records)),
       worktreeStatus: goals.flatMap((log) => worktreeStatusFromGoal(log.records)),
       sandboxEvidence: goals.flatMap((log) => sandboxEvidenceFromGoal(log.records)),
+      approvals: summarizeApprovals(approvalRecords),
     },
   };
 }
 
 export async function loadWorkspaceObservation(dataDir: string): Promise<ObservationReport> {
-  const [sessions, goals, loops, cron, cronDaemon] = await Promise.all([
+  const [sessions, goals, loops, cron, cronDaemon, approvals] = await Promise.all([
     readJsonlDir(join(dataDir, 'sessions'), parseSessionLog),
     readJsonlDir(join(dataDir, 'goals'), parseGoalLog),
     readJsonlDir(join(dataDir, 'loops'), parseLoopLog),
     readJsonlFile(join(dataDir, 'cron', 'loop-cron.jsonl'), parseLoopCronLog),
     readJsonlFile(join(dataDir, 'cron', 'loop-cron-daemon.jsonl'), parseLoopCronDaemonLog),
+    readJsonlDir(join(dataDir, 'approvals'), parseApprovalAuditLog),
   ]);
 
   return buildObservationReport({
@@ -226,6 +243,7 @@ export async function loadWorkspaceObservation(dataDir: string): Promise<Observa
     loops,
     ...(cron === undefined ? {} : { cron }),
     ...(cronDaemon === undefined ? {} : { cronDaemon }),
+    approvals,
   }, { sourceDataDir: dataDir });
 }
 
@@ -237,7 +255,7 @@ export function formatObservationReport(report: ObservationReport): string {
     `goals: ${report.status.goals.total} active=${report.status.goals.byState.active} complete=${report.status.goals.byState.complete} blocked=${report.status.goals.byState.blocked}`,
     `loops: ${report.status.loops.total} loopTokens=${report.usage.loopTokens} loopFinishedGoals=${report.usage.loopFinishedGoals}`,
     `cron: attempts=${report.status.cron.attempts}`,
-    `audit: trusted contracts=${report.audit.trustedContracts.length} worktree statuses=${report.audit.worktreeStatus.length} sandbox evidence: ${report.audit.sandboxEvidence.length}`,
+    `audit: trusted contracts=${report.audit.trustedContracts.length} worktree statuses=${report.audit.worktreeStatus.length} sandbox evidence: ${report.audit.sandboxEvidence.length} approvals=${report.audit.approvals.requests}/${report.audit.approvals.results}`,
   ];
 
   if (report.status.latestSession) {
@@ -421,6 +439,23 @@ function extractSandboxAudits(evidence: string): Array<Omit<SandboxAuditSummary,
     cursor = objectStart + objectText.length;
   }
   return audits;
+}
+
+function summarizeApprovals(records: ApprovalAuditRecord[]): ApprovalAuditSummary {
+  const requests = records.filter((record) => record.t === 'approval-request');
+  const results = records.filter((record) => record.t === 'approval-result');
+  const sessionIds = new Set<string>();
+  for (const record of records) {
+    if (record.sessionId !== undefined) sessionIds.add(record.sessionId);
+  }
+  return {
+    requests: requests.length,
+    results: results.length,
+    allowed: results.filter((record) => record.decision === 'allow-once' || record.decision === 'allow-session').length,
+    denied: results.filter((record) => record.decision === 'deny').length,
+    errors: results.filter((record) => record.decision === 'error').length,
+    sessionIds: [...sessionIds].sort(),
+  };
 }
 
 function balancedJsonObject(text: string, start: number): string | undefined {

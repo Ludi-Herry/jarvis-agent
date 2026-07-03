@@ -48,6 +48,7 @@ import {
 } from '../../capabilities/index.js';
 import type { ModelProvider } from '../../core/index.js';
 import { safeInline } from './approval.js';
+import { createApprovalEventApprover, FileApprovalAuditStore } from './approval-events.js';
 import { registerBuilderSandboxTools } from './builder-sandbox-tools.js';
 import { parseGoalArgs } from './goal-args.js';
 import { createInteractiveApprover, readlineApproverIo } from './interactive-approver.js';
@@ -144,20 +145,8 @@ async function main(): Promise<void> {
   const vision = resolveVisionConfig(process.env, config);
   if (vision.enabled) tools.register(createVisionTool(createVisionComplete(vision.config)));
 
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  // The same interactive approver the loop uses (interactive-approver.ts): renders detailOf +
-  // [a]/[s]/[d] (so a network `vision` call is approved KNOWING which image leaves the machine) and
-  // now exposes `s` (allow-session) — command-scoped for bash, so approving a shell command once
-  // stops re-asking that exact command for the rest of this goal run. Blank/unrecognized re-asks;
-  // EOF or exhausted retries → deny (fail-closed).
-  const approver: Approver = createInteractiveApprover(readlineApproverIo(rl));
-  const gate = new DefaultPermissionGate({ approver });
-  const context = new DefaultContextManager({
-    summarizer: provider,
-    maxContextTokens: provider.capability.maxContextTokens,
-    maxOutputTokens: OUTPUT_RESERVE_TOKENS,
-  });
-
+  const id = new Date().toISOString().replace(/[:.]/g, '-');
+  const sessionId = `goal-${id}`;
   const bus = new InMemoryEventBus();
   let rstate = initialRenderState();
   bus.subscribe((e: Event) => {
@@ -166,10 +155,28 @@ async function main(): Promise<void> {
     if (output) process.stdout.write(output);
   });
 
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  // The same interactive approver the loop uses (interactive-approver.ts): renders detailOf +
+  // [a]/[s]/[d] (so a network `vision` call is approved KNOWING which image leaves the machine) and
+  // now exposes `s` (allow-session) — command-scoped for bash, so approving a shell command once
+  // stops re-asking that exact command for the rest of this goal run. Blank/unrecognized re-asks;
+  // EOF or exhausted retries → deny (fail-closed).
+  const interactiveApprover: Approver = createInteractiveApprover(readlineApproverIo(rl));
+  const approver: Approver = createApprovalEventApprover({
+    approver: interactiveApprover,
+    bus,
+    store: new FileApprovalAuditStore(join(cwd, 'data', 'approvals', `${sessionId}.jsonl`)),
+    sessionId,
+  });
+  const gate = new DefaultPermissionGate({ approver });
+  const context = new DefaultContextManager({
+    summarizer: provider,
+    maxContextTokens: provider.capability.maxContextTokens,
+    maxOutputTokens: OUTPUT_RESERVE_TOKENS,
+  });
+
   const baseline = await snapshotBaseline(shellPath, cwd); // leg-2 baseline; undefined if not a git repo
   const worktreeBaseline = await snapshotWorktreeStatus(shellPath, cwd);
-  const id = new Date().toISOString().replace(/[:.]/g, '-');
-  const sessionId = `goal-${id}`;
   const goalStore = new FileGoalStore(join(cwd, 'data', 'goals', `${id}.jsonl`));
   const sessionStore = new FileSessionStore(join(cwd, 'data', 'sessions', `${sessionId}.jsonl`));
   await sessionStore.writeHeader({ id: sessionId, model: config.model, cwd, startedAt: new Date().toISOString() });

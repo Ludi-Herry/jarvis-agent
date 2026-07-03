@@ -21,7 +21,7 @@
 | propose_skill | ⛔ 已拍板 defer（投机性、判定偏弱、无证实复用场景） |
 | 新增 verifier / route / scheduler 抽象 | ⛔ 已拍板不做；现有四套 map 足够（`verifier` / `hook` / `sandbox-check` / `goal-setter-requirements`） |
 
-`npm run typecheck / lint / test / build` 全绿（**1003 passed / 1 skipped**，Windows 下 1 个 POSIX SIGINT smoke 跳过）。命令安全根（PermissionGate + 命令解析器 + bash 审批）经**六轮独立 codex 对抗核查**确认无破闸 HIGH；goal 验收子系统（确定性三腿 + 腿3 裁判 + bash/Linux 密钥加固）经**多轮多裁判对抗核查**（codex + 独立 Claude 子代理，含一轮 4 裁判收尾）。Phase E 各切片与 Hooks slice-1/2 均经 **codex 跨模型对抗审查逐层加固**（vision 四轮 / bash 白名单 Path A 经 7 HIGH 撤回、保留命令级 Path B / Hooks 信任边界修 HIGH / slice-2 每切片 2 轮 SHIP）。方法 / 严重度基线 / 历史见 `docs/security-review-baseline.md`。
+`npm run typecheck / lint / test / build` 全绿（**1005 passed / 1 skipped**，Windows 下 1 个 POSIX SIGINT smoke 跳过）。命令安全根（PermissionGate + 命令解析器 + bash 审批）经**六轮独立 codex 对抗核查**确认无破闸 HIGH；goal 验收子系统（确定性三腿 + 腿3 裁判 + bash/Linux 密钥加固）经**多轮多裁判对抗核查**（codex + 独立 Claude 子代理，含一轮 4 裁判收尾）。Phase E 各切片与 Hooks slice-1/2 均经 **codex 跨模型对抗审查逐层加固**（vision 四轮 / bash 白名单 Path A 经 7 HIGH 撤回、保留命令级 Path B / Hooks 信任边界修 HIGH / slice-2 每切片 2 轮 SHIP）。方法 / 严重度基线 / 历史见 `docs/security-review-baseline.md`。
 
 接手入口：
 - **Loop primitive 怎么选 → `docs/loop-primitives-guide.md`**；**最新全景 + Phase E/Hooks 现状 + 下一步（GUI 就绪盘点）→ `docs/handoff-next.md`**；**Loop 重项收口记录（parallel resume / finalize / cron daemon）→ `docs/handoff-loop-remaining.md`**；**Phase D（GoalLoop + 三腿 + 腿3 裁判）→ `docs/handoff-D.md`**；**Hooks（tool-call / lifecycle / loop per-goal hook-map）→ `docs/handoff-hooks.md`**；
@@ -76,9 +76,9 @@ npm run loop:finalize -- --loop <id> --merge # 交互式 apply：必须输入 me
 npm run loop:finalize -- --loop <id> --cleanup # 交互式清理：必须输入 cleanup <loopId>；只移除有 merge-applied 审计且当前 clean 的 worktree；使用 git worktree remove，不强删、不删日志
 npm run cron -- --cron-map <trusted-json> # cron 单次扫描：可信 cwd 外计划文件，到期任务触发普通 loop；task 必须 unattended:true；带同工作区扫描锁 + stale 回收 + task 前心跳；记录 data/cron/loop-cron.jsonl，不常驻
 npm run cron:daemon -- --cron-map <trusted-json> [--poll-ms <n>] # cron 前台 daemon：可信 cwd 外计划文件；默认 poll=60000；daemon lock + scan lock；写 data/cron/loop-cron-daemon.jsonl；SIGINT/SIGTERM 释放锁退出；不自动 resume/merge/cleanup，不后台 fork
-npm run observe     # 只读观测：汇总 data/sessions|goals|loops|cron 的 status / usage / audit；--json 输出 schemaVersion=1 给 GUI/脚本
+npm run observe     # 只读观测：汇总 data/sessions|goals|loops|cron|approvals 的 status / usage / audit；--json 输出 schemaVersion=1 给 GUI/脚本
 npm run typecheck   # tsc --noEmit
-npm test            # vitest（1003 passed / 1 skipped，Windows 下 1 个 POSIX SIGINT smoke 跳过）
+npm test            # vitest（1005 passed / 1 skipped，Windows 下 1 个 POSIX SIGINT smoke 跳过）
 npm run build       # tsc 产出到 dist/
 npm run lint        # eslint
 npm run demo:a1     # A1：调 Doubao 一句话 → 流式增量 + 聚合 ModelResult
@@ -125,9 +125,11 @@ Browser smoke output is feedback for the builder or a human smoke pass. It canno
 
 ### Read-only observation contract
 
-`npm run observe -- --json` emits `ObservationReport` schema version 1. The report includes `meta.generatedAt`, `meta.source.dataDir`, the fixed log scope (`sessions/goals/loops/cron/cronDaemon`), `status`, `usage`, and audit summaries for trusted contracts, worktree status, and sandbox evidence.
+`npm run observe -- --json` emits `ObservationReport` schema version 1. The report includes `meta.generatedAt`, `meta.source.dataDir`, the fixed log scope (`sessions/goals/loops/cron/cronDaemon/approvals`), `status`, `usage`, and audit summaries for trusted contracts, worktree status, sandbox evidence, and approval request/result counts.
 
 The report also includes `authority: { mode: "observation-only", canCompleteGoals: false, canCompleteLoops: false }`. GUI or scripts can display and filter it, but they must not treat it as completion evidence.
+
+Attended `goal` and `loop` runs emit `approval_request` / `approval_result` events around the injected human approver and append the same safe details to `data/approvals/*.jsonl`. These records omit write content and remain audit-only; they do not approve `human` verifier requirements or change verdicts.
 
 ### Worktree status baseline
 
@@ -340,7 +342,7 @@ src/
 skills/          # git-commit/SKILL.md
 agents/          # researcher/ROLE.md（子 agent 角色花名册）
 scripts/         # a1/a2/a3/a5 + b1/b3 + c1/c2 + d1 demo（真连 Doubao / 真跑 bash）
-test/            # vitest 单测（1003 passed / 1 skipped，Windows 下 1 个 POSIX SIGINT smoke 跳过）
+test/            # vitest 单测（1005 passed / 1 skipped，Windows 下 1 个 POSIX SIGINT smoke 跳过）
 docs/            # 各阶段 plan + handoff + security-review-baseline
 data/            # 运行期会话日志（gitignore）
 ```

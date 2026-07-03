@@ -99,6 +99,7 @@ import {
 } from '../../capabilities/index.js';
 import type { ModelProvider } from '../../core/index.js';
 import { safeInline } from './approval.js';
+import { createApprovalEventApprover, FileApprovalAuditStore } from './approval-events.js';
 import { registerBuilderSandboxTools } from './builder-sandbox-tools.js';
 import { createInteractiveApprover, readlineApproverIo } from './interactive-approver.js';
 import { parseLoopArgs } from './loop-args.js';
@@ -494,7 +495,12 @@ async function main(): Promise<void> {
     // (the gate is shared across goals by loop-cli and remembers the exact command
     // string, never bash wholesale, deciding a deny first). Unattended (no approver) still
     // fail-closes every ask.
-    approver = createInteractiveApprover(readlineApproverIo(ask));
+    approver = createApprovalEventApprover({
+      approver: createInteractiveApprover(readlineApproverIo(ask)),
+      bus,
+      store: new FileApprovalAuditStore(join(cwd, 'data', 'approvals', `${loopId}.jsonl`)),
+      sessionId: `loop-${loopId}`,
+    });
   }
   // --unattended means no approver, so the gate fail-closes every `ask` to deny.
   const gate = new DefaultPermissionGate({ approver });

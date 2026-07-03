@@ -148,6 +148,39 @@ describe('buildObservationReport', () => {
           },
         ],
       },
+      approvals: [
+        {
+          path: 'data/approvals/goal-1.jsonl',
+          records: [
+            {
+              t: 'approval-request',
+              requestId: 'a1',
+              sessionId: 'goal-1',
+              toolName: 'bash',
+              capability: 'executes-code',
+              reason: 'executes code',
+              detail: 'npm test',
+              at: '2026-07-02T10:00:30.000Z',
+            },
+            {
+              t: 'approval-result',
+              requestId: 'a1',
+              sessionId: 'goal-1',
+              toolName: 'bash',
+              decision: 'allow-once',
+              at: '2026-07-02T10:00:31.000Z',
+            },
+            {
+              t: 'approval-result',
+              requestId: 'a2',
+              sessionId: 'goal-1',
+              toolName: 'write',
+              decision: 'deny',
+              at: '2026-07-02T10:00:32.000Z',
+            },
+          ],
+        },
+      ],
     };
 
     const report = buildObservationReport(input);
@@ -163,6 +196,7 @@ describe('buildObservationReport', () => {
           loops: true,
           cron: true,
           cronDaemon: true,
+          approvals: true,
         },
       },
     });
@@ -188,6 +222,14 @@ describe('buildObservationReport', () => {
         limits: { timeoutMs: 30000, outputLimitBytes: 20000 },
       },
     ]);
+    expect(report.audit.approvals).toEqual({
+      requests: 1,
+      results: 2,
+      allowed: 1,
+      denied: 1,
+      errors: 0,
+      sessionIds: ['goal-1'],
+    });
 
     expect(formatObservationReport(report)).toContain('Observation: status/usage/audit (read-only)');
     expect(formatObservationReport(report)).toContain('completion authority: none');
@@ -214,6 +256,13 @@ describe('loadWorkspaceObservation', () => {
         '{"t":"goal-state","state":"blocked","at":"t1"}\n',
       'utf8',
     );
+    await mkdir(join(dir, 'data', 'approvals'), { recursive: true });
+    await writeFile(
+      join(dir, 'data', 'approvals', 'goal-1.jsonl'),
+      '{"t":"approval-request","requestId":"a1","sessionId":"goal-1","toolName":"write","capability":"writes-files","reason":"writes files","detail":"路径: README.md","at":"t0"}\n' +
+        '{"t":"approval-result","requestId":"a1","sessionId":"goal-1","toolName":"write","decision":"deny","at":"t1"}\n',
+      'utf8',
+    );
 
     const report = await loadWorkspaceObservation(join(dir, 'data'));
 
@@ -222,5 +271,6 @@ describe('loadWorkspaceObservation', () => {
     expect(report.status.goals.total).toBe(1);
     expect(report.status.latestGoal).toMatchObject({ id: 'g1', state: 'blocked' });
     expect(report.usage.sessionMessages).toBe(1);
+    expect(report.audit.approvals.denied).toBe(1);
   });
 });

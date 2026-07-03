@@ -13,6 +13,8 @@
  * subscriber handles it (or ignores it) in its `default` branch.
  */
 import type { ToolCall, ToolResult } from '../core/types.js';
+import type { ToolCapability } from '../core/tools/types.js';
+import type { Approval } from './permission/permission-gate.js';
 
 /** The canonical event union (a subset for A phase; grows as milestones land). */
 export type Event =
@@ -36,7 +38,28 @@ export type Event =
     }
   // Hooks slice-2 — a PostToolUse hook's stdout: surfaced for observability AND folded into the
   // conversation by run-agent so the model sees it next turn. Advisory (never alters a tool result).
-  | { type: 'hook_output'; hook: 'PostToolUse'; toolName: string; output: string };
+  | { type: 'hook_output'; hook: 'PostToolUse'; toolName: string; output: string }
+  // GUI/human-review prelude: approval events are observation/audit only. They do not alter the
+  // PermissionGate outcome and cannot feed verifier reports or completion authority.
+  | {
+      type: 'approval_request';
+      requestId: string;
+      sessionId?: string;
+      toolName: string;
+      capability: ToolCapability;
+      reason: string;
+      detail: string;
+      at: string;
+    }
+  | {
+      type: 'approval_result';
+      requestId: string;
+      sessionId?: string;
+      toolName: string;
+      decision: Approval | 'error';
+      error?: string;
+      at: string;
+    };
 
 export type Subscriber = (event: Event) => void;
 
