@@ -126,6 +126,7 @@ export interface SandboxAuditSummary {
   goalId: string;
   round: number;
   backend?: string;
+  command?: unknown;
   mounts?: unknown;
   networkMode?: string;
   limits?: unknown;
@@ -378,6 +379,7 @@ function extractSandboxAudits(evidence: string): Array<Omit<SandboxAuditSummary,
     if (parsed !== undefined) {
       audits.push({
         ...optional('backend', stringField(parsed, 'backend')),
+        ...optional('command', parsed.command),
         ...optional('mounts', parsed.mounts),
         ...optional('networkMode', stringField(parsed, 'networkMode')),
         ...optional('limits', parsed.limits),

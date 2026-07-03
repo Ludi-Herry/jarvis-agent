@@ -60,7 +60,7 @@ describe('sandboxed_exec tool factory', () => {
 
     await tool.run({ command: 'git diff --stat' }, { cwd: '/host/project' });
 
-    expect(captured?.command).toEqual(['bash', '--noprofile', '--norc', '-c', 'git diff --no-ext-diff --stat']);
+    expect(captured?.command).toEqual(['bash', '--noprofile', '--norc', '-c', 'git diff --no-ext-diff --no-textconv --stat']);
   });
 
   it('does not execute the command when the sandbox is unavailable', async () => {

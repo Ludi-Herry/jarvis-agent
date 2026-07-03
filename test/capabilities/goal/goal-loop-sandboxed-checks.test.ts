@@ -121,7 +121,7 @@ describe('runGoal sandboxed requirement checks', () => {
       }),
     );
 
-    expect(requests[0]?.command).toEqual(['bash', '--noprofile', '--norc', '-c', 'git diff --no-ext-diff --stat']);
+    expect(requests[0]?.command).toEqual(['bash', '--noprofile', '--norc', '-c', 'git diff --no-ext-diff --no-textconv --stat']);
   });
 
   it('parks when sandbox checks are configured but no runner is available', async () => {

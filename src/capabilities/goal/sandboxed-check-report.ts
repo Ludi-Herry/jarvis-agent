@@ -68,7 +68,12 @@ function mapSandboxResult(
   observed: string;
   couldNotVerify?: string;
 } {
-  const prefix = `${requirement.id}: ${requirement.text}\ncommand: ${check.command}\n${renderSandboxAudit(check.result.audit)}`;
+  const prefix = [
+    `${requirement.id}: ${requirement.text}`,
+    `configuredCommand: ${check.command}`,
+    `executedCommand: ${check.result.audit.command.join(' ')}`,
+    renderSandboxAudit(check.result.audit),
+  ].join('\n');
   if (check.result.status !== 'completed') {
     const reason = `${check.result.status}: ${check.result.reason}`;
     return {
@@ -102,6 +107,7 @@ function renderSandboxAudit(audit: SandboxRunResult['audit']): string {
   return `sandbox audit:\n${JSON.stringify(
     {
       backend: audit.backend,
+      command: audit.command,
       mounts: audit.mounts,
       networkMode: audit.networkMode,
       limits: audit.limits,

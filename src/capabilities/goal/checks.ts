@@ -172,7 +172,8 @@ async function runHeldOut(deps: CheckDeps, commands: string[]): Promise<HeldOutR
   return { passed, results };
 }
 
-/** Diff the test tree vs the baseline commit and classify. A failed git invocation → inert (clean). */
+/** Diff the test tree vs the baseline commit and classify. A failed/truncated git diff with a baseline
+ *  present fails closed because we cannot prove tests and check-oracle files stayed intact. */
 async function scanTestTamper(
   deps: CheckDeps,
   baseline: TestBaseline,
@@ -181,7 +182,7 @@ async function scanTestTamper(
   // check-oracle files, so ordinary source edits are ignored but neutralizing the oracle isn't.
   const res = await runCommand(
     deps.shellPath,
-    `git diff --no-color ${baseline.headSha}`,
+    `git diff --no-ext-diff --no-textconv --no-color ${baseline.headSha}`,
     deps.cwd,
     60_000,
     DIFF_OUTPUT_CHARS,

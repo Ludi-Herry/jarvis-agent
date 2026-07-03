@@ -37,8 +37,11 @@ describe('reportFromSandboxedRequirementChecks', () => {
       { requirementId: 'r1', command: 'git status --short', result: completed(0, 'ok') },
     ]);
 
+    expect(report.evidence).toContain('configuredCommand: git status --short');
+    expect(report.evidence).toContain('executedCommand: bash --noprofile --norc -c git status --short');
     expect(report.evidence).toContain('sandbox audit:');
     expect(report.evidence).toContain('"backend": "wsl2-unshare"');
+    expect(report.evidence).toContain('"command": [');
     expect(report.evidence).toContain('"mounts"');
     expect(report.evidence).toContain('"networkMode": "none"');
     expect(report.evidence).toContain('"limits"');

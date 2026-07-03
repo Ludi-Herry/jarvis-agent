@@ -14,6 +14,7 @@ const ok: InspectionCommandDecision = { ok: true };
 const SIMPLE_NODE_TYPES = new Set(['File', 'Stmt', 'CallExpr', 'Word', 'Lit', 'SglQuoted', 'DblQuoted']);
 const GLOB_META = /[*?]|\[.+?\]/;
 const BRACE_EXPANSION = /\{[^{}]*(,|\.\.)[^{}]*\}/;
+const GIT_DIFF_HARDENING_FLAGS = ['--no-ext-diff', '--no-textconv'] as const;
 
 export function validateSandboxInspectionCommand(command: string): InspectionCommandDecision {
   const analysis = analyzeCommand(command);
@@ -31,16 +32,17 @@ export function hardenSandboxInspectionCommand(command: string): string {
   if (!parsed.ok) return command;
 
   const [program, subcommand, ...rest] = parsed.words;
-  if (program === 'git' && subcommand === 'diff' && !hasGitDiffNoExtDiffFlag(rest)) {
-    return shellWords(['git', 'diff', '--no-ext-diff', ...rest]);
+  if (program === 'git' && subcommand === 'diff') {
+    const missingFlags = GIT_DIFF_HARDENING_FLAGS.filter((flag) => !hasGitDiffFlag(rest, flag));
+    if (missingFlags.length > 0) return shellWords(['git', 'diff', ...missingFlags, ...rest]);
   }
   return command;
 }
 
-function hasGitDiffNoExtDiffFlag(args: readonly string[]): boolean {
+function hasGitDiffFlag(args: readonly string[], flag: string): boolean {
   for (const arg of args) {
     if (arg === '--') return false;
-    if (arg === '--no-ext-diff') return true;
+    if (arg === flag) return true;
   }
   return false;
 }
@@ -97,6 +99,7 @@ function validateProgram(words: readonly string[]): InspectionCommandDecision {
 }
 
 function validateGit(args: readonly string[]): InspectionCommandDecision {
+  if (args.some(isGitPathspecMagic)) return reject('git pathspec magic is not allowed in sandboxed inspection commands');
   const [subcommand, ...rest] = args;
   switch (subcommand) {
     case 'status':
@@ -115,7 +118,7 @@ function validateGit(args: readonly string[]): InspectionCommandDecision {
 }
 
 function validateGitDiff(args: readonly string[]): InspectionCommandDecision {
-  const allowedFlags = new Set(['--', '--stat', '--name-only', '--name-status', '--check', '--cached', '--staged', '--color=never', '--no-ext-diff']);
+  const allowedFlags = new Set(['--', '--stat', '--name-only', '--name-status', '--check', '--cached', '--staged', '--color=never', '--no-ext-diff', '--no-textconv']);
   for (const arg of args) {
     if (arg.startsWith('-') && !allowedFlags.has(arg)) return reject(`git diff flag is not allowed: ${arg}`);
   }
@@ -145,6 +148,10 @@ function validateWc(args: readonly string[]): InspectionCommandDecision {
 function allFlags(args: readonly string[], allowed: readonly string[]): boolean {
   const set = new Set(allowed);
   return args.every((arg) => set.has(arg));
+}
+
+function isGitPathspecMagic(arg: string): boolean {
+  return arg.startsWith(':(');
 }
 
 function allArgsStayInsideProject(args: readonly string[]): boolean {

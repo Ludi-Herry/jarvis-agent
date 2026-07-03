@@ -86,11 +86,13 @@ describe('buildObservationReport', () => {
                   evidence:
                     'sandbox verifier evidence:\n' +
                     'r1: README is inspectable\n' +
-                    'command: stat README.md\n' +
+                    'configuredCommand: stat README.md\n' +
+                    'executedCommand: bash --noprofile --norc -c stat README.md\n' +
                     'sandbox audit:\n' +
                     JSON.stringify(
                       {
                         backend: 'wsl2-unshare',
+                        command: ['bash', '--noprofile', '--norc', '-c', 'stat README.md'],
                         mounts: [{ hostPath: 'H:\\jarvis-agent', sandboxPath: '/tmp/jarvis-sandbox/project', access: 'read-only' }],
                         networkMode: 'none',
                         limits: { timeoutMs: 30000, outputLimitBytes: 20000 },
@@ -166,6 +168,7 @@ describe('buildObservationReport', () => {
         goalId: 'g1',
         round: 1,
         backend: 'wsl2-unshare',
+        command: ['bash', '--noprofile', '--norc', '-c', 'stat README.md'],
         networkMode: 'none',
         mounts: [{ hostPath: 'H:\\jarvis-agent', sandboxPath: '/tmp/jarvis-sandbox/project', access: 'read-only' }],
         limits: { timeoutMs: 30000, outputLimitBytes: 20000 },

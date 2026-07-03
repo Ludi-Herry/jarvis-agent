@@ -88,4 +88,21 @@ describe('runCommand — secret env scrubbing (model-facing vs harness)', () => 
     });
     expect(r.output).toContain('[set]');
   });
+
+  it('scrubGitEnv removes inherited GIT_* values before applying trusted overrides', async () => {
+    const prev = process.env.GIT_EXTERNAL_DIFF;
+    process.env.GIT_EXTERNAL_DIFF = 'evil-diff';
+    try {
+      const r = await runCommand(shellPath, 'echo "[$GIT_EXTERNAL_DIFF][$GIT_OPTIONAL_LOCKS]"', process.cwd(), 10_000, 1_000, undefined, {
+        scrubGitEnv: true,
+        extraEnv: { GIT_OPTIONAL_LOCKS: '0' },
+      });
+
+      expect(r.output).toContain('[][0]');
+      expect(r.output).not.toContain('evil-diff');
+    } finally {
+      if (prev === undefined) delete process.env.GIT_EXTERNAL_DIFF;
+      else process.env.GIT_EXTERNAL_DIFF = prev;
+    }
+  });
 });

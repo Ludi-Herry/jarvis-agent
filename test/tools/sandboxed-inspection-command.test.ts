@@ -6,6 +6,7 @@ describe('validateSandboxInspectionCommand', () => {
     'git status --short',
     'git diff --stat',
     'git diff --no-ext-diff --stat',
+    'git diff --no-ext-diff --no-textconv --stat',
     'git diff --name-only -- src',
     'git log --oneline -5',
     'git log --max-count=3 --color=never',
@@ -26,6 +27,8 @@ describe('validateSandboxInspectionCommand', () => {
     ['git diff --ext-diff --stat', /flag/],
     ['git diff --output=x', /flag/],
     ['git diff -- .env', /secret|project snapshot/],
+    ["git diff -- ':(glob).e*'", /pathspec magic/],
+    ["git ls-files ':(glob).e*'", /pathspec magic/],
     ['git diff $(echo src)', /command\/process substitution|shell expansion|unsupported/],
     ['git status; git diff --stat', /one simple/],
     ['git status && git diff --stat', /unsupported|one simple/],
@@ -47,15 +50,16 @@ describe('validateSandboxInspectionCommand', () => {
     expect(decision.reason).not.toContain('[object Object]');
   });
 
-  it('adds --no-ext-diff to allowed git diff commands before sandbox execution', () => {
-    expect(hardenSandboxInspectionCommand('git diff --stat')).toBe('git diff --no-ext-diff --stat');
-    expect(hardenSandboxInspectionCommand('git diff --no-ext-diff --stat')).toBe('git diff --no-ext-diff --stat');
-    expect(hardenSandboxInspectionCommand('git diff -- --no-ext-diff')).toBe('git diff --no-ext-diff -- --no-ext-diff');
+  it('adds git diff hardening flags before sandbox execution', () => {
+    expect(hardenSandboxInspectionCommand('git diff --stat')).toBe('git diff --no-ext-diff --no-textconv --stat');
+    expect(hardenSandboxInspectionCommand('git diff --no-ext-diff --stat')).toBe('git diff --no-textconv --no-ext-diff --stat');
+    expect(hardenSandboxInspectionCommand('git diff --no-ext-diff --no-textconv --stat')).toBe('git diff --no-ext-diff --no-textconv --stat');
+    expect(hardenSandboxInspectionCommand('git diff -- --no-ext-diff')).toBe('git diff --no-ext-diff --no-textconv -- --no-ext-diff');
     expect(hardenSandboxInspectionCommand("git diff --name-only -- 'dir/file name.txt'")).toBe(
-      "git diff --no-ext-diff --name-only -- 'dir/file name.txt'",
+      "git diff --no-ext-diff --no-textconv --name-only -- 'dir/file name.txt'",
     );
     expect(hardenSandboxInspectionCommand('git diff --name-only -- "dir/it\'s ok.txt"')).toBe(
-      "git diff --no-ext-diff --name-only -- 'dir/it'\\''s ok.txt'",
+      "git diff --no-ext-diff --no-textconv --name-only -- 'dir/it'\\''s ok.txt'",
     );
     expect(hardenSandboxInspectionCommand('git status --short')).toBe('git status --short');
   });

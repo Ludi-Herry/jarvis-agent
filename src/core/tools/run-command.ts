@@ -41,6 +41,10 @@ export interface RunCommandOptions {
    *  (e.g. a hook's JARVIS_HOOK_* tool-call metadata) to the command without re-exposing scrubbed
    *  secrets. Applied last, so these keys win over inherited env. */
   extraEnv?: Record<string, string>;
+  /** Remove inherited Git configuration/env hooks before layering `extraEnv`. Use for harness-owned
+   *  Git invocations that inspect or apply untrusted worktrees, so repo/user env cannot turn reads into
+   *  command execution via fsmonitor, external diff, pagers, or similar Git extension points. */
+  scrubGitEnv?: boolean;
 }
 
 /** Spawn `shellPath -c command` in `cwd`, capture merged stdout+stderr (capped at `maxOutputChars`),
@@ -68,7 +72,7 @@ export function runCommand(
     const child = spawn(shellPath, ['-c', command], {
       cwd,
       windowsHide: true,
-      env: shellEnv(options?.scrubSecretEnv, options?.extraEnv),
+      env: shellEnv(options?.scrubSecretEnv, options?.extraEnv, options?.scrubGitEnv),
       detached: process.platform !== 'win32',
     });
 
@@ -151,10 +155,15 @@ function killTree(pid: number | undefined): void {
  *  `scrubSecrets` is set (the model-facing bash tool), credential-shaped vars are also removed so the
  *  agent can't read a key out of its own environment. `extraEnv` is layered on LAST (after scrubbing),
  *  so trusted caller-supplied context (e.g. a hook's JARVIS_HOOK_* vars) survives the scrub. */
-function shellEnv(scrubSecrets = false, extraEnv?: Record<string, string>): NodeJS.ProcessEnv {
+function shellEnv(scrubSecrets = false, extraEnv?: Record<string, string>, scrubGitEnv = false): NodeJS.ProcessEnv {
   const env = { ...process.env };
   delete env.BASH_ENV;
   delete env.ENV;
+  if (scrubGitEnv) {
+    for (const name of Object.keys(env)) {
+      if (name.toUpperCase().startsWith('GIT_')) delete env[name];
+    }
+  }
   if (scrubSecrets) {
     for (const name of Object.keys(env)) {
       if (isSecretEnvName(name)) delete env[name];

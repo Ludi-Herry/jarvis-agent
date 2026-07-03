@@ -22,6 +22,24 @@ const GIT_READ_OUTPUT_LIMIT = 20_000;
 const GIT_WRITE_TIMEOUT_MS = 30_000;
 const GIT_WRITE_OUTPUT_LIMIT = 50_000;
 const GIT_PATCH_OUTPUT_LIMIT = 5_000_000;
+const FINALIZE_DIFF_STAT_COMMAND = 'git diff --no-ext-diff --no-textconv --stat HEAD';
+const FINALIZE_PATCH_COMMAND = 'git diff --no-ext-diff --no-textconv --binary HEAD';
+const FINALIZE_GIT_ENV = {
+  GIT_OPTIONAL_LOCKS: '0',
+  GIT_CONFIG_NOSYSTEM: '1',
+  GIT_CONFIG_GLOBAL: '/dev/null',
+  GIT_CONFIG_COUNT: '4',
+  GIT_CONFIG_KEY_0: 'core.pager',
+  GIT_CONFIG_VALUE_0: 'cat',
+  GIT_CONFIG_KEY_1: 'core.fsmonitor',
+  GIT_CONFIG_VALUE_1: 'false',
+  GIT_CONFIG_KEY_2: 'core.hooksPath',
+  GIT_CONFIG_VALUE_2: '/dev/null',
+  GIT_CONFIG_KEY_3: 'interactive.diffFilter',
+  GIT_CONFIG_VALUE_3: '',
+  GIT_PAGER: 'cat',
+  PAGER: 'cat',
+} as const;
 
 async function main(): Promise<void> {
   let args;
@@ -158,7 +176,7 @@ async function readWorktreeStatus(path: string, shellPath: string): Promise<Fina
     return missingWorktreeStatus(path);
   }
   const status = await runGitRead(shellPath, 'git status --porcelain=v1 --untracked-files=all', path);
-  const diffStat = await runGitRead(shellPath, 'git diff --no-ext-diff --stat HEAD', path);
+  const diffStat = await runGitRead(shellPath, FINALIZE_DIFF_STAT_COMMAND, path);
   const statusText = status.code === 0 ? status.output.trim() : `git status failed: ${status.output.trim() || status.spawnError || String(status.code)}`;
   const diffText = diffStat.code === 0 ? diffStat.output.trim() : `git diff failed: ${diffStat.output.trim() || diffStat.spawnError || String(diffStat.code)}`;
   const classified = status.code === 0 ? classifyStatus(statusText) : { conflicted: false, hasTrackedChanges: false, hasUntracked: false };
@@ -194,7 +212,8 @@ function missingWorktreeStatus(path: string): FinalizeWorktreeStatus {
 
 function runGitRead(shellPath: string, command: string, cwd: string) {
   return runCommand(shellPath, command, cwd, GIT_READ_TIMEOUT_MS, GIT_READ_OUTPUT_LIMIT, undefined, {
-    extraEnv: { GIT_OPTIONAL_LOCKS: '0' },
+    scrubGitEnv: true,
+    extraEnv: FINALIZE_GIT_ENV,
   });
 }
 
@@ -420,12 +439,12 @@ async function applyOneProposal(
 ): Promise<void> {
   const item = opts.report.items.find((candidate) => candidate.index === proposal.index);
   const worktreePath = item?.worktree?.path ?? proposal.worktreePath;
-  const patch = await runGitPatch(opts.shellPath, 'git diff --no-ext-diff --binary HEAD', worktreePath);
+  const patch = await runGitPatch(opts.shellPath, FINALIZE_PATCH_COMMAND, worktreePath);
   if (patch.code !== 0 || patch.truncated) {
     await parkAndThrow(opts.auditPath, opts.report.loopId, proposal, 'patch-generation-failed', compactGitOutput(patch));
   }
   if (patch.output.trim() === '') {
-    await parkAndThrow(opts.auditPath, opts.report.loopId, proposal, 'empty-patch', 'git diff --binary HEAD produced no patch');
+    await parkAndThrow(opts.auditPath, opts.report.loopId, proposal, 'empty-patch', `${FINALIZE_PATCH_COMMAND} produced no patch`);
   }
 
   const headBefore = await readGitHead(opts.cwd, opts.shellPath);
@@ -484,11 +503,17 @@ async function parkAndThrow(
 }
 
 function runGitPatch(shellPath: string, command: string, cwd: string) {
-  return runCommand(shellPath, command, cwd, GIT_WRITE_TIMEOUT_MS, GIT_PATCH_OUTPUT_LIMIT);
+  return runCommand(shellPath, command, cwd, GIT_WRITE_TIMEOUT_MS, GIT_PATCH_OUTPUT_LIMIT, undefined, {
+    scrubGitEnv: true,
+    extraEnv: FINALIZE_GIT_ENV,
+  });
 }
 
 function runGitWrite(shellPath: string, command: string, cwd: string) {
-  return runCommand(shellPath, command, cwd, GIT_WRITE_TIMEOUT_MS, GIT_WRITE_OUTPUT_LIMIT);
+  return runCommand(shellPath, command, cwd, GIT_WRITE_TIMEOUT_MS, GIT_WRITE_OUTPUT_LIMIT, undefined, {
+    scrubGitEnv: true,
+    extraEnv: FINALIZE_GIT_ENV,
+  });
 }
 
 function compactGitOutput(result: Awaited<ReturnType<typeof runCommand>>): string {
