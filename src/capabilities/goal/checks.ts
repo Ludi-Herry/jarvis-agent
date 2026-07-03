@@ -64,7 +64,7 @@ export interface CheckDeps {
   /** Held-out leg: SECRET hidden-assertion commands the builder never sees — sourced from config, NEVER
    *  the claim, and (unlike checkCommands) never surfaced back to the builder. Absent/empty → no
    *  held-out leg (it stays `undefined` on the result; decideVerdict treats absence as "leg not run"). */
-  heldOutCommands?: string[];
+  heldOutCommands?: readonly string[];
   /** Worktree status captured before the goal/loop run. Absent -> no worktree audit leg. */
   worktreeBaseline?: WorktreeStatusBaseline;
   /** `audit` records changes only; `forbid` makes any baseline drift reject. */
@@ -154,7 +154,7 @@ export function classifyWorktreeStatusChange(
 
 /** Run the secret held-out commands and AND their real exit codes. Same trust model as leg 1 (the real
  *  exit code, never a self-report), but these commands are NEVER revealed to the builder. */
-async function runHeldOut(deps: CheckDeps, commands: string[]): Promise<HeldOutResult> {
+async function runHeldOut(deps: CheckDeps, commands: readonly string[]): Promise<HeldOutResult> {
   const results: HeldOutResult['results'] = [];
   let passed = true;
   for (const command of commands) {

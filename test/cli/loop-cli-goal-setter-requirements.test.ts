@@ -11,6 +11,8 @@ describe('loop CLI goal-setter requirements wiring', () => {
     expect(source).toContain('goalSetterRequirementsMapPath: goalSetterRequirementsMap?.path');
     expect(source).toContain('goalSetterRequirementsMapHash: goalSetterRequirementsMap?.hash');
     expect(source).toContain('goalSetterRequirementRoutes: goalSetterRoutes');
+    expect(source).toContain('goalSetterHeldOutCommands');
+    expect(source).toContain('heldOutCommands: goalSetterHeldOutCommands');
     expect(source).toContain('sandboxedRequirementCommands');
   });
 });

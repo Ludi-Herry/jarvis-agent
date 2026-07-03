@@ -26,8 +26,8 @@
  * different model, and ONLY then can a goal return couldNotVerify, which is the sole input to the
  * cross-goal VerifierHealthMonitor. So the headline monitor is INERT in the default `npm run loop`
  * (correctly: no shared judge, no judge-health signal) and LIVE once ARK_VERIFIER_MODEL is set. The
- * held-out hidden-assertion leg is NOT wired here (it is a per-objective secret; one shared file across
- * a heterogeneous queue is meaningless); set it per single goal via `npm run goal` if you need it.
+ * held-out hidden-assertion commands can be supplied per objective through the trusted
+ * --goal-setter-requirements-map. They stay out of cwd logs/builder context and flow only into runGoal.
  *
  * Run:  npm run loop -- <objectives-file>            (needs ARK_API_KEY in .env)
  *       npm run loop -- <objectives-file> --unattended
@@ -565,6 +565,11 @@ async function main(): Promise<void> {
       : 'Goal-setter requirements: disabled',
   );
   console.log(
+    goalSetterRequirementsPlan.heldOutCommandsByIndex.size > 0
+      ? `Held-out: per-goal hidden checks configured for ${goalSetterRequirementsPlan.heldOutCommandsByIndex.size}/${objectives.length} goals`
+      : 'Held-out: no per-goal hidden checks',
+  );
+  console.log(
     vision.enabled
       ? `vision: enabled (${safeInline(vision.config.model)}), builder-only, gated as network`
       : `vision: disabled (${vision.reason})`,
@@ -626,6 +631,7 @@ async function main(): Promise<void> {
     const goalSetterPinned = goalSetterRequirementsPlan.pinnedByIndex.get(attempt.index);
     const goalSetterRoutes = goalSetterRequirementsPlan.routesByIndex.get(attempt.index);
     const goalSetterCommands = goalSetterRequirementsPlan.commandsByIndex.get(attempt.index);
+    const goalSetterHeldOutCommands = goalSetterRequirementsPlan.heldOutCommandsByIndex.get(attempt.index);
     const verifierProvider =
       goalSetterPinned !== undefined
         ? goalSetterRoutesNeedLlm(goalSetterRoutes)
@@ -699,6 +705,7 @@ async function main(): Promise<void> {
           builderSystemPrompt: BUILDER_PROMPT,
           perRoundMaxTurns: PER_ROUND_MAX_TURNS,
           checkCommands: DEFAULT_CHECK_COMMANDS,
+          heldOutCommands: goalSetterHeldOutCommands,
           worktreeChangePolicy: failOnWorktreeChange ? 'forbid' : 'audit',
           verifierProvider,
           sandboxedRequirementCommands,

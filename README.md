@@ -68,8 +68,8 @@ cp .env.example .env   # 然后编辑 .env 填 ARK_API_KEY
 ```bash
 npm run dev         # 终端 REPL：带权限闸门 + bash + 交互审批 + 会话落盘（需 ARK_API_KEY）。Ctrl-C 中断 / /exit 退出
 npm run resume      # 恢复 data/sessions/ 最近一个会话继续跑
-npm run goal        # goal 模式：npm run goal -- "<objective>" 自主跑到达标自停（确定性两腿；JARVIS_HELDOUT_CHECKS_FILE 加 held-out 隐藏断言；ARK_VERIFIER_MODEL=不同模型 启用腿3 独立裁判）
-npm run loop        # loop 模式（Phase E）：npm run loop -- <objectives-file> 多 goal 队列顺序排空、崩溃安全 resume；默认 attended / --unattended fail-closed / --resume(+--force)；可 --parallel 2..4 用 cwd 外 worktree 并行跑，parallel resume 必须显式带 --worktree-root（与任何 hooks 配置互斥）；可 --hook-map <trusted-json> 给串行 goal 配 cwd 外 hook 覆盖；可 --sandbox-check-map <trusted-json> 给每个 goal 配 repo/worktree 外 sandbox checks；可 --goal-setter-requirements-map <trusted-json> 给每个 goal 配 repo/worktree 外 requirement route map
+npm run goal        # goal 模式：npm run goal -- "<objective>" 自主跑到达标自停（确定性两腿；JARVIS_HELDOUT_CHECKS_FILE 或 trusted requirements 的 heldOutCommands 加隐藏断言；ARK_VERIFIER_MODEL=不同模型 启用腿3 独立裁判）
+npm run loop        # loop 模式（Phase E）：npm run loop -- <objectives-file> 多 goal 队列顺序排空、崩溃安全 resume；默认 attended / --unattended fail-closed / --resume(+--force)；可 --parallel 2..4 用 cwd 外 worktree 并行跑，parallel resume 必须显式带 --worktree-root（与任何 hooks 配置互斥）；可 --hook-map <trusted-json> 给串行 goal 配 cwd 外 hook 覆盖；可 --sandbox-check-map <trusted-json> 给每个 goal 配 repo/worktree 外 sandbox checks；可 --goal-setter-requirements-map <trusted-json> 给每个 goal 配 repo/worktree 外 requirement route map 和 per-goal held-out checks
 npm run resume:loop -- --verifier-map <trusted-json> --hook-map <trusted-json> --sandbox-check-map <trusted-json> # 恢复最近 loop：恢复模式来自 cwd 外可信 map；无 per-goal verifier / hooks / sandbox checks 时各用 {"goals":[]}；原 loop 若带任一 map，恢复必须传同一个可信 map；若原 loop 使用 goal-setter requirements map，恢复也必须传同一路径和哈希的 --goal-setter-requirements-map
 npm run loop:finalize -- --loop <id> # 只读 finalize report：汇总 parallel worktree 的 logged verdict / status / diff，生成人工审阅 merge proposal；不 cleanup
 npm run loop:finalize -- --loop <id> --merge # 交互式 apply：必须输入 merge <loopId>；只合入 verified + tracked diff proposal，untracked/conflict/缺 verdict 停下；不 cleanup
@@ -148,6 +148,7 @@ Do not set `JARVIS_GOAL_SETTER_REQUIREMENTS_FILE` together with `JARVIS_SANDBOX_
 ```json
 {
   "version": 1,
+  "heldOutCommands": ["node C:/trusted/jarvis/assert-goal.js"],
   "requirements": [
     {
       "id": "r1",
@@ -174,6 +175,7 @@ Route behavior:
 - `sandbox-command`: command is required and must pass the narrow inspection allow scope. The WSL2 sandbox result maps to `proves`, `contradicts`, or `cannotVerify`.
 - `llm`: only these requirements are sent to the independent LLM verifier. Command-backed and human-routed requirements are not in that prompt.
 - `human`: always parks as `cannotVerify` for manual review.
+- `heldOutCommands`: optional hidden assertions from the same cwd-outside trusted JSON. They run as the deterministic held-out leg, stay out of builder feedback, and are not written into cwd goal logs.
 
 PowerShell example:
 
@@ -211,6 +213,7 @@ Loop uses the same route contract with a `goals` array keyed by objective index:
   "goals": [
     {
       "index": 0,
+      "heldOutCommands": ["node C:/trusted/jarvis/assert-loop-goal-0.js"],
       "requirements": [
         {
           "id": "r1",
@@ -234,7 +237,7 @@ npm run loop -- objectives.txt --goal-setter-requirements-map <trusted-json-outs
 npm run resume:loop -- --verifier-map <trusted-empty-or-full-map> --hook-map <trusted-empty-or-full-map> --goal-setter-requirements-map <same-trusted-json>
 ```
 
-The loop header records the canonical requirements map path and SHA-256 hash. Resume requires the same path and hash, and the CLI rejects maps inside the current cwd, detected repo/workspace root, or parallel worktree root.
+The loop header records the canonical requirements map path and SHA-256 hash. Resume requires the same path and hash, and the CLI rejects maps inside the current cwd, detected repo/workspace root, or parallel worktree root. Per-goal `heldOutCommands` are reloaded from that trusted map on each run/resume and only passed to `runGoal` as hidden deterministic checks.
 
 真实 loop CLI route-map smoke 已在 2026-07-02 跑通：`npm run loop -- <temp-objectives> --goal-setter-requirements-map <temp-map> --unattended` 输出 `Goal-setter requirements: per-goal route-map overrides 1/1 goals` 和 `sandboxed verifier...`，最终 `verified`、`complete`、`queue-empty`。该 smoke 使用 repo/worktree 外 map，两个 `sandbox-command` requirements 分别通过 WSL2 read-only sandbox 内的 `stat package.json` / `stat README.md` 验证。
 
@@ -344,7 +347,7 @@ src/
 skills/          # git-commit/SKILL.md
 agents/          # researcher/ROLE.md（子 agent 角色花名册）
 scripts/         # a1/a2/a3/a5 + b1/b3 + c1/c2 + d1 demo（真连 Doubao / 真跑 bash）
-test/            # vitest 单测（1005 passed / 1 skipped，Windows 下 1 个 POSIX SIGINT smoke 跳过）
+test/            # vitest 单测（1007 passed / 1 skipped，Windows 下 1 个 POSIX SIGINT smoke 跳过）
 docs/            # 各阶段 plan + handoff + security-review-baseline
 data/            # 运行期会话日志（gitignore）
 ```

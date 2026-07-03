@@ -138,7 +138,7 @@ export interface GoalRunDeps {
   /** Held-out leg: SECRET hidden-assertion commands the builder never sees (config, NEVER the claim).
    *  Absent/empty → no held-out leg. The harness runs them and trusts the real exit codes, but never
    *  surfaces them to the builder — see {@link continuationFromVerdict}. */
-  heldOutCommands?: string[];
+  heldOutCommands?: readonly string[];
   /** `audit` records worktree status drift; `forbid` rejects if status changes after the baseline. */
   worktreeChangePolicy?: WorktreeChangePolicy;
   /** Leg 3: the SECOND (independent, different-model) provider. Present → leg 3 runs after the

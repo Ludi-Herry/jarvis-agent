@@ -15,6 +15,7 @@ describe('goal-setter-authored requirements', () => {
     const plan = parseGoalSetterRequirementsPlan(
       JSON.stringify({
         version: 1,
+        heldOutCommands: ['node C:/trusted/assert-copy.js'],
         requirements: [
           { id: 'r1', text: 'status is inspectable', route: 'sandbox-command', command: 'git status --short' },
           { id: 'r2', text: 'copy reads clearly', route: 'llm' },
@@ -25,6 +26,7 @@ describe('goal-setter-authored requirements', () => {
 
     expect(plan).toEqual({
       version: 1,
+      heldOutCommands: ['node C:/trusted/assert-copy.js'],
       requirements: [
         { id: 'r1', text: 'status is inspectable', route: 'sandbox-command', command: 'git status --short' },
         { id: 'r2', text: 'copy reads clearly', route: 'llm' },
@@ -78,6 +80,7 @@ describe('goal-setter-authored requirements', () => {
       '\uFEFF' +
       JSON.stringify({
         version: 1,
+        heldOutCommands: ['node C:/trusted/assert-copy.js'],
         requirements: [
           { id: 'r1', text: 'status is inspectable', route: 'sandbox-command', command: 'git status --short' },
           { id: 'r2', text: 'copy reads clearly', route: 'llm' },
@@ -95,7 +98,7 @@ describe('goal-setter-authored requirements', () => {
     expect(loaded.path).toBe(resolve(outside));
     expect(loaded.hash).toMatch(/^[a-f0-9]{64}$/);
     expect(loaded.hash).toBe(
-      'd2dc65826270166869a1bebf6b38684b8d3a464dc138b2119441b3722c7079eb',
+      '720f17c9f0198b27640b0984da5b34b4c4f7a0980a3fc6219744911234486983',
     );
     expect(loaded.pinned).toEqual([
       { id: 'r1', text: 'status is inspectable' },
@@ -103,6 +106,7 @@ describe('goal-setter-authored requirements', () => {
       { id: 'r3', text: 'operator approves visual polish' },
     ]);
     expect(loaded.commands).toEqual([{ requirementId: 'r1', command: 'git status --short' }]);
+    expect(loaded.heldOutCommands).toEqual(['node C:/trusted/assert-copy.js']);
     expect(loaded.routes.get('r1')).toBe('sandbox-command');
     expect(loaded.routes.get('r2')).toBe('llm');
     expect(loaded.routes.get('r3')).toBe('human');
@@ -124,6 +128,7 @@ describe('goal-setter-authored requirements', () => {
         goals: [
           {
             index: 0,
+            heldOutCommands: ['node C:/trusted/assert-goal-0.js'],
             requirements: [
               { id: 'r1', text: 'status is inspectable', route: 'sandbox-command', command: 'git status --short' },
               { id: 'r2', text: 'copy reads clearly', route: 'llm' },
@@ -142,6 +147,7 @@ describe('goal-setter-authored requirements', () => {
       { id: 'r2', text: 'copy reads clearly' },
     ]);
     expect(plan.commandsByIndex.get(0)).toEqual([{ requirementId: 'r1', command: 'git status --short' }]);
+    expect(plan.heldOutCommandsByIndex.get(0)).toEqual(['node C:/trusted/assert-goal-0.js']);
     expect(plan.routesByIndex.get(2)?.get('r3')).toBe('human');
     expect(() =>
       buildLoopGoalSetterRequirementsPlan({ objectivesCount: 1, map: { version: 1, goals: [{ index: 2, requirements: [] }] } }),

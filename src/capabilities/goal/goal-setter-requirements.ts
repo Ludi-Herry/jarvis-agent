@@ -17,6 +17,7 @@ export interface GoalSetterRequirement {
 
 export interface GoalSetterRequirementsPlan {
   readonly version: 1;
+  readonly heldOutCommands?: readonly string[];
   readonly requirements: GoalSetterRequirement[];
 }
 
@@ -29,10 +30,12 @@ export interface LoadedGoalSetterRequirements extends GoalSetterRequirementsPlan
   readonly pinned: PinnedRequirement[];
   readonly routes: Map<string, GoalSetterRequirementRoute>;
   readonly commands: SandboxedRequirementCommand[];
+  readonly heldOutCommands: readonly string[];
 }
 
 export interface LoopGoalSetterRequirementsMapEntry {
   readonly index: number;
+  readonly heldOutCommands?: readonly string[];
   readonly requirements: GoalSetterRequirement[];
 }
 
@@ -47,15 +50,21 @@ export interface LoopGoalSetterRequirementsPlan {
   readonly pinnedByIndex: Map<number, PinnedRequirement[]>;
   readonly routesByIndex: Map<number, Map<string, GoalSetterRequirementRoute>>;
   readonly commandsByIndex: Map<number, SandboxedRequirementCommand[]>;
+  readonly heldOutCommandsByIndex: Map<number, readonly string[]>;
   readonly overrideCount: number;
 }
 
 export function parseGoalSetterRequirementsPlan(text: string): GoalSetterRequirementsPlan {
   const raw = parseJsonObject(stripUtf8Bom(text), 'goal-setter requirements');
-  const unknownTop = Object.keys(raw).filter((key) => key !== 'version' && key !== 'requirements');
+  const unknownTop = Object.keys(raw).filter((key) => key !== 'version' && key !== 'requirements' && key !== 'heldOutCommands');
   if (unknownTop.length > 0) throw new Error(`unknown goal-setter requirements keys: ${unknownTop.join(', ')}`);
   if (raw.version !== 1) throw new Error('goal-setter requirements .version must be 1');
-  return { version: 1, requirements: parseRequirements(raw.requirements, 'requirements', true) };
+  const heldOutCommands = parseHeldOutCommands(raw.heldOutCommands, 'heldOutCommands');
+  return {
+    version: 1,
+    ...optional('heldOutCommands', heldOutCommands),
+    requirements: parseRequirements(raw.requirements, 'requirements', true),
+  };
 }
 
 export async function loadGoalSetterRequirementsPlan(deps: {
@@ -92,14 +101,19 @@ export function parseLoopGoalSetterRequirementsMap(text: string): LoopGoalSetter
       throw new Error(`goals[${index}] must be an object`);
     }
     const entry = item as Record<string, unknown>;
-    const unknown = Object.keys(entry).filter((key) => key !== 'index' && key !== 'requirements');
+    const unknown = Object.keys(entry).filter((key) => key !== 'index' && key !== 'requirements' && key !== 'heldOutCommands');
     if (unknown.length > 0) throw new Error(`goals[${index}] has unknown keys: ${unknown.join(', ')}`);
     if (typeof entry.index !== 'number' || !Number.isInteger(entry.index) || entry.index < 0) {
       throw new Error(`goals[${index}].index must be a non-negative integer`);
     }
     if (seen.has(entry.index)) throw new Error(`duplicate loop goal-setter requirements index: ${entry.index}`);
     seen.add(entry.index);
-    return { index: entry.index, requirements: parseRequirements(entry.requirements, `goals[${index}].requirements`, true) };
+    const heldOutCommands = parseHeldOutCommands(entry.heldOutCommands, `goals[${index}].heldOutCommands`);
+    return {
+      index: entry.index,
+      ...optional('heldOutCommands', heldOutCommands),
+      requirements: parseRequirements(entry.requirements, `goals[${index}].requirements`, true),
+    };
   });
 
   return { version: 1, goals };
@@ -132,18 +146,20 @@ export function buildLoopGoalSetterRequirementsPlan(input: {
   const pinnedByIndex = new Map<number, PinnedRequirement[]>();
   const routesByIndex = new Map<number, Map<string, GoalSetterRequirementRoute>>();
   const commandsByIndex = new Map<number, SandboxedRequirementCommand[]>();
+  const heldOutCommandsByIndex = new Map<number, readonly string[]>();
 
   for (const goal of input.map?.goals ?? []) {
     if (goal.index >= input.objectivesCount) {
       throw new Error(`goal-setter requirements map index ${goal.index} is out of range for ${input.objectivesCount} objectives`);
     }
-    const loaded = loadedFromPlan({ version: 1, requirements: goal.requirements });
+    const loaded = loadedFromPlan({ version: 1, heldOutCommands: goal.heldOutCommands, requirements: goal.requirements });
     pinnedByIndex.set(goal.index, loaded.pinned);
     routesByIndex.set(goal.index, loaded.routes);
     commandsByIndex.set(goal.index, loaded.commands);
+    if (loaded.heldOutCommands.length > 0) heldOutCommandsByIndex.set(goal.index, loaded.heldOutCommands);
   }
 
-  return { pinnedByIndex, routesByIndex, commandsByIndex, overrideCount: pinnedByIndex.size };
+  return { pinnedByIndex, routesByIndex, commandsByIndex, heldOutCommandsByIndex, overrideCount: pinnedByIndex.size };
 }
 
 export function assertResumeGoalSetterRequirementsMatch(
@@ -182,7 +198,14 @@ function loadedFromPlan(plan: GoalSetterRequirementsPlan): Omit<LoadedGoalSetter
     pinned: plan.requirements.map((requirement) => ({ id: requirement.id, text: requirement.text })),
     routes,
     commands,
+    heldOutCommands: [...(plan.heldOutCommands ?? [])],
   };
+}
+
+function parseHeldOutCommands(value: unknown, label: string): readonly string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) throw new Error(`${label} must be an array`);
+  return value.map((item, index) => asNonEmptyString(item, `${label}[${index}]`));
 }
 
 function parseRequirements(value: unknown, label: string, requireNonEmpty: boolean): GoalSetterRequirement[] {
@@ -265,6 +288,10 @@ function asNonEmptyString(value: unknown, label: string): string {
 function asRoute(value: unknown, label: string): GoalSetterRequirementRoute {
   if (value === 'sandbox-command' || value === 'llm' || value === 'human') return value;
   throw new Error(`${label} must be one of sandbox-command, llm, human`);
+}
+
+function optional<K extends string, T>(key: K, value: T | undefined): { [P in K]: T } | Record<string, never> {
+  return value === undefined ? {} : { [key]: value } as { [P in K]: T };
 }
 
 function stripUtf8Bom(text: string): string {

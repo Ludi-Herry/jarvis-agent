@@ -210,7 +210,10 @@ async function main(): Promise<void> {
 
   // Held-out leg: secret hidden-assertion commands from a FILE (kept off the command line / shell
   // history). Absent → the leg is explicitly declared absent (a known weaker-confidence state).
-  const heldOutCommands = loadHeldOutCommands();
+  const heldOutCommands = [
+    ...loadHeldOutCommands(),
+    ...(goalSetterRequirements?.heldOutCommands ?? []),
+  ];
   const checksOnlyDefaultMode =
     verifierProvider === undefined && sandboxCheckPlan === undefined && goalSetterRequirements === undefined && heldOutCommands.length === 0;
 
