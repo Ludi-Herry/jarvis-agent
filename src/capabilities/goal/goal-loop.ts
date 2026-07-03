@@ -292,6 +292,7 @@ export async function runGoal(spec: GoalSpec, deps: GoalRunDeps): Promise<GoalRu
     }
     while (state === 'active' && round < goal.budget.maxRounds) {
       round++;
+      emitGoalRoundStart(deps, goal, round, totalTurns, totalTokens);
 
       const tokensBeforeRound = totalTokens;
       const outcome = await run({
@@ -319,7 +320,16 @@ export async function runGoal(spec: GoalSpec, deps: GoalRunDeps): Promise<GoalRu
       // No completion claim this round → either out of budget, or nudge and keep going.
       if (claim === undefined) {
         await deps.goalStore?.recordRound({ round, turns: outcome.turns, tokens: roundTokens, at: stamp() });
-        if (overBudget(totalTurns, totalTokens, goal.budget)) {
+        const budgetExceeded = overBudget(totalTurns, totalTokens, goal.budget) || round >= goal.budget.maxRounds;
+        emitGoalRoundEnd(deps, goal, {
+          round,
+          turns: outcome.turns,
+          roundTokens,
+          totalTurns,
+          totalTokens,
+          state: budgetExceeded ? 'blocked' : 'active',
+        });
+        if (budgetExceeded) {
           state = await transitionAfterSnapshots('blocked', 'budget');
           break;
         }
@@ -334,6 +344,15 @@ export async function runGoal(spec: GoalSpec, deps: GoalRunDeps): Promise<GoalRu
       if (claim.status === 'blocked') {
         state = await transitionAfterSnapshots('blocked');
         await deps.goalStore?.recordRound({ round, turns: outcome.turns, tokens: roundTokens, claim, at: stamp() });
+        emitGoalRoundEnd(deps, goal, {
+          round,
+          turns: outcome.turns,
+          roundTokens,
+          totalTurns,
+          totalTokens,
+          claimStatus: claim.status,
+          state,
+        });
         break;
       }
 
@@ -353,15 +372,47 @@ export async function runGoal(spec: GoalSpec, deps: GoalRunDeps): Promise<GoalRu
         if (action === 'halt') {
           deps.bus.emit({ type: 'halt', reason: 'guardrail' });
           state = await transitionAfterSnapshots(advanceGoalState('rejected', true)); // forceBlocked
+          emitGoalRoundEnd(deps, goal, {
+            round,
+            turns: outcome.turns,
+            roundTokens,
+            totalTurns,
+            totalTokens,
+            claimStatus: claim.status,
+            verdict: verdict.outcome,
+            state,
+          });
           break;
         }
-        state = advanceGoalState('rejected'); // active — keep going with a continuation
-        deps.bus.emit({ type: 'goal_state', goalId: goal.id, state });
+        const budgetExceeded = overBudget(totalTurns, totalTokens, goal.budget) || round >= goal.budget.maxRounds;
+        state = budgetExceeded ? await transitionAfterSnapshots('blocked', 'budget') : advanceGoalState('rejected');
+        if (!budgetExceeded) deps.bus.emit({ type: 'goal_state', goalId: goal.id, state });
+        emitGoalRoundEnd(deps, goal, {
+          round,
+          turns: outcome.turns,
+          roundTokens,
+          totalTurns,
+          totalTokens,
+          claimStatus: claim.status,
+          verdict: verdict.outcome,
+          state,
+        });
+        if (budgetExceeded) break;
         messages.push({ role: 'user', content: continuationFromVerdict(checks, verdict) });
         continue;
       }
 
       state = await transitionAfterSnapshots(advanceGoalState(verdict.outcome));
+      emitGoalRoundEnd(deps, goal, {
+        round,
+        turns: outcome.turns,
+        roundTokens,
+        totalTurns,
+        totalTokens,
+        claimStatus: claim.status,
+        verdict: verdict.outcome,
+        state,
+      });
       break;
     }
 
@@ -377,6 +428,60 @@ export async function runGoal(spec: GoalSpec, deps: GoalRunDeps): Promise<GoalRu
 
   goal = { ...goal, state };
   return { goal, state, rounds: round, tokens: totalTokens, finalVerdict };
+}
+
+function emitGoalRoundStart(
+  deps: GoalRunDeps,
+  goal: Goal,
+  round: number,
+  totalTurns: number,
+  totalTokens: number,
+): void {
+  deps.bus.emit({
+    type: 'goal_round_start',
+    goalId: goal.id,
+    round,
+    maxRounds: goal.budget.maxRounds,
+    totalTurns,
+    ...optionalEventField('maxTotalTurns', goal.budget.maxTotalTurns),
+    totalTokens,
+    ...optionalEventField('maxTotalTokens', goal.budget.maxTotalTokens),
+  });
+}
+
+function emitGoalRoundEnd(
+  deps: GoalRunDeps,
+  goal: Goal,
+  input: {
+    round: number;
+    turns: number;
+    roundTokens: number;
+    totalTurns: number;
+    totalTokens: number;
+    claimStatus?: 'complete' | 'blocked';
+    verdict?: 'verified' | 'rejected' | 'couldNotVerify';
+    state: GoalState;
+  },
+): void {
+  deps.bus.emit({
+    type: 'goal_round_end',
+    goalId: goal.id,
+    round: input.round,
+    turns: input.turns,
+    roundTokens: input.roundTokens,
+    totalTurns: input.totalTurns,
+    ...optionalEventField('maxTotalTurns', goal.budget.maxTotalTurns),
+    totalTokens: input.totalTokens,
+    ...optionalEventField('maxTotalTokens', goal.budget.maxTotalTokens),
+    maxRounds: goal.budget.maxRounds,
+    ...optionalEventField('claimStatus', input.claimStatus),
+    ...optionalEventField('verdict', input.verdict),
+    state: input.state,
+  });
+}
+
+function optionalEventField<K extends string, T>(key: K, value: T | undefined): { [P in K]: T } | Record<string, never> {
+  return value === undefined ? {} : { [key]: value } as { [P in K]: T };
 }
 
 /** Emit + persist a state transition. */

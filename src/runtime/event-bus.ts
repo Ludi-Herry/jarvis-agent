@@ -29,6 +29,33 @@ export type Event =
   // runtime EventBus carries no back-dependency on the capabilities layer.
   | { type: 'verdict'; goalId: string; outcome: 'verified' | 'rejected' | 'couldNotVerify'; rationale: string }
   | { type: 'goal_state'; goalId: string; state: 'active' | 'complete' | 'blocked' }
+  // Read-only round/budget telemetry for GUI/status surfaces. These events are advisory and cannot
+  // grant or replace completion authority.
+  | {
+      type: 'goal_round_start';
+      goalId: string;
+      round: number;
+      maxRounds: number;
+      totalTurns: number;
+      totalTokens: number;
+      maxTotalTurns?: number;
+      maxTotalTokens?: number;
+    }
+  | {
+      type: 'goal_round_end';
+      goalId: string;
+      round: number;
+      turns: number;
+      roundTokens: number;
+      totalTurns: number;
+      totalTokens: number;
+      maxRounds: number;
+      maxTotalTurns?: number;
+      maxTotalTokens?: number;
+      claimStatus?: 'complete' | 'blocked';
+      verdict?: 'verified' | 'rejected' | 'couldNotVerify';
+      state: 'active' | 'complete' | 'blocked';
+    }
   // Phase E — multi-goal Loop scheduling. The ONE machine-actionable moment an operator/GUI must act
   // on: the loop stopped, and why. Reason string inlined (no capabilities back-dependency, as above).
   | {

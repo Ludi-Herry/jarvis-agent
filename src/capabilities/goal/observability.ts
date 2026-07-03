@@ -73,6 +73,7 @@ export interface ObservationReport {
     cronDaemon: { records: number; parkedTasks: string[]; lastStopReason?: string };
     latestSession?: SessionSummary;
     latestGoal?: GoalSummary;
+    latestGoalBudget?: GoalBudgetSummary;
     latestLoop?: LoopSummary;
   };
   usage: {
@@ -105,6 +106,18 @@ export interface GoalSummary {
   state: GoalState;
   rounds: number;
   verdict?: VerdictOutcome;
+  lastAt?: string;
+}
+
+export interface GoalBudgetSummary {
+  goalId: string;
+  roundsUsed: number;
+  maxRounds: number;
+  totalTurns: number;
+  totalTokens: number;
+  lastRound?: number;
+  maxTotalTurns?: number;
+  maxTotalTokens?: number;
   lastAt?: string;
 }
 
@@ -174,6 +187,7 @@ export function buildObservationReport(input: ObservationInput, options: Observa
 
   const sessionSummaries = sessions.map(summarizeSession).filter((summary): summary is SessionSummary => summary !== undefined);
   const goalSummaries = goals.map(summarizeGoal).filter((summary): summary is GoalSummary => summary !== undefined);
+  const goalBudgetSummaries = goals.map(summarizeGoalBudget).filter((summary): summary is GoalBudgetSummary => summary !== undefined);
   const loopSummaries = loops.map(summarizeLoop).filter((summary): summary is LoopSummary => summary !== undefined);
 
   const goalRounds = goals.flatMap((log) => log.records.filter((record): record is GoalRoundRecord => record.t === 'goal-round')
@@ -208,6 +222,7 @@ export function buildObservationReport(input: ObservationInput, options: Observa
       cronDaemon: summarizeCronDaemon(daemonRecords),
       ...optional('latestSession', latestBy(sessionSummaries, (summary) => summary.startedAt)),
       ...optional('latestGoal', latestBy(goalSummaries, (summary) => summary.lastAt ?? '')),
+      ...optional('latestGoalBudget', latestBy(goalBudgetSummaries, (summary) => summary.lastAt ?? '')),
       ...optional('latestLoop', latestBy(loopSummaries, (summary) => summary.lastAt ?? '')),
     },
     usage: {
@@ -266,6 +281,12 @@ export function formatObservationReport(report: ObservationReport): string {
     const goal = report.status.latestGoal;
     lines.push(`latest goal: ${goal.id} ${goal.state} verdict=${goal.verdict ?? '-'} rounds=${goal.rounds}`);
   }
+  if (report.status.latestGoalBudget) {
+    const budget = report.status.latestGoalBudget;
+    const turns = budget.maxTotalTurns === undefined ? `${budget.totalTurns}` : `${budget.totalTurns}/${budget.maxTotalTurns}`;
+    const tokens = budget.maxTotalTokens === undefined ? `${budget.totalTokens}` : `${budget.totalTokens}/${budget.maxTotalTokens}`;
+    lines.push(`latest goal budget: ${budget.goalId} rounds=${budget.roundsUsed}/${budget.maxRounds} turns=${turns} tokens=${tokens}`);
+  }
   if (report.status.latestLoop) {
     const loop = report.status.latestLoop;
     lines.push(`latest loop: ${loop.id} completed=${loop.completed}/${loop.objectives} blocked=${loop.blocked} inFlight=${loop.inFlight} halted=${loop.halted ?? '-'}`);
@@ -300,6 +321,23 @@ function summarizeGoal(log: ObservationLog<GoalRecord>): GoalSummary | undefined
     state: goal.state,
     rounds: rounds.length,
     ...(latestRound?.verdict?.outcome === undefined ? {} : { verdict: latestRound.verdict.outcome }),
+    ...optional('lastAt', lastTimestamp(log.records)),
+  };
+}
+
+function summarizeGoalBudget(log: ObservationLog<GoalRecord>): GoalBudgetSummary | undefined {
+  const { goal, rounds } = replayGoal(log.records);
+  if (goal === undefined) return undefined;
+  const latestRound = last(rounds);
+  return {
+    goalId: goal.id,
+    roundsUsed: rounds.length,
+    maxRounds: goal.budget.maxRounds,
+    totalTurns: rounds.reduce((sum, round) => sum + (round.turns ?? 0), 0),
+    totalTokens: rounds.reduce((sum, round) => sum + (round.tokens ?? 0), 0),
+    ...optional('lastRound', latestRound?.round),
+    ...optional('maxTotalTurns', goal.budget.maxTotalTurns),
+    ...optional('maxTotalTokens', goal.budget.maxTotalTokens),
     ...optional('lastAt', lastTimestamp(log.records)),
   };
 }

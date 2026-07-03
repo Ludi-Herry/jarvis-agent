@@ -174,6 +174,75 @@ describe('runGoal — verification gates completion', () => {
     expect(result.state).toBe('blocked');
     expect(calls).toBe(3); // nudged each round, never claimed → exhausted the 3-round budget
     expect(events.some((e) => e.type === 'halt' && e.reason === 'budget')).toBe(true);
+    expect(events.filter((e) => e.type === 'goal_round_end').at(-1)).toMatchObject({
+      type: 'goal_round_end',
+      round: 3,
+      state: 'blocked',
+    });
+  });
+
+  it('emits read-only round budget events around a builder round', async () => {
+    const bus = new InMemoryEventBus();
+    const events = record(bus);
+    const run: NonNullable<GoalRunDeps['run']> = async (ctx) => {
+      ctx.bus.emit({ type: 'usage', inputTokens: 3, outputTokens: 4 });
+      await ctx.tools.run(
+        { id: 'u1', name: 'update_goal', arguments: JSON.stringify({ status: 'complete' }) },
+        ctx.toolCtx,
+      );
+      return { finalText: 'claimed', turns: 2 };
+    };
+
+    const result = await runGoal(
+      spec({ budget: { maxRounds: 2, maxTotalTurns: 10, maxTotalTokens: 20 } }),
+      baseDeps({ bus, run, check: passingCheck }),
+    );
+
+    expect(result.state).toBe('complete');
+    const roundEvents = events.filter((event) => ['goal_round_start', 'goal_round_end'].includes(event.type));
+    expect(roundEvents).toEqual([
+      {
+        type: 'goal_round_start',
+        goalId: 'g1',
+        round: 1,
+        maxRounds: 2,
+        totalTurns: 0,
+        maxTotalTurns: 10,
+        totalTokens: 0,
+        maxTotalTokens: 20,
+      },
+      {
+        type: 'goal_round_end',
+        goalId: 'g1',
+        round: 1,
+        turns: 2,
+        roundTokens: 7,
+        totalTurns: 2,
+        maxTotalTurns: 10,
+        totalTokens: 7,
+        maxTotalTokens: 20,
+        maxRounds: 2,
+        claimStatus: 'complete',
+        verdict: 'verified',
+        state: 'complete',
+      },
+    ]);
+  });
+
+  it('emits blocked round end when the last round rejects a completion claim', async () => {
+    const bus = new InMemoryEventBus();
+    const events = record(bus);
+    const { run } = claimingRun('complete');
+
+    const result = await runGoal(spec({ budget: { maxRounds: 1 } }), baseDeps({ bus, run, check: failingCheck }));
+
+    expect(result.state).toBe('blocked');
+    expect(events.filter((e) => e.type === 'goal_round_end').at(-1)).toMatchObject({
+      type: 'goal_round_end',
+      round: 1,
+      verdict: 'rejected',
+      state: 'blocked',
+    });
   });
 });
 

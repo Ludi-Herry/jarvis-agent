@@ -204,6 +204,13 @@ describe('buildObservationReport', () => {
     expect(report.status.latestGoal).toMatchObject({ id: 'g1', state: 'complete', verdict: 'verified', rounds: 1 });
     expect(report.status.latestLoop).toMatchObject({ id: 'L1', completed: 1, blocked: 1, halted: 'queue-empty' });
     expect(report.status.cron.lastAttempt).toMatchObject({ taskId: 'daily', exitCode: 0, loopId: 'L1' });
+    expect(report.status.latestGoalBudget).toMatchObject({
+      goalId: 'g1',
+      roundsUsed: 1,
+      maxRounds: 3,
+      totalTurns: 2,
+      totalTokens: 42,
+    });
     expect(report.usage).toMatchObject({ sessionMessages: 2, goalTurns: 2, goalTokens: 42, loopTokens: 51 });
     expect(report.audit.trustedContracts).toEqual([
       { loopId: 'L1', goalSetterRequirementsMapPath: 'C:\\trusted\\requirements.json', goalSetterRequirementsMapHash: 'abc123' },
@@ -234,6 +241,7 @@ describe('buildObservationReport', () => {
     expect(formatObservationReport(report)).toContain('Observation: status/usage/audit (read-only)');
     expect(formatObservationReport(report)).toContain('completion authority: none');
     expect(formatObservationReport(report)).toContain('latest goal: g1 complete verdict=verified rounds=1');
+    expect(formatObservationReport(report)).toContain('latest goal budget: g1 rounds=1/3 turns=2 tokens=42');
     expect(formatObservationReport(report)).toContain('sandbox evidence: 1');
   });
 });
