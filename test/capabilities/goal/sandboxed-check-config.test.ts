@@ -96,4 +96,19 @@ describe('loadSandboxedCheckPlan', () => {
       }),
     ).rejects.toThrow(/forbidden working tree/);
   });
+
+  it('refuses outside-looking config after realpath resolves inside cwd', async () => {
+    const cwd = resolve('tmp', 'jarvis-agent');
+    const outsideLookingPath = resolve('tmp', 'trusted-looking', 'sandbox-plan.json');
+    const resolvedInside = join(cwd, 'sandbox-plan.json');
+
+    await expect(
+      loadSandboxedCheckPlan({
+        path: outsideLookingPath,
+        cwd,
+        readText: async () => '{"requirements":[]}',
+        realpath: async (path) => (path === outsideLookingPath ? resolvedInside : path),
+      }),
+    ).rejects.toThrow(/forbidden working tree/);
+  });
 });

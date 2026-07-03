@@ -46,6 +46,7 @@ describe('Wsl2UnshareSandboxRunner', () => {
 
   it('scrubs shell startup hooks and credential-shaped env before launching WSL', async () => {
     let env: NodeJS.ProcessEnv | undefined;
+    let input = '';
     const prevBashEnv = process.env.BASH_ENV;
     const prevEnv = process.env.ENV;
     const prevSecret = process.env.JARVIS_TEST_SECRET_TOKEN;
@@ -58,6 +59,7 @@ describe('Wsl2UnshareSandboxRunner', () => {
       const runner = createWsl2UnshareSandboxRunner({
         spawnSync(_command, _args, options) {
           env = options.env;
+          input = options.input;
           return {
             status: 0,
             signal: null,
@@ -83,6 +85,9 @@ describe('Wsl2UnshareSandboxRunner', () => {
       expect(env?.GIT_CONFIG_VALUE_2).toBe('/dev/null');
       expect(env?.GIT_CONFIG_KEY_3).toBe('interactive.diffFilter');
       expect(env?.GIT_CONFIG_VALUE_3).toBe('');
+      expect(input).not.toContain('diff.external');
+      expect(input).not.toContain('GIT_CONFIG_KEY_4');
+      expect(input.match(/"GIT_CONFIG_COUNT": "4"/g)).toHaveLength(2);
     } finally {
       if (prevBashEnv === undefined) delete process.env.BASH_ENV;
       else process.env.BASH_ENV = prevBashEnv;
