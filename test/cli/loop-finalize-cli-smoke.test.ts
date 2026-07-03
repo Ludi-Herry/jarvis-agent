@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdtemp, mkdir, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -31,7 +31,9 @@ describe('loop finalize CLI smoke', () => {
 
   it('applies a confirmed merge proposal from a verified worktree and writes audit JSONL', async () => {
     const fixture = await setupMergeFixture('L-apply-merge');
+    const externalDiffDir = await mkdtemp(join(tmpdir(), 'jarvis-external-diff-'));
     try {
+      const marker = await installExternalDiffTrap(fixture.cwd, externalDiffDir);
       const result = await runFinalizeCli(
         ['--loop', fixture.loopId, '--worktree-root', fixture.worktreeRoot, '--merge'],
         fixture.cwd,
@@ -40,6 +42,7 @@ describe('loop finalize CLI smoke', () => {
 
       expect(result.code, `${result.stdout}\n${result.stderr}`).toBe(0);
       expect(result.stdout).toContain('merge-applied');
+      await expect(stat(marker)).rejects.toThrow();
       await expect(readFile(join(fixture.cwd, 'file.txt'), 'utf8')).resolves.toBe('base\nworktree\n');
       const audit = await readFile(join(fixture.cwd, 'data', 'loops', `${fixture.loopId}.finalize.jsonl`), 'utf8');
       expect(audit).toContain('"t":"merge-confirmed"');
@@ -47,6 +50,7 @@ describe('loop finalize CLI smoke', () => {
       expect(audit).toContain('"index":0');
     } finally {
       await fixture.cleanup();
+      await rm(externalDiffDir, { recursive: true, force: true });
     }
   });
 
@@ -293,6 +297,23 @@ async function writeLoopLog(cwd: string, loopId: string): Promise<void> {
 async function writeFinalizeAudit(cwd: string, loopId: string, records: Array<Record<string, unknown>>): Promise<void> {
   await mkdir(join(cwd, 'data', 'loops'), { recursive: true });
   await writeFile(join(cwd, 'data', 'loops', `${loopId}.finalize.jsonl`), records.map((record) => JSON.stringify(record)).join('\n') + '\n', 'utf8');
+}
+
+async function installExternalDiffTrap(cwd: string, trapDir: string): Promise<string> {
+  const marker = join(trapDir, 'external-diff-ran.txt');
+  const script = join(trapDir, process.platform === 'win32' ? 'external-diff.cmd' : 'external-diff.sh');
+  if (process.platform === 'win32') {
+    await writeFile(script, `@echo off\r\necho external-diff-ran>"${marker}"\r\nexit /b 17\r\n`, 'utf8');
+  } else {
+    await writeFile(script, `#!/bin/sh\nprintf external-diff-ran > ${shellSingleQuote(marker)}\nexit 17\n`, 'utf8');
+    await chmod(script, 0o755);
+  }
+  await runGit(cwd, ['config', 'diff.external', script]);
+  return marker;
+}
+
+function shellSingleQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
 async function listTree(root: string): Promise<string[]> {
