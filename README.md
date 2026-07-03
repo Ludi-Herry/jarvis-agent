@@ -17,7 +17,8 @@
 | Phase E 多能力（多 goal Loop 调度 + 外置 vision + 命令级 bash session-allow + shadow-git 旁路历史） | ✅ 完成（4 切片合入 main） |
 | Hooks（PreToolUse 阻断 + PostToolUse 咨询/反馈；tool result env；per-hook timeout；round/session lifecycle；多来源；loop per-goal hook-map） | ✅ 完成，剩余仅保留 defer |
 | **下一步：GUI（晴天模式外壳）** | ⏭️ GUI 可开工；loop 重项已收口 |
-| 沙箱两件（#2 客观路由 / #6 裁判 exec）+ propose_skill | ⛔ 已拍板 defer（能力天花板：`cannotVerify→park` 是正确 fail-closed） |
+| OS sandbox Phase 3 v1 + 只读观测层 | ✅ 完成（trusted requirements / route map / composite verifier / `npm run observe`）；剩余：通用 app/browser/network verifier、GUI human-review |
+| propose_skill | ⛔ 已拍板 defer（投机性、判定偏弱、无证实复用场景） |
 
 `npm run typecheck / lint / test / build` 全绿（**974 passed / 1 skipped**，Windows 下 1 个 POSIX SIGINT smoke 跳过）。命令安全根（PermissionGate + 命令解析器 + bash 审批）经**六轮独立 codex 对抗核查**确认无破闸 HIGH；goal 验收子系统（确定性三腿 + 腿3 裁判 + bash/Linux 密钥加固）经**多轮多裁判对抗核查**（codex + 独立 Claude 子代理，含一轮 4 裁判收尾）。Phase E 各切片与 Hooks slice-1/2 均经 **codex 跨模型对抗审查逐层加固**（vision 四轮 / bash 白名单 Path A 经 7 HIGH 撤回、保留命令级 Path B / Hooks 信任边界修 HIGH / slice-2 每切片 2 轮 SHIP）。方法 / 严重度基线 / 历史见 `docs/security-review-baseline.md`。
 
