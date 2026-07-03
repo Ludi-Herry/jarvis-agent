@@ -1,14 +1,17 @@
 # 交接：Phase D 之后 + Phase E 第一切片收口（给新会话）
 
 > Phase D 腿3 整套**已全部落地 + 经 5 轮多裁判对抗核查 + 诚实文档化**——背景见 `docs/handoff-D.md`（主交接）、`docs/phase-D-leg3-checklist.md`（5 条全收口）、`docs/security-review-baseline.md`（审查历史 + 元教训）、memory `phase-d-goalloop-deterministic-legs`。
-> Phase E 四条独立第一切片（vision / bash-allow / loop / shadow-git）**已全部合进本地 main**（见下「合并收口」）。本页交接 **两类剩余工作**：① 仍需 OS 沙箱的两件（leg3-checklist #2 客观路由 + #6 裁判 exec）；② Phase E 后续批（Hooks / skill 自动沉淀 + 各切片的 defer 残留）。
+> Phase E 四条独立第一切片（vision / bash-allow / loop / shadow-git）**已全部合进本地 main**（见下「合并收口」）。
+> OS sandbox Phase 3 v1 **已落地**：可信 goal-setter requirements、单 goal env contract、loop `--goal-setter-requirements-map`、sandbox / LLM / human 组合 verifier report、resume path/hash fail-closed、sandbox audit evidence、runner cleanup、worktree baseline audit 与 `--fail-on-worktree-change` 都已接入并有真实 goal/loop smoke。当前交接重点改为：① Phase 3 v1 后的剩余 verifier/runtime 边界；② GUI / status / usage / audit 观测入口；③ Phase E 后续 defer。
 
-## 方向决策（2026-07-01，用户拍板）
+## 方向决策与当前状态（更新至 2026-07-02）
 
 - **Hooks 已扩到 slice-2 follow-up**：PreToolUse 阻断、PostToolUse 咨询与反馈回灌、result env、每-hook timeout、round/session lifecycle、多来源合并均已落地。详见 `docs/handoff-hooks.md`。
-- **沙箱：跳过**。不做沙箱前置调研，也不做被沙箱卡住的两件（#2 客观路由 / #6 裁判 exec）。当前 `cannotVerify→park` / `fail-closed deny` 接受为**正确的能力天花板**（自主性封顶在「没人就拒/挂起」，attended 全好用）。将来真要无人值守跑危险/运行态操作，再回头开沙箱。下文「第一类」整节据此**暂不推进**。
+- **OS sandbox Phase 3 v1 已落地**：`JARVIS_GOAL_SETTER_REQUIREMENTS_FILE` 提供单 goal 可信 route contract；`npm run loop -- --goal-setter-requirements-map <trusted-json>` 提供 per-goal route map；`sandbox-command` / `llm` / `human` 汇成同一个 verifier report；resume 必须匹配可信文件 path + SHA-256 hash；sandbox evidence 记录 backend、mounts、networkMode、limits、stdout/stderr；runner 默认清理 WSL payload temp roots；goal/loop 会记录 worktree status baseline，`--fail-on-worktree-change` 可把任何 drift 变成 deterministic reject。
+- **剩余沙箱边界**：Phase 3 v1 只覆盖 goal-setter 预声明的窄 read-only inspection command（`git status/diff/log/ls-files`、`stat`、`wc`）。还没有通用 app / browser / network verifier；`human` route 仍然 `cannotVerify→park`；GUI human-review flow 未实现；`status` / `usage` / `audit` 仍缺产品化入口。只读观测层可以汇总 JSONL 和 audit evidence，但不能给 goal/loop 完成授权。
 - **skill 自动沉淀（`propose_skill`）：不做**（投机性、判定偏弱、无证实的复用场景）。下文该节仅作设计存档。
-- **下一步工作**：① **接 vision 进 goal/loop 已完成**（2026-06-30，分支 `feat/vision-goal-loop`，未合并/未 push，四轮 codex 对抗审查 SHIP，625 测试——详见下「vision→goal/loop 接线」；注意最终**只接 builder 侧、裁判不给 vision**，与原文「/verifier」不同，理由见小节）；② shadow restore 确认、shadow snapshot 异步化、vision MIME sniff + 活体验证、loop mid-goal resume、per-goal verifier、per-goal hook runner、并行目标/worktree first slice、parallel resume 最小 slice、loop finalize 只读报告、loop finalize `--merge` 交互 apply、loop finalize `--cleanup` 交互清理、cron first slice（含同工作区扫描锁 + stale 回收 + task 前心跳）、cron foreground daemon 已完成；loop 重项收口记录见 `docs/handoff-loop-remaining.md`。
+- **下一步建议（尚未落地）**：设计并实现只读 `status` / `usage` / `audit` 观测层。输入只来自 session / goal / loop / cron JSONL 与 sandbox audit evidence；输出只做运行态摘要、成本/轮次摘要、verdict/evidence 检索和人工复核辅助；完成授权仍只来自 `decideVerdict`、deterministic checks、trusted requirement routes 和人工确认。
+- **已完成的 Phase E/loop 收口**：接 vision 进 goal/loop、shadow restore 确认、shadow snapshot 异步化、vision MIME sniff + 活体验证、loop mid-goal resume、per-goal verifier、per-goal hook runner、并行目标/worktree first slice、parallel resume 最小 slice、loop finalize 只读报告、loop finalize `--merge` 交互 apply、loop finalize `--cleanup` 交互清理、cron first slice（含同工作区扫描锁 + stale 回收 + task 前心跳）、cron foreground daemon 均已完成；loop 重项收口记录见 `docs/handoff-loop-remaining.md`。
 
 ## GUI 就绪盘点（2026-07-01）
 
@@ -23,9 +26,9 @@ CLI 功能已实质收尾（A→E + Hooks slice-1/slice-2 follow-up）。GUI（�
 **GUI 前唯一的真前置（发现的缺口，均「加事件成员」级小改，不碰 core 逻辑）**：
 - **审批不在事件流**（最值得先定）：Approver 是请求-响应回调，审批发生时**不 emit 事件、不进持久化**（CLI 靠 approver 内 render 显示）。GUI 必须注入自己的 Approver（这是注入式设计意图）；但若要**审批历史可观测 / 可审计**，需加 `approval_request`/`approval_result` 事件（emit 在 gate.check 前后或 approver 包装层）+ 落盘。做不做是 GUI 前的第一个选择。
 - **round / budget 无专门事件**：GUI 想显示「第几轮 / token 预算条」，round 可从 goal_state 推、或随 slice-2 ⑤ round-hook 顺带加 round 事件；budget 剩余需加 budget 事件或查询接口。按 GUI 实际需求补，非阻塞。
-- **usage/status 还没有产品化入口**：session / goal / loop / cron 已有 JSONL，loop/goal 也已通过 bus 记录 usage；后续 GUI 或 CLI 可补只读 `status` / `usage` 摘要，按 primitive 汇总 turns、tokens、halt reason、verdict。该视图只能做观测，不能给 loop 完成授权。
+- **usage/status/audit 还没有产品化入口**：session / goal / loop / cron 已有 JSONL，loop/goal 也已通过 bus 记录 usage，sandbox verifier 已记录 audit evidence；后续 GUI 或 CLI 可补只读 `status` / `usage` / `audit` 摘要，按 primitive 汇总 turns、tokens、halt reason、verdict、trusted contract path/hash、sandbox backend/mount/network/limits。该视图只能做观测，不能给 goal/loop 完成授权。
 
-**结论**：GUI 可开工。前置 = ①本页 + README 已同步（done）+ ②上面「审批事件」取舍 + 按需补 round/budget/usage 观测。loop primitive 选择入口见 `docs/loop-primitives-guide.md`。loop 重项已收口，记录见 `docs/handoff-loop-remaining.md`；沙箱 #2/#6 是能力天花板（非代码活）。
+**结论**：GUI 可开工。前置 = ①本页 + README 已同步（done）+ ②上面「审批事件」取舍 + 按需补 round/budget/status/usage/audit 观测。loop primitive 选择入口见 `docs/loop-primitives-guide.md`。loop 重项已收口，记录见 `docs/handoff-loop-remaining.md`；`human` route 的 GUI review flow、通用 app/browser/network verifier、status/usage/audit 产品入口仍待补。
 
 ## vision→goal/loop 接线（2026-06-30，方向决策 ① 完成）
 
@@ -55,23 +58,27 @@ vision defer ③「未接 goal/loop」补完——**只接 builder 侧，裁判�
 
 ## 一句话现状（goal 验收）
 
-goal 完成验收 = **确定性三腿（canonical 重跑 + 篡改检测 + held-out 隐藏断言）+ 独立只读 LLM 裁判（腿3，opt-in）**，`decideVerdict` 纯函数定 verdict、不信 builder 自评、不信 LLM 自报。Phase D 提交链：`f2e6e15`(腿3) → `006fe8a`(held-out) → `ee02737`(bash 脱敏) → `eeb5f05`(删死 monitor #6) → `d752fb9`(cannotVerify #2) → `a2a3c07`(收尾审查修复) → Linux /proc 根因修。
+goal 完成验收 = **确定性三腿（canonical 重跑 + 篡改检测 + held-out 隐藏断言）+ 独立 verifier report**，report 可由 LLM-only、legacy sandbox-only，或 Phase 3 v1 的 `sandbox-command` / `llm` / `human` route 组合产生。`decideVerdict` 纯函数定 verdict、不信 builder 自评、不信 LLM 自报；command-backed evidence 只能证明绑定到同一 trusted requirement id 的条目。Phase D 提交链：`f2e6e15`(腿3) → `006fe8a`(held-out) → `ee02737`(bash 脱敏) → `eeb5f05`(删死 monitor #6) → `d752fb9`(cannotVerify #2) → `a2a3c07`(收尾审查修复) → Linux /proc 根因修。
 
-## 第一类：需 OS 沙箱的两件（同一堵墙）
+## 第一类：Phase 3 v1 后的剩余边界
 
-#2 客观路由 和 #6 裁判 exec **撞同一个根问题**：验收里没有「可信地跑东西」的办法。当前裁判是**纯文件取证**（read/grep），跑不了命令、驱不动 app，运行态需求恒 `cannotVerify` → park 交人（fail-closed，安全但不自主）。
+Phase 3 v1 已解决早前「#2 客观路由」和「#6 裁判只读命令取证」的最小安全切片：goal-setter 在仓库 / workspace / worktree 外提供 trusted requirements；每条 requirement 显式选择 `sandbox-command`、`llm` 或 `human`；sandbox route 只跑窄 inspection command；LLM route 只看 LLM-routed subset；human route 统一 park。真实 goal/loop smoke 已证明 repo/worktree 外 map、WSL2 read-only audit evidence、resume path/hash fail-closed、runner cleanup 和 worktree baseline audit 链路可跑。
 
-### #6 — 让裁判能跑只读命令 / 驱动 app
-- **要什么**：裁判验运行态需求（"CLI 跑出 X"、"build 产物能用"）需要执行,但执行=跑任意代码=任意副作用。
-- **为什么 defer**：无 OS 级沙箱（容器/seccomp/只读 fs/网络命名空间），「只读 exec」做不到真只读——跑解释器/app 就是跑任意代码。命令分析器能挡 shell 层危险/密钥/网络,挡不住程序内副作用。且给裁判 exec 会削弱「裁判被注入也不能行动」这条核心安全属性。
-- **做的话**：先有沙箱基建；裁判 exec 工具走沙箱（只读 fs 挂载 + 无网 + 资源限），输出回 decideVerdict。或退一步：给裁判**只读 inspection 命令白名单**（git log/diff/status、ls/find/stat/wc,**排除解释器/app-runner**）——能多取证、不跑任意代码,但仍验不了运行态行为。当前用户已拍板「保纯读」（见 leg3-checklist #6）,要改先问。
+### 已落地能力
 
-### #2 — 确定性主客观分流（客观需求跑命令验、不烧裁判）
-- **现状**：防作弊覆盖面**已结构性满足**（所有 pinned 都交裁判、无「标客观」旋钮可绕）。剩的是省算力/自主杠杆。
-- **为什么 defer**：「客观需求→有命令→跑命令验」需**可信的 per-需求命令**。但决策 #1 定了 `pinned = LLM 推导`的文本清单——goal-setter 给不了「还没生成的需求」预挂命令,LLM 自派生命令=弱测试 reward-hacking（held-out 腿存在正因如此）。
-- **做的话**：需要「goal-setter 提供 (需求, 命令) 对」的新模式（客观项 harness 跑命令验、主观项 LLM 裁判,路由是纯函数 `有命令→客观`、builder 改不动）。这是新数据模型 + 配置负担 + 验收路径 + 一轮审查。或与上面的沙箱裁判合流。
+- **trusted goal-setter requirements**：`version: 1`，per requirement `id/text/route`，`sandbox-command` 必须带 allow-scoped command，`llm`/`human` 禁止带 command。
+- **single-goal env contract**：`JARVIS_GOAL_SETTER_REQUIREMENTS_FILE` 在 `.env` 加载前捕获，加载后从 `process.env` 删除，并禁止与 legacy `JARVIS_SANDBOX_CHECKS_FILE` 同时出现。
+- **loop route map**：`--goal-setter-requirements-map <trusted-json>` 按 objective index 提供 route contract，路径必须在 repo/worktree 外；resume 要求同一路径和同一 hash。
+- **composite verifier report**：sandbox、LLM、human 三路按 requirement id 合并；LLM 不能评价 command-backed 或 human-routed 条目。
+- **sandbox audit evidence**：report 保留 command、stdout/stderr、backend、mounts、networkMode、limits，方便后续人工复核。
+- **worktree baseline audit**：每个 goal 运行前后记录 `git status --porcelain --untracked-files=all`；`--fail-on-worktree-change` 适合 no-edit/read-only goal，把 status drift 变成 reject。
 
-> **共同前置**：先有 OS 沙箱（或 goal-setter-authored-requirements 模式）。没有它,这两件的「自主验运行态」都做不成,当前 park-to-human 是正确的 fail-closed 行为。
+### 仍未覆盖
+
+- **无通用 app/browser/network verifier**：Phase 3 v1 没有 package script、解释器、browser driving、GUI app、network check 或完整 runtime command 路线。运行态需求如果超出窄 inspection scope，继续靠 LLM route 的文本证据或 `human` route park。
+- **human route 仍 park**：`human` requirement 只会生成 `cannotVerify`，没有 CLI/GUI 审批结果回写 verifier report 的闭环。
+- **无 GUI human-review flow**：GUI 可接 Approver，但还没有把 human review 变成持久化事件、人工裁决、report merge、audit trail 的产品流程。
+- **无 status/usage/audit 产品化入口**：已有 JSONL 和 audit evidence，缺一个只读入口汇总最新 goal/loop/cron 状态、tokens、rounds、halt reason、trusted contract metadata、sandbox evidence。该入口只负责观察和复核辅助，不能改变 verdict。
 
 ## 第二类：Phase E 切片现状 + 剩余
 
@@ -98,14 +105,18 @@ goal 完成验收 = **确定性三腿（canonical 重跑 + 篡改检测 + held-o
 ## 上手顺序（新会话）
 
 1. 读 `docs/handoff-D.md`（Phase D 主交接：架构、两种 verified 模式、最高优先级不变量、gotcha、关键文件）。
-2. 读本页：先看「方向决策（2026-07-01）」（沙箱已跳过、propose_skill 不做、下一步=vision 接线）+「Phase E 合并收口」（main 现状）+「第二类」（切片 defer）。「第一类」（沙箱两件）按决策**暂不推进**。要查 loop 重项收口边界时读 `docs/handoff-loop-remaining.md`。
-3. memory `phase-d-goalloop-deterministic-legs`（不变量 + 历轮教训）、`restore-bash-session-allow`（白名单）、`phase-e-loop-scheduling`、`openhanako-outer-vision-multimodal`（vision 接线背景）、`hooks-slice-1`、`codex-for-adversarial-review`（对抗审查用 codex）。
-4. `docs/security-review-baseline.md`（审查方法 + 严重度尺子 + 历史 + 元教训：组件级 review 挡不住系统级不可达 / OS 语义坑 / 死 guardrail 成对出现）。
+2. 读本页：先看「方向决策与当前状态（更新至 2026-07-02）」+「第一类：Phase 3 v1 后的剩余边界」+「GUI 就绪盘点」。旧的「沙箱跳过」判断已过期。
+3. 查 Phase 3 细节：`README.md` 的「OS sandbox trusted checks」、`docs/os-sandbox-research.md` 的「Phase 3 - verifier exec and objective routing / Status on 2026-07-02」、`docs/superpowers/plans/2026-07-02-os-sandbox-phase3-design.md`。
+4. 要查 loop 重项收口边界时读 `docs/handoff-loop-remaining.md`；要查 cron daemon 设计读 `docs/superpowers/plans/2026-07-02-cron-daemon-plan.md`。
+5. memory `phase-d-goalloop-deterministic-legs`（不变量 + 历轮教训）、`restore-bash-session-allow`（白名单）、`phase-e-loop-scheduling`、`openhanako-outer-vision-multimodal`（vision 接线背景）、`hooks-slice-1`、`codex-for-adversarial-review`（对抗审查用 codex）。
+6. `docs/security-review-baseline.md`（审查方法 + 严重度尺子 + 历史 + 元教训：组件级 review 挡不住系统级不可达 / OS 语义坑 / 死 guardrail 成对出现）。
 
 ## 别破的不变量（改验收代码前必读）
 
 - `decideVerdict`：腿1/腿2/held-out 在任何 report 评分前判 rejected（注入不可绕）；唯一 verified 窄分支（每条 pinned proves+matched + feature works + pinned 非空 + cnv 空）；空 pinned→verified 不可达；兜底永不默认 verified；`cannotVerify`→park 不 reject、`contradicts`→优先 reject。
 - **最高优先级不变量**：腿3 启用 ⇒ `runVerifier` 永返回 report（失败合成 couldNotVerify、非可选返回类型）+ goal-loop `report===undefined` 边界防御 ⇒ 永不回落假阳性 verified。
+- **Phase 3 trust boundary**：goal-setter requirements / sandbox check map 只能来自 repo / workspace / worktree 外可信文件；resume path/hash mismatch fail-closed；cwd JSONL、audit evidence、status/usage 视图都不能扩大 route、替换 trusted contract、生成 verified/complete。
+- **route 分权**：`sandbox-command` 只能证明同 id command-backed requirement；LLM 只能评分 `llm` route；`human` route 在 GUI human-review flow 落地前一直 park。
 - held-out 命令/输出绝不进 builder 上下文（continuation 泛化 / 事件不带 / goalStore 落盘前 `{passed, results:[]}`）。
 - 写 guardrail 必配**走真实接线的触发单测**（component 级测试漏过「接线后不可达」——VerifierMonitor 与 recordNonReject 都栽在这）。
 - 密钥：model-facing bash 脱敏 env + `ps`/`/proc/environ` 分析器拦 + **Linux 用 .env 别用启动 env**（`assertKeyNotInLaunchEnv`）；**shadow exclude = harness 密钥边界**（复用 `sensitive.ts`,改 shadow 别只信项目 .gitignore）；vision 错误通道套 `describeModelError`+`redactSecrets`。
