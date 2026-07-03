@@ -219,6 +219,29 @@ Acceptance:
 - The tool cannot prove trusted requirements, merge verifier reports, or mark a goal complete.
 - Host project writes from build artifacts stay outside the working tree unless the builder separately edits files through gated tools.
 
+### Phase 2.6 - fixed browser smoke feedback design
+
+Status on 2026-07-03:
+
+- Design doc: `docs/superpowers/plans/2026-07-03-fixed-browser-smoke-feedback-design.md`.
+- Scope is builder feedback and manual smoke only.
+- Candidate future tool is `browser_smoke`, registered only into goal/loop builder registries or exposed through a manual `sandbox:browser-smoke` script.
+- Candidate input stays fixed: `profile: "static-dist" | "local-preview"`, with no model-authored command, arbitrary URL, host, port, browser path, or extra env.
+- `static-dist` is the only first implementation candidate because it can run with `networkMode: "none"` against a built local artifact.
+- `local-preview` remains blocked until the sandbox backend proves loopback-only networking with no external route and no host service access.
+- Browser smoke output cannot prove trusted requirements, cannot merge into `VerifierReport`, and cannot mark a goal complete.
+- Browser runtime must be preapproved and local. The smoke must not download browsers, inherit the user's browser profile, read cookies, use shell startup files, or reuse real home/cache directories.
+
+Acceptance before any implementation:
+
+- Arbitrary URL/command schema rejection.
+- Default registry and verifier registry absence.
+- Read-only host mount plus sandbox-local copy with secret-shaped paths excluded.
+- Independent browser profile/cache/temp.
+- External request block/fail evidence.
+- Timeout kills both server and browser process tree.
+- Regression tests showing `decideVerdict`, `human` route, and inspection-only `sandbox-command` behavior are unchanged.
+
 ### Phase 3 - verifier exec and objective routing
 
 Design entry: `docs/superpowers/plans/2026-07-02-os-sandbox-phase3-design.md`.

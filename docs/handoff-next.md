@@ -10,6 +10,7 @@
 - **OS sandbox Phase 3 v1 已落地**：`JARVIS_GOAL_SETTER_REQUIREMENTS_FILE` 提供单 goal 可信 route contract；`npm run loop -- --goal-setter-requirements-map <trusted-json>` 提供 per-goal route map；`sandbox-command` / `llm` / `human` 汇成同一个 verifier report；resume 必须匹配可信文件 path + SHA-256 hash；sandbox evidence 记录 backend、mounts、networkMode、limits、stdout/stderr；runner 默认清理 WSL payload temp roots；goal/loop 会记录 worktree status baseline，`--fail-on-worktree-change` 可把任何 drift 变成 deterministic reject。
 - **sandboxed builder checks 已落地**：`goal-cli` / `loop-cli` 的 builder registry 现在注册 `sandboxed_check`，只接受 `typecheck/lint/test/build` 四个枚举，映射到 `npm run typecheck` / `npm run lint` / `npm test` / `npm run build`。host cwd 只读挂载，复制到 sandbox-local work dir 时排除 `.env`、`.ssh`、私钥、credentials、registry auth 等 secret-shaped 路径，再禁网运行；非零 exit code 作为 stdout/stderr 反馈回 builder，帮助无人值守 loop 自我迭代。
 - **Phase 3 v1 边界**：trusted verifier route 仍只覆盖 goal-setter 预声明的窄 read-only inspection command（`git status/diff/log/ls-files`、`stat`、`wc`）。`sandboxed_check` 是 builder 反馈工具，不能证明 trusted requirement、不能改写 verdict、不能给 goal/loop 完成授权。通用 app / browser / network 运行态检查不在当前抽象范围；`human` route 仍然 `cannotVerify→park`；GUI human-review flow 未实现。`npm run observe` 只能汇总 JSONL 和 audit evidence，不能给 goal/loop 完成授权。
+- **固定 browser smoke 反馈层已有设计稿**：`docs/superpowers/plans/2026-07-03-fixed-browser-smoke-feedback-design.md` 只允许做 builder feedback / 人工 smoke；不接 trusted verifier、不新增 route/map、不启用默认网络、不扩无人值守 bash。后续若实现，先做 `static-dist` 这类 no-network smoke，再证明 loopback-only 后考虑 local preview。
 - **skill 自动沉淀（`propose_skill`）：不做**（投机性、判定偏弱、无证实的复用场景）。下文该节仅作设计存档。
 - **新增 verifier / route / scheduler 抽象：不做**。现有 `--verifier-map`、`--hook-map`、`--sandbox-check-map`、`--goal-setter-requirements-map` 四套 map 已足够；后续只允许修 bug、收窄边界、同步文档，不能再加第 5 套 map 或新调度/路由层。
 - **只读观测层已落地**：`npm run observe` 读取 session / goal / loop / cron JSONL 与 sandbox audit evidence，输出运行态摘要、成本/轮次摘要、trusted contract metadata、worktree status 和 sandbox backend/mount/network/limits；`--json` 给 GUI/脚本消费；`--data-dir <path>` 可看非默认 `data/`。完成授权仍只来自 `decideVerdict`、deterministic checks、trusted requirement routes 和人工确认。
@@ -77,7 +78,7 @@ Phase 3 v1 已解决早前「#2 客观路由」和「#6 裁判只读命令取证
 
 ### 仍未覆盖
 
-- **无通用 app/browser/network 运行态检查**：builder 已能通过 `sandboxed_check` 跑固定项目检查脚本并读取失败输出；trusted verifier route 仍没有解释器、browser driving、GUI app、network check 或完整 runtime command 路线。运行态需求如果超出窄 inspection scope，继续靠 LLM route 的文本证据或 `human` route park。
+- **无通用 app/browser/network 运行态检查**：builder 已能通过 `sandboxed_check` 跑固定项目检查脚本并读取失败输出；固定 browser smoke 只有设计稿，且定位为 feedback/manual smoke。trusted verifier route 仍没有解释器、browser driving、GUI app、network check 或完整 runtime command 路线。运行态需求如果超出窄 inspection scope，继续靠 LLM route 的文本证据或 `human` route park。
 - **human route 仍 park**：`human` requirement 只会生成 `cannotVerify`，没有 CLI/GUI 审批结果回写 verifier report 的闭环。
 - **无 GUI human-review flow**：GUI 可接 Approver，但还没有把 human review 变成持久化事件、人工裁决、report merge、audit trail 的产品流程。
 - **status/usage/audit 入口只有只读版**：`npm run observe` 已能汇总最新 goal/loop/cron 状态、tokens、rounds、halt reason、trusted contract metadata、sandbox evidence。它只负责观察和复核辅助，不能改变 verdict。
