@@ -103,6 +103,27 @@ describe('runGoal sandboxed requirement checks', () => {
     });
   });
 
+  it('hardens trusted git diff sandbox checks before runner execution', async () => {
+    const requests: SandboxRunRequest[] = [];
+    const runner: SandboxRunner = {
+      backend: 'wsl2-unshare',
+      async run(request) {
+        requests.push(request);
+        return completed(0, 'ok', '', request);
+      },
+    };
+
+    await runGoal(
+      spec(),
+      baseDeps({
+        sandboxRunner: runner,
+        sandboxedRequirementCommands: [{ requirementId: 'r1', command: 'git diff --stat' }],
+      }),
+    );
+
+    expect(requests[0]?.command).toEqual(['bash', '--noprofile', '--norc', '-c', 'git diff --no-ext-diff --stat']);
+  });
+
   it('parks when sandbox checks are configured but no runner is available', async () => {
     const result = await runGoal(
       spec({ budget: { maxRounds: 1 } }),

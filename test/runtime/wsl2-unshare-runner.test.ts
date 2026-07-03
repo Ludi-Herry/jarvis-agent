@@ -76,10 +76,13 @@ describe('Wsl2UnshareSandboxRunner', () => {
       expect(env?.PATH ?? env?.Path).toBeTruthy();
       expect(env?.GIT_CONFIG_NOSYSTEM).toBe('1');
       expect(env?.GIT_CONFIG_GLOBAL).toBe('/dev/null');
-      expect(env?.GIT_CONFIG_KEY_1).toBe('diff.external');
-      expect(env?.GIT_CONFIG_VALUE_1).toBe('');
-      expect(env?.GIT_CONFIG_KEY_2).toBe('core.fsmonitor');
-      expect(env?.GIT_CONFIG_VALUE_2).toBe('false');
+      expect(env?.GIT_CONFIG_COUNT).toBe('4');
+      expect(env?.GIT_CONFIG_KEY_1).toBe('core.fsmonitor');
+      expect(env?.GIT_CONFIG_VALUE_1).toBe('false');
+      expect(env?.GIT_CONFIG_KEY_2).toBe('core.hooksPath');
+      expect(env?.GIT_CONFIG_VALUE_2).toBe('/dev/null');
+      expect(env?.GIT_CONFIG_KEY_3).toBe('interactive.diffFilter');
+      expect(env?.GIT_CONFIG_VALUE_3).toBe('');
     } finally {
       if (prevBashEnv === undefined) delete process.env.BASH_ENV;
       else process.env.BASH_ENV = prevBashEnv;

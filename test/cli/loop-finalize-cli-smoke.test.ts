@@ -38,7 +38,7 @@ describe('loop finalize CLI smoke', () => {
         `merge ${fixture.loopId}\n`,
       );
 
-      expect(result.code).toBe(0);
+      expect(result.code, `${result.stdout}\n${result.stderr}`).toBe(0);
       expect(result.stdout).toContain('merge-applied');
       await expect(readFile(join(fixture.cwd, 'file.txt'), 'utf8')).resolves.toBe('base\nworktree\n');
       const audit = await readFile(join(fixture.cwd, 'data', 'loops', `${fixture.loopId}.finalize.jsonl`), 'utf8');

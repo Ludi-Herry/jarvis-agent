@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { validateSandboxInspectionCommand } from '../../src/core/tools/sandboxed-inspection-command.js';
+import { hardenSandboxInspectionCommand, validateSandboxInspectionCommand } from '../../src/core/tools/sandboxed-inspection-command.js';
 
 describe('validateSandboxInspectionCommand', () => {
   it.each([
     'git status --short',
     'git diff --stat',
+    'git diff --no-ext-diff --stat',
     'git diff --name-only -- src',
     'git log --oneline -5',
     'git log --max-count=3 --color=never',
@@ -33,5 +34,11 @@ describe('validateSandboxInspectionCommand', () => {
     const decision = validateSandboxInspectionCommand(command);
     expect(decision.ok).toBe(false);
     expect(decision.reason).toMatch(reason);
+  });
+
+  it('adds --no-ext-diff to allowed git diff commands before sandbox execution', () => {
+    expect(hardenSandboxInspectionCommand('git diff --stat')).toBe('git diff --no-ext-diff --stat');
+    expect(hardenSandboxInspectionCommand('git diff --no-ext-diff --stat')).toBe('git diff --no-ext-diff --stat');
+    expect(hardenSandboxInspectionCommand('git status --short')).toBe('git status --short');
   });
 });

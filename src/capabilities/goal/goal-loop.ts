@@ -22,7 +22,7 @@ import type { Message } from '../../core/types.js';
 import type { HookRunner } from '../hooks/index.js';
 import type { SandboxLimits, SandboxRunRequest, SandboxRunResult, SandboxRunner } from '../../runtime/sandbox/index.js';
 import { type AgentContext, type RunOutcome, runAgent } from '../../core/loop/run-agent.js';
-import { validateSandboxInspectionCommand } from '../../core/tools/sandboxed-inspection-command.js';
+import { hardenSandboxInspectionCommand, validateSandboxInspectionCommand } from '../../core/tools/sandboxed-inspection-command.js';
 import { redactSecrets } from '../../core/model/errors.js';
 import { decideVerdict } from './verdict.js';
 import { advanceGoalState } from './state.js';
@@ -525,8 +525,9 @@ async function runSandboxedRequirementChecks(input: {
 }
 
 function sandboxRequestForCommand(cwd: string, command: string): SandboxRunRequest {
+  const hardenedCommand = hardenSandboxInspectionCommand(command);
   return {
-    command: ['bash', '--noprofile', '--norc', '-c', command],
+    command: ['bash', '--noprofile', '--norc', '-c', hardenedCommand],
     cwd: SANDBOX_CHECK_CWD,
     mounts: [{ hostPath: cwd, sandboxPath: SANDBOX_CHECK_CWD, access: 'read-only' }],
     networkMode: 'none',

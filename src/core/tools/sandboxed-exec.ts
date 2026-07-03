@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { SandboxLimits, SandboxRunResult, SandboxRunner } from '../../runtime/sandbox/index.js';
-import { validateSandboxInspectionCommand } from './sandboxed-inspection-command.js';
+import { hardenSandboxInspectionCommand, validateSandboxInspectionCommand } from './sandboxed-inspection-command.js';
 import type { ToolDefinition } from './types.js';
 
 const DEFAULT_SANDBOX_CWD = '/tmp/jarvis-sandbox/project';
@@ -40,8 +40,9 @@ export function createSandboxedExecTool(options: SandboxedExecToolOptions): Tool
         return { content: '', error: `Sandboxed inspection command rejected: ${inspection.reason ?? 'not allowed'}` };
       }
 
+      const hardenedCommand = hardenSandboxInspectionCommand(command);
       const result = await options.runner.run({
-        command: ['bash', '--noprofile', '--norc', '-c', command],
+        command: ['bash', '--noprofile', '--norc', '-c', hardenedCommand],
         cwd: sandboxCwd,
         mounts: [{ hostPath: ctx.cwd, sandboxPath: sandboxCwd, access: 'read-only' }],
         networkMode: 'none',

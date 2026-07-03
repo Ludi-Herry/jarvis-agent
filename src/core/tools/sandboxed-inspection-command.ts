@@ -21,11 +21,28 @@ export function validateSandboxInspectionCommand(command: string): InspectionCom
     return reject(analysis.reason ?? 'command is not safe enough for sandboxed inspection');
   }
 
+  const parsed = parseInspectionWords(command);
+  if (!parsed.ok) return reject(parsed.reason);
+  return validateProgram(parsed.words);
+}
+
+export function hardenSandboxInspectionCommand(command: string): string {
+  const parsed = parseInspectionWords(command);
+  if (!parsed.ok) return command;
+
+  const [program, subcommand, ...rest] = parsed.words;
+  if (program === 'git' && subcommand === 'diff' && !rest.includes('--no-ext-diff')) {
+    return shellWords(['git', 'diff', '--no-ext-diff', ...rest]);
+  }
+  return command;
+}
+
+function parseInspectionWords(command: string): { readonly ok: true; readonly words: string[] } | { readonly ok: false; readonly reason: string } {
   let file: ShNode;
   try {
     file = syntax.NewParser(syntax.Variant(syntax.LangBash)).Parse(command, 'sandboxed-inspection');
   } catch (err) {
-    return reject(`cannot parse command: ${message(err)}`);
+    return { ok: false, reason: `cannot parse command: ${message(err)}` };
   }
 
   const calls: string[][] = [];
@@ -49,9 +66,9 @@ export function validateSandboxInspectionCommand(command: string): InspectionCom
     return true;
   });
 
-  if (unsupported !== undefined) return reject(unsupported);
-  if (calls.length !== 1) return reject(`expected one simple inspection command, got ${calls.length}`);
-  return validateProgram(calls[0]);
+  if (unsupported !== undefined) return { ok: false, reason: unsupported };
+  if (calls.length !== 1) return { ok: false, reason: `expected one simple inspection command, got ${calls.length}` };
+  return { ok: true, words: calls[0] ?? [] };
 }
 
 function validateProgram(words: readonly string[]): InspectionCommandDecision {
@@ -90,7 +107,7 @@ function validateGit(args: readonly string[]): InspectionCommandDecision {
 }
 
 function validateGitDiff(args: readonly string[]): InspectionCommandDecision {
-  const allowedFlags = new Set(['--', '--stat', '--name-only', '--name-status', '--check', '--cached', '--staged', '--color=never']);
+  const allowedFlags = new Set(['--', '--stat', '--name-only', '--name-status', '--check', '--cached', '--staged', '--color=never', '--no-ext-diff']);
   for (const arg of args) {
     if (arg.startsWith('-') && !allowedFlags.has(arg)) return reject(`git diff flag is not allowed: ${arg}`);
   }
@@ -169,6 +186,14 @@ function literalWord(word: ShNode): { readonly ok: true; readonly value: string 
 
 function reject(reason: string): InspectionCommandDecision {
   return { ok: false, reason };
+}
+
+function shellWords(words: readonly string[]): string {
+  return words.map(shellWord).join(' ');
+}
+
+function shellWord(value: string): string {
+  return /^[A-Za-z0-9_./:=,@%+-]+$/.test(value) ? value : `'${value.replace(/'/g, "'\\''")}'`;
 }
 
 function typeOf(node: ShNode): string {

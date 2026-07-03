@@ -47,6 +47,22 @@ describe('sandboxed_exec tool factory', () => {
     expect(result.error).toBe('Sandbox unavailable: disabled for test');
   });
 
+  it('hardens git diff commands before handing them to the sandbox runner', async () => {
+    let captured: SandboxRunRequest | undefined;
+    const runner: SandboxRunner = {
+      backend: 'unavailable',
+      async run(request) {
+        captured = request;
+        return sandboxUnavailable(request, 'disabled for test');
+      },
+    };
+    const tool = createSandboxedExecTool({ runner });
+
+    await tool.run({ command: 'git diff --stat' }, { cwd: '/host/project' });
+
+    expect(captured?.command).toEqual(['bash', '--noprofile', '--norc', '-c', 'git diff --no-ext-diff --stat']);
+  });
+
   it('does not execute the command when the sandbox is unavailable', async () => {
     const marker = join(tmpdir(), `jarvis-sandboxed-exec-${Date.now()}-${Math.random()}.txt`);
     const options: SandboxedExecToolOptions = {

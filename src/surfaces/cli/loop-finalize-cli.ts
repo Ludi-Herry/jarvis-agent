@@ -158,7 +158,7 @@ async function readWorktreeStatus(path: string, shellPath: string): Promise<Fina
     return missingWorktreeStatus(path);
   }
   const status = await runGitRead(shellPath, 'git status --porcelain=v1 --untracked-files=all', path);
-  const diffStat = await runGitRead(shellPath, 'git diff --stat HEAD', path);
+  const diffStat = await runGitRead(shellPath, 'git diff --no-ext-diff --stat HEAD', path);
   const statusText = status.code === 0 ? status.output.trim() : `git status failed: ${status.output.trim() || status.spawnError || String(status.code)}`;
   const diffText = diffStat.code === 0 ? diffStat.output.trim() : `git diff failed: ${diffStat.output.trim() || diffStat.spawnError || String(diffStat.code)}`;
   const classified = status.code === 0 ? classifyStatus(statusText) : { conflicted: false, hasTrackedChanges: false, hasUntracked: false };
@@ -420,7 +420,7 @@ async function applyOneProposal(
 ): Promise<void> {
   const item = opts.report.items.find((candidate) => candidate.index === proposal.index);
   const worktreePath = item?.worktree?.path ?? proposal.worktreePath;
-  const patch = await runGitPatch(opts.shellPath, 'git diff --binary HEAD', worktreePath);
+  const patch = await runGitPatch(opts.shellPath, 'git diff --no-ext-diff --binary HEAD', worktreePath);
   if (patch.code !== 0 || patch.truncated) {
     await parkAndThrow(opts.auditPath, opts.report.loopId, proposal, 'patch-generation-failed', compactGitOutput(patch));
   }

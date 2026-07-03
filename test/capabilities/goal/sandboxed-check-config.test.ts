@@ -1,3 +1,4 @@
+import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { loadSandboxedCheckPlan, parseSandboxedCheckPlan } from '../../../src/capabilities/goal/sandboxed-check-config.js';
 
@@ -54,9 +55,11 @@ describe('parseSandboxedCheckPlan', () => {
 
 describe('loadSandboxedCheckPlan', () => {
   it('loads a trusted file outside cwd', async () => {
+    const trustedPath = resolve('tmp', 'trusted', 'sandbox-plan.json');
+    const cwd = resolve('tmp', 'jarvis-agent');
     const loaded = await loadSandboxedCheckPlan({
-      path: 'C:\\trusted\\sandbox-plan.json',
-      cwd: 'H:\\jarvis-agent',
+      path: trustedPath,
+      cwd,
       readText: async () =>
         JSON.stringify({
           requirements: [{ id: 'r1', text: 'shows status', command: 'git status --short' }],
@@ -64,16 +67,17 @@ describe('loadSandboxedCheckPlan', () => {
       realpath: async (path) => path,
     });
 
-    expect(loaded.path).toBe('C:\\trusted\\sandbox-plan.json');
+    expect(loaded.path).toBe(trustedPath);
     expect(loaded.pinned).toEqual([{ id: 'r1', text: 'shows status' }]);
     expect(loaded.commands).toEqual([{ requirementId: 'r1', command: 'git status --short' }]);
   });
 
   it('refuses repo-controlled sandbox check config', async () => {
+    const cwd = resolve('tmp', 'jarvis-agent');
     await expect(
       loadSandboxedCheckPlan({
-        path: 'H:\\jarvis-agent\\sandbox-plan.json',
-        cwd: 'H:\\jarvis-agent',
+        path: join(cwd, 'sandbox-plan.json'),
+        cwd,
         readText: async () => '{"requirements":[]}',
         realpath: async (path) => path,
       }),
@@ -81,11 +85,12 @@ describe('loadSandboxedCheckPlan', () => {
   });
 
   it('refuses repo-controlled config even when cwd is a subdirectory', async () => {
+    const root = resolve('tmp', 'jarvis-agent');
     await expect(
       loadSandboxedCheckPlan({
-        path: 'H:\\jarvis-agent\\sandbox-plan.json',
-        cwd: 'H:\\jarvis-agent\\src',
-        forbiddenRoots: ['H:\\jarvis-agent'],
+        path: join(root, 'sandbox-plan.json'),
+        cwd: join(root, 'src'),
+        forbiddenRoots: [root],
         readText: async () => '{"requirements":[]}',
         realpath: async (path) => path,
       }),
