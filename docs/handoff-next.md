@@ -1,10 +1,10 @@
-# 交接：Phase D 之后 + GUI 前收口（给新会话）
+# 交接：Phase D 之后 + 发布前收口（给新会话）
 
 > **2026-07-03 起的执行路线图在 `docs/handoff-release.md`**（受限无人值守先行 → worktree 写隔离 → GUI 裁决流 → UI/UX 打磨 → 可发布 v1，含 R1-R9 验收契约与对抗审查要求）。本页继续作为系统现状与不变量的权威来源。
 
 > Phase D 腿3 整套**已全部落地 + 经 5 轮多裁判对抗核查 + 诚实文档化**——背景见 `docs/handoff-D.md`（主交接）、`docs/phase-D-leg3-checklist.md`（5 条全收口）、`docs/security-review-baseline.md`（审查历史 + 元教训）、memory `phase-d-goalloop-deterministic-legs`。
 > Phase E 四条独立第一切片（vision / bash-allow / loop / shadow-git）**已全部合进本地 main**（见下「合并收口」）。
-> OS sandbox Phase 3 v1 **已落地**：可信 goal-setter requirements、单 goal env contract、loop `--goal-setter-requirements-map`、sandbox / LLM / human 组合 verifier report、per-goal held-out hidden checks、resume path/hash fail-closed、sandbox audit evidence、runner cleanup、worktree baseline audit 与 `--fail-on-worktree-change` 都已接入并有真实 goal/loop smoke。builder 侧 `sandboxed_check` 已能在 OS sandbox 内跑 `typecheck/lint/test/build` 并把输出回灌给 builder；`browser_smoke(static-dist)` 已提供固定浏览器 smoke feedback；`goal_round_start` / `goal_round_end` 已提供只读 round/budget 进度事件；`npm run observe` 已提供只读 status / usage / audit / latestGoalBudget 入口；attended goal/loop 已记录 `approval_request` / `approval_result` 事件与 `data/approvals/*.jsonl` 审计；GUI human-review MVP 已能裁决 `human` route park、回写 verifier report 并留 audit trail。当前交接重点改为：① Phase 3 v1 后的收口边界；② GUI UI/UX 打磨与真实 R5 演示；③ Phase E 后续 defer。
+> OS sandbox Phase 3 v1 **已落地**：可信 goal-setter requirements、单 goal env contract、loop `--goal-setter-requirements-map`、sandbox / LLM / human 组合 verifier report、per-goal held-out hidden checks、resume path/hash fail-closed、sandbox audit evidence、runner cleanup、worktree baseline audit 与 `--fail-on-worktree-change` 都已接入并有真实 goal/loop smoke。builder 侧 `sandboxed_check` 已能在 OS sandbox 内跑 `typecheck/lint/test/build` 并把输出回灌给 builder；`browser_smoke(static-dist)` 已提供固定浏览器 smoke feedback；`goal_round_start` / `goal_round_end` 已提供只读 round/budget 进度事件；`npm run observe` 已提供只读 status / usage / audit / latestGoalBudget 入口；attended goal/loop 已记录 `approval_request` / `approval_result` 事件与 `data/approvals/*.jsonl` 审计；GUI human-review 能力/API 已落地，但 2026-07-03 发布检查在内置 Browser R5 验收与 R7 对抗审查上失败。当前交接重点改为：① 修 R5 内置 Browser 裁决表单；② 修 R7 human-review / loop-finalize 信任边界；③ 再做 UI/UX 打磨与 R1-R9 发布收口。
 
 ## 方向决策与当前状态（更新至 2026-07-03）
 
@@ -15,6 +15,7 @@
 - **fixed browser smoke feedback 已落地最小切片**：`goal-cli` / `loop-cli` 的 builder registry 现在注册 `browser_smoke`，只接受 `profile: "static-dist"`，打开 sandbox-local copy 里的 `dist/index.html`，禁网运行，独立 HOME/cache/temp，不接用户浏览器 profile。手动入口是 `npm run sandbox:browser-smoke`；缺预批准浏览器时返回 skipped/unavailable 反馈。设计记录见 `docs/superpowers/plans/2026-07-03-fixed-browser-smoke-feedback-design.md`。
 - **真实模型 autonomous coding smoke 已补手动脚本**：`npm run sandbox:autonomous-model-smoke` 在临时 fixture 里让真实 builder 先看 `sandboxed_check(test)` 红灯、改代码、再跑绿灯、最后 claim complete。该脚本需要模型 key，不进默认测试，不自动清理/merge。
 - **unattended worktree write 已落地最小权限切片（2026-07-03）**：`--unattended --parallel` 的 per-goal gate 会注入 `goalWorktreeWriteRoot`，仅 built-in `write` 的 literal/effective realpath 都留在该 goal worktree 内才自动 allow；`.git`、sensitive path、symlink/junction/`..`/absolute/Windows namespaced escape 全拒绝。plain `--unattended` 仍对 write fail-closed；bash/vision/network/unknown write-like tools 仍 fail-closed。goal worktree 会桥接宿主 `node_modules` 供 deterministic checks 使用，文件工具不能跟随该链接读写宿主依赖。codex 两轮审查 no HIGH；真实 smoke 已证明 write 成功、bash 拒绝、宿主 `git status` 零漂移。稳定全绿轮 `2026-07-03T17-06-40-512Z` 使用 `VITEST_MAX_WORKERS=1` 跑 `--unattended --parallel 2`，2/2 goals `verified` + `complete`。
+- **发布收口检查未通过（2026-07-03）**：R1 四关卡通过，R4 worktree 写隔离通过；R2/R3/R5/R6/R7/R8/R9 未达发布条件。内置 Browser 访问 `http://127.0.0.1:4328/` 时，human-review「通过」按钮触发 `window.prompt`，Browser 报 `prompt() is not supported`，未写入 `data/human-reviews/*.jsonl`，goal 保持 `blocked / couldNotVerify`。独立子代理与 codex CLI 对抗审查还发现两条 HIGH：human-review 通过 `couldNotVerify` 文本前缀识别 pending requirement，缺 trusted route provenance；`loop:finalize` 只信 loop JSONL 的 latest `goal-finished`，未交叉验证 goal log / verifier report / audit。
 - **Phase 3 v1 边界**：trusted verifier route 仍只覆盖 goal-setter 预声明的窄 read-only inspection command（`git status/diff/log/ls-files`、`stat`、`wc`）。`sandboxed_check` 和 `browser_smoke` 都是 builder 反馈工具，不能证明 trusted requirement、不能改写 verdict、不能给 goal/loop 完成授权。通用 app / browser / network verifier 不在当前抽象范围；`local-preview` browser smoke 仍等 loopback-only sandbox proof；`human` route 先 `cannotVerify→park`，随后可由 GUI human-review 记录人工裁决证据并交回 `decideVerdict`。`npm run observe` 只能汇总 JSONL 和 audit evidence，不能给 goal/loop 完成授权。
 - **skill 自动沉淀（`propose_skill`）：不做**（投机性、判定偏弱、无证实的复用场景）。下文该节仅作设计存档。
 - **新增 verifier / route / scheduler 抽象：不做**。现有 `--verifier-map`、`--hook-map`、`--sandbox-check-map`、`--goal-setter-requirements-map` 四套 map 已足够；后续只允许修 bug、收窄边界、同步文档，不能再加第 5 套 map 或新调度/路由层。
@@ -36,14 +37,15 @@ CLI 功能已实质收尾（A→E + Hooks slice-1/slice-2 follow-up）。GUI（�
 - **round / budget 事件已补**：`runGoal` 每轮 emit `goal_round_start` / `goal_round_end`，包含当前 round、maxRounds、累计 turns/tokens、可选总预算、claim status、verdict 和 resulting state。事件只给 GUI 进度条 / 状态面板消费，不进入 verifier report。
 - **usage/status/audit 只读入口已补**：`npm run observe` 按 primitive 汇总 turns、tokens、`latestGoalBudget`、halt reason、verdict、trusted contract path/hash、approval counts、sandbox backend/mount/network/limits，并输出 `activity.recent` 给 GUI 时间线。JSON 输出已有 versioned contract 与 explicit authority 字段；该视图只能做观测，不能给 goal/loop 完成授权。
 
-**结论**：GUI 已开工并完成第一版晴天模式外壳 + human-review MVP。前置 = 审批历史事件、round/budget 事件、只读 observe JSON contract 已接展示层；`npm run gui` 提供 observe 时间线、emergency stop 与 `human` route 裁决。loop primitive 选择入口见 `docs/loop-primitives-guide.md`。loop 重项已收口，记录见 `docs/handoff-loop-remaining.md`；通用 app/browser/network 运行态检查保持范围外。
+**结论**：GUI 已开工并完成第一版晴天模式外壳 + human-review 能力层/API。前置 = 审批历史事件、round/budget 事件、只读 observe JSON contract 已接展示层；`npm run gui` 提供 observe 时间线、emergency stop 与 `human` route 裁决入口。发布前不能把 R5 记为通过：内置 Browser 不支持当前 `window.prompt` 备注输入，真实点击后不会落 human-review audit。loop primitive 选择入口见 `docs/loop-primitives-guide.md`。loop 重项已收口，记录见 `docs/handoff-loop-remaining.md`；通用 app/browser/network 运行态检查保持范围外。
 
 ### GUI 第一版（2026-07-03）
 
 - `npm run gui` 启动本地 HTTP UI（默认 `127.0.0.1:4317`，端口占用时向后探测）。
 - UI 数据来自 `loadWorkspaceObservation`，与 `npm run observe -- --json` 同源；时间线展示 `activity.recent` 最近事件，并保留 session / goal / loop / cron / approvals / sandbox / worktree / authority 摘要。
-- GUI server 已补切片 0 安全修复：只接受 loopback `Host` header，`POST /api/emergency-stop` 要求 `x-jarvis-gui: 1`，`--host` 绑定非 loopback 时打印无认证控制面警告。
+- GUI server 已补切片 0 安全修复：只接受 loopback `Host` header，`POST /api/emergency-stop` 与 `POST /api/human-reviews/:goalId/decide` 都要求 `x-jarvis-gui: 1`，`--host` 绑定非 loopback 时打印无认证控制面警告。
 - GUI human-review MVP 已补切片 3 最小闭环：`GET /api/human-reviews` 列出 parked human requirements，`POST /api/human-reviews/:goalId/decide` 要求 `x-jarvis-gui: 1`，裁决会追加 `data/human-reviews/<goalId>.jsonl`、写入新 goal round、合成 verifier report，并由 `decideVerdict` 给出最终 verdict；若 goal 属于 loop，同步补写新的 `goal-finished` 记录供 `loop:finalize` 读取。
+- R5 当前阻塞：GUI 页面使用 `window.prompt('裁决备注')` 收备注；内置 Browser 抛 `prompt() is not supported`，点击「通过」后按钮仍留在 pending 状态，控制台有错误，audit 文件未生成。下一步先改成页面内联备注输入，再用同一 Browser 复验。
 - 急停按钮写 `data/control/emergency-stop.json`，并追加 `data/control/emergency-stop.jsonl` 审计。`goal`、`loop`、`cron`、`cron:daemon` 只响应晚于自身启动时间的停机请求，并把同一个 `AbortSignal` 传给模型流、bash、deterministic checks、sandbox checks 与 loop 调度。
 - GUI 保持窄控制面：不启动 goal、不创建 trusted requirement、不运行 verifier、不 merge code、不编辑 map、不做 agent identity / connector / team collaboration。human-review 只把人工判断记录成 verifier evidence，完成授权仍由 `decideVerdict` 产生。
 
@@ -95,7 +97,7 @@ Phase 3 v1 已解决早前「#2 客观路由」和「#6 裁判只读命令取证
 
 - **无通用 app/browser/network verifier**：builder 已能通过 `sandboxed_check` 跑固定项目检查脚本并读取失败输出，也能通过 `browser_smoke(static-dist)` 做固定静态页面 smoke feedback。trusted verifier route 仍没有解释器、任意 browser driving、GUI app、network check 或完整 runtime command 路线。运行态需求如果超出窄 inspection scope，继续靠 LLM route 的文本证据或 `human` route park。
 - **human route 仍先 park**：`human` requirement 首轮生成 `cannotVerify`，随后 GUI human-review 可把人工 approve/reject 写回 verifier report 并留 audit trail；重跑 goal 后仍按新一轮 report 重新判断，不静默继承旧裁决。
-- **GUI human-review MVP 已落地**：当前覆盖 parked 列表、单条 requirement approve/reject、备注审计、report merge、`decideVerdict` 重算和 loop finish 补记；还缺真实 parked goal 的 R5 演示、codex 控制面/注入面审查、以及 UI/UX 打磨。
+- **GUI human-review MVP 代码/API 已落地，但 R5 未过**：能力层覆盖 parked 列表、单条 requirement approve/reject、备注审计、report merge、`decideVerdict` 重算和 loop finish 补记；GUI 入口在内置 Browser 因 `window.prompt` 不支持失败。R7 也未过：先补 trusted route provenance 与 `loop:finalize` 交叉验证，再重跑 codex 对抗审查。
 - **status/usage/audit 入口只有只读版**：`npm run observe` 已能汇总最新 goal/loop/cron 状态、tokens、rounds、`latestGoalBudget`、halt reason、trusted contract metadata、approval counts、sandbox evidence、`activity.recent` 最近事件流，并通过 `schemaVersion: 1` JSON contract 暴露给 GUI/脚本。它只负责观察和复核辅助，不能改变 verdict。
 
 ## 第二类：Phase E 切片现状 + 剩余

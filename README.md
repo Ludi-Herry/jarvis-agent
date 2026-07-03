@@ -16,12 +16,14 @@
 | Phase D 自主（GoalLoop + 确定性三腿〔canonical 重跑 + 篡改检测 + held-out 隐藏断言〕+ 独立 LLM 裁判） | ✅ 完成（D1–D9 + held-out） |
 | Phase E 多能力（多 goal Loop 调度 + 外置 vision + 命令级 bash session-allow + shadow-git 旁路历史） | ✅ 完成（4 切片合入 main） |
 | Hooks（PreToolUse 阻断 + PostToolUse 咨询/反馈；tool result env；per-hook timeout；round/session lifecycle；多来源；loop per-goal hook-map） | ✅ 完成，剩余仅保留 defer |
-| **GUI 第一版（看得懂 + 急停 + human-review MVP）** | ✅ observe 时间线 + emergency stop + human route 人工裁决闭环 |
+| **GUI 第一版（看得懂 + 急停 + human-review MVP）** | ⚠️ observe 时间线 + emergency stop 已可用；human-review 能力/API 已落地，但 2026-07-03 内置 Browser R5 验收失败 |
 | OS sandbox Phase 3 v1 + builder sandboxed checks + browser smoke feedback + 只读观测层 | ✅ 完成（trusted requirements / route map / composite verifier / `sandboxed_check` / `browser_smoke(static-dist)` / round budget events / `npm run observe`）；未覆盖范围：通用 app/browser/network verifier |
 | propose_skill | ⛔ 已拍板 defer（投机性、判定偏弱、无证实复用场景） |
 | 新增 verifier / route / scheduler 抽象 | ⛔ 已拍板不做；现有四套 map 足够（`verifier` / `hook` / `sandbox-check` / `goal-setter-requirements`） |
 
 `npm run typecheck / lint / test / build` 全绿（**1041 passed / 1 skipped**，Windows 下 1 个 POSIX SIGINT smoke 跳过）。命令安全根（PermissionGate + 命令解析器 + bash 审批）经**六轮独立 codex 对抗核查**确认无破闸 HIGH；goal 验收子系统（确定性三腿 + 腿3 裁判 + bash/Linux 密钥加固）经**多轮多裁判对抗核查**（codex + 独立 Claude 子代理，含一轮 4 裁判收尾）。Phase E 各切片与 Hooks slice-1/2 均经 **codex 跨模型对抗审查逐层加固**（vision 四轮 / bash 白名单 Path A 经 7 HIGH 撤回、保留命令级 Path B / Hooks 信任边界修 HIGH / slice-2 每切片 2 轮 SHIP）。方法 / 严重度基线 / 历史见 `docs/security-review-baseline.md`。
+
+**发布收口状态（2026-07-03）**：R1 四关卡通过；R4 worktree 写隔离通过；R2/R3/R5/R6/R7/R8/R9 仍未满足发布条件。R5 的内置 Browser 验收卡在 `window.prompt` 不支持，点击 human-review「通过」后前端报错且未写 `data/human-reviews/*.jsonl`；R7 对抗审查发现 human-review provenance spoof 与 `loop:finalize` 信任 loop JSONL 两个 HIGH。发布前先修这些阻塞项。
 
 接手入口：
 - **Loop primitive 怎么选 → `docs/loop-primitives-guide.md`**；**最新全景 + Phase E/Hooks 现状 + 下一步（GUI 就绪盘点）→ `docs/handoff-next.md`**；**Loop 重项收口记录（parallel resume / finalize / cron daemon）→ `docs/handoff-loop-remaining.md`**；**Phase D（GoalLoop + 三腿 + 腿3 裁判）→ `docs/handoff-D.md`**；**Hooks（tool-call / lifecycle / loop per-goal hook-map）→ `docs/handoff-hooks.md`**；
@@ -135,13 +137,13 @@ Goal runs emit `goal_round_start` / `goal_round_end` events with round number, m
 
 Attended `goal` and `loop` runs emit `approval_request` / `approval_result` events around the injected human approver and append the same safe details to `data/approvals/*.jsonl`. These records omit write content and remain audit-only; they do not approve `human` verifier requirements or change verdicts.
 
-Human-routed verifier requirements park as `cannotVerify` until a person reviews them in the GUI. The GUI writes a separate `data/human-reviews/<goalId>.jsonl` audit record, appends a new goal round with the merged verifier report, and calls `decideVerdict` to produce the final verdict.
+Human-routed verifier requirements park as `cannotVerify` until a person reviews them in the GUI. The capability/API path writes a separate `data/human-reviews/<goalId>.jsonl` audit record, appends a new goal round with the merged verifier report, and calls `decideVerdict` to produce the final verdict. Current caveat: the first GUI surface asks for the review note via `window.prompt`, which fails in the built-in Browser; replace it with an inline form before counting R5 as passed.
 
 ### GUI first slice
 
 `npm run gui` starts a local HTTP UI on `127.0.0.1:4317` by default. It serves a compact timeline built from the same `loadWorkspaceObservation` contract behind `npm run observe -- --json`, including `activity.recent` event rows and aggregate status cards, plus a visible emergency stop control and a human-review queue for parked verifier requirements.
 
-The GUI server only accepts loopback `Host` headers (`127.0.0.1`, `localhost`, `[::1]`, with optional port). Emergency-stop POSTs require `x-jarvis-gui: 1`, and binding `--host` to a non-loopback address prints an unauthenticated-control warning.
+The GUI server only accepts loopback `Host` headers (`127.0.0.1`, `localhost`, `[::1]`, with optional port). GUI control POSTs (`/api/emergency-stop` and `/api/human-reviews/:goalId/decide`) require `x-jarvis-gui: 1`, and binding `--host` to a non-loopback address prints an unauthenticated-control warning.
 
 The stop control writes `data/control/emergency-stop.json` and appends `data/control/emergency-stop.jsonl`. Running `goal`, `loop`, `cron`, and `cron:daemon` watch that file and only honor stop requests newer than their own process start time. When honored, the shared `AbortSignal` is passed into model streams, bash, deterministic checks, sandbox checks, and loop scheduling so new agent actions stop promptly while existing JSONL logs remain available for review.
 

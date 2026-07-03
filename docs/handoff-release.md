@@ -8,8 +8,8 @@
 
 - 验收侧已全线就绪：确定性三腿 + trusted requirements（sandbox-command/llm/human）+ held-out + `decideVerdict` 零信任链，1041 测试全绿。
 - 切片 2 前，行动侧的 write 结构性封死：`--unattended` 无 approver，gate 对一切 `ask` fail-closed deny；goal/loop CLI 不加载 RuleResolver（`loop-cli.ts` 用裸 `defaultPolicy()`），所以无人值守下 builder 写不了任何文件。2026-07-03 已补一条收窄例外：`--unattended --parallel` 的 per-goal gate 只自动放行落在该 goal worktree 内的 built-in `write`。
-- GUI human-review MVP 已按真实 parked sample 的需求落地，R5 仍要求再跑一次真实 parked goal 端到端演示。
-- 结论：只读巡检和 worktree 隔离写已先后落地；接下来补 GUI 裁决流真实演示、codex 审查和 UI/UX 打磨。
+- GUI human-review 能力层/API 已按真实 parked sample 的需求落地；2026-07-03 发布检查发现内置 Browser 入口仍失败，R5 不能计为通过。
+- 结论：只读巡检和 worktree 隔离写已先后落地；发布前先修 R5 内置 Browser 裁决表单与 R7 对抗审查 HIGH，再进入 UI/UX 打磨和版本收口。
 
 ## 1. 发布定义（Definition of Done，全局终线）
 
@@ -21,9 +21,9 @@ v1 可发布 = 以下每条都有**可验证证据**（跑过的命令 / 截图 
 | R2 | 无人值守只读巡检在真实任务上连续 ≥5 次 cron 运行：0 false-verified、0 失控（每次要么正常完成要么 park/halt 且原因可解释） | `data/` JSONL + `npm run observe` 报告逐次核对 |
 | R3 | 急停演练 ≥1 次：GUI 按钮按下后，运行中的 loop 在一个轮询周期内中断且审计留痕 | `data/control/emergency-stop.jsonl` + loop halt 记录 |
 | R4 | 无人值守写码切片（worktree 隔离 write）落地并通过 codex 对抗审查（无未缓解 HIGH） | 审查记录追加进 `security-review-baseline.md` |
-| R5 | GUI human-review 裁决流可用：human route 的 parked requirement 能被人工裁决、回写 verifier report、留 audit trail | 端到端真实 goal 演示一次（MVP 代码已落地，真实演示待补） |
+| R5 | GUI human-review 裁决流可用：human route 的 parked requirement 能被人工裁决、回写 verifier report、留 audit trail | 端到端真实 goal 演示一次。2026-07-03 内置 Browser 验收失败：`window.prompt` 不支持，未写 audit |
 | R6 | GUI UI/UX 打磨完成且 Luis 逐节验收通过（视觉层级、文案、空态/错误态、响应式） | 每节验收记录（见切片 4） |
-| R7 | GUI server 安全修复落地（Host 校验等，见切片 0），且对 GUI 控制面做过一轮 codex 安全审查 | 同 R4 |
+| R7 | GUI server 安全修复落地（Host 校验等，见切片 0），且对 GUI 控制面做过一轮 codex 安全审查 | 同 R4。2026-07-03 对抗审查发现 human-review provenance spoof 与 `loop:finalize` JSONL 信任 HIGH |
 | R8 | 文档一致：README、`docs/handoff-next.md`、本文状态段与实际行为无出入 | neat-freak 式核对 |
 | R9 | 发布检查单走完（版本号、changelog、已知问题清单） | 切片 5 |
 
@@ -33,7 +33,7 @@ v1 可发布 = 以下每条都有**可验证证据**（跑过的命令 / 截图 
 
 继承 `docs/handoff-next.md`「别破的不变量」全文，另加本路线图自己的红线：
 
-- **完成授权唯一来源不变**：`decideVerdict` + deterministic checks + trusted requirement routes + 人工确认。GUI、observe、任何新代码都只能观测，不能生成 verified/complete。
+- **完成授权唯一来源不变**：`observe` 只能观测；GUI human-review 只能写入人工裁决证据并交回 `decideVerdict`。任何 GUI/API 新代码都不能绕过 deterministic checks、trusted requirement routes、人工确认和 `decideVerdict` 生成 verified/complete。
 - **四套 map 是抽象上限**：不新增第 5 套 map、不新增 verifier/route/scheduler 抽象。本路线图所有切片都必须在现有抽象内实现。
 - **不做清单继续有效**：propose_skill 不做；enterprise 化（connector 矩阵、组织平台、自动长期记忆）不做；cron daemon 不自动 resume/merge/cleanup。
 - **unattended bash / vision 保持 fail-closed**，本路线图任何切片不得放开。切片 2 只放开 worktree 内 write，边界见该节。
@@ -51,7 +51,7 @@ v1 可发布 = 以下每条都有**可验证证据**（跑过的命令 / 截图 
 
 **已完成**：
 1. `gui-server.ts` 校验 `Host` 头：仅接受 `127.0.0.1[:port]` / `localhost[:port]` / `[::1][:port]`，不匹配一律 403——堵 DNS rebinding 读取 `/api/observation`（内含审批命令预览、sandbox evidence stdout/stderr）。
-2. `POST /api/emergency-stop` 加最小 CSRF 防线：要求自定义请求头 `x-jarvis-gui: 1`，前端 `app.js` 已同步携带。简单表单 POST 无法携带自定义头，可挡住跨站触发。
+2. GUI 控制 POST 加最小 CSRF 防线：`POST /api/emergency-stop` 与 `POST /api/human-reviews/:goalId/decide` 都要求自定义请求头 `x-jarvis-gui: 1`，前端 `app.js` 已同步携带。简单表单 POST 无法携带自定义头，可挡住跨站触发。
 3. `--host` 绑定非 loopback 地址时启动打印醒目警告（无认证、observation 数据和急停控制面都暴露），README / handoff 已同步说明。
 
 **边界**：不做登录/鉴权体系、不上 HTTPS、不改端口探测逻辑。
@@ -127,14 +127,14 @@ v1 可发布 = 以下每条都有**可验证证据**（跑过的命令 / 截图 
 2. Verifier report 闭环：人工 approve/reject 会写入新的 verifier evidence，更新对应 requirement score，追加新的 `goal-round` + `goal-state`，最终 verdict 只由 `decideVerdict` 产生。
 3. Loop finalize 可见：若 parked goal 属于 loop，会补写新的 `goal-finished` 记录，`loop:finalize` 可看到 reviewed 后的 latest finish state/outcome。
 4. GUI API：`GET /api/human-reviews` 列表；`POST /api/human-reviews/:goalId/decide` 复用切片 0 的 loopback Host 校验，并要求 `x-jarvis-gui: 1`。
-5. GUI UI：首版人工裁决队列展示 goal / requirement / reason，支持单条通过或驳回并填写备注。
+5. GUI UI：首版人工裁决队列展示 goal / requirement / reason，支持单条通过或驳回并填写备注；备注输入当前依赖 `window.prompt`。
 6. 测试：`test/capabilities/goal/human-review.test.ts` 覆盖列表、approve、reject、audit、loop finish；`test/surfaces/gui/gui-server.test.ts` 覆盖 API、CSRF 和编码路径穿越拒绝。
 
-**仍待补**：真实 parked goal 的 R5 端到端演示；codex 控制面 + 注入面审查；切片 4 中继续打磨裁决表单体验、键盘可达性、错误态和证据详情密度。
+**仍待补**：真实 parked goal 的 R5 端到端演示；把 `window.prompt` 备注输入改成页面内联表单（内置 Browser 不支持 prompt）；补 trusted route provenance，避免非 human route 通过 `couldNotVerify` 文本前缀伪造 pending item；让 `loop:finalize` 交叉验证 goal log / verifier report / audit 后再给 merge proposal；切片 4 中继续打磨裁决表单体验、键盘可达性、错误态和证据详情密度。
 
 **边界**：单用户本地场景；不做多人协作、不做 agent identity、不做通知系统。
 
-**验收状态**：单元/API 层已证明 parked requirement 可裁决、report 可回写、audit trail 可回放、伪造 CSRF 与编码路径穿越被拒；R5 还需要用真实 parked goal 演示一次，并补 codex 对抗审查记录。
+**验收状态**：单元/API 层已证明 parked requirement 可裁决、report 可回写、audit trail 可回放、伪造 CSRF 与编码路径穿越被拒；R5/R7 未过。2026-07-03 内置 Browser 验收中，点击「通过」触发 `prompt() is not supported`，没有写入 `data/human-reviews/*.jsonl`；独立子代理 + codex CLI 对抗审查发现 human-review provenance spoof 与 `loop:finalize` JSONL 信任 HIGH。
 
 ### 切片 4：GUI UI/UX 打磨
 
@@ -166,6 +166,8 @@ v1 可发布 = 以下每条都有**可验证证据**（跑过的命令 / 截图 
 5. 停在发布线前：向 Luis 提交发布检查单，publish/push 等待人工明示。
 
 **验收**：R1-R9 逐条打勾且每条有证据链接（命令输出 / JSONL 路径 / 审查记录 / 验收记录）。
+
+**2026-07-03 首轮发布检查结果**：未通过。R1 四关卡通过（`typecheck` / `lint` / `build` / `test`，1041 passed / 1 skipped），R4 worktree 写隔离通过；R2 真实 cron 证据仍是 `0/5`，R3 急停 JSONL 终态缺口未闭合，R5 内置 Browser 裁决失败，R6 未验收，R7 有未缓解 HIGH，R8 已发现文档口径漂移，R9 仍是 `package.json` version `0.0.0` 且无 `CHANGELOG.md` / `RELEASE_NOTES.md`。R5 浏览器证据：`http://127.0.0.1:4328/` 页面上点击「通过」后 `window.prompt` 抛 `prompt() is not supported`，`data/human-reviews/*.jsonl` 未生成，goal 仍是 `blocked / couldNotVerify`。
 
 ## 4. 对抗式审查制度（本路线图执行标准）
 

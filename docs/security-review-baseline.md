@@ -45,6 +45,17 @@ codex exec -s danger-full-access --skip-git-repo-check -m gpt-5.5 \
 
 ## 历史
 
+### 2026-07-03 · GUI human-review / loop-finalize 发布收口审查
+切片 5 发布检查按 R1-R9 做只读收口，调用 3 个独立子代理（R1-R9 证据、GUI/human-review 安全面、文档一致性）并跑 codex CLI 只读对抗审查。四关卡全绿：`npm run typecheck`、`npm run lint`、`npm run build`、`npm test`（102 files / 1041 passed / 1 skipped）。结论：发布检查未通过，R7 有未缓解 HIGH。
+
+**HIGH（未修）**：
+- **human-review pending item 缺 trusted route provenance**：`src/capabilities/goal/human-review.ts` 通过 `VerifierReport.couldNotVerify` 的文本前缀 `human verification required for <id>:` 解析 GUI 队列，并只检查同 id 的 `perRequirement.strength === 'cannotVerify'`。非 human route 的 verifier report 如果写出同样文本，可把 requirement 伪造成可人工裁决项；GUI approve 后会把该 requirement 改成 `proves/matched` 并交给 `decideVerdict`。修法：pending human-review 必须来自 trusted requirement route metadata 或结构化 park record，不能从自由文本推断 route。
+- **`loop:finalize` 过度信任 loop JSONL 的 latest `goal-finished`**：`src/capabilities/goal/loop-finalize.ts` 只看 loop records 里的 latest started/finished 与 worktree diff，就能给出 `verified-mergeable` proposal；未重新读取对应 goal log、verifier report、human-review audit 或 trusted requirements hash。若 loop JSONL 被篡改为 `complete/verified`，finalize 报告会把 dirty tracked diff 作为可 merge proposal。修法：finalize 生成 proposal 前要交叉验证 goal log 最终 verdict/state、对应 human-review audit（如有）、trusted route contract 与 worktree baseline。
+
+**MED/LOW（未修）**：human-review 先写 goal round/state 再写 audit，audit 失败时可能留下无审计的 complete/blocked 状态；human-review POST 缺 expectedRound/idempotency，双标签页可竞态；requirement id 允许 `:` 等字符会让文本解析不可逆；`matchHumanReviewDecisionPath` 对 malformed percent encoding 走 500；timeline 文本虽用 `textContent` 防 HTML 注入，但缺 bidi/control stripping，仍有视觉 spoof 风险。
+
+**Browser 验收失败（R5，未修）**：内置 Browser 打开 `http://127.0.0.1:4328/` 后可见 human-review 队列和「通过/驳回」按钮；点击「通过」触发 `src/surfaces/gui/assets/app.js` 的 `window.prompt('裁决备注')`，Browser 报 `prompt() is not supported`，未写入 `data/human-reviews/*.jsonl`，goal 仍保持 `blocked / couldNotVerify`。这条属于可达性/UX 阻塞，也会影响安全审查复验。
+
 ### 2026-07-03 · unattended worktree write + dependency bridge 轮
 切片 2 解锁无人值守写码：`--unattended --parallel` 的 per-goal gate 注入 `goalWorktreeWriteRoot`，只自动放行 built-in `write`，且 literal/effective realpath 都必须留在该 goal worktree 内；`.git`、sensitive path、symlink/junction/`..`/absolute/Windows namespaced escape 全拒绝。loop-cli 只给 parallel per-goal gate 注 root，shared gate / goal-cli / REPL 不拿该权限；bash / vision / network / unknown write-like tools 继续 fail-closed。执行层同步加固：`safeResolve` 拒绝 git metadata，`writeTool` 兜底拒写 `.git`。真实 smoke 首轮暴露新 worktree 缺 `node_modules` 导致 deterministic checks 找不到 `tsc/vitest/eslint`；随后补 dependency bridge：worktree 创建 / resume 时把宿主 `node_modules` 以 junction/symlink 暴露给 checks，文件工具因 realpath outside root 仍不能读写该链接。
 
