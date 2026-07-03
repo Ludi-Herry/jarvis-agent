@@ -101,6 +101,9 @@ function validateRoutes(
   for (const requirement of pinned) {
     const route = routes.get(requirement.id);
     if (route === undefined) return couldNotVerifyReport(`no verification route configured for ${requirement.id}`);
+    if (requirement.route !== undefined && route !== requirement.route) {
+      return couldNotVerifyReport(`verification route mismatch for ${requirement.id}: pinned=${requirement.route} current=${route}`);
+    }
     if (route !== 'sandbox-command' && route !== 'llm' && route !== 'human') {
       return couldNotVerifyReport(`unknown verification route for ${requirement.id}: ${String(route)}`);
     }

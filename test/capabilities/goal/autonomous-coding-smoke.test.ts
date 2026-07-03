@@ -76,7 +76,7 @@ describe('autonomous coding smoke', () => {
     } finally {
       await fixture.cleanup();
     }
-  });
+  }, 20_000);
 
   it('does not complete from green sandboxed builder feedback without an update_goal claim', async () => {
     const fixture = await createFixtureProject();

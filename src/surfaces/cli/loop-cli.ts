@@ -800,7 +800,8 @@ async function main(): Promise<void> {
     if (NEEDS_HUMAN.has(result.reason)) process.exitCode = 1;
   } catch (err) {
     if (emergencyStop.signal.aborted) {
-      bus.emit({ type: 'loop_halt', loopId, reason: 'wall-clock' });
+      await loopStore.recordHalted('emergency-stop', new Date().toISOString()).catch(() => undefined);
+      bus.emit({ type: 'loop_halt', loopId, reason: 'emergency-stop' });
       bus.emit({ type: 'halt', reason: 'emergency-stop' });
       console.error('\n[loop] emergency stop requested; no new goals will launch and JSONL logs were left in place.');
       process.exitCode = 1;

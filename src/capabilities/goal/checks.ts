@@ -15,6 +15,7 @@
  * {@link classifyTestDiff} is PURE (unit-testable without a git repo); {@link runDeterministicChecks}
  * is the impure shell that runs the commands + git and feeds the pure classifier.
  */
+import { createHash } from 'node:crypto';
 import { runCommand } from '../../core/tools/run-command.js';
 import type {
   DeterministicChecks,
@@ -33,6 +34,8 @@ const CHECK_OUTPUT_CHARS = 20_000;
 const DIFF_OUTPUT_CHARS = 500_000;
 const WORKTREE_STATUS_COMMAND = 'git status --porcelain --untracked-files=all' as const;
 const WORKTREE_STATUS_OUTPUT_CHARS = 200_000;
+const WORKTREE_DIFF_HASH_COMMAND = 'git diff --no-ext-diff --no-textconv --binary --no-color HEAD' as const;
+const WORKTREE_DIFF_HASH_OUTPUT_CHARS = 2_000_000;
 
 /** Project canonical checks when a goal doesn't override (Jarvis's own four gates). */
 export const DEFAULT_CHECK_COMMANDS = ['npm run typecheck', 'npm run lint', 'npm test', 'npm run build'];
@@ -242,7 +245,33 @@ async function scanWorktreeStatus(
     };
   }
   const current = normalizePorcelainStatus(res.output);
-  return { ...baseline, policy, current, ...classifyWorktreeStatusChange(baseline.baseline, current) };
+  const status = classifyWorktreeStatusChange(baseline.baseline, current);
+  const diffHash = await trackedDiffHash(deps);
+  if ('error' in diffHash) {
+    return {
+      ...baseline,
+      policy,
+      current,
+      ...status,
+      changed: true,
+      error: diffHash.error,
+    };
+  }
+  return { ...baseline, policy, current, trackedDiffHash: diffHash.hash, ...status };
+}
+
+async function trackedDiffHash(deps: CheckDeps): Promise<{ hash: string } | { error: string }> {
+  const res = await runCommand(
+    deps.shellPath,
+    WORKTREE_DIFF_HASH_COMMAND,
+    deps.cwd,
+    60_000,
+    WORKTREE_DIFF_HASH_OUTPUT_CHARS,
+    deps.signal,
+  );
+  if (res.code !== 0) return { error: `git diff failed (code ${res.code ?? 'killed'})` };
+  if (res.truncated) return { error: `git diff exceeded the ${WORKTREE_DIFF_HASH_OUTPUT_CHARS}-char cap` };
+  return { hash: createHash('sha256').update(res.output, 'utf8').digest('hex') };
 }
 
 function normalizePorcelainStatus(text: string): string {

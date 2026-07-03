@@ -218,9 +218,10 @@ describe('runLoop — hard budget ceilings (each a precise stop)', () => {
     expect(result.started).toBe(1);
   });
 
-  it('signal.aborted stops the drain (wall-clock reason)', async () => {
+  it('signal.aborted stops the drain with an emergency-stop terminal record', async () => {
     const bus = new InMemoryEventBus();
-    const { store } = fakeStore();
+    const halts = captureHalts(bus);
+    const { store, records } = fakeStore();
     const ac = new AbortController();
     ac.abort();
     const { runOne, seen } = scriptedRunOne([verified]);
@@ -228,8 +229,33 @@ describe('runLoop — hard budget ceilings (each a precise stop)', () => {
       { id: 'L', objectives: ['a', 'b'], contract: contract() },
       { bus, loopStore: store, runOne, signal: ac.signal },
     );
-    expect(result.reason).toBe('wall-clock');
+    expect(result.reason).toBe('emergency-stop');
     expect(seen).toEqual([]); // aborted before the first start
+    expect(halts).toEqual([{ type: 'loop_halt', loopId: 'L', reason: 'emergency-stop' }]);
+    expect(records.at(-1)).toMatchObject({ t: 'loop-halted', reason: 'emergency-stop' });
+  });
+
+  it('records loop-halted when a running goal aborts and throws', async () => {
+    const bus = new InMemoryEventBus();
+    const { store, records } = fakeStore();
+    const ac = new AbortController();
+    const result = await runLoop(
+      { id: 'L', objectives: ['a', 'b'], contract: contract() },
+      {
+        bus,
+        loopStore: store,
+        signal: ac.signal,
+        runOne: async () => {
+          ac.abort();
+          throw new Error('aborted during goal');
+        },
+      },
+    );
+
+    expect(result.reason).toBe('emergency-stop');
+    expect(result.started).toBe(1);
+    expect(records.map((record) => record.t)).toEqual(['goal-started', 'loop-halted']);
+    expect(records.at(-1)).toMatchObject({ t: 'loop-halted', reason: 'emergency-stop' });
   });
 });
 

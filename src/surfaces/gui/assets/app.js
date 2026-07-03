@@ -2,6 +2,8 @@
 
 const state = {
   busy: false,
+  activeDraftKey: undefined,
+  drafts: new Map(),
   timer: undefined,
 };
 
@@ -105,6 +107,8 @@ function renderReview(review) {
 }
 
 function renderRequirement(goalId, requirement) {
+  const draftKey = reviewDraftKey(goalId, requirement.requirementId);
+  const draft = state.drafts.get(draftKey);
   const row = document.createElement('div');
   row.className = 'review-requirement';
 
@@ -119,11 +123,89 @@ function renderRequirement(goalId, requirement) {
   const actions = document.createElement('div');
   actions.className = 'review-actions';
   actions.append(
-    reviewButton('通过', 'approve', () => decideHumanReview(goalId, requirement.requirementId, 'approve')),
-    reviewButton('驳回', 'reject', () => decideHumanReview(goalId, requirement.requirementId, 'reject')),
+    reviewButton('通过', 'approve', () => openReviewForm('approve', note.value)),
+    reviewButton('驳回', 'reject', () => openReviewForm('reject', note.value)),
   );
 
-  row.append(copy, actions);
+  const form = document.createElement('form');
+  form.className = 'review-form';
+  form.hidden = true;
+
+  const note = document.createElement('textarea');
+  note.className = 'review-note';
+  note.rows = 2;
+  note.maxLength = 1000;
+  note.placeholder = '裁决备注';
+
+  const error = document.createElement('span');
+  error.className = 'review-form-error';
+  error.setAttribute('aria-live', 'polite');
+
+  const formActions = document.createElement('div');
+  formActions.className = 'review-form-actions';
+  const submit = document.createElement('button');
+  submit.type = 'submit';
+  submit.className = 'review-submit';
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'review-cancel';
+  cancel.textContent = '取消';
+  formActions.append(submit, cancel);
+  form.append(note, error, formActions);
+
+  let pendingDecision = draft?.decision;
+
+  function openReviewForm(decision, currentNote) {
+    pendingDecision = decision;
+    state.activeDraftKey = draftKey;
+    state.drafts.set(draftKey, { decision, note: currentNote ?? '' });
+    applyDraftToForm(decision);
+    form.hidden = false;
+    error.textContent = '';
+    note.focus();
+  }
+
+  cancel.addEventListener('click', () => {
+    pendingDecision = undefined;
+    if (state.activeDraftKey === draftKey) state.activeDraftKey = undefined;
+    state.drafts.delete(draftKey);
+    form.hidden = true;
+    note.value = '';
+    error.textContent = '';
+  });
+
+  note.addEventListener('input', () => {
+    if (pendingDecision === undefined) return;
+    state.drafts.set(draftKey, { decision: pendingDecision, note: note.value });
+  });
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const value = note.value.trim();
+    if (pendingDecision === undefined) return;
+    if (value === '') {
+      error.textContent = '请填写裁决备注';
+      note.focus();
+      return;
+    }
+    await decideHumanReview(goalId, requirement.requirementId, pendingDecision, value, draftKey);
+  });
+
+  if (draft !== undefined) {
+    note.value = draft.note;
+    applyDraftToForm(draft.decision);
+    form.hidden = false;
+    if (state.activeDraftKey === draftKey) {
+      window.setTimeout(() => note.focus(), 0);
+    }
+  }
+
+  function applyDraftToForm(decision) {
+    submit.textContent = decision === 'approve' ? '确认通过' : '确认驳回';
+    form.dataset.decision = decision;
+  }
+
+  row.append(copy, actions, form);
   return row;
 }
 
@@ -136,10 +218,12 @@ function reviewButton(label, tone, onClick) {
   return button;
 }
 
-async function decideHumanReview(goalId, requirementId, decision) {
+function reviewDraftKey(goalId, requirementId) {
+  return `${goalId}:${requirementId}`;
+}
+
+async function decideHumanReview(goalId, requirementId, decision, note, draftKey) {
   if (state.busy) return;
-  const note = window.prompt('裁决备注');
-  if (note === null || note.trim() === '') return;
   setBusy(true);
   try {
     const response = await fetch(`/api/human-reviews/${encodeURIComponent(goalId)}/decide`, {
@@ -150,6 +234,8 @@ async function decideHumanReview(goalId, requirementId, decision) {
       }),
     });
     if (!response.ok) throw new Error(`review ${response.status}`);
+    state.drafts.delete(draftKey);
+    if (state.activeDraftKey === draftKey) state.activeDraftKey = undefined;
     await refresh();
   } catch (err) {
     nodes.updatedAt.textContent = err instanceof Error ? err.message : String(err);
@@ -161,8 +247,8 @@ async function decideHumanReview(goalId, requirementId, decision) {
 function setBusy(value) {
   state.busy = value;
   nodes.stopButton.disabled = value;
-  for (const button of document.querySelectorAll('.review-action')) {
-    button.disabled = value;
+  for (const control of document.querySelectorAll('.review-action, .review-note, .review-submit, .review-cancel')) {
+    control.disabled = value;
   }
 }
 

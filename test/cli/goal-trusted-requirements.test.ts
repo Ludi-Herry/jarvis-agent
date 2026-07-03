@@ -28,9 +28,9 @@ describe('goal CLI trusted requirements loading', () => {
     expect(source.kind).toBe('goal-setter-requirements');
     if (source.kind !== 'goal-setter-requirements') throw new Error('unexpected source');
     expect(source.plan.pinned).toEqual([
-      { id: 'r1', text: 'status is inspectable' },
-      { id: 'r2', text: 'docs are updated' },
-      { id: 'r3', text: 'copy reads naturally' },
+      { id: 'r1', text: 'status is inspectable', route: 'sandbox-command' },
+      { id: 'r2', text: 'docs are updated', route: 'llm' },
+      { id: 'r3', text: 'copy reads naturally', route: 'human' },
     ]);
     expect(source.plan.routes.get('r1')).toBe('sandbox-command');
     expect(source.plan.routes.get('r2')).toBe('llm');

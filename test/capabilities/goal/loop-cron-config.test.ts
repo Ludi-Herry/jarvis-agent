@@ -16,6 +16,7 @@ describe('parseLoopCronConfig', () => {
               nextRunAt: '2026-07-01T00:00:00.000Z',
               unattended: true,
               verifierMapPath: 'C:\\trusted\\verifiers.json',
+              goalSetterRequirementsMapPath: 'C:\\trusted\\requirements.json',
             },
           ],
         }),
@@ -29,6 +30,7 @@ describe('parseLoopCronConfig', () => {
           nextRunAt: '2026-07-01T00:00:00.000Z',
           unattended: true,
           verifierMapPath: 'C:\\trusted\\verifiers.json',
+          goalSetterRequirementsMapPath: 'C:\\trusted\\requirements.json',
         },
       ],
     });
@@ -59,6 +61,7 @@ describe('loadLoopCronConfig trust boundary', () => {
   const outside = join(tmpdir(), 'loop-cron.json');
   const inside = join(cwd, 'loop-cron.json');
   const verifierInside = join(cwd, 'verifier-map.json');
+  const requirementsInside = join(cwd, 'requirements-map.json');
 
   it('loads a trusted cron config outside cwd after realpath', async () => {
     const text = JSON.stringify({
@@ -106,5 +109,28 @@ describe('loadLoopCronConfig trust boundary', () => {
         realpath: async (p) => resolve(p),
       }),
     ).rejects.toThrow(/verifier map.*inside the working directory/);
+  });
+
+  it('refuses a goal-setter requirements map path inside cwd', async () => {
+    await expect(
+      loadLoopCronConfig({
+        path: outside,
+        cwd,
+        readText: async () =>
+          JSON.stringify({
+            tasks: [
+              {
+                id: 't',
+                objectivesFile: 'tasks.txt',
+                intervalMinutes: 5,
+                nextRunAt: '2026-07-01T00:00:00.000Z',
+                unattended: true,
+                goalSetterRequirementsMapPath: requirementsInside,
+              },
+            ],
+          }),
+        realpath: async (p) => resolve(p),
+      }),
+    ).rejects.toThrow(/goal-setter requirements map.*inside the working directory/);
   });
 });

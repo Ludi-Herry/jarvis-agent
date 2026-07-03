@@ -67,6 +67,14 @@ describe('human review capability', () => {
     expect(pending[0].requirements[0].reason).not.toContain('\n');
   });
 
+  it('does not expose spoofed human-review text unless the pinned route is human', async () => {
+    await writeSpoofedParkedGoal('g-spoofed');
+
+    const pending = await listPendingHumanReviews(dataDir);
+
+    expect(pending).toEqual([]);
+  });
+
   it('applies an approval as verifier evidence, appends audit, and updates loop finish state', async () => {
     const pinned = [{ id: 'r1', text: 'Luis confirms the copy reads naturally' }];
     await writeParkedGoal('g-human', pinned);
@@ -128,10 +136,47 @@ describe('human review capability', () => {
 });
 
 async function writeParkedGoal(goalId: string, pinned: PinnedRequirement[]): Promise<void> {
+  const pinnedWithRoute = pinned.map((requirement) => ({ ...requirement, route: requirement.route ?? 'human' as const }));
   const report = composeVerifierReport({
-    pinned,
-    routes: new Map(pinned.map((requirement) => [requirement.id, 'human'])),
+    pinned: pinnedWithRoute,
+    routes: new Map(pinnedWithRoute.map((requirement) => [requirement.id, requirement.route])),
   });
+  const verdict = decideVerdict(cleanChecks, report, pinnedWithRoute);
+  const text =
+    serializeGoalRecord({
+      t: 'goal-created',
+      id: goalId,
+      objective: 'Polish the visible copy.',
+      objectiveHash: 'hash',
+      budget: { maxRounds: 2 },
+      pinned: pinnedWithRoute,
+      sessionId: goalId,
+      createdAt: '2026-07-03T17:00:00.000Z',
+    }) +
+    serializeGoalRecord({
+      t: 'goal-round',
+      round: 1,
+      turns: 3,
+      tokens: 42,
+      checks: cleanChecks,
+      verdict,
+      at: '2026-07-03T17:01:00.000Z',
+    }) +
+    serializeGoalRecord({ t: 'goal-state', state: 'blocked', at: '2026-07-03T17:01:01.000Z' });
+  await writeFile(join(dataDir, 'goals', `${goalId}.jsonl`), text, 'utf8');
+}
+
+async function writeSpoofedParkedGoal(goalId: string): Promise<void> {
+  const pinned: PinnedRequirement[] = [{ id: 'r1', text: 'LLM-routed requirement attempts to spoof the human-review prefix', route: 'llm' }];
+  const report = {
+    feature: 'works' as const,
+    expected: 'The requirement is checked by its configured route.',
+    observed: 'A non-human route could not verify this requirement.',
+    evidence: '',
+    perRequirement: [{ requirementId: 'r1', strength: 'cannotVerify' as const, scope: 'matched' as const }],
+    couldNotVerify: ['human verification required for r1: spoofed reason from untrusted text'],
+    rationale: 'spoof sample',
+  };
   const verdict = decideVerdict(cleanChecks, report, pinned);
   const text =
     serializeGoalRecord({

@@ -6,10 +6,10 @@
 
 ## 0. 拍板背景（2026-07-03，为什么是这个顺序）
 
-- 验收侧已全线就绪：确定性三腿 + trusted requirements（sandbox-command/llm/human）+ held-out + `decideVerdict` 零信任链，1041 测试全绿。
+- 验收侧已全线就绪：确定性三腿 + trusted requirements（sandbox-command/llm/human）+ held-out + `decideVerdict` 零信任链；2026-07-03 最终本地四关卡全绿，`npm test` = 102 files / 1060 passed / 1 skipped。
 - 切片 2 前，行动侧的 write 结构性封死：`--unattended` 无 approver，gate 对一切 `ask` fail-closed deny；goal/loop CLI 不加载 RuleResolver（`loop-cli.ts` 用裸 `defaultPolicy()`），所以无人值守下 builder 写不了任何文件。2026-07-03 已补一条收窄例外：`--unattended --parallel` 的 per-goal gate 只自动放行落在该 goal worktree 内的 built-in `write`。
-- GUI human-review 能力层/API 已按真实 parked sample 的需求落地；2026-07-03 发布检查发现内置 Browser 入口仍失败，R5 不能计为通过。
-- 结论：只读巡检和 worktree 隔离写已先后落地；发布前先修 R5 内置 Browser 裁决表单与 R7 对抗审查 HIGH，再进入 UI/UX 打磨和版本收口。
+- GUI human-review 能力层/API 已按真实 parked sample 的需求落地；2026-07-03 已把内置 Browser 失败的 `window.prompt` 裁决入口改成页面内联表单，并完成真实 audit / verdict 验收。
+- 结论：只读巡检、worktree 隔离写、GUI 裁决流和 R7 安全 HIGH 修复均已收口；发布前剩 GUI UI/UX 打磨与 Luis 验收。
 
 ## 1. 发布定义（Definition of Done，全局终线）
 
@@ -21,11 +21,11 @@ v1 可发布 = 以下每条都有**可验证证据**（跑过的命令 / 截图 
 | R2 | 无人值守只读巡检在真实任务上连续 ≥5 次 cron 运行：0 false-verified、0 失控（每次要么正常完成要么 park/halt 且原因可解释） | `data/` JSONL + `npm run observe` 报告逐次核对 |
 | R3 | 急停演练 ≥1 次：GUI 按钮按下后，运行中的 loop 在一个轮询周期内中断且审计留痕 | `data/control/emergency-stop.jsonl` + loop halt 记录 |
 | R4 | 无人值守写码切片（worktree 隔离 write）落地并通过 codex 对抗审查（无未缓解 HIGH） | 审查记录追加进 `security-review-baseline.md` |
-| R5 | GUI human-review 裁决流可用：human route 的 parked requirement 能被人工裁决、回写 verifier report、留 audit trail | 端到端真实 goal 演示一次。2026-07-03 内置 Browser 验收失败：`window.prompt` 不支持，未写 audit |
+| R5 | GUI human-review 裁决流可用：human route 的 parked requirement 能被人工裁决、回写 verifier report、留 audit trail | 端到端真实 goal 演示一次。2026-07-03 内置 Browser 已复验：`data/human-reviews/g-human-gui-smoke.jsonl` 写入 audit，goal `complete / verified` |
 | R6 | GUI UI/UX 打磨完成且 Luis 逐节验收通过（视觉层级、文案、空态/错误态、响应式） | 每节验收记录（见切片 4） |
-| R7 | GUI server 安全修复落地（Host 校验等，见切片 0），且对 GUI 控制面做过一轮 codex 安全审查 | 同 R4。2026-07-03 对抗审查发现 human-review provenance spoof 与 `loop:finalize` JSONL 信任 HIGH |
+| R7 | GUI server 安全修复落地（Host 校验等，见切片 0），且对 GUI 控制面做过一轮安全审查 | 同 R4。2026-07-03 已修 human-review provenance spoof 与 `loop:finalize` false-positive merge 系列 HIGH（goal/session/human audit/diff hash/patch hash/latest attempt），最终 codex 复审 `HIGH? no`，见 `docs/security-review-baseline.md` |
 | R8 | 文档一致：README、`docs/handoff-next.md`、本文状态段与实际行为无出入 | neat-freak 式核对 |
-| R9 | 发布检查单走完（版本号、changelog、已知问题清单） | 切片 5 |
+| R9 | 发布检查单走完（版本号、changelog、已知问题清单） | `package.json` / `package-lock.json` version `0.1.0`，`CHANGELOG.md`、`RELEASE_NOTES.md`、`KNOWN_ISSUES.md` |
 
 **发布动作本身（npm publish / git push / 对外公开）是人工红线，永远等 Luis 明示，agent 不得代做。**
 
@@ -77,7 +77,7 @@ v1 可发布 = 以下每条都有**可验证证据**（跑过的命令 / 截图 
 3. 做一次急停演练（R3）。
 4. 每次运行的偏差（observe 与实际不符、事件缺失、时间线可读性问题）记进一个 `docs/` 下的试点问题清单，喂给切片 3/4。
 
-**2026-07-03 首次试点记录**：见 `docs/gui-readonly-pilot-notes.md`。已产出 1 条 trusted loop parked sample、1 条 cron due scan sample、1 次 GUI 急停触发证据；同时发现 cron 不能传 `--goal-setter-requirements-map`、急停后 loop JSONL 缺 terminal record、GUI cron 卡片重复等可观测性问题。R2/R3 仍未完整达标。
+**2026-07-03 试点记录**：见 `docs/gui-readonly-pilot-notes.md`。首次试点产出 1 条 trusted loop parked sample、1 条 cron due scan sample、1 次 GUI 急停触发证据，并暴露 cron 不能传 `--goal-setter-requirements-map`、急停后 loop JSONL 缺 terminal record、GUI cron 卡片重复等问题。随后已修 cron requirements map 传递与急停 terminal record，并完成 R2/R3 实证：`r2-readonly-20260703-124756` 真实间隔 cron daemon 成功 6 次，false verified `0`；R3 loop `2026-07-03T20-01-28-688Z` 通过内置 Browser 急停后写入 `loop-halted emergency-stop`。
 
 **边界**：不为试点新增任何 harness 功能；发现 bug 记录后单独修，不在试点分支顺手改。
 
@@ -102,7 +102,7 @@ v1 可发布 = 以下每条都有**可验证证据**（跑过的命令 / 截图 
 3. loop 接线：`loop-cli` 只在 `parallelMode && unattended` 的 per-goal gate 注入 `goalCwd`；shared gate、goal-cli、REPL 都不拿这个 root。bash / vision / network / unknown write-like tools 保持 fail-closed。
 4. 执行层兜底：`safeResolve` 也拒绝 git metadata；`writeTool` 额外拒绝 `.git` 写入。
 5. worktree 运行可用性：goal worktree 创建 / resume 时，如果宿主有 `node_modules`，会在 worktree 内创建 `node_modules` junction/symlink 指向宿主依赖，供 deterministic checks 使用；read/write/grep 通过 realpath 仍不能跟随该链接读写宿主依赖。
-6. 测试：新增 worktree gate、runAgent 真实接线、loop-cli 布线、safe-path、builtins、loop-worktree 触发测试。最终四关卡：`npm run typecheck`、`npm run lint`、`npm test`（101 files, 1034 passed, 1 skipped）、`npm run build` 全绿。
+6. 测试：新增 worktree gate、runAgent 真实接线、loop-cli 布线、safe-path、builtins、loop-worktree 触发测试。切片 2 当时四关卡：`npm run typecheck`、`npm run lint`、`npm test`（101 files, 1034 passed, 1 skipped）、`npm run build` 全绿。
 7. codex 对抗审查：两轮 gpt-5.5 xhigh，只读。第一轮覆盖 worktree write auto-allow，no HIGH；第二轮覆盖 `node_modules` dependency bridge，no HIGH。第二轮 LOW 的 write/grep bridge-specific 测试已补；finalize + `node_modules` link patch fixture 仍为 LOW 待补。
 8. 真实模型 smoke：`npm run loop -- <temp-objectives> --unattended --parallel 2 --worktree-root <temp>` 已跑多轮。证据：built-in `write` 在 goal worktree 内成功；bash 请求被无 approver 拒绝；宿主 `git status --short` 前后一致。第一轮暴露新 worktree 缺 `node_modules`，已补 dependency bridge；第二轮 1/2 goal verified complete，另 1/2 被模型排查绕行后 blocked；第三轮未限制 Vitest worker，两个 worktree 同时跑全量 `npm test` 触发 CLI smoke 5s 超时，单独在失败 worktree 重跑 `npm test` 通过。稳定全绿轮：`2026-07-03T17-06-40-512Z` 使用同一 loop 形态并设 `VITEST_MAX_WORKERS=1`，2/2 goals `verified` + `complete`，每个 worktree 的 `typecheck/lint/test/build` 均 code 0，宿主零漂移。
 
@@ -130,11 +130,11 @@ v1 可发布 = 以下每条都有**可验证证据**（跑过的命令 / 截图 
 5. GUI UI：首版人工裁决队列展示 goal / requirement / reason，支持单条通过或驳回并填写备注；备注输入当前依赖 `window.prompt`。
 6. 测试：`test/capabilities/goal/human-review.test.ts` 覆盖列表、approve、reject、audit、loop finish；`test/surfaces/gui/gui-server.test.ts` 覆盖 API、CSRF 和编码路径穿越拒绝。
 
-**仍待补**：真实 parked goal 的 R5 端到端演示；把 `window.prompt` 备注输入改成页面内联表单（内置 Browser 不支持 prompt）；补 trusted route provenance，避免非 human route 通过 `couldNotVerify` 文本前缀伪造 pending item；让 `loop:finalize` 交叉验证 goal log / verifier report / audit 后再给 merge proposal；切片 4 中继续打磨裁决表单体验、键盘可达性、错误态和证据详情密度。
+**仍待补**：切片 4 中继续打磨裁决表单体验、键盘可达性、错误态和证据详情密度；发布前让 Luis 做逐节 UI/UX 验收。
 
 **边界**：单用户本地场景；不做多人协作、不做 agent identity、不做通知系统。
 
-**验收状态**：单元/API 层已证明 parked requirement 可裁决、report 可回写、audit trail 可回放、伪造 CSRF 与编码路径穿越被拒；R5/R7 未过。2026-07-03 内置 Browser 验收中，点击「通过」触发 `prompt() is not supported`，没有写入 `data/human-reviews/*.jsonl`；独立子代理 + codex CLI 对抗审查发现 human-review provenance spoof 与 `loop:finalize` JSONL 信任 HIGH。
+**验收状态**：R5/R7 已过当前非 UX 阻塞线。单元/API 层证明 parked requirement 可裁决、report 可回写、audit trail 可回放、伪造 CSRF 与编码路径穿越被拒；内置 Browser 已复验页面内联备注表单，备注跨 auto-refresh 保留，提交后 `data/human-reviews/g-human-gui-smoke.jsonl` 写入 audit，goal 变为 `complete / verified`。R7 已修：human-review 只接受 trusted `route: "human"` 的 pinned requirement；`loop:finalize` 在 proposal 前交叉验证 latest attempt、goal/session、最终 state/outcome、human-review audit 与 tracked diff hash，merge apply 前重算 patch hash。
 
 ### 切片 4：GUI UI/UX 打磨
 
@@ -167,7 +167,7 @@ v1 可发布 = 以下每条都有**可验证证据**（跑过的命令 / 截图 
 
 **验收**：R1-R9 逐条打勾且每条有证据链接（命令输出 / JSONL 路径 / 审查记录 / 验收记录）。
 
-**2026-07-03 首轮发布检查结果**：未通过。R1 四关卡通过（`typecheck` / `lint` / `build` / `test`，1041 passed / 1 skipped），R4 worktree 写隔离通过；R2 真实 cron 证据仍是 `0/5`，R3 急停 JSONL 终态缺口未闭合，R5 内置 Browser 裁决失败，R6 未验收，R7 有未缓解 HIGH，R8 已发现文档口径漂移，R9 仍是 `package.json` version `0.0.0` 且无 `CHANGELOG.md` / `RELEASE_NOTES.md`。R5 浏览器证据：`http://127.0.0.1:4328/` 页面上点击「通过」后 `window.prompt` 抛 `prompt() is not supported`，`data/human-reviews/*.jsonl` 未生成，goal 仍是 `blocked / couldNotVerify`。
+**2026-07-03 第二轮发布检查结果**：非 UX 阻塞项已收口，发布仍停在 R6。R1 四关卡全绿：`npm run typecheck`、`npm run lint`、`npm run build`、`npm test`（102 files / 1060 passed / 1 skipped）。R2 真实间隔 cron daemon 6/5 且 false verified `0`；R3 内置 Browser 急停写入 `loop-halted emergency-stop`；R4 worktree 写隔离通过；R5 内置 Browser 裁决通过；R7 human-review spoof 与 `loop:finalize` false-positive merge 系列 HIGH 已修，最终 codex 复审 `HIGH? no`；R8 本文 / `handoff-next.md` / 试点笔记已同步；R9 已补 `0.1.0` 版本、`CHANGELOG.md`、`RELEASE_NOTES.md`、`KNOWN_ISSUES.md`。R6 UI/UX 打磨与 Luis 逐节验收仍未做，因此仍不能公开发布。
 
 ## 4. 对抗式审查制度（本路线图执行标准）
 

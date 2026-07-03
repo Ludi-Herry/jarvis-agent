@@ -33,6 +33,11 @@ describe('parseLoopFinalizeArgs', () => {
     expect(() => parseLoopFinalizeArgs(['--wat'])).toThrow(/unknown flag/);
   });
 
+  it('rejects loop ids that can escape the loop log directory', () => {
+    expect(() => parseLoopFinalizeArgs(['--loop', '..\\outside'])).toThrow(/safe log id/);
+    expect(() => parseLoopFinalizeArgs(['--loop', '../outside'])).toThrow(/safe log id/);
+  });
+
   it('rejects combining merge and cleanup in one invocation', () => {
     expect(() => parseLoopFinalizeArgs(['--loop', 'L1', '--merge', '--cleanup'])).toThrow(/combine/);
   });

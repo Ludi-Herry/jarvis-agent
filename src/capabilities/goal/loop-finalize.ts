@@ -1,3 +1,4 @@
+import { normalize } from 'node:path';
 import type { GoalState, VerdictOutcome } from './goal.js';
 import type { LoopRecord } from './loop-store.js';
 
@@ -12,6 +13,7 @@ export interface FinalizeWorktreeStatus {
   diffReadable: boolean;
   status: string;
   diffStat: string;
+  trackedDiffHash?: string;
 }
 
 export type LoopFinalizeDecision = 'proposal' | 'park';
@@ -22,6 +24,9 @@ export type LoopFinalizeReason =
   | 'could-not-verify'
   | 'rejected'
   | 'missing-verdict'
+  | 'missing-goal-evidence'
+  | 'goal-mismatch'
+  | 'missing-human-review-audit'
   | 'missing-worktree'
   | 'conflict'
   | 'dirty'
@@ -42,6 +47,7 @@ export interface LoopFinalizeProposal {
   index: number;
   goalId: string;
   worktreePath: string;
+  worktreeDiffHash: string;
 }
 
 export interface LoopFinalizeReport {
@@ -50,21 +56,40 @@ export interface LoopFinalizeReport {
   proposals: LoopFinalizeProposal[];
 }
 
-export function buildLoopFinalizeReport(records: LoopRecord[], worktrees: Map<number, FinalizeWorktreeStatus>): LoopFinalizeReport {
+export interface LoopFinalizeGoalEvidence {
+  goalId: string;
+  objective?: string;
+  sessionId?: string;
+  sessionCwd?: string;
+  pinnedCount?: number;
+  hasVerifierReport?: boolean;
+  worktreeDiffHash?: string;
+  state?: GoalState;
+  outcome?: VerdictOutcome;
+  requiresHumanReviewAudit?: boolean;
+  hasHumanReviewAudit?: boolean;
+}
+
+export function buildLoopFinalizeReport(
+  records: LoopRecord[],
+  worktrees: Map<number, FinalizeWorktreeStatus>,
+  goalEvidence: ReadonlyMap<string, LoopFinalizeGoalEvidence>,
+): LoopFinalizeReport {
   const created = [...records].reverse().find((record): record is Extract<LoopRecord, { t: 'loop-created' }> => record.t === 'loop-created');
   if (created === undefined) throw new Error('loop log is missing loop-created');
 
-  const latestStarted = new Map<number, Extract<LoopRecord, { t: 'goal-started' }>>();
-  const latestFinished = new Map<number, Extract<LoopRecord, { t: 'goal-finished' }>>();
+  const latestAttempt = new Map<
+    number,
+    Extract<LoopRecord, { t: 'goal-started' }> | Extract<LoopRecord, { t: 'goal-finished' }>
+  >();
   for (const record of records) {
-    if (record.t === 'goal-started') latestStarted.set(record.index, record);
-    if (record.t === 'goal-finished') latestFinished.set(record.index, record);
+    if (record.t === 'goal-started' || record.t === 'goal-finished') latestAttempt.set(record.index, record);
   }
 
   const items = created.objectives.map((objective, index): LoopFinalizeItem => {
-    const started = latestStarted.get(index);
-    const finished = latestFinished.get(index);
-    const goalId = finished?.goalId ?? started?.goalId;
+    const attempt = latestAttempt.get(index);
+    const finished = attempt?.t === 'goal-finished' ? attempt : undefined;
+    const goalId = attempt?.goalId;
     const base = {
       index,
       objective,
@@ -80,9 +105,30 @@ export function buildLoopFinalizeReport(records: LoopRecord[], worktrees: Map<nu
       return { ...base, decision: 'park', reason: outcomeStop };
     }
 
+    const evidence = goalId === undefined ? undefined : goalEvidence.get(goalId);
+    if (evidence === undefined) {
+      return { ...base, decision: 'park', reason: 'missing-goal-evidence' };
+    }
+    if (
+      evidence.goalId !== goalId ||
+      evidence.objective !== objective ||
+      evidence.sessionId !== goalId ||
+      evidence.state !== finished.state ||
+      evidence.outcome !== finished.outcome ||
+      ((evidence.pinnedCount ?? 0) > 0 && evidence.hasVerifierReport === false)
+    ) {
+      return { ...base, decision: 'park', reason: 'goal-mismatch' };
+    }
+    if (evidence.requiresHumanReviewAudit && !evidence.hasHumanReviewAudit) {
+      return { ...base, decision: 'park', reason: 'missing-human-review-audit' };
+    }
+
     const worktree = worktrees.get(index);
     if (worktree === undefined || !worktree.exists) {
       return { ...base, worktree, decision: 'park', reason: 'missing-worktree' };
+    }
+    if (evidence.sessionCwd === undefined || !samePath(evidence.sessionCwd, worktree.path)) {
+      return { ...base, worktree, decision: 'park', reason: 'goal-mismatch' };
     }
     if (worktree.conflicted) {
       return { ...base, worktree, decision: 'park', reason: 'conflict' };
@@ -93,12 +139,26 @@ export function buildLoopFinalizeReport(records: LoopRecord[], worktrees: Map<nu
     if (!worktree.hasTrackedChanges) {
       return { ...base, worktree, decision: 'park', reason: 'no-diff' };
     }
+    if (evidence.worktreeDiffHash === undefined || worktree.trackedDiffHash !== evidence.worktreeDiffHash) {
+      return { ...base, worktree, decision: 'park', reason: 'goal-mismatch' };
+    }
     return { ...base, worktree, decision: 'proposal', reason: 'verified-mergeable' };
   });
 
   const proposals = items
-    .filter((item): item is LoopFinalizeItem & { goalId: string; worktree: FinalizeWorktreeStatus; decision: 'proposal' } => item.decision === 'proposal')
-    .map((item) => ({ index: item.index, goalId: item.goalId, worktreePath: item.worktree.path }));
+    .filter(
+      (item): item is LoopFinalizeItem & {
+        goalId: string;
+        worktree: FinalizeWorktreeStatus & { trackedDiffHash: string };
+        decision: 'proposal';
+      } => item.decision === 'proposal' && item.worktree?.trackedDiffHash !== undefined,
+    )
+    .map((item) => ({
+      index: item.index,
+      goalId: item.goalId,
+      worktreePath: item.worktree.path,
+      worktreeDiffHash: item.worktree.trackedDiffHash,
+    }));
 
   return { loopId: created.id, items, proposals };
 }
@@ -112,4 +172,13 @@ function reasonForOutcome(state: GoalState, outcome: VerdictOutcome): LoopFinali
   if (outcome === 'verified') return undefined;
   if (outcome === 'couldNotVerify') return 'could-not-verify';
   return 'rejected';
+}
+
+function samePath(left: string, right: string): boolean {
+  return normalizeForCompare(left) === normalizeForCompare(right);
+}
+
+function normalizeForCompare(value: string): string {
+  const normalized = normalize(value).replace(/[\\/]+$/g, '');
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
 }

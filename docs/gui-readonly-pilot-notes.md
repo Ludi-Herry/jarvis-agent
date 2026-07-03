@@ -39,6 +39,33 @@
   - `halted: emergency-stop`
 - 结果：按钮触发有效，审计有效，运行进程收到 stop。
 
+### 4. R2 real-interval cron daemon run
+
+- 命令：`npm run cron:daemon -- --cron-map C:\Users\Administrator.DESKTOP-33TL0HO\AppData\Local\Temp\jarvis-r2-cron-20260703-124756\cron-map.json --poll-ms 10000`
+- task：`r2-readonly-20260703-124756`
+- requirements map：`C:\Users\Administrator.DESKTOP-33TL0HO\AppData\Local\Temp\jarvis-r2-cron-20260703-124756\requirements-map.json`
+- 真实间隔成功运行：`6` 次，均由 cron daemon 根据 `intervalMinutes=1` 触发，均 `exitCode=0`。
+- loop 证据：
+  - `2026-07-03T19-48-06-439Z`
+  - `2026-07-03T19-50-16-714Z`
+  - `2026-07-03T19-52-20-703Z`
+  - `2026-07-03T19-54-47-468Z`
+  - `2026-07-03T19-56-56-411Z`
+  - `2026-07-03T19-59-11-433Z`
+- 结果核对：6/6 最终 `blocked / couldNotVerify`，`falseVerified=0`。原因均来自 `human` route：`r_human_readability` 需要人工判断 observe/GUI 可读性。
+- 只读证据：每轮 goal 的 worktree status audit 均 `changed=false`；sandbox evidence 记录 `stat docs/handoff-release.md` 与 `stat docs/gui-readonly-pilot-notes.md` 在 WSL2 read-only mount、`networkMode=none` 下执行。
+- observe 交叉验证：`npm run observe -- --json` 于 `2026-07-03T20:02:33.826Z` 看到 `cron.lastAttempt.taskId=r2-readonly-20260703-124756`、`exitCode=0`、`loopId=2026-07-03T19-59-11-433Z`，并在 trustedContracts / sandboxEvidence / worktreeStatus 中列出上述运行证据。
+
+### 5. R3 running-loop GUI emergency-stop drill
+
+- GUI：复用既有 dev/smoke server `http://127.0.0.1:4328/`，未另起端口；使用内置 Browser 点击唯一 `急停` 按钮。
+- stop-drill loop：`2026-07-03T20-01-28-688Z`
+- goal：`2026-07-03T20-01-28-688Z-g0-2026-07-03T20-01-28-698Z`
+- GUI 点击审计：`data/control/emergency-stop.jsonl` 追加 `requestedAt=2026-07-03T20:01:55.048Z`、`source=gui`、`reason=GUI emergency stop`、`pid=21644`。
+- loop JSONL：`data/loops/2026-07-03T20-01-28-688Z.jsonl` 追加 `{"t":"loop-halted","reason":"emergency-stop","at":"2026-07-03T20:01:55.345Z"}`。
+- stdout 证据：R3 loop 正在读取多份源码/文档时收到停机，输出 `loop 停止: emergency-stop` 与 `[emergency-stop] GUI emergency stop`。
+- observe 交叉验证：`npm run observe -- --json` 的 `latestLoop.halted` 为 `emergency-stop`，`activity.recent[0]` 为 `Loop halted / emergency-stop`。
+
 ## 发现的问题
 
 1. **cron 无法携带 trusted requirements map**
@@ -63,6 +90,6 @@
 
 ## 当前计数
 
-- R2 真实间隔 cron 触发：`0/5` 完成。已有 `1` 条单次 due scan 证据，不能计作真实间隔累计。
-- parked goals 样本：`1` 条，来自 trusted loop `2026-07-03T16-07-19-236Z`。
-- R3 急停演练：按钮与进程中断链路已触发；JSONL/observe 终态记录缺口未闭合，暂不计作完整 R3。
+- R2 真实间隔 cron 触发：`6/5` 完成，false verified `0`。
+- parked goals 样本：`7` 条，其中 1 条来自 trusted loop `2026-07-03T16-07-19-236Z`，6 条来自 `r2-readonly-20260703-124756`。
+- R3 急停演练：完整通过。GUI 点击、`data/control/emergency-stop.jsonl`、running loop `loop-halted emergency-stop`、observe latestLoop/activity 均有证据。

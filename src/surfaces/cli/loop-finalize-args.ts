@@ -16,6 +16,7 @@ export function parseLoopFinalizeArgs(argv: string[]): LoopFinalizeCliArgs {
     if (arg === '--loop') {
       const value = argv[++i];
       if (value === undefined || value.startsWith('--') || value.trim() === '') throw new Error('--loop requires an id');
+      if (!isSafeLogId(value)) throw new Error('--loop must be a safe log id');
       loopId = value;
       continue;
     }
@@ -40,4 +41,8 @@ export function parseLoopFinalizeArgs(argv: string[]): LoopFinalizeCliArgs {
   if (loopId === undefined) throw new Error('Usage: npm run loop:finalize -- --loop <id>');
   if (merge && cleanup) throw new Error('cannot combine --merge and --cleanup in one invocation');
   return worktreeRootPath === undefined ? { loopId, merge, cleanup } : { loopId, worktreeRootPath, merge, cleanup };
+}
+
+function isSafeLogId(value: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value) && !value.includes('/') && !value.includes('\\');
 }

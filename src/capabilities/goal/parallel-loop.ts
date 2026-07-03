@@ -86,7 +86,8 @@ export async function runParallelLoop(spec: LoopSpec, deps: ParallelLoopDeps): P
   const preLaunchHalt = (): LoopHaltReason | undefined => {
     if (goalsFinished + active.size >= c.maxGoals) return 'max-goals';
     if (cumulativeTokens >= c.maxTotalTokens) return 'token-budget';
-    if (now() >= deadline || deps.signal?.aborted) return 'wall-clock';
+    if (now() >= deadline) return 'wall-clock';
+    if (deps.signal?.aborted) return 'emergency-stop';
     if (consecutiveBlocked >= c.maxConsecutiveBlocked) return 'consecutive-blocked';
     if (anyMonitorTripped()) return 'verifier-health';
     return undefined;
@@ -184,7 +185,11 @@ export async function runParallelLoop(spec: LoopSpec, deps: ParallelLoopDeps): P
 
   if (fatal !== undefined) {
     await Promise.allSettled(active);
-    throw fatal;
+    if (deps.signal?.aborted) {
+      reason = 'emergency-stop';
+    } else {
+      throw fatal;
+    }
   }
 
   if (active.size > 0) await Promise.allSettled(active);

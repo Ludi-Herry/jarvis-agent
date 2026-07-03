@@ -51,6 +51,7 @@ export type LoopHaltReason =
   | 'max-goals'
   | 'token-budget'
   | 'wall-clock'
+  | 'emergency-stop'
   | 'consecutive-blocked'
   | 'verifier-health';
 
@@ -240,8 +241,12 @@ export async function runLoop(spec: LoopSpec, deps: LoopDeps): Promise<LoopRunRe
         reason = 'token-budget';
         break;
       }
-      if (now() >= deadline || deps.signal?.aborted) {
+      if (now() >= deadline) {
         reason = 'wall-clock';
+        break;
+      }
+      if (deps.signal?.aborted) {
+        reason = 'emergency-stop';
         break;
       }
       // Re-assert the human-checkpoint guards against SEEDED state (not just post-goal): on a --resume
@@ -265,7 +270,16 @@ export async function runLoop(spec: LoopSpec, deps: LoopDeps): Promise<LoopRunRe
       started++;
 
       const before = runTokens;
-      const result = await deps.runOne(spec.objectives[i], goalId, { index: i, resumed: resumedGoalId !== undefined }); // ← runGoal, the SOLE completer
+      let result: GoalRunSummary;
+      try {
+        result = await deps.runOne(spec.objectives[i], goalId, { index: i, resumed: resumedGoalId !== undefined }); // ← runGoal, the SOLE completer
+      } catch (err) {
+        if (deps.signal?.aborted) {
+          reason = 'emergency-stop';
+          break;
+        }
+        throw err;
+      }
       const tokens = result.tokens ?? runTokens - before;
       const outcome = result.outcome;
 

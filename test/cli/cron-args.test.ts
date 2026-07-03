@@ -16,7 +16,7 @@ describe('parseCronArgs', () => {
 });
 
 describe('buildLoopCronCommand', () => {
-  it('builds a regular loop command with unattended and verifier-map flags', () => {
+  it('builds a regular loop command with unattended and trusted map flags', () => {
     const command = buildLoopCronCommand({
       id: 't',
       objectivesFile: 'tasks with spaces.txt',
@@ -24,10 +24,12 @@ describe('buildLoopCronCommand', () => {
       nextRunAt: '2026-07-01T00:00:00.000Z',
       unattended: true,
       verifierMapPath: 'C:\\trusted\\map.json',
+      goalSetterRequirementsMapPath: 'C:\\trusted\\requirements.json',
     });
     expect(command).toContain('npm run loop --');
     expect(command).toContain('--unattended');
     expect(command).toContain('--verifier-map');
+    expect(command).toContain('--goal-setter-requirements-map');
     expect(command).toContain('tasks with spaces.txt');
   });
 });

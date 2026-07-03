@@ -25,6 +25,9 @@ export function buildLoopCronCommand(task: LoopCronTask): string {
   const parts = ['npm', 'run', 'loop', '--', shellQuote(task.objectivesFile)];
   if (task.unattended) parts.push('--unattended');
   if (task.verifierMapPath !== undefined) parts.push('--verifier-map', shellQuote(task.verifierMapPath));
+  if (task.goalSetterRequirementsMapPath !== undefined) {
+    parts.push('--goal-setter-requirements-map', shellQuote(task.goalSetterRequirementsMapPath));
+  }
   return parts.join(' ');
 }
 

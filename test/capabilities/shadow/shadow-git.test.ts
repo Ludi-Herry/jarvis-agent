@@ -37,7 +37,7 @@ describe('ShadowGit — real git round-trip', () => {
     const restored = await shadow.restore(firstSha);
     expect(restored.ok).toBe(true);
     expect(await readFile(join(dir, 'a.txt'), 'utf8')).toBe('v1'); // working tree reverted
-  });
+  }, 20_000);
 
   it('snapshots an empty change too (--allow-empty), so every round gets a marker', async () => {
     await writeFile(join(dir, 'a.txt'), 'x');

@@ -9,6 +9,7 @@ export interface LoopCronTask {
   nextRunAt: string;
   unattended: boolean;
   verifierMapPath?: string;
+  goalSetterRequirementsMapPath?: string;
 }
 
 export interface LoopCronConfig {
@@ -44,7 +45,16 @@ export function parseLoopCronConfig(text: string): LoopCronConfig {
     }
     const task = item as Record<string, unknown>;
     const unknown = Object.keys(task).filter(
-      (k) => !['id', 'objectivesFile', 'intervalMinutes', 'nextRunAt', 'unattended', 'verifierMapPath'].includes(k),
+      (k) =>
+        ![
+          'id',
+          'objectivesFile',
+          'intervalMinutes',
+          'nextRunAt',
+          'unattended',
+          'verifierMapPath',
+          'goalSetterRequirementsMapPath',
+        ].includes(k),
     );
     if (unknown.length > 0) throw new Error(`tasks[${i}] has unknown keys: ${unknown.join(', ')}`);
 
@@ -63,9 +73,19 @@ export function parseLoopCronConfig(text: string): LoopCronConfig {
     if (task.unattended !== true) throw new Error(`tasks[${i}].unattended must be true for cron tasks`);
 
     const verifierMapPath = task.verifierMapPath === undefined ? undefined : stringField(task.verifierMapPath, `tasks[${i}].verifierMapPath`);
-    return verifierMapPath === undefined
-      ? { id, objectivesFile, intervalMinutes: task.intervalMinutes, nextRunAt, unattended: task.unattended }
-      : { id, objectivesFile, intervalMinutes: task.intervalMinutes, nextRunAt, unattended: task.unattended, verifierMapPath };
+    const goalSetterRequirementsMapPath =
+      task.goalSetterRequirementsMapPath === undefined
+        ? undefined
+        : stringField(task.goalSetterRequirementsMapPath, `tasks[${i}].goalSetterRequirementsMapPath`);
+    return {
+      id,
+      objectivesFile,
+      intervalMinutes: task.intervalMinutes,
+      nextRunAt,
+      unattended: task.unattended,
+      ...(verifierMapPath === undefined ? {} : { verifierMapPath }),
+      ...(goalSetterRequirementsMapPath === undefined ? {} : { goalSetterRequirementsMapPath }),
+    };
   });
 
   return { tasks };
@@ -90,20 +110,37 @@ export async function loadLoopCronConfig(deps: {
   const text = await deps.readText(canonPath);
   if (text === null) throw new Error(`cron config cannot be read: ${canonPath}`);
   const config = parseLoopCronConfig(text);
-  await assertVerifierMapsOutsideCwd(config, canonCwd, deps.realpath);
+  await assertTrustedMapsOutsideCwd(config, canonCwd, deps.realpath);
   return { ...config, path: canonPath };
 }
 
-async function assertVerifierMapsOutsideCwd(config: LoopCronConfig, canonCwd: string, realpath?: RealPath): Promise<void> {
+async function assertTrustedMapsOutsideCwd(config: LoopCronConfig, canonCwd: string, realpath?: RealPath): Promise<void> {
   for (const task of config.tasks) {
-    if (task.verifierMapPath === undefined) continue;
-    const canonVerifier = realpath ? await realpath(task.verifierMapPath) : resolve(task.verifierMapPath);
-    if (canonVerifier === null) throw new Error(`cron task ${task.id} verifier map cannot be read: ${task.verifierMapPath}`);
-    if (isInsideCwd(canonVerifier, canonCwd)) {
-      throw new Error(`cron task ${task.id} verifier map is inside the working directory (${canonVerifier}); refusing repo-controlled verifier config`);
-    }
-    task.verifierMapPath = canonVerifier;
+    task.verifierMapPath = await trustedMapPath(task.verifierMapPath, canonCwd, realpath, `cron task ${task.id} verifier map`, 'verifier config');
+    task.goalSetterRequirementsMapPath = await trustedMapPath(
+      task.goalSetterRequirementsMapPath,
+      canonCwd,
+      realpath,
+      `cron task ${task.id} goal-setter requirements map`,
+      'goal-setter requirements config',
+    );
   }
+}
+
+async function trustedMapPath(
+  value: string | undefined,
+  canonCwd: string,
+  realpath: RealPath | undefined,
+  label: string,
+  boundary: string,
+): Promise<string | undefined> {
+  if (value === undefined) return undefined;
+  const canon = realpath ? await realpath(value) : resolve(value);
+  if (canon === null) throw new Error(`${label} cannot be read: ${value}`);
+  if (isInsideCwd(canon, canonCwd)) {
+    throw new Error(`${label} is inside the working directory (${canon}); refusing repo-controlled ${boundary}`);
+  }
+  return canon;
 }
 
 function stringField(value: unknown, name: string): string {

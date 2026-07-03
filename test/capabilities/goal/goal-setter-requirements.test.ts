@@ -101,9 +101,9 @@ describe('goal-setter-authored requirements', () => {
       '720f17c9f0198b27640b0984da5b34b4c4f7a0980a3fc6219744911234486983',
     );
     expect(loaded.pinned).toEqual([
-      { id: 'r1', text: 'status is inspectable' },
-      { id: 'r2', text: 'copy reads clearly' },
-      { id: 'r3', text: 'operator approves visual polish' },
+      { id: 'r1', text: 'status is inspectable', route: 'sandbox-command' },
+      { id: 'r2', text: 'copy reads clearly', route: 'llm' },
+      { id: 'r3', text: 'operator approves visual polish', route: 'human' },
     ]);
     expect(loaded.commands).toEqual([{ requirementId: 'r1', command: 'git status --short' }]);
     expect(loaded.heldOutCommands).toEqual(['node C:/trusted/assert-copy.js']);
@@ -143,12 +143,15 @@ describe('goal-setter-authored requirements', () => {
 
     expect(plan.overrideCount).toBe(2);
     expect(plan.pinnedByIndex.get(0)).toEqual([
-      { id: 'r1', text: 'status is inspectable' },
-      { id: 'r2', text: 'copy reads clearly' },
+      { id: 'r1', text: 'status is inspectable', route: 'sandbox-command' },
+      { id: 'r2', text: 'copy reads clearly', route: 'llm' },
     ]);
     expect(plan.commandsByIndex.get(0)).toEqual([{ requirementId: 'r1', command: 'git status --short' }]);
     expect(plan.heldOutCommandsByIndex.get(0)).toEqual(['node C:/trusted/assert-goal-0.js']);
     expect(plan.routesByIndex.get(2)?.get('r3')).toBe('human');
+    expect(plan.pinnedByIndex.get(2)).toEqual([
+      { id: 'r3', text: 'operator approves visual polish', route: 'human' },
+    ]);
     expect(() =>
       buildLoopGoalSetterRequirementsPlan({ objectivesCount: 1, map: { version: 1, goals: [{ index: 2, requirements: [] }] } }),
     ).toThrow(/out of range/);

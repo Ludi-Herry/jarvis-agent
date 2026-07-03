@@ -156,7 +156,11 @@ async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknow
 function matchHumanReviewDecisionPath(pathname: string): { goalId: string } | undefined {
   const match = /^\/api\/human-reviews\/([^/]+)\/decide$/.exec(pathname);
   if (match === null) return undefined;
-  return { goalId: decodeURIComponent(match[1]) };
+  try {
+    return { goalId: decodeURIComponent(match[1]) };
+  } catch {
+    throw new HumanReviewError(400, 'goal id must be valid URL encoding');
+  }
 }
 
 function parseHumanReviewDecisionInputs(value: unknown): HumanReviewDecisionInput[] {

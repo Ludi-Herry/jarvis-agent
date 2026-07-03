@@ -219,4 +219,26 @@ describe('runParallelLoop', () => {
       ),
     ).rejects.toThrow(/tokens/);
   });
+
+  it('records emergency-stop before launching new parallel work when the signal is already aborted', async () => {
+    const bus = new InMemoryEventBus();
+    const { store, records } = fakeStore();
+    const ac = new AbortController();
+    ac.abort();
+
+    const result = await runParallelLoop(
+      { id: 'L', objectives: ['a', 'b'], contract: contract() },
+      {
+        bus,
+        loopStore: store,
+        maxParallel: 2,
+        signal: ac.signal,
+        runOne: async () => verified,
+      },
+    );
+
+    expect(result.reason).toBe('emergency-stop');
+    expect(result.started).toBe(0);
+    expect(records).toEqual([{ t: 'loop-halted', reason: 'emergency-stop', at: expect.any(String) }]);
+  });
 });

@@ -110,6 +110,21 @@ describe('composeVerifierReport', () => {
     expect(decideVerdict(cleanChecks, report, pinned).outcome).toBe('couldNotVerify');
   });
 
+  it('fails closed when a persisted pinned route disagrees with the current route map', () => {
+    const pinned: PinnedRequirement[] = [
+      { id: 'r1', text: 'Human confirms the GUI timeline is readable', route: 'human' },
+    ];
+
+    const report = composeVerifierReport({
+      pinned,
+      routes: new Map([['r1', 'llm']]),
+      llmReport: llmReport([{ requirementId: 'r1', strength: 'proves', scope: 'matched' }]),
+    });
+
+    expect(report.couldNotVerify[0]).toContain('verification route mismatch for r1: pinned=human current=llm');
+    expect(decideVerdict(cleanChecks, report, pinned).outcome).toBe('couldNotVerify');
+  });
+
   it('parks missing sandbox and LLM route results without marking the feature verified', () => {
     const pinned: PinnedRequirement[] = [
       { id: 'r1', text: 'CLI status command succeeds in the sandbox' },

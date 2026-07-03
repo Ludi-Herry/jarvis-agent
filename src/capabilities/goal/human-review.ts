@@ -225,7 +225,11 @@ function humanRequirementsFrom(
   pinned: readonly PinnedRequirement[],
   report: VerifierReport,
 ): PendingHumanReviewRequirement[] {
-  const pinnedById = new Map(pinned.map((requirement) => [requirement.id, requirement.text]));
+  const humanPinnedById = new Map(
+    pinned
+      .filter((requirement) => requirement.route === 'human')
+      .map((requirement) => [requirement.id, requirement.text]),
+  );
   const cannotVerify = new Set(
     report.perRequirement
       .filter((score) => score.strength === 'cannotVerify')
@@ -235,9 +239,11 @@ function humanRequirementsFrom(
   for (const reason of report.couldNotVerify) {
     const parsed = parseHumanReviewReason(reason);
     if (parsed === undefined || !cannotVerify.has(parsed.requirementId)) continue;
+    const pinnedText = humanPinnedById.get(parsed.requirementId);
+    if (pinnedText === undefined) continue;
     requirements.push({
       requirementId: parsed.requirementId,
-      text: pinnedById.get(parsed.requirementId) ?? parsed.text,
+      text: pinnedText,
       reason,
     });
   }
@@ -297,6 +303,7 @@ function displaySafePendingReview(review: PendingHumanReview): PendingHumanRevie
     pinned: review.pinned.map((requirement) => ({
       id: requirement.id,
       text: safeReviewText(requirement.text),
+      ...(requirement.route === undefined ? {} : { route: requirement.route }),
     })),
     report: {
       ...review.report,

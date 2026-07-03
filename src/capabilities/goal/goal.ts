@@ -71,6 +71,9 @@ export interface WorktreeStatusBaseline {
 export interface WorktreeStatusCheck extends WorktreeStatusBaseline {
   policy: WorktreeChangePolicy;
   current: string;
+  /** sha256 of the tracked `git diff --binary` output at verification time; used by loop:finalize to
+   *  prove the proposed merge diff is the same diff that was verified. */
+  trackedDiffHash?: string;
   changed: boolean;
   changedEntries: string[];
   error?: string;
@@ -93,12 +96,16 @@ export type EvidenceStrength =
 /** Claim scope axis — a narrow check must not support a broad claim (Part7). */
 export type ClaimScope = 'matched' | 'narrowerThanClaim';
 
+export type VerificationRoute = 'sandbox-command' | 'llm' | 'human';
+
 /** A pinned requirement: derived once at goal creation (one LLM decomposition of the objective),
  *  then immutable. The verifier scores EVERY one (decideVerdict fails closed on any unscored), so the
  *  builder can neither narrow the requirement set nor influence what gets judged (Part7 §3.2 step 3). */
 export interface PinnedRequirement {
   id: string;
   text: string;
+  /** Optional persisted provenance for trusted goal-setter requirements. Legacy LLM-derived lists omit it. */
+  route?: VerificationRoute;
 }
 
 /** The independent verifier's report (leg 3, deferred). `verdict` is NOT here — it's computed by the

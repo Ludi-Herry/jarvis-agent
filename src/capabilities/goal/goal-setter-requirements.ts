@@ -2,10 +2,10 @@ import { createHash } from 'node:crypto';
 import { relative, resolve } from 'node:path';
 import type { ReadText } from '../rules/index.js';
 import { validateSandboxInspectionCommand } from '../../core/tools/sandboxed-inspection-command.js';
-import type { PinnedRequirement } from './goal.js';
+import type { PinnedRequirement, VerificationRoute } from './goal.js';
 import type { SandboxedRequirementCommand } from './sandboxed-check-config.js';
 
-export type GoalSetterRequirementRoute = 'sandbox-command' | 'llm' | 'human';
+export type GoalSetterRequirementRoute = VerificationRoute;
 export type GoalSetterRequirementsRealPath = (path: string) => Promise<string | null>;
 
 export interface GoalSetterRequirement {
@@ -195,7 +195,7 @@ function loadedFromPlan(plan: GoalSetterRequirementsPlan): Omit<LoadedGoalSetter
   return {
     version: 1,
     requirements: plan.requirements,
-    pinned: plan.requirements.map((requirement) => ({ id: requirement.id, text: requirement.text })),
+    pinned: plan.requirements.map((requirement) => ({ id: requirement.id, text: requirement.text, route: requirement.route })),
     routes,
     commands,
     heldOutCommands: [...(plan.heldOutCommands ?? [])],
@@ -221,7 +221,7 @@ function parseRequirements(value: unknown, label: string, requireNonEmpty: boole
     const unknown = Object.keys(raw).filter((key) => key !== 'id' && key !== 'text' && key !== 'route' && key !== 'command');
     if (unknown.length > 0) throw new Error(`${label}[${index}] has unknown keys: ${unknown.join(', ')}`);
 
-    const id = asNonEmptyString(raw.id, `${label}[${index}].id`);
+    const id = asRequirementId(raw.id, `${label}[${index}].id`);
     if (seen.has(id)) throw new Error(`duplicate goal-setter requirement id: ${id}`);
     seen.add(id);
 
@@ -282,7 +282,15 @@ function isInsideRoot(absPath: string, root: string): boolean {
 
 function asNonEmptyString(value: unknown, label: string): string {
   if (typeof value !== 'string' || value.trim() === '') throw new Error(`${label} must be a non-empty string`);
-  return value;
+  return value.trim();
+}
+
+function asRequirementId(value: unknown, label: string): string {
+  const id = asNonEmptyString(value, label);
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id)) {
+    throw new Error(`${label} must use only letters, numbers, dot, underscore, or hyphen`);
+  }
+  return id;
 }
 
 function asRoute(value: unknown, label: string): GoalSetterRequirementRoute {

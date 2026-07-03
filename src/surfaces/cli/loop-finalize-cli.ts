@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { appendFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
@@ -5,15 +6,23 @@ import { createInterface } from 'node:readline';
 import {
   assertWorktreeRootOutsideCwd,
   buildLoopFinalizeReport,
+  decideVerdict,
   loopWorktreeRoot,
+  parseGoalLog,
+  parseHumanReviewAuditLog,
   parseLoopLog,
+  replayGoal,
   resolveExistingGoalWorktree,
   type FinalizeWorktreeStatus,
   type LoopCreatedRecord,
+  type LoopFinalizeGoalEvidence,
   type LoopFinalizeProposal,
   type LoopFinalizeReport,
+  type LoopRecord,
+  type VerifierReport,
 } from '../../capabilities/index.js';
 import { defaultShellPath, runCommand } from '../../core/index.js';
+import { parseSessionLog, replayMessages } from '../../runtime/index.js';
 import { safeInline } from './approval.js';
 import { parseLoopFinalizeArgs } from './loop-finalize-args.js';
 
@@ -23,6 +32,8 @@ const GIT_WRITE_TIMEOUT_MS = 30_000;
 const GIT_WRITE_OUTPUT_LIMIT = 50_000;
 const GIT_PATCH_OUTPUT_LIMIT = 5_000_000;
 const FINALIZE_DIFF_STAT_COMMAND = 'git diff --no-ext-diff --no-textconv --stat HEAD';
+const FINALIZE_DIFF_HASH_COMMAND = 'git diff --no-ext-diff --no-textconv --binary --no-color HEAD';
+const FINALIZE_DIFF_HASH_OUTPUT_LIMIT = 2_000_000;
 const FINALIZE_PATCH_COMMAND = 'git diff --no-ext-diff --no-textconv --binary HEAD';
 const FINALIZE_GIT_ENV = {
   GIT_OPTIONAL_LOCKS: '0',
@@ -53,18 +64,21 @@ async function main(): Promise<void> {
 
   const cwd = process.cwd();
   const loopPath = join(cwd, 'data', 'loops', `${args.loopId}.jsonl`);
-  let records;
+  const dataDir = join(cwd, 'data');
+  let records: LoopRecord[];
   try {
-    records = parseLoopLog(await readFile(loopPath, 'utf8'));
+    records = await readLoopRecords(loopPath);
   } catch (err) {
     console.error(`[loop finalize] cannot read loop log ${safeInline(loopPath)}: ${err instanceof Error ? err.message : String(err)}`);
     process.exitCode = 1;
     return;
   }
 
-  const created = [...records].reverse().find((record) => record.t === 'loop-created');
-  if (created === undefined) {
-    console.error(`[loop finalize] loop log is missing loop-created: ${safeInline(loopPath)}`);
+  let created: LoopCreatedRecord;
+  try {
+    created = latestLoopCreated(records, loopPath, args.loopId);
+  } catch (err) {
+    console.error(`[loop finalize] ${err instanceof Error ? err.message : String(err)}`);
     process.exitCode = 1;
     return;
   }
@@ -82,7 +96,8 @@ async function main(): Promise<void> {
   let report: LoopFinalizeReport;
   try {
     const statuses = await collectWorktreeStatuses({ created, cwd, worktreeBaseRoot, shellPath });
-    report = buildLoopFinalizeReport(records, statuses);
+    const goalEvidence = await collectGoalEvidence(dataDir, records);
+    report = buildLoopFinalizeReport(records, statuses, goalEvidence);
   } catch (err) {
     console.error(`[loop finalize] ${err instanceof Error ? err.message : String(err)}`);
     process.exitCode = 1;
@@ -100,8 +115,11 @@ async function main(): Promise<void> {
 
     let freshReport: LoopFinalizeReport;
     try {
-      const freshStatuses = await collectWorktreeStatuses({ created, cwd, worktreeBaseRoot, shellPath });
-      freshReport = buildLoopFinalizeReport(records, freshStatuses);
+      const freshRecords = await readLoopRecords(loopPath);
+      const freshCreated = latestLoopCreated(freshRecords, loopPath, args.loopId);
+      const freshStatuses = await collectWorktreeStatuses({ created: freshCreated, cwd, worktreeBaseRoot, shellPath });
+      const freshGoalEvidence = await collectGoalEvidence(dataDir, freshRecords);
+      freshReport = buildLoopFinalizeReport(freshRecords, freshStatuses, freshGoalEvidence);
     } catch (err) {
       console.error(`[loop finalize] ${err instanceof Error ? err.message : String(err)}`);
       process.exitCode = 1;
@@ -136,8 +154,11 @@ async function main(): Promise<void> {
     }
 
     try {
-      const freshStatuses = await collectWorktreeStatuses({ created, cwd, worktreeBaseRoot, shellPath });
-      const freshReport = buildLoopFinalizeReport(records, freshStatuses);
+      const freshRecords = await readLoopRecords(loopPath);
+      const freshCreated = latestLoopCreated(freshRecords, loopPath, args.loopId);
+      const freshStatuses = await collectWorktreeStatuses({ created: freshCreated, cwd, worktreeBaseRoot, shellPath });
+      const freshGoalEvidence = await collectGoalEvidence(dataDir, freshRecords);
+      const freshReport = buildLoopFinalizeReport(freshRecords, freshStatuses, freshGoalEvidence);
       const freshAudit = await readMergeAppliedAudit(auditPath, freshReport.loopId);
       const cleanupReport = buildCleanupReport(freshReport, freshAudit);
       await applyCleanupCandidates({ cwd, shellPath, cleanupReport, auditPath });
@@ -146,6 +167,139 @@ async function main(): Promise<void> {
       process.exitCode = 1;
     }
   }
+}
+
+async function readLoopRecords(path: string): Promise<LoopRecord[]> {
+  return parseLoopLog(await readFile(path, 'utf8'));
+}
+
+function latestLoopCreated(records: LoopRecord[], path: string, expectedId: string): LoopCreatedRecord {
+  const created = [...records].reverse().find((record): record is LoopCreatedRecord => record.t === 'loop-created');
+  if (created === undefined) throw new Error(`loop log is missing loop-created: ${path}`);
+  if (created.id !== expectedId) throw new Error(`loop log id mismatch: expected ${expectedId}, found ${created.id}`);
+  return created;
+}
+
+async function collectGoalEvidence(
+  dataDir: string,
+  records: readonly LoopRecord[],
+): Promise<Map<string, LoopFinalizeGoalEvidence>> {
+  const goalIds = new Set<string>();
+  for (const record of records) {
+    if (record.t === 'goal-started' || record.t === 'goal-finished') goalIds.add(record.goalId);
+  }
+
+  const evidence = new Map<string, LoopFinalizeGoalEvidence>();
+  for (const goalId of goalIds) {
+    const item = await readGoalEvidence(dataDir, goalId);
+    if (item !== undefined) evidence.set(goalId, item);
+  }
+  return evidence;
+}
+
+async function readGoalEvidence(dataDir: string, goalId: string): Promise<LoopFinalizeGoalEvidence | undefined> {
+  if (!isSafeLogId(goalId)) return undefined;
+  let text: string;
+  try {
+    text = await readFile(join(dataDir, 'goals', `${goalId}.jsonl`), 'utf8');
+  } catch {
+    return undefined;
+  }
+  const replayed = replayGoal(parseGoalLog(text));
+  const latestRound = replayed.rounds.at(-1);
+  const pinned = replayed.goal?.pinned ?? [];
+  const hasVerifierReport = latestRound?.verdict?.report !== undefined;
+  const storedOutcome = latestRound?.verdict?.outcome;
+  const recomputed =
+    latestRound?.checks !== undefined && latestRound.verdict !== undefined && (pinned.length === 0 || hasVerifierReport)
+      ? decideVerdict(latestRound.checks, latestRound.verdict.report, replayed.goal?.pinned ?? [])
+      : undefined;
+  const outcome = recomputed?.outcome === storedOutcome ? storedOutcome : undefined;
+  const humanRequirementIds = pinned
+    .filter((requirement) => requirement.route === 'human')
+    .map((requirement) => requirement.id);
+  const requiresHumanReviewAudit =
+    reportNeedsHumanReviewAudit(latestRound?.verdict?.report) || (outcome === 'verified' && humanRequirementIds.length > 0);
+  const hasHumanReviewAudit =
+    requiresHumanReviewAudit && latestRound !== undefined
+      ? await hasMatchingHumanReviewAudit(dataDir, goalId, latestRound.round - 1, replayed.goal?.state, outcome, humanRequirementIds)
+      : false;
+  const session = replayed.goal?.sessionId === undefined ? undefined : await readSessionEvidence(dataDir, replayed.goal.sessionId);
+  return {
+    goalId: replayed.goal?.id ?? goalId,
+    ...(replayed.goal?.objective === undefined ? {} : { objective: replayed.goal.objective }),
+    ...(replayed.goal?.sessionId === undefined ? {} : { sessionId: replayed.goal.sessionId }),
+    ...(session?.cwd === undefined ? {} : { sessionCwd: session.cwd }),
+    pinnedCount: pinned.length,
+    hasVerifierReport,
+    ...(latestRound?.checks?.worktreeStatus?.trackedDiffHash === undefined
+      ? {}
+      : { worktreeDiffHash: latestRound.checks.worktreeStatus.trackedDiffHash }),
+    ...(replayed.goal?.state === undefined ? {} : { state: replayed.goal.state }),
+    ...(outcome === undefined ? {} : { outcome }),
+    ...(requiresHumanReviewAudit ? { requiresHumanReviewAudit, hasHumanReviewAudit } : {}),
+  };
+}
+
+async function readSessionEvidence(dataDir: string, sessionId: string): Promise<{ cwd?: string } | undefined> {
+  if (!isSafeLogId(sessionId)) return undefined;
+  try {
+    const text = await readFile(join(dataDir, 'sessions', `${sessionId}.jsonl`), 'utf8');
+    const header = replayMessages(parseSessionLog(text)).header;
+    if (header?.id !== sessionId) return undefined;
+    return { cwd: header.cwd };
+  } catch {
+    return undefined;
+  }
+}
+
+function reportNeedsHumanReviewAudit(report: VerifierReport | undefined): boolean {
+  if (report === undefined) return false;
+  return report.observed.includes('human review observed:') || report.evidence.includes('human review evidence:');
+}
+
+async function hasMatchingHumanReviewAudit(
+  dataDir: string,
+  goalId: string,
+  previousRound: number,
+  state: unknown,
+  outcome: unknown,
+  requirementIds: readonly string[],
+): Promise<boolean> {
+  try {
+    const text = await readFile(join(dataDir, 'human-reviews', `${goalId}.jsonl`), 'utf8');
+    return parseHumanReviewAuditLog(text).some(
+      (record) =>
+        record.goalId === goalId &&
+        record.previousRound === previousRound &&
+        record.state === state &&
+        record.verdict === outcome &&
+        Array.isArray(record.decisions) &&
+        record.decisions.length > 0 &&
+        decisionsCoverRequirements(record.decisions, requirementIds, outcome),
+    );
+  } catch {
+    return false;
+  }
+}
+
+function decisionsCoverRequirements(
+  decisions: readonly { requirementId: string; decision: 'approve' | 'reject' }[],
+  requirementIds: readonly string[],
+  outcome: unknown,
+): boolean {
+  if (requirementIds.length === 0) return true;
+  const byRequirement = new Map(decisions.map((decision) => [decision.requirementId, decision.decision]));
+  if (byRequirement.size !== decisions.length || byRequirement.size !== requirementIds.length) return false;
+  if (decisions.some((decision) => !requirementIds.includes(decision.requirementId))) return false;
+  return requirementIds.every((id) => {
+    const decision = byRequirement.get(id);
+    return outcome === 'verified' ? decision === 'approve' : decision !== undefined;
+  });
+}
+
+function isSafeLogId(value: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value) && !value.includes('/') && !value.includes('\\');
 }
 
 async function collectWorktreeStatuses(opts: {
@@ -177,10 +331,15 @@ async function readWorktreeStatus(path: string, shellPath: string): Promise<Fina
   }
   const status = await runGitRead(shellPath, 'git status --porcelain=v1 --untracked-files=all', path);
   const diffStat = await runGitRead(shellPath, FINALIZE_DIFF_STAT_COMMAND, path);
+  const diffHash = await runGitRead(shellPath, FINALIZE_DIFF_HASH_COMMAND, path, FINALIZE_DIFF_HASH_OUTPUT_LIMIT);
   const statusText = status.code === 0 ? status.output.trim() : `git status failed: ${status.output.trim() || status.spawnError || String(status.code)}`;
   const diffText = diffStat.code === 0 ? diffStat.output.trim() : `git diff failed: ${diffStat.output.trim() || diffStat.spawnError || String(diffStat.code)}`;
   const classified = status.code === 0 ? classifyStatus(statusText) : { conflicted: false, hasTrackedChanges: false, hasUntracked: false };
   const clean = status.code === 0 && statusText === '' && !classified.conflicted;
+  const trackedDiffHash =
+    diffHash.code === 0 && !diffHash.truncated
+      ? createHash('sha256').update(diffHash.output, 'utf8').digest('hex')
+      : undefined;
   return {
     path,
     exists: true,
@@ -189,9 +348,10 @@ async function readWorktreeStatus(path: string, shellPath: string): Promise<Fina
     hasTrackedChanges: classified.hasTrackedChanges,
     hasUntracked: classified.hasUntracked,
     statusReadable: status.code === 0,
-    diffReadable: diffStat.code === 0,
+    diffReadable: diffStat.code === 0 && diffHash.code === 0 && !diffHash.truncated,
     status: statusText,
     diffStat: diffText,
+    ...(trackedDiffHash === undefined ? {} : { trackedDiffHash }),
   };
 }
 
@@ -210,8 +370,8 @@ function missingWorktreeStatus(path: string): FinalizeWorktreeStatus {
   };
 }
 
-function runGitRead(shellPath: string, command: string, cwd: string) {
-  return runCommand(shellPath, command, cwd, GIT_READ_TIMEOUT_MS, GIT_READ_OUTPUT_LIMIT, undefined, {
+function runGitRead(shellPath: string, command: string, cwd: string, maxOutputChars = GIT_READ_OUTPUT_LIMIT) {
+  return runCommand(shellPath, command, cwd, GIT_READ_TIMEOUT_MS, maxOutputChars, undefined, {
     scrubGitEnv: true,
     extraEnv: FINALIZE_GIT_ENV,
   });
@@ -446,6 +606,16 @@ async function applyOneProposal(
   if (patch.output.trim() === '') {
     await parkAndThrow(opts.auditPath, opts.report.loopId, proposal, 'empty-patch', `${FINALIZE_PATCH_COMMAND} produced no patch`);
   }
+  const patchHash = createHash('sha256').update(patch.output, 'utf8').digest('hex');
+  if (patchHash !== proposal.worktreeDiffHash) {
+    await parkAndThrow(
+      opts.auditPath,
+      opts.report.loopId,
+      proposal,
+      'patch-hash-mismatch',
+      `verified ${proposal.worktreeDiffHash} but generated ${patchHash}`,
+    );
+  }
 
   const headBefore = await readGitHead(opts.cwd, opts.shellPath);
   const tempDir = await mkdtemp(join(tmpdir(), 'jarvis-finalize-patch-'));
@@ -469,6 +639,7 @@ async function applyOneProposal(
     goalId: proposal.goalId,
     worktreePath,
     patchBytes: Buffer.byteLength(patch.output, 'utf8'),
+    patchHash,
     headBefore,
     headAfter,
     at: new Date().toISOString(),

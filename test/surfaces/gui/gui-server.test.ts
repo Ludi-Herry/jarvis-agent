@@ -192,6 +192,30 @@ describe('GUI server security guard', () => {
       await close(server);
     }
   });
+
+  it('rejects malformed URL encoding in human-review goal ids without a 500', async () => {
+    const server = createGuiServer({ cwd: dir, dataDir: join(dir, 'data') });
+    const base = await listen(server);
+    try {
+      const result = await httpJson(base.port, {
+        path: '/api/human-reviews/%E0%A4%A/decide',
+        method: 'POST',
+        headers: {
+          host: `127.0.0.1:${base.port}`,
+          'content-type': 'application/json',
+          'x-jarvis-gui': '1',
+        },
+        body: JSON.stringify({
+          decisions: [{ requirementId: 'r1', decision: 'approve', note: 'Looks good.' }],
+        }),
+      });
+
+      expect(result.status).toBe(400);
+      expect(result.body).toEqual({ error: 'goal id must be valid URL encoding' });
+    } finally {
+      await close(server);
+    }
+  });
 });
 
 describe('GUI server pure guards', () => {
@@ -271,7 +295,7 @@ const cleanChecks: DeterministicChecks = {
 
 async function writeParkedHumanGoal(goalId: string): Promise<void> {
   await mkdir(join(dir, 'data', 'goals'), { recursive: true });
-  const pinned: PinnedRequirement[] = [{ id: 'r1', text: 'Luis confirms the GUI copy reads naturally' }];
+  const pinned: PinnedRequirement[] = [{ id: 'r1', text: 'Luis confirms the GUI copy reads naturally', route: 'human' }];
   const report = composeVerifierReport({
     pinned,
     routes: new Map([['r1', 'human']]),
