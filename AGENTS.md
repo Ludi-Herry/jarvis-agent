@@ -6,6 +6,10 @@
 - **是**：一个有状态宿主 + 纯函数决策点的 agent loop，事件流 day-1 解耦前端，渐进披露 skill，确定性交脚本、判断交模型。
 - **不是**：不预埋抽象层 / 插件系统 / 通用框架；没证明需要前不建。反过度工程，目录按需才建。
 
+## 硬约束
+- **不再新增 verifier / route / scheduler 抽象**：现有 `--verifier-map`、`--hook-map`、`--sandbox-check-map`、`--goal-setter-requirements-map` 四套 map 就是当前边界。后续只做 bug 修复、边界收窄和必要文档同步；要重开这类抽象，必须先由 Luis 明确推翻本条并先改本规范。
+- **`propose_skill` 继续不做**：skill 自动沉淀属于已拍板 defer，不把它当待办自动实现。
+
 ## 唯一设计依据（source of truth）
 架构蓝图与设计决策**不在本仓库重写**，以知识库里的报告为准：
 - 共识骨架：`H:\LLM本地知识库\采集\external\agent-harness-调研\agent-harness-Part2-架构蓝图.md`（含 v2/v3 修订）

@@ -72,7 +72,7 @@ function walkSource(src: string, depth: number): Verdict {
   try {
     file = syntax.NewParser(syntax.Variant(syntax.LangBash)).Parse(src, 'cmd');
   } catch (err) {
-    return danger(`cannot parse command safely: ${err instanceof Error ? err.message : String(err)}`);
+    return danger(`cannot parse command safely: ${formatUnknownError(err)}`);
   }
 
   let v = clean;
@@ -91,9 +91,39 @@ function walkSource(src: string, depth: number): Verdict {
     });
   } catch (err) {
     // Any analyzer error mid-walk → fail closed rather than letting it escape.
-    return danger(`could not verify command safely: ${err instanceof Error ? err.message : String(err)}`);
+    return danger(`could not verify command safely: ${formatUnknownError(err)}`);
   }
   return v;
+}
+
+function formatUnknownError(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === 'string') return err;
+  if (err && typeof err === 'object') {
+    const record = err as Record<string, unknown>;
+    if (typeof record.message === 'string' && record.message.trim() !== '') return record.message;
+
+    const goError = record.Error;
+    if (typeof goError === 'function') {
+      try {
+        const message = (goError as () => unknown).call(err);
+        if (typeof message === 'string' && message.trim() !== '' && message !== '[object Object]') return message;
+      } catch {
+        // Fall through to generic formatting.
+      }
+    }
+
+    try {
+      const json = JSON.stringify(err);
+      if (json && json !== '{}' && json !== 'null') return json;
+    } catch {
+      // Fall through to the object tag below.
+    }
+
+    const tag = Object.prototype.toString.call(err);
+    return tag === '[object Object]' ? 'unknown parser error object' : tag;
+  }
+  return String(err);
 }
 
 /** One word resolved into what we can know statically: its literal text plus flags for the parts
@@ -307,7 +337,7 @@ function classifyProgram(prog: string, args: string[], argDescs: WordDesc[], dep
   // 1. Code interpreters: inline code (`-c`/`-e`/bundles) is opaque; a bare interpreter reads its
   //    program from stdin (curl | python). A script file or info flag is fine.
   if (CODE_INTERPRETERS.has(prog)) {
-    if (hasInlineCodeFlag(args)) return danger(`inline code execution via '${prog}' cannot be statically verified`);
+    if (hasInlineCodeFlag(prog, args)) return danger(`inline code execution via '${prog}' cannot be statically verified`);
     if (!runsAScriptFile(args) && !isInfoOnly(prog, args)) {
       return danger(`bare '${prog}' reads its program from stdin (e.g. piped from curl)`);
     }
@@ -458,10 +488,25 @@ const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 const GIT_COMMAND_CONFIG =
   /^(alias\.|pager\.|core\.(pager|editor|sshcommand|askpass)|sequence\.editor|diff\.external|diff\..*\.command|merge\..*\.driver|filter\..*\.(clean|smudge|process)|gpg\.(program|.*\.program)|uploadpack\.|receivepack\.|protocol\..*\.command)/;
 
-function hasInlineCodeFlag(args: string[]): boolean {
+function hasInlineCodeFlag(prog: string, args: string[]): boolean {
+  const hasLong = (name: string): boolean => args.some((a) => a === name || a.startsWith(`${name}=`));
+  const shortHas = (letters: string): boolean => args.some((a) => /^-[A-Za-z]+$/.test(a) && [...a.slice(1)].some((ch) => letters.includes(ch)));
+
+  if (NODE_FAMILY.has(prog)) return hasLong('--eval') || hasLong('--print') || shortHas('ep');
+  if (PYTHON_FAMILY.has(prog)) return shortHas('c');
+  if (prog === 'perl') return shortHas('eE');
+  if (prog === 'php') return shortHas('rRBE');
+  if (prog === 'ruby') return hasLong('--eval') || shortHas('e') || args.includes('-p') || hasLong('--print');
+  if (prog === 'lua') return shortHas('e');
   return args.some(
     (a) =>
-      a === '-c' || a === '-e' || a === '--eval' || a === '-p' || a === '--print' || a === '--eval-file' || (/^-[a-z]+$/.test(a) && (a.includes('c') || a.includes('e'))),
+      a === '-c' ||
+      a === '-e' ||
+      a === '--eval' ||
+      a === '-p' ||
+      a === '--print' ||
+      a === '--eval-file' ||
+      (/^-[a-z]+$/.test(a) && (a.includes('c') || a.includes('e'))),
   );
 }
 

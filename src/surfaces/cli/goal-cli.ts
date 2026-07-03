@@ -199,6 +199,8 @@ async function main(): Promise<void> {
   // Held-out leg: secret hidden-assertion commands from a FILE (kept off the command line / shell
   // history). Absent → the leg is explicitly declared absent (a known weaker-confidence state).
   const heldOutCommands = loadHeldOutCommands();
+  const checksOnlyDefaultMode =
+    verifierProvider === undefined && sandboxCheckPlan === undefined && goalSetterRequirements === undefined && heldOutCommands.length === 0;
 
   // shadow-git (opt-in via JARVIS_SHADOW_GIT): a side history of the builder's file changes under
   // data/shadow, snapshotted per round, so you can audit / `npm run shadow -- restore <sha>` a bad run.
@@ -221,7 +223,7 @@ async function main(): Promise<void> {
   console.log(
     heldOutCommands.length > 0
       ? `held-out: 已配置 ${heldOutCommands.length} 条隐藏校验(builder 看不到)`
-      : 'held-out: 未配置 —— 缺这条腿,verified 置信偏弱,建议加权人工抽查(设 JARVIS_HELDOUT_CHECKS_FILE 启用)',
+      : 'held-out: 未配置 —— 默认档只确认项目检查通过,目标达成需人工复核或启用腿3/held-out/trusted requirements',
   );
   console.log(
     sandboxCheckPlan
@@ -289,9 +291,14 @@ async function main(): Promise<void> {
     rl.close();
   }
 
-  console.log(
-    `\n=== goal ${result.state} (rounds=${result.rounds}, verdict=${result.finalVerdict?.outcome ?? '—'}) ===`,
-  );
+  const verdict = result.finalVerdict?.outcome ?? '—';
+  const displayedVerdict = checksOnlyDefaultMode && verdict === 'verified' ? 'checks-passed' : verdict;
+  console.log(`\n=== goal ${result.state} (rounds=${result.rounds}, verdict=${displayedVerdict}) ===`);
+  if (checksOnlyDefaultMode && verdict === 'verified') {
+    console.log(
+      '[goal] 默认档没有检查“目标到底有没有做到”；它只确认项目检查通过，git 仓内还会确认测试没有被改坏。要强校验目标，启用 ARK_VERIFIER_MODEL、JARVIS_HELDOUT_CHECKS_FILE 或 trusted requirements。',
+    );
+  }
   if (result.state !== 'complete') process.exitCode = 1;
 }
 

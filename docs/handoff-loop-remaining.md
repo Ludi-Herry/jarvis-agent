@@ -42,6 +42,7 @@
 - terminal complete 恢复必须重跑验收；active goal 恢复必须保留 turns/tokens/breaker/round budget。
 - 不给 unattended bash 新增自动 allow。
 - 不从 cwd 自动发现 hook/verifier/cron enforcement 配置。
+- 不再新增 verifier / route / scheduler 抽象；现有 `--verifier-map`、`--hook-map`、`--sandbox-check-map`、`--goal-setter-requirements-map` 四套 map 足够，不能加第 5 套 map。
 - 不自动 push、不自动 rebase、不改 `.env`、不删用户工作产物。
 - 所有架构级改动先写 plan，列红线和验证，再实现。
 
