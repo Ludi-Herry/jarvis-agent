@@ -39,18 +39,43 @@ Jarvis 已经有只读 `npm run observe` 入口。它读取 session / goal / loo
 - GUI：`npm run gui` 已接 `ObservationReport.activity.recent` 最近事件流、聚合状态摘要和急停控制；`human` verifier requirement 的人工裁决回写仍需单独产品流。
 - 约束：observe 视图只读，不给完成授权；goal/loop 完成仍只看 `runGoal` / `decideVerdict`。
 
+## Goal 完成后的毕业判断
+
+只验证过一次的目标，只能算一条带时间戳的假设。GUI v1 收口后，值得长期成立的完成物可以毕业成 `standing goal`，成为持续重验的不变量；这属于 post-v1 持续健康能力，不影响当前 R6 GUI 收口。
+
+毕业条件写死：
+
+- 必须有一条可重跑 predicate，最好是 shell 命令，`exit 0` 表示不变量仍成立。
+- predicate 必须只读、可解释、低 flaky；容易受网络、时间、随机数据影响的检查先隔离，别登记成常驻目标。
+- 违约时只报警、park 或列出嫌疑清单，例如 last-pass 以来合入了什么；sentinel 不自动修复。
+- builder 不能自己改 predicate 后自证通过；完成授权仍来自现有 trusted requirements、deterministic checks、human review 与 `decideVerdict`。
+- 形容词目标不算 goal，例如“更稳定”“体验更好”。先把它们定义成可检查条件，再考虑登记。
+
+未来实现时复用现有机制：`cron:daemon` 负责调度，trusted `goal-setter-requirements` 仍放 cwd 外，`sandbox-command` 执行只读 predicate，`observe` 汇总 JSONL 结果。repo 内 `goals/<name>.md` 只能作为候选说明或人读文档，不能当完成授权来源；不新增 verifier / route / scheduler 抽象。
+
 ## skill 沉淀规则
 
-文章建议把人工验证步骤写进 `SKILL.md`。Jarvis 保持更保守的策略：
+文章建议把人工验证步骤写进 `SKILL.md`。Jarvis 保持更保守的策略：`propose_skill` 继续不做；需要新 skill 时由人确认场景，再按普通文件改动创建。
+
+边界先分清：
+
+- **Skill**：教 agent “怎么做”，适合流程、检查清单、领域判断、gotchas。
+- **Tool**：给 agent 一个明确可执行动作，带输入 schema、权限分类和 side effect。
+- **MCP**：让 agent 够到外部数据源或应用，例如 issue、数据库、浏览器、设计工具。
+- **Subagent**：独立上下文、独立指令、受限工具面的专用 agent，适合 fresh-context review 或分工探索。
+
+手动 skill 毕业条件：
 
 - 只有重复出现、步骤稳定、能显著减少人工判断成本的流程才写 skill。
 - 优先沉淀项目内具体检查：frontend visual verification、loop rollout checklist、安全 review checklist。
-- 确定性步骤优先写脚本，判断性步骤再写 skill 提示。
-- `propose_skill` 继续不做；需要新 skill 时由人确认场景，再按普通文件改动创建。
+- 确定性步骤优先写脚本，skill 只负责何时用、怎么判断、如何验收。
+- 保留流程约束、验收标准、禁区和 gotchas；删除替模型做微观决策的旧模型式碎步骤。
+- 不写“展示思考过程 / 解释推理”这类要求；需要过程证据时改收集结构化产物、命令输出或审查报告。
+- 未来若重开自动沉淀，必须先证明有重复信号、held-out 验证、安全审查和人审 gate；不能让 agent 自评自改后自动注册。
 
 ## 和现有文档的关系
 
 - `README.md`：命令入口和快速选择表。
 - `docs/handoff-D.md`：GoalLoop、三腿验收、`decideVerdict` 不变量。
 - `docs/handoff-loop-remaining.md`：parallel resume、finalize、cron daemon 的边界和失败模式。
-- `docs/handoff-next.md`：GUI 就绪、observe 入口、usage/budget/approval 事件 backlog、skill 自动沉淀决策。
+- `docs/handoff-next.md`：GUI 就绪、observe 入口、usage/budget/approval 事件 backlog、post-v1 standing goals 和保守 skill 沉淀准则。

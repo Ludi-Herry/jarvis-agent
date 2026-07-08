@@ -17,7 +17,7 @@
 - **unattended worktree write 已落地最小权限切片（2026-07-03）**：`--unattended --parallel` 的 per-goal gate 会注入 `goalWorktreeWriteRoot`，仅 built-in `write` 的 literal/effective realpath 都留在该 goal worktree 内才自动 allow；`.git`、sensitive path、symlink/junction/`..`/absolute/Windows namespaced escape 全拒绝。plain `--unattended` 仍对 write fail-closed；bash/vision/network/unknown write-like tools 仍 fail-closed。goal worktree 会桥接宿主 `node_modules` 供 deterministic checks 使用，文件工具不能跟随该链接读写宿主依赖。codex 两轮审查 no HIGH；真实 smoke 已证明 write 成功、bash 拒绝、宿主 `git status` 零漂移。稳定全绿轮 `2026-07-03T17-06-40-512Z` 使用 `VITEST_MAX_WORKERS=1` 跑 `--unattended --parallel 2`，2/2 goals `verified` + `complete`。
 - **发布收口检查状态（2026-07-03 第二轮）**：R2/R3/R5/R7/R9 已补齐当前非 UX 证据。R2：`r2-readonly-20260703-124756` 真实间隔 cron daemon 成功 6 次，false verified `0`。R3：内置 Browser 点击急停，`data/control/emergency-stop.jsonl` 记录 `2026-07-03T20:01:55.048Z`，loop `2026-07-03T20-01-28-688Z` 写入 `loop-halted emergency-stop`。R5：内置 Browser 验证页面内联备注表单，`data/human-reviews/g-human-gui-smoke.jsonl` 写入 audit，goal `complete / verified`。R7：human-review trusted route provenance 与 `loop:finalize` latest attempt、goal/session、human audit、tracked diff hash、patch hash 交叉验证已修，最终 codex 复审 `HIGH? no`。R9：version `0.1.0`、`CHANGELOG.md`、`RELEASE_NOTES.md`、`KNOWN_ISSUES.md` 已补。最终本地四关卡已通过：`npm run typecheck`、`npm run lint`、`npm run build`、`npm test`（102 files / 1060 passed / 1 skipped）。R6 GUI UI/UX 打磨与 Luis 验收仍未做；GUI 打磨若改代码，发布前需再次跑四关卡。
 - **Phase 3 v1 边界**：trusted verifier route 仍只覆盖 goal-setter 预声明的窄 read-only inspection command（`git status/diff/log/ls-files`、`stat`、`wc`）。`sandboxed_check` 和 `browser_smoke` 都是 builder 反馈工具，不能证明 trusted requirement、不能改写 verdict、不能给 goal/loop 完成授权。通用 app / browser / network verifier 不在当前抽象范围；`local-preview` browser smoke 仍等 loopback-only sandbox proof；`human` route 先 `cannotVerify→park`，随后可由 GUI human-review 记录人工裁决证据并交回 `decideVerdict`。`npm run observe` 只能汇总 JSONL 和 audit evidence，不能给 goal/loop 完成授权。
-- **skill 自动沉淀（`propose_skill`）：不做**（投机性、判定偏弱、无证实的复用场景）。下文该节仅作设计存档。
+- **skill 自动沉淀（`propose_skill`）：不做**。允许人工沉淀高频、稳定、可验证的 skill；未来若重开自动沉淀，必须先有重复信号、held-out 验证、安全审查和人审 gate。
 - **新增 verifier / route / scheduler 抽象：不做**。现有 `--verifier-map`、`--hook-map`、`--sandbox-check-map`、`--goal-setter-requirements-map` 四套 map 已足够；后续只允许修 bug、收窄边界、同步文档，不能再加第 5 套 map 或新调度/路由层。
 - **只读观测层已落地**：`goal_round_start` / `goal_round_end` 提供实时轮次、turn/token、预算上限、claim/verdict/state 进度事件；`npm run observe` 读取 session / goal / loop / cron / approval JSONL 与 sandbox audit evidence，输出运行态摘要、`latestGoalBudget`、trusted contract metadata、worktree status、approval counts、sandbox backend/mount/network/limits，以及 `activity.recent` 最近事件流；`--json` 给 GUI/脚本消费，当前 `ObservationReport` 为 `schemaVersion: 1`，带 `meta.source.dataDir` 与 `authority.mode: "observation-only"`。`--data-dir <path>` 可看非默认 `data/`。完成授权仍只来自 `decideVerdict`、deterministic checks、trusted requirement routes 和人工确认。
 - **已完成的 Phase E/loop 收口**：接 vision 进 goal/loop、shadow restore 确认、shadow snapshot 异步化、vision MIME sniff + 活体验证、loop mid-goal resume、per-goal verifier、per-goal hook runner、并行目标/worktree first slice、parallel resume 最小 slice、loop finalize 只读报告、loop finalize `--merge` 交互 apply、loop finalize `--cleanup` 交互清理、cron first slice（含同工作区扫描锁 + stale 回收 + task 前心跳）、cron foreground daemon 均已完成；loop 重项收口记录见 `docs/handoff-loop-remaining.md`。
@@ -112,15 +112,19 @@ Phase 3 v1 已解决早前「#2 客观路由」和「#6 裁判只读命令取证
 ### 未起 / 移交
 
 - **Hooks：已落地**——PreToolUse 阻断 + PostToolUse 咨询/反馈回灌 + result env + per-hook timeout + round/session lifecycle + 多来源配置合并，见 `docs/handoff-hooks.md`。剩余 defer：PostToolUse 输出不能阻断/改判；无人值守 bash 自治等 OS 沙箱。
-- **skill 自动沉淀**：设计已定，**2026-07-01 决定不做**（见「方向决策」）——下节仅设计存档。
+- **post-v1 standing goals**：GUI R6 收口后再考虑的持续健康能力，当前不是发布 blocker，也不新增 R10。完成物若值得长期成立，未来可登记为只读、可解释、低 flaky 的 predicate，映射到现有 `cron:daemon` + cwd 外 trusted `goal-setter-requirements` + `sandbox-command` + `observe`；repo 内 `goals/<name>.md` 只能做候选说明，不当完成授权来源；违约时只报警/park/列嫌疑清单，不自动修复；不新增 verifier / route / scheduler 抽象。
+- **skill 自动沉淀**：`propose_skill` 继续不做（见「方向决策」）。保留人工沉淀准则：高频、稳定、可验证、能减少人工验收成本的流程才新增 `SKILL.md`。
 
-## skill 自动沉淀（设计已定，判定偏弱 → 本会话按用户原则未实现）
+## skill 沉淀边界（保守准则）
 
-设计：一个 `propose_skill` 工具——入参 `{name, description, triggers, body}`,组装成正确 SKILL.md frontmatter、`safeResolve` 写到 `skills/<name>/SKILL.md`,**人审 gate = 现有 PermissionGate**（writes-files→ask,用户在批准框看到 skill 内容批/拒）,下次加载生效（不热重载）。本质=「agent 在人审下自创 skill」,是 `write` 工具的薄包装。做的话:工具放 `src/core/tools/`（同 createBashTool 范式）、REPL 条件注册、faked ctx + 临时目录测试、codex 审查。
+Jarvis 现阶段只做人工沉淀，不做 `propose_skill`。SkillRegistry 已能只读加载 `<dir>/<name>/SKILL.md`；新增 skill 的价值来自真实复用场景，不来自给 agent 增加一个自我扩展按钮。
 
-> **为什么未做**：交接文档自身已标它「投机性、判定偏弱」——SkillRegistry 已能只读加载 `<dir>/<name>/SKILL.md`,「自动沉淀」真实价值**取决于是否真有复用场景**,这与用户原则「不预埋未证明需要的抽象 / 新功能先判值不值得做」冲突。**要做先确认有真实复用场景**,否则就是给一个能力找用途。
+- Skill：教 agent “怎么做”，适合流程、检查清单、领域判断和 gotchas。
+- Tool：给 agent 一个明确可执行动作，带权限分类和 side effect。
+- MCP：让 agent 够到外部数据源或应用。
+- Subagent：独立上下文、独立指令、受限工具面的专用 agent。
 
-**手动 skill 沉淀准则**：可保留为人工动作。重复出现、步骤稳定、能减少人工验收成本时，再新增具体 `SKILL.md`；优先沉淀 frontend visual verification、loop rollout checklist、安全 review checklist 这类项目内检查。确定性步骤优先写脚本，判断性步骤再写 skill 提示。`propose_skill` 继续不做。
+**手动 skill 沉淀准则**：重复出现、步骤稳定、可验证、能减少人工验收成本时，再新增具体 `SKILL.md`；优先沉淀 frontend visual verification、loop rollout checklist、安全 review checklist 这类项目内检查。确定性步骤优先脚本化，skill 负责触发条件、判断步骤、验收标准、禁区和 gotchas。不写“展示思考过程 / 解释推理”类要求；未来若重开自动沉淀，先补重复信号、held-out 验证、安全审查和人审 gate。
 
 ## 上手顺序（新会话）
 
