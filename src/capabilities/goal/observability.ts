@@ -80,9 +80,15 @@ export interface ObservationReport {
     sessionMessages: number;
     sessionCompactions: number;
     goalTurns: number;
+    /** Detailed tokens recorded by goal-round JSONL records. */
     goalTokens: number;
+    /** Loop goal-finished rollups. This overlaps goalTokens and must not be added to it. */
     loopTokens: number;
     loopFinishedGoals: number;
+    /** Deduplicated by goal id across detailed goal logs and loop rollups. */
+    uniqueTotalTokens: number;
+    /** Partial while verifier and pinned-requirement model calls remain off-bus. */
+    coverage: 'complete' | 'partial';
   };
   audit: {
     trustedContracts: TrustedContractSummary[];
@@ -120,7 +126,12 @@ export interface SessionSummary {
 export interface GoalSummary {
   id: string;
   objective: string;
+  /** Backward-compatible raw state replayed from the goal audit log. */
   state: GoalState;
+  recordedState: GoalState;
+  effectiveState: GoalState | 'interrupted';
+  effectiveReason?: LoopHaltReason;
+  effectiveSource?: { kind: 'loop-halt'; loopId: string };
   rounds: number;
   verdict?: VerdictOutcome;
   lastAt?: string;
@@ -203,7 +214,8 @@ export function buildObservationReport(input: ObservationInput, options: Observa
   const approvalRecords = (input.approvals ?? []).flatMap((log) => log.records);
 
   const sessionSummaries = sessions.map(summarizeSession).filter((summary): summary is SessionSummary => summary !== undefined);
-  const goalSummaries = goals.map(summarizeGoal).filter((summary): summary is GoalSummary => summary !== undefined);
+  const recordedGoalSummaries = goals.map(summarizeGoal).filter((summary): summary is GoalSummary => summary !== undefined);
+  const goalSummaries = deriveEffectiveGoalSummaries(recordedGoalSummaries, loops);
   const goalBudgetSummaries = goals.map(summarizeGoalBudget).filter((summary): summary is GoalBudgetSummary => summary !== undefined);
   const loopSummaries = loops.map(summarizeLoop).filter((summary): summary is LoopSummary => summary !== undefined);
 
@@ -249,6 +261,8 @@ export function buildObservationReport(input: ObservationInput, options: Observa
       goalTokens: goalRounds.reduce((sum, item) => sum + (item.round.tokens ?? 0), 0),
       loopTokens: loopFinished.reduce((sum, record) => sum + record.tokens, 0),
       loopFinishedGoals: loopFinished.length,
+      uniqueTotalTokens: uniqueMeasuredTokens(goalBudgetSummaries, loopFinished),
+      coverage: 'partial',
     },
     audit: {
       trustedContracts: loops.flatMap((log) => trustedContractsFromLoop(log.records)),
@@ -289,6 +303,7 @@ export function formatObservationReport(report: ObservationReport): string {
     `sessions: ${report.status.sessions.total} messages=${report.usage.sessionMessages} compactions=${report.usage.sessionCompactions}`,
     `goals: ${report.status.goals.total} active=${report.status.goals.byState.active} complete=${report.status.goals.byState.complete} blocked=${report.status.goals.byState.blocked}`,
     `loops: ${report.status.loops.total} loopTokens=${report.usage.loopTokens} loopFinishedGoals=${report.usage.loopFinishedGoals}`,
+    `usage: goalRecordedTokens=${report.usage.goalTokens} loopRollupTokens=${report.usage.loopTokens} uniqueTotalTokens=${report.usage.uniqueTotalTokens} coverage=${report.usage.coverage} unmeasured=${report.usage.coverage === 'partial' ? 'unknown' : '0'}`,
     `cron: attempts=${report.status.cron.attempts}`,
     `audit: trusted contracts=${report.audit.trustedContracts.length} worktree statuses=${report.audit.worktreeStatus.length} sandbox evidence: ${report.audit.sandboxEvidence.length} approvals=${report.audit.approvals.requests}/${report.audit.approvals.results}`,
   ];
@@ -299,7 +314,10 @@ export function formatObservationReport(report: ObservationReport): string {
   }
   if (report.status.latestGoal) {
     const goal = report.status.latestGoal;
-    lines.push(`latest goal: ${goal.id} ${goal.state} verdict=${goal.verdict ?? '-'} rounds=${goal.rounds}`);
+    const state = goal.effectiveState === goal.recordedState
+      ? goal.effectiveState
+      : `${goal.effectiveState} recorded=${goal.recordedState} reason=${goal.effectiveReason ?? '-'} source=${goal.effectiveSource ? `loop:${goal.effectiveSource.loopId}` : '-'}`;
+    lines.push(`latest goal: ${goal.id} ${state} verdict=${goal.verdict ?? '-'} rounds=${goal.rounds}`);
   }
   if (report.status.latestGoalBudget) {
     const budget = report.status.latestGoalBudget;
@@ -345,10 +363,68 @@ function summarizeGoal(log: ObservationLog<GoalRecord>): GoalSummary | undefined
     id: goal.id,
     objective: goal.objective,
     state: goal.state,
+    recordedState: goal.state,
+    effectiveState: goal.state,
     rounds: rounds.length,
     ...(latestRound?.verdict?.outcome === undefined ? {} : { verdict: latestRound.verdict.outcome }),
     ...optional('lastAt', lastTimestamp(log.records)),
   };
+}
+
+/**
+ * Overlay a presentation-only interruption state when the final record of a halted loop leaves an
+ * active goal attempt in flight. Raw goal JSONL and the backward-compatible `state` field stay
+ * untouched; observe remains unable to write or authorize completion.
+ */
+export function deriveEffectiveGoalSummaries(
+  goals: readonly GoalSummary[],
+  loops: readonly ObservationLog<LoopRecord>[],
+): GoalSummary[] {
+  const interruptions = new Map<string, { loopId: string; reason: LoopHaltReason }>();
+
+  for (const log of loops) {
+    const created = log.records.find((record): record is LoopCreatedRecord => record.t === 'loop-created');
+    if (created === undefined) continue;
+
+    const latestAttempts = new Map<number, { index: number; record: Extract<LoopRecord, { t: 'goal-started' | 'goal-finished' }> }>();
+    let latestHalt: { index: number; reason: LoopHaltReason } | undefined;
+    for (const [index, record] of log.records.entries()) {
+      if (record.t === 'goal-started' || record.t === 'goal-finished') {
+        latestAttempts.set(record.index, { index, record });
+      }
+      if (record.t === 'loop-halted') latestHalt = { index, reason: record.reason };
+    }
+    if (latestHalt === undefined) continue;
+
+    for (const attempt of latestAttempts.values()) {
+      if (attempt.record.t === 'goal-started' && attempt.index < latestHalt.index) {
+        interruptions.set(attempt.record.goalId, { loopId: created.id, reason: latestHalt.reason });
+      }
+    }
+  }
+
+  return goals.map((goal) => {
+    const interruption = interruptions.get(goal.id);
+    if (goal.recordedState !== 'active' || interruption === undefined) return goal;
+    return {
+      ...goal,
+      effectiveState: 'interrupted',
+      effectiveReason: interruption.reason,
+      effectiveSource: { kind: 'loop-halt', loopId: interruption.loopId },
+    };
+  });
+}
+
+function uniqueMeasuredTokens(
+  goals: readonly GoalBudgetSummary[],
+  loopFinished: readonly Extract<LoopRecord, { t: 'goal-finished' }>[],
+): number {
+  const byGoalId = new Map<string, number>();
+  for (const goal of goals) byGoalId.set(goal.goalId, goal.totalTokens);
+  for (const record of loopFinished) {
+    byGoalId.set(record.goalId, Math.max(byGoalId.get(record.goalId) ?? 0, record.tokens));
+  }
+  return [...byGoalId.values()].reduce((sum, tokens) => sum + tokens, 0);
 }
 
 function summarizeGoalBudget(log: ObservationLog<GoalRecord>): GoalBudgetSummary | undefined {

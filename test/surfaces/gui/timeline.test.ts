@@ -17,11 +17,11 @@ const REPORT: ObservationReport = {
     cron: { attempts: 1, lastAttempt: { taskId: 'daily', exitCode: 0, startedAt: '2026-07-03T11:00:00.000Z', finishedAt: '2026-07-03T11:01:00.000Z', loopId: 'L1' } },
     cronDaemon: { records: 0, parkedTasks: [] },
     latestSession: { id: 's1', model: 'builder', cwd: 'H:\\jarvis-agent', startedAt: '2026-07-03T10:00:00.000Z', messages: 3 },
-    latestGoal: { id: 'g1', objective: 'ship GUI', state: 'complete', rounds: 1, verdict: 'verified', lastAt: '2026-07-03T11:30:00.000Z' },
+    latestGoal: { id: 'g1', objective: 'ship GUI', state: 'complete', recordedState: 'complete', effectiveState: 'complete', rounds: 1, verdict: 'verified', lastAt: '2026-07-03T11:30:00.000Z' },
     latestGoalBudget: { goalId: 'g1', roundsUsed: 1, maxRounds: 8, totalTurns: 2, totalTokens: 120, lastAt: '2026-07-03T11:30:00.000Z' },
     latestLoop: { id: 'L1', objectives: 1, completed: 1, blocked: 0, inFlight: 0, tokens: 120, halted: 'queue-empty', lastAt: '2026-07-03T11:31:00.000Z' },
   },
-  usage: { sessionMessages: 3, sessionCompactions: 0, goalTurns: 2, goalTokens: 120, loopTokens: 120, loopFinishedGoals: 1 },
+  usage: { sessionMessages: 3, sessionCompactions: 0, goalTurns: 2, goalTokens: 120, loopTokens: 120, loopFinishedGoals: 1, uniqueTotalTokens: 120, coverage: 'partial' },
   audit: {
     trustedContracts: [{ loopId: 'L1', goalSetterRequirementsMapPath: 'C:\\trusted\\requirements.json' }],
     worktreeStatus: [{ goalId: 'g1', round: 1, policy: 'audit', changed: true, changedEntries: [' M README.md'] }],
@@ -74,5 +74,30 @@ describe('buildGuiTimeline', () => {
     });
 
     expect(items[0]).toMatchObject({ kind: 'control', tone: 'danger', detail: 'operator stop' });
+  });
+
+  it('shows the effective interruption and preserves its recorded source state', () => {
+    const report: ObservationReport = {
+      ...REPORT,
+      status: {
+        ...REPORT.status,
+        latestGoal: {
+          ...REPORT.status.latestGoal!,
+          state: 'active',
+          recordedState: 'active',
+          effectiveState: 'interrupted',
+          effectiveReason: 'emergency-stop',
+          effectiveSource: { kind: 'loop-halt', loopId: 'L-stop' },
+        },
+      },
+    };
+
+    const goal = buildGuiTimeline(report, { path: 'stop.json', requested: false })
+      .find((item) => item.id === 'goal-g1');
+
+    expect(goal).toMatchObject({
+      tone: 'warn',
+      meta: ['state interrupted', 'recorded active', 'reason emergency-stop', 'source loop L-stop', 'verdict verified', 'rounds 1'],
+    });
   });
 });

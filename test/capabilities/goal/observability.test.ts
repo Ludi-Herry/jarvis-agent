@@ -211,7 +211,14 @@ describe('buildObservationReport', () => {
       totalTurns: 2,
       totalTokens: 42,
     });
-    expect(report.usage).toMatchObject({ sessionMessages: 2, goalTurns: 2, goalTokens: 42, loopTokens: 51 });
+    expect(report.usage).toMatchObject({
+      sessionMessages: 2,
+      goalTurns: 2,
+      goalTokens: 42,
+      loopTokens: 51,
+      uniqueTotalTokens: 51,
+      coverage: 'partial',
+    });
     expect(report.audit.trustedContracts).toEqual([
       { loopId: 'L1', goalSetterRequirementsMapPath: 'C:\\trusted\\requirements.json', goalSetterRequirementsMapHash: 'abc123' },
     ]);
@@ -246,6 +253,56 @@ describe('buildObservationReport', () => {
     expect(formatObservationReport(report)).toContain('latest goal budget: g1 rounds=1/3 turns=2 tokens=42');
     expect(formatObservationReport(report)).toContain('sandbox evidence: 1');
     expect(formatObservationReport(report)).toContain('recent activity:');
+  });
+
+  it('keeps the recorded goal state and derives interruption from its halted parent loop', () => {
+    const report = buildObservationReport({
+      goals: [
+        {
+          path: 'data/goals/L-stop-g0.jsonl',
+          records: [
+            {
+              t: 'goal-created',
+              id: 'L-stop-g0',
+              objective: 'inspect the release evidence',
+              objectiveHash: 'hash',
+              budget: { maxRounds: 3 },
+              sessionId: 'L-stop-g0',
+              createdAt: '2026-07-03T20:01:28.000Z',
+            },
+          ],
+        },
+      ],
+      loops: [
+        {
+          path: 'data/loops/L-stop.jsonl',
+          records: [
+            {
+              t: 'loop-created',
+              id: 'L-stop',
+              contract: CONTRACT,
+              objectives: ['inspect the release evidence'],
+              createdAt: '2026-07-03T20:01:28.000Z',
+            },
+            { t: 'goal-started', index: 0, goalId: 'L-stop-g0', at: '2026-07-03T20:01:28.100Z' },
+            { t: 'loop-halted', reason: 'emergency-stop', at: '2026-07-03T20:01:55.000Z' },
+          ],
+        },
+      ],
+    });
+
+    expect(report.status.latestGoal).toMatchObject({
+      id: 'L-stop-g0',
+      state: 'active',
+      recordedState: 'active',
+      effectiveState: 'interrupted',
+      effectiveReason: 'emergency-stop',
+      effectiveSource: { kind: 'loop-halt', loopId: 'L-stop' },
+    });
+    expect(report.status.goals.byState.active).toBe(1);
+    expect(formatObservationReport(report)).toContain(
+      'latest goal: L-stop-g0 interrupted recorded=active reason=emergency-stop source=loop:L-stop',
+    );
   });
 });
 

@@ -220,7 +220,7 @@ textarea {
 
 .meters {
   display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(160px, 0.8fr) minmax(120px, 0.5fr);
+  grid-template-columns: minmax(0, 1.2fr) minmax(160px, 0.8fr) minmax(240px, 1fr);
   gap: 12px;
 }
 
@@ -233,6 +233,24 @@ textarea {
 
 .meter strong {
   font-size: 15px;
+}
+
+.token-values {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.token-values > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.token-coverage {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
 }
 
 .review-panel {

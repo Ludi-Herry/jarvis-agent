@@ -49,14 +49,22 @@ export function buildGuiTimeline(report: ObservationReport, stop: EmergencyStopS
 
   const goal = report.status.latestGoal;
   if (goal) {
+    const effectiveState = goal.effectiveState;
+    const effectiveMeta = effectiveState === goal.recordedState
+      ? []
+      : [
+          `recorded ${goal.recordedState}`,
+          `reason ${goal.effectiveReason ?? '-'}`,
+          `source ${goal.effectiveSource ? `loop ${goal.effectiveSource.loopId}` : '-'}`,
+        ];
     items.push({
       id: `goal-${goal.id}`,
       kind: 'goal',
       title: `Goal ${goal.id}`,
       detail: goal.objective,
-      tone: goal.state === 'complete' ? 'good' : goal.state === 'blocked' ? 'warn' : 'info',
+      tone: effectiveState === 'complete' ? 'good' : effectiveState === 'blocked' || effectiveState === 'interrupted' ? 'warn' : 'info',
       at: goal.lastAt,
-      meta: [`state ${goal.state}`, `verdict ${goal.verdict ?? '-'}`, `rounds ${goal.rounds}`],
+      meta: [`state ${effectiveState}`, ...effectiveMeta, `verdict ${goal.verdict ?? '-'}`, `rounds ${goal.rounds}`],
     });
   }
 

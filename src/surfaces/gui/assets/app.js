@@ -17,7 +17,9 @@ const nodes = {
   updatedAt: document.querySelector('#updated-at'),
   latestGoal: document.querySelector('#latest-goal'),
   budget: document.querySelector('#budget'),
-  tokens: document.querySelector('#tokens'),
+  goalTokens: document.querySelector('#goal-tokens'),
+  loopTokens: document.querySelector('#loop-tokens'),
+  tokenCoverage: document.querySelector('#token-coverage'),
   reviewCount: document.querySelector('#review-count'),
   humanReviews: document.querySelector('#human-reviews'),
   timeline: document.querySelector('#timeline'),
@@ -58,16 +60,27 @@ function render(payload) {
   nodes.approvals.textContent = `${report.audit.approvals.requests}/${report.audit.approvals.results}`;
   nodes.stopState.textContent = payload.stop.requested ? 'Stopped' : 'Armed';
   nodes.updatedAt.textContent = shortTime(report.meta.generatedAt);
-  nodes.latestGoal.textContent = report.status.latestGoal
-    ? `${report.status.latestGoal.state} · ${report.status.latestGoal.verdict || '-'}`
-    : '-';
+  nodes.latestGoal.textContent = formatLatestGoal(report.status.latestGoal);
   nodes.budget.textContent = report.status.latestGoalBudget
     ? `${report.status.latestGoalBudget.roundsUsed}/${report.status.latestGoalBudget.maxRounds} rounds`
     : '-';
-  nodes.tokens.textContent = `${report.usage.goalTokens + report.usage.loopTokens}`;
+  nodes.goalTokens.textContent = `${report.usage.goalTokens}`;
+  nodes.loopTokens.textContent = `${report.usage.loopTokens}`;
+  nodes.tokenCoverage.textContent = `Unique measured ${report.usage.uniqueTotalTokens} · ${report.usage.coverage} coverage · unmeasured ${report.usage.coverage === 'partial' ? 'unknown' : '0'}`;
   nodes.reviewCount.textContent = `${payload.reviews.length}`;
   nodes.humanReviews.replaceChildren(...renderReviews(payload.reviews));
   nodes.timeline.replaceChildren(...payload.timeline.map(renderItem));
+}
+
+function formatLatestGoal(goal) {
+  if (!goal) return '-';
+  const recordedState = goal.recordedState || goal.state;
+  const effectiveState = goal.effectiveState || recordedState;
+  const parts = [effectiveState, goal.verdict || '-'];
+  if (effectiveState !== recordedState) parts.push(`recorded ${recordedState}`);
+  if (goal.effectiveReason) parts.push(goal.effectiveReason);
+  if (goal.effectiveSource?.loopId) parts.push(`loop ${goal.effectiveSource.loopId}`);
+  return parts.join(' · ');
 }
 
 function renderReviews(reviews) {

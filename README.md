@@ -129,9 +129,13 @@ Browser smoke output is feedback for the builder or a human smoke pass. It canno
 
 ### Read-only observation contract
 
-`npm run observe -- --json` emits `ObservationReport` schema version 1. The report includes `meta.generatedAt`, `meta.source.dataDir`, the fixed log scope (`sessions/goals/loops/cron/cronDaemon/approvals`), `status.latestGoalBudget`, `usage`, audit summaries for trusted contracts, worktree status, sandbox evidence, approval request/result counts, and `activity.recent` with the latest session / goal / loop / cron / approval records in display order.
+`npm run observe -- --json` emits `ObservationReport` schema version 1. The report includes `meta.generatedAt`, `meta.source.dataDir`, the fixed log scope (`sessions/goals/loops/cron/cronDaemon/approvals`), `status.latestGoalBudget`, additive effective-state fields, deduplicated token usage, audit summaries for trusted contracts, worktree status, sandbox evidence, approval request/result counts, and `activity.recent` with the latest session / goal / loop / cron / approval records in display order.
 
 The report also includes `authority: { mode: "observation-only", canCompleteGoals: false, canCompleteLoops: false }`. GUI or scripts can display and filter it, but they must not treat it as completion evidence.
+
+`status.latestGoal.state` remains the raw state replayed from the goal JSONL for compatibility. `recordedState` repeats that audit value, while `effectiveState` can become `interrupted` when the final record of a halted loop leaves that active goal in flight; `effectiveReason` and `effectiveSource.loopId` explain the derivation. These fields are presentation-only and cannot write goal/loop state or authorize completion.
+
+Every normal loop goal writes detailed rounds to `data/goals/<goalId>.jsonl`; the loop log also writes `goal-finished` token rollups. `usage.goalTokens` is the detailed goal-record total and `usage.loopTokens` is the overlapping loop rollup, so consumers must not add them. `usage.uniqueTotalTokens` deduplicates by goal id, taking the larger recorded value when both sources exist and retaining orphan loop rollups when a detailed goal log is missing. `usage.coverage` remains `partial` while verifier and pinned-requirement derivation calls stay off-bus; their unmeasured token amount is `unknown`. The GUI therefore shows Goal recorded and Loop rollup separately.
 
 Goal runs emit `goal_round_start` / `goal_round_end` events with round number, max rounds, total turns/tokens, optional total limits, claim status, verdict, and resulting state. These events are read-only telemetry for GUI progress bars and status panes; they cannot update verifier reports or mark a goal complete.
 

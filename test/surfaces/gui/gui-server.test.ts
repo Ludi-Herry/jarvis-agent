@@ -14,6 +14,7 @@ import {
   composeVerifierReport,
   decideVerdict,
   serializeGoalRecord,
+  serializeLoopRecord,
   type DeterministicChecks,
   type PinnedRequirement,
 } from '../../../src/capabilities/goal/index.js';
@@ -97,6 +98,39 @@ describe('GUI server security guard', () => {
         report: { authority: { mode: 'observation-only' } },
         stop: { requested: false },
         timeline: expect.any(Array),
+      });
+    } finally {
+      await close(server);
+    }
+  });
+
+  it('exposes an interrupted effective goal state without changing observation authority', async () => {
+    await writeInterruptedLoopGoal('L-stop', 'L-stop-g0');
+    const server = createGuiServer({ cwd: dir, dataDir: join(dir, 'data') });
+    const base = await listen(server);
+    try {
+      const result = await httpJson(base.port, {
+        path: '/api/status',
+        method: 'GET',
+        headers: { host: `127.0.0.1:${base.port}` },
+      });
+
+      expect(result.status).toBe(200);
+      expect(result.body).toMatchObject({
+        report: {
+          authority: { mode: 'observation-only', canCompleteGoals: false, canCompleteLoops: false },
+          status: {
+            latestGoal: {
+              id: 'L-stop-g0',
+              state: 'active',
+              recordedState: 'active',
+              effectiveState: 'interrupted',
+              effectiveReason: 'emergency-stop',
+              effectiveSource: { kind: 'loop-halt', loopId: 'L-stop' },
+            },
+          },
+          usage: { uniqueTotalTokens: 0, coverage: 'partial' },
+        },
       });
     } finally {
       await close(server);
@@ -323,6 +357,45 @@ async function writeParkedHumanGoal(goalId: string): Promise<void> {
         at: '2026-07-03T17:01:00.000Z',
       }) +
       serializeGoalRecord({ t: 'goal-state', state: 'blocked', at: '2026-07-03T17:01:01.000Z' }),
+    'utf8',
+  );
+}
+
+async function writeInterruptedLoopGoal(loopId: string, goalId: string): Promise<void> {
+  await mkdir(join(dir, 'data', 'goals'), { recursive: true });
+  await mkdir(join(dir, 'data', 'loops'), { recursive: true });
+  await writeFile(
+    join(dir, 'data', 'goals', `${goalId}.jsonl`),
+    serializeGoalRecord({
+      t: 'goal-created',
+      id: goalId,
+      objective: 'Inspect the release evidence.',
+      objectiveHash: 'hash',
+      budget: { maxRounds: 2 },
+      sessionId: goalId,
+      createdAt: '2026-07-03T20:01:28.000Z',
+    }),
+    'utf8',
+  );
+  await writeFile(
+    join(dir, 'data', 'loops', `${loopId}.jsonl`),
+    serializeLoopRecord({
+      t: 'loop-created',
+      id: loopId,
+      contract: {
+        maxGoals: 1,
+        maxTotalTokens: 1000,
+        maxWallClockMs: 60_000,
+        maxConsecutiveBlocked: 1,
+        cnvWindow: 1,
+        cnvThreshold: 1,
+        perGoalBudget: { maxRounds: 2 },
+      },
+      objectives: ['Inspect the release evidence.'],
+      createdAt: '2026-07-03T20:01:28.000Z',
+    }) +
+      serializeLoopRecord({ t: 'goal-started', index: 0, goalId, at: '2026-07-03T20:01:28.100Z' }) +
+      serializeLoopRecord({ t: 'loop-halted', reason: 'emergency-stop', at: '2026-07-03T20:01:55.000Z' }),
     'utf8',
   );
 }
