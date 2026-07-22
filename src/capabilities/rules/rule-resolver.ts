@@ -1,6 +1,8 @@
 /**
- * RuleResolver — load and merge the three rule layers that feed the PermissionGate (B5,
- * plan §3.6): global `~/AGENTS.md` → project `AGENTS.md` → path-level `.rules/`, nearest wins.
+ * RuleResolver — parse and merge the trusted rule layers supplied by callers to the
+ * PermissionGate (B5, plan §3.6). The CLI auto-loads two project layers:
+ * project `AGENTS.md` → path-level `.rules/`, nearest wins. Global `~/AGENTS.md` remains
+ * explicit so private cross-tool configuration never enters enforcement silently.
  *
  * Two deliberate boundaries:
  *  - **Markdown is soft.** A rule file's prose body is GUIDANCE (context for the model), never
@@ -8,7 +10,8 @@
  *    those are applied AFTER the built-in hard checks, so a rule can never unlock a secret path or
  *    a dangerous command (that invariant lives in decide.ts; see the B5 tests).
  *  - **Nearest wins.** Merged rules are ordered most-specific-first, so the gate's first-match
- *    (applyRules) naturally lets a path-level rule override a project one over a global one.
+ *    (applyRules) naturally lets a path-level rule override a project one. Callers that explicitly
+ *    supply a global layer keep it at the least-specific end.
  *
  * The frontmatter format (reusing A5's zero-dep parser):
  *   ---

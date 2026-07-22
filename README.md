@@ -16,14 +16,14 @@
 | Phase D 自主（GoalLoop + 确定性三腿〔canonical 重跑 + 篡改检测 + held-out 隐藏断言〕+ 独立 LLM 裁判） | ✅ 完成（D1–D9 + held-out） |
 | Phase E 多能力（多 goal Loop 调度 + 外置 vision + 命令级 bash session-allow + shadow-git 旁路历史） | ✅ 完成（4 切片合入 main） |
 | Hooks（PreToolUse 阻断 + PostToolUse 咨询/反馈；tool result env；per-hook timeout；round/session lifecycle；多来源；loop per-goal hook-map） | ✅ 完成，剩余仅保留 defer |
-| **GUI 第一版（看得懂 + 急停 + human-review MVP）** | ⚠️ observe 时间线 + emergency stop 已可用；human-review 能力/API 已落地，但 2026-07-03 内置 Browser R5 验收失败 |
+| **GUI 第一版（看得懂 + 急停 + human-review MVP）** | ⚠️ observe 时间线、emergency stop 与 human-review 已落地并复验通过；当前剩余 R6 GUI UI/UX 打磨与 Luis 验收 |
 | OS sandbox Phase 3 v1 + builder sandboxed checks + browser smoke feedback + 只读观测层 | ✅ 完成（trusted requirements / route map / composite verifier / `sandboxed_check` / `browser_smoke(static-dist)` / round budget events / `npm run observe`）；未覆盖范围：通用 app/browser/network verifier |
 | propose_skill | ⛔ 已拍板 defer（投机性、判定偏弱、无证实复用场景） |
 | 新增 verifier / route / scheduler 抽象 | ⛔ 已拍板不做；现有四套 map 足够（`verifier` / `hook` / `sandbox-check` / `goal-setter-requirements`） |
 
-`npm run typecheck / lint / test / build` 全绿（**1041 passed / 1 skipped**，Windows 下 1 个 POSIX SIGINT smoke 跳过）。命令安全根（PermissionGate + 命令解析器 + bash 审批）经**六轮独立 codex 对抗核查**确认无破闸 HIGH；goal 验收子系统（确定性三腿 + 腿3 裁判 + bash/Linux 密钥加固）经**多轮多裁判对抗核查**（codex + 独立 Claude 子代理，含一轮 4 裁判收尾）。Phase E 各切片与 Hooks slice-1/2 均经 **codex 跨模型对抗审查逐层加固**（vision 四轮 / bash 白名单 Path A 经 7 HIGH 撤回、保留命令级 Path B / Hooks 信任边界修 HIGH / slice-2 每切片 2 轮 SHIP）。方法 / 严重度基线 / 历史见 `docs/security-review-baseline.md`。
+`npm run typecheck / lint / test / build` 最近一轮全绿（测试数与当轮证据以 `docs/handoff-next.md` 的「发布收口检查状态」为准；Windows 下 1 个 POSIX SIGINT smoke 跳过）。命令安全根（PermissionGate + 命令解析器 + bash 审批）经**六轮独立 codex 对抗核查**确认无破闸 HIGH；goal 验收子系统（确定性三腿 + 腿3 裁判 + bash/Linux 密钥加固）经**多轮多裁判对抗核查**（codex + 独立 Claude 子代理，含一轮 4 裁判收尾）。Phase E 各切片与 Hooks slice-1/2 均经 **codex 跨模型对抗审查逐层加固**（vision 四轮 / bash 白名单 Path A 经 7 HIGH 撤回、保留命令级 Path B / Hooks 信任边界修 HIGH / slice-2 每切片 2 轮 SHIP）。方法 / 严重度基线 / 历史见 `docs/security-review-baseline.md`。
 
-**发布收口状态（2026-07-03）**：R1 四关卡通过；R4 worktree 写隔离通过；R2/R3/R5/R6/R7/R8/R9 仍未满足发布条件。R5 的内置 Browser 验收卡在 `window.prompt` 不支持，点击 human-review「通过」后前端报错且未写 `data/human-reviews/*.jsonl`；R7 对抗审查发现 human-review provenance spoof 与 `loop:finalize` 信任 loop JSONL 两个 HIGH。发布前先修这些阻塞项。
+**发布收口状态（2026-07-03 第二轮）**：R1-R5、R7-R9 已闭环；R5 的页面内联备注表单已通过内置 Browser 复验，R7 的 human-review provenance 与 `loop:finalize` 交叉验证已修复并复审无 HIGH。当前只剩 R6 GUI UI/UX 打磨与 Luis 逐节验收。
 
 接手入口：
 - **Loop primitive 怎么选 → `docs/loop-primitives-guide.md`**；**最新全景 + Phase E/Hooks 现状 + 下一步（GUI 就绪盘点）→ `docs/handoff-next.md`**；**Loop 重项收口记录（parallel resume / finalize / cron daemon）→ `docs/handoff-loop-remaining.md`**；**Phase D（GoalLoop + 三腿 + 腿3 裁判）→ `docs/handoff-D.md`**；**Hooks（tool-call / lifecycle / loop per-goal hook-map）→ `docs/handoff-hooks.md`**；
@@ -82,7 +82,7 @@ npm run cron:daemon -- --cron-map <trusted-json> [--poll-ms <n>] # cron 前台 d
 npm run observe     # 只读观测：汇总 data/sessions|goals|loops|cron|approvals 的 status / usage / audit / latestGoalBudget；--json 输出 schemaVersion=1 给 GUI/脚本
 npm run gui         # 本地 GUI 第一版：http://127.0.0.1:4317 起，时间线 + 急停键 + human-review 裁决；若端口占用会自动向后找可用端口
 npm run typecheck   # tsc --noEmit
-npm test            # vitest（1041 passed / 1 skipped，Windows 下 1 个 POSIX SIGINT smoke 跳过）
+npm test            # vitest（测试数以 docs/handoff-next.md 最近一轮证据为准；Windows 下 1 个 POSIX SIGINT smoke 跳过）
 npm run build       # tsc 产出到 dist/
 npm run lint        # eslint
 npm run demo:a1     # A1：调 Doubao 一句话 → 流式增量 + 聚合 ModelResult
@@ -137,7 +137,7 @@ Goal runs emit `goal_round_start` / `goal_round_end` events with round number, m
 
 Attended `goal` and `loop` runs emit `approval_request` / `approval_result` events around the injected human approver and append the same safe details to `data/approvals/*.jsonl`. These records omit write content and remain audit-only; they do not approve `human` verifier requirements or change verdicts.
 
-Human-routed verifier requirements park as `cannotVerify` until a person reviews them in the GUI. The capability/API path writes a separate `data/human-reviews/<goalId>.jsonl` audit record, appends a new goal round with the merged verifier report, and calls `decideVerdict` to produce the final verdict. Current caveat: the first GUI surface asks for the review note via `window.prompt`, which fails in the built-in Browser; replace it with an inline form before counting R5 as passed.
+Human-routed verifier requirements park as `cannotVerify` until a person reviews them in the GUI. The capability/API path writes a separate `data/human-reviews/<goalId>.jsonl` audit record, appends a new goal round with the merged verifier report, and calls `decideVerdict` to produce the final verdict. The GUI uses an inline review-note form; the built-in Browser verification confirmed the audit write and final `complete / verified` result, so R5 is closed.
 
 ### GUI first slice
 
@@ -363,7 +363,7 @@ src/
 skills/          # git-commit/SKILL.md
 agents/          # researcher/ROLE.md（子 agent 角色花名册）
 scripts/         # a1/a2/a3/a5 + b1/b3 + c1/c2 + d1 demo（真连 Doubao / 真跑 bash）
-test/            # vitest 单测（1041 passed / 1 skipped，Windows 下 1 个 POSIX SIGINT smoke 跳过）
+test/            # vitest 单测（测试数以 docs/handoff-next.md 最近一轮证据为准；Windows 下 1 个 POSIX SIGINT smoke 跳过）
 docs/            # 各阶段 plan + handoff + security-review-baseline
 data/            # 运行期会话日志（gitignore）
 ```
