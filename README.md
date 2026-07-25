@@ -37,7 +37,7 @@
 - **是**：一个有状态宿主 + 纯函数决策点的 agent loop，事件流第一天就解耦前端，确定性交脚本、判断交模型；危险 / 敏感操作运行时确定性拦截，改动级走人在环审批。
 - **范围外**：不预埋抽象层 / 插件系统 / 通用框架；反过度工程，目录按需才建。
 
-首发模型 = **Doubao-Seed-2.1-pro**（火山方舟 ARK，OpenAI 兼容端点）；ModelProvider 抽象留好切换，将来 Kimi / DeepSeek 一行配置 drop-in。
+默认模型 = **Doubao-Seed-2.1-pro**（`doubao-seed-2-1-pro-260628`，走火山方舟 ARK 的 OpenAI 兼容端点）。Ark 上的 DeepSeek 家族 id（如 `deepseek-v4-pro-260425`，1M 上下文）仍可用——设 `ARK_MODEL` 即切、或当跨家族 `ARK_VERIFIER_MODEL` 裁判用，能力窗口由 `capabilityForModel` 按 model id 自动分派。将来正式切 DeepSeek 时走 DeepSeek 官方 API（届时加独立 provider 配置）；ModelProvider 抽象留好切换，Kimi 一行配置 drop-in。
 
 ## 快速开始
 
@@ -85,15 +85,15 @@ npm run typecheck   # tsc --noEmit
 npm test            # vitest（测试数以 docs/handoff-next.md 最近一轮证据为准；Windows 下 1 个 POSIX SIGINT smoke 跳过）
 npm run build       # tsc 产出到 dist/
 npm run lint        # eslint
-npm run demo:a1     # A1：调 Doubao 一句话 → 流式增量 + 聚合 ModelResult
+npm run demo:a1     # A1：调 ARK 模型一句话 → 流式增量 + 聚合 ModelResult
 npm run demo:a2     # A2：模型读文件回答 → 工具闭环
 npm run demo:a3     # A3：上下文满自动压缩
 npm run demo:a5     # A5：commit 请求触发 git-commit skill
 npm run demo:b1     # B1：权限闸门（读 allow / 改源码 ask / 读 .env deny）
 npm run demo:b3     # B3：bash 安全闭环 + 危险 / 密钥拦截
-npm run demo:c1     # C1：主 agent 派调研专家（能力分发轴，真连 Doubao）
+npm run demo:c1     # C1：主 agent 派调研专家（能力分发轴，真连 ARK）
 npm run demo:c2     # C2：视角评审面板（六顶帽并行评审同一产物）
-npm run demo:d1     # D1：自主跑一个 goal 到达标自停（确定性两条腿验收，真连 Doubao）
+npm run demo:d1     # D1：自主跑一个 goal 到达标自停（确定性两条腿验收，真连 ARK）
 npm run demo:d2     # D2：腿3 独立裁判（双模型，第二模型读文件逐条打分 → verdict；需 ARK_VERIFIER_MODEL）
 npm run demo:d3     # D3：held-out 隐藏断言腿（真活被秘密校验 verified / 伪造实现被同一秘密校验 rejected）
 npm run sandbox:smoke # OS sandbox 无下载 WSL2 能力探针（不接入生产运行时）
@@ -366,7 +366,7 @@ src/
   surfaces/cli/  # 终端 REPL + goal-cli + loop-cli：render（纯）+ repl + 审批（interactive-approver 三件套）+ commander 入口
 skills/          # git-commit/SKILL.md
 agents/          # researcher/ROLE.md（子 agent 角色花名册）
-scripts/         # a1/a2/a3/a5 + b1/b3 + c1/c2 + d1 demo（真连 Doubao / 真跑 bash）
+scripts/         # a1/a2/a3/a5 + b1/b3 + c1/c2 + d1 demo（真连 ARK / 真跑 bash）
 test/            # vitest 单测（测试数以 docs/handoff-next.md 最近一轮证据为准；Windows 下 1 个 POSIX SIGINT smoke 跳过）
 docs/            # 各阶段 plan + handoff + security-review-baseline
 data/            # 运行期会话日志（gitignore）

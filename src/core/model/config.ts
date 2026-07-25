@@ -1,5 +1,5 @@
 /**
- * Read Doubao config from the environment.
+ * Read the Ark (火山方舟) provider config from the environment.
  *
  * The only side effect is reading `env` (defaults to `process.env`); pass a fake
  * env to test it. The API key is required and has no default — it is never logged
@@ -9,6 +9,10 @@
 import type { DoubaoConfig } from './types.js';
 import { DEFAULT_ARK_BASE_URL } from './doubao-provider.js';
 
+/** Ark model id used when ARK_MODEL is unset. Doubao stays the Ark default (user decision
+ *  2026-07-25: a future DeepSeek switch will go through DeepSeek's own API, not Ark); DS-family
+ *  ids on Ark remain valid for e.g. a cross-family ARK_VERIFIER_MODEL — capabilityForModel
+ *  in doubao-provider.ts sizes the window per model id either way. */
 export const DEFAULT_ARK_MODEL = 'doubao-seed-2-1-pro-260628';
 
 export function loadDoubaoConfig(env: NodeJS.ProcessEnv = process.env): DoubaoConfig {

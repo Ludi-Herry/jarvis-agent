@@ -32,6 +32,7 @@ import {
   latestSessionPath,
 } from '../../runtime/index.js';
 import { startRepl } from './repl.js';
+import { buildSystemPrompt } from './system-prompt.js';
 
 // Capture BEFORE the runtime .env load: a key here came from the shell LAUNCH env (in /proc/environ on
 // Linux); one appearing only after came from .env (runtime, /proc-clean). Used by assertKeyNotInLaunchEnv.
@@ -42,18 +43,10 @@ const JARVIS_HOOKS_LAUNCH = process.env.JARVIS_HOOKS;
 // tsx does not auto-load .env; mirror the demos so `npm run dev` works from a .env too.
 if (existsSync('.env')) process.loadEnvFile('.env');
 
-/** Tokens held back from the window for the model's reply when deciding to compact. The
- *  256K-context model's absolute max output is huge; reserving a realistic reply size lets
- *  a session actually USE the window before compaction kicks in. */
+/** Tokens held back from the window for the model's reply when deciding to compact. These models'
+ *  absolute max output is huge (384K on the DeepSeek-V4 default, 128K on Doubao); reserving a
+ *  realistic reply size lets a session actually USE the window before compaction kicks in. */
 const OUTPUT_RESERVE_TOKENS = 16_384;
-
-const SYSTEM_PROMPT = [
-  '你是一个在终端里运行的编码助手。你可以调用这些工具:',
-  'read(读文件)、write(写文件)、grep(按正则搜内容)、bash(运行 shell 命令)。',
-  '路径都相对当前工作目录。回答需要文件内容时先调用工具读取,再据此作答;',
-  '需要构建/测试/查看 git 等用 bash。危险或涉及密钥的操作会被权限闸门拦下或需用户批准——',
-  '被拒绝时如实说明,不要绕过。不要编造文件内容。回答简洁。',
-].join('\n');
 
 const program = new Command();
 
@@ -154,7 +147,9 @@ program
       roster,
       cwd: opts.cwd,
       modelName: config.model,
-      systemPrompt: SYSTEM_PROMPT,
+      // A builder, not a string: `task` is registered inside the REPL (roster-dependent), so only
+      // the REPL knows the complete tool list the prompt must advertise.
+      systemPrompt: buildSystemPrompt,
       maxTurns: opts.maxTurns,
       policy,
       hooks,

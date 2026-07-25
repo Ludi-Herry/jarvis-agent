@@ -1,5 +1,7 @@
 /**
- * DoubaoProvider — the Doubao (火山方舟 / ARK) wire, OpenAI-compatible.
+ * DoubaoProvider — the 火山方舟 / ARK wire, OpenAI-compatible. Named for the model family it was
+ * written against; it is the generic implementation for every model Ark serves through that
+ * endpoint (the default model id lives in config.ts, today a DeepSeek one).
  *
  * Shaped after kimi-code's `kosong` ChatProvider (knowledge base Part8 §3):
  *  - immutable: `withThinking` / `withMaxCompletionTokens` return shallow clones
@@ -36,6 +38,31 @@ export const DOUBAO_SEED_PRO_CAPABILITY: ModelCapability = {
   videoIn: false,
 };
 
+/** DeepSeek-V4 (pro and flash) capability. Evidence: Ark `GET /api/v3/models` on 2026-07-25 reports
+ *  `context_window: 1048576`, `max_output_token_length: 393216` for both `deepseek-v4-pro-260425`
+ *  and `deepseek-v4-flash-260425`. */
+export const DEEPSEEK_V4_CAPABILITY: ModelCapability = {
+  maxContextTokens: 1_048_576,
+  maxOutputTokens: 393_216,
+  thinking: true,
+  toolUse: true,
+  imageIn: false,
+  videoIn: false,
+};
+
+/**
+ * Which capability a model id gets. One Ark endpoint serves several families whose windows differ
+ * 4x, and the ContextManager compacts against this number — a wrong one either wastes most of the
+ * window or overruns it mid-session. Matching is by family prefix because Ark ids carry a date
+ * suffix (`deepseek-v4-pro-260425`); anything unrecognized falls back to the SMALLER Doubao numbers,
+ * which only compacts earlier than necessary rather than blowing the request.
+ *
+ * Pure decision point.
+ */
+export function capabilityForModel(model: string): ModelCapability {
+  return model.startsWith('deepseek-v4-') ? DEEPSEEK_V4_CAPABILITY : DOUBAO_SEED_PRO_CAPABILITY;
+}
+
 /** Per-clone kwargs — the only things `with*` builders change. */
 interface DoubaoKwargs {
   thinking?: ThinkingEffort;
@@ -43,7 +70,7 @@ interface DoubaoKwargs {
 }
 
 export class DoubaoProvider implements ModelProvider {
-  readonly capability: ModelCapability = DOUBAO_SEED_PRO_CAPABILITY;
+  readonly capability: ModelCapability;
 
   private readonly client: OpenAI;
   private readonly model: string;
@@ -53,6 +80,7 @@ export class DoubaoProvider implements ModelProvider {
 
   constructor(config: DoubaoConfig, client?: OpenAI, kwargs: DoubaoKwargs = {}) {
     this.model = config.model;
+    this.capability = capabilityForModel(config.model); // must precede maxOutputCap, which reads it
     this.reasoningKey = config.reasoningKey;
     this.maxOutputCap = config.maxOutputCap ?? this.capability.maxOutputTokens;
     // Reuse the injected client on clones so the HTTP transport is shared.

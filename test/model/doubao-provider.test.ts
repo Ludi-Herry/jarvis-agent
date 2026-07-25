@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { DoubaoProvider } from '../../src/core/model/doubao-provider.js';
+import {
+  DEEPSEEK_V4_CAPABILITY,
+  DOUBAO_SEED_PRO_CAPABILITY,
+  DoubaoProvider,
+  capabilityForModel,
+} from '../../src/core/model/doubao-provider.js';
 import { createProvider } from '../../src/core/model/create-provider.js';
 import type { DoubaoConfig } from '../../src/core/model/types.js';
 
@@ -50,6 +55,33 @@ describe('DoubaoProvider clone semantics', () => {
     expect(base.capability.toolUse).toBe(true);
     expect(base.capability.thinking).toBe(true);
     expect(base.capability.maxContextTokens).toBeGreaterThan(0);
+  });
+});
+
+describe('capabilityForModel', () => {
+  it('gives the DeepSeek-V4 family its 1M window (pro and flash, whatever the date suffix)', () => {
+    for (const id of ['deepseek-v4-pro-260425', 'deepseek-v4-flash-260425', 'deepseek-v4-pro-999999']) {
+      expect(capabilityForModel(id)).toEqual(DEEPSEEK_V4_CAPABILITY);
+    }
+    expect(DEEPSEEK_V4_CAPABILITY.maxContextTokens).toBe(1_048_576);
+  });
+
+  it('keeps Doubao on its own 256K window, so ARK_MODEL still switches back cleanly', () => {
+    expect(capabilityForModel('doubao-seed-2-1-pro-260628')).toEqual(DOUBAO_SEED_PRO_CAPABILITY);
+    expect(new DoubaoProvider(config).capability.maxContextTokens).toBe(262_144);
+  });
+
+  it('falls back to the SMALLER window for an unknown id (under-promise, never overrun)', () => {
+    const unknown = capabilityForModel('some-future-model-270101');
+    expect(unknown).toEqual(DOUBAO_SEED_PRO_CAPABILITY);
+    expect(unknown.maxContextTokens).toBeLessThan(DEEPSEEK_V4_CAPABILITY.maxContextTokens);
+  });
+
+  it('the provider reports the window of the model it was configured with', () => {
+    const ds = new DoubaoProvider({ ...config, model: 'deepseek-v4-pro-260425' });
+    expect(ds.capability.maxContextTokens).toBe(1_048_576);
+    // and a clone (withThinking/withMaxCompletionTokens) keeps it
+    expect((ds.withThinking('off') as DoubaoProvider).capability.maxContextTokens).toBe(1_048_576);
   });
 });
 

@@ -47,7 +47,10 @@ export interface ReplDeps {
   cwd: string;
   /** Shown in the banner. */
   modelName: string;
-  systemPrompt: string;
+  /** Either a fixed prompt, or a builder called with the names of the tools actually registered
+   *  (see {@link resolveSystemPrompt}) — `task` is registered below, so only the REPL can know the
+   *  complete list. The composition root passes `buildSystemPrompt` (system-prompt.ts). */
+  systemPrompt: string | ((toolNames: string[]) => string);
   maxTurns: number;
   /** Override the approver (tests). Default builds the interactive readline approver below. */
   approver?: Approver;
@@ -74,12 +77,6 @@ export async function startRepl(deps: ReplDeps): Promise<void> {
   const out = deps.output ?? process.stdout;
   const rl = createInterface({ input: deps.input ?? process.stdin, output: out });
 
-  // Resume from a prior session if given (it already carries its own system message); otherwise
-  // start fresh with the system prompt.
-  const messages: Message[] =
-    deps.initialMessages && deps.initialMessages.length > 0
-      ? [...deps.initialMessages]
-      : [{ role: 'system', content: deps.systemPrompt }];
   let activeRun: AbortController | null = null;
   let inApproval = false;
 
@@ -161,6 +158,14 @@ export async function startRepl(deps: ReplDeps): Promise<void> {
     deps.tools.register(createDelegateTool(manager));
   }
 
+  // Built HERE, after every conditional registration (bash/vision from the composition root, `task`
+  // just above), so a derived prompt lists exactly the tools the model will be offered. Resume from a
+  // prior session if given — it already carries its own system message; otherwise start fresh.
+  const messages: Message[] =
+    deps.initialMessages && deps.initialMessages.length > 0
+      ? [...deps.initialMessages]
+      : [{ role: 'system', content: resolveSystemPrompt(deps) }];
+
   await runAdvisoryHook(deps.hooks?.sessionStart);
   try {
     out.write(`Jarvis-Agent · ${deps.modelName}\n输入消息,Ctrl-C 退出(/exit 也可)\n\n`);
@@ -218,6 +223,13 @@ export async function startRepl(deps: ReplDeps): Promise<void> {
     await runAdvisoryHook(deps.hooks?.sessionEnd);
     rl.close();
   }
+}
+
+/** A fixed prompt passes through; a builder gets the tool names the model will actually see. */
+function resolveSystemPrompt(deps: ReplDeps): string {
+  return typeof deps.systemPrompt === 'string'
+    ? deps.systemPrompt
+    : deps.systemPrompt(deps.tools.schemasForModel().map((s) => s.name));
 }
 
 async function runAdvisoryHook(fn: (() => Promise<void>) | undefined): Promise<void> {
