@@ -19,6 +19,20 @@ The useful claim in the article:
 
 For Jarvis, this maps to product readiness questions, not immediate feature scope.
 
+## Source Signal: OpenUI (2026-07-30)
+
+[OpenUI](https://www.openui.com/docs/openui-lang) fills the Generative UI component-protocol and rendering layers. A registered component library produces model instructions; the model streams compact OpenUI Lang; the Renderer validates each node and maps it to real components. Reactive state, queries, and mutations can then run through a function map or MCP provider without regenerating the full interface on every interaction.
+
+This layer can connect directly to Jarvis. Pi is optional: OpenUI's official [Pi harness example](https://www.openui.com/docs/openui-lang/examples/harnesses/pi-agent-harness) proves the Agent-runtime-to-Renderer bridge, while the same transport boundary can adapt Jarvis `message_delta` / final text into an OpenUI Lang stream. Official examples also pair OpenUI with [shadcn/ui](https://www.openui.com/docs/openui-lang/examples/shadcn-chat), Vercel AI SDK, LangGraph, and React Native. AI Elements can supply React components behind `defineComponent` and Zod contracts; this is an architectural fit, with no official adapter confirmed in the reviewed docs.
+
+The Jarvis boundary:
+
+- Keep the attention-first control center deterministic. Emergency stop, approvals, human review, verdict, completion state, and merge controls retain fixed placement and fixed semantics.
+- Use OpenUI only for dynamic result artifacts: reports, diff / verification summaries, tables, charts, forms, and dashboards where the required composition genuinely varies by task.
+- Keep EventBus, JSONL, PermissionGate, trusted requirements, and `decideVerdict` canonical. OpenUI Lang is presentation output and carries no completion authority.
+- Route every `toolProvider` / MCP action through a Jarvis server endpoint that still enforces permission and audit policy. Browser-side tools never gain a direct mutation path.
+- Finish R6 first. A future OpenUI spike starts read-only and dependency-isolated; current Jarvis gains no user value from changing its fixed vanilla-JS control surface during release closeout.
+
 ## What Jarvis Already Does Better
 
 - **Verification discipline**: completion comes from `runGoal` / `decideVerdict`, with independent verifier paths and `cannotVerify -> park`.
@@ -56,6 +70,11 @@ Only revisit these after the GUI shell is useful for Luis' day-to-day work.
    - For current local Jarvis, this can map to stopping the active run / daemon and preserving logs.
    - Stronger cross-process or system-wide stop behavior belongs to a separate safety design.
 
+6. **Read-Only Generative Artifact Panel** (from OpenUI, 2026-07-30)
+   - After R6, a bounded spike may transform an audited `ObservationReport` or completed result through a separate presentation adapter: `Jarvis result -> OpenUI Lang -> Renderer -> registered component library`.
+   - The first spike has no `toolProvider`, MCP, mutation, or write action. It must render malformed output safely, preserve a fixed-text fallback, and leave Jarvis authority fields untouched.
+   - Use shadcn/ui, AI Elements, or the product design system behind the component contracts. Adopt the layer only if varying task results repeatedly need richer composition than fixed cards.
+
 ## Explicit Non-Goals
 
 - Do not build a Glean-style enterprise context graph.
@@ -64,6 +83,9 @@ Only revisit these after the GUI shell is useful for Luis' day-to-day work.
 - Do not make cron daemon auto-resume, auto-merge, or auto-cleanup.
 - Do not let the GUI status layer grant completion or bypass `decideVerdict`.
 - Do not introduce broad agent identity / permission abstractions before the GUI has a real workflow that needs them.
+- Do not generate emergency-stop, approval, verdict, completion, or merge controls with OpenUI.
+- Do not let OpenUI `toolProvider`, MCP, or browser-side actions bypass Jarvis permission, audit, verification, or completion authority.
+- Do not replace canonical Jarvis events or persisted state with OpenUI Lang.
 
 ## Trigger To Reopen
 
@@ -74,5 +96,6 @@ Reopen this note only when one of these becomes true:
 - Local knowledge-base / repo-doc context is repeatedly being gathered by hand.
 - A long-running cron / loop workflow needs a user-facing kill switch and audit view.
 - The project starts defining multiple durable agent roles with different memory and tool access.
+- Completed runs repeatedly need task-specific reports, tables, charts, forms, or dashboards that fixed cards cannot express cleanly.
 
 Until then, keep this as a product radar item.

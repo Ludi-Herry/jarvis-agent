@@ -20,6 +20,15 @@ Tomasz Tunguz 的 `Most AI Work Can Wait` 提出三层拆分：
 
 文章里最有用的提醒是：classifier 是语言问题，router 是调度问题。两者混在 prompt 里，会让系统失去复盘、A/B 和成本控制能力。
 
+## Post-v1 Source Signal: Pi Agent provider adapter
+
+[Pi Agent](https://github.com/earendil-works/pi) 的分包方式提供了一个可借鉴边界：provider adapter 统一不同模型协议、流式事件和工具调用形状；任务路由继续由 harness 的产品规则决定。对 Jarvis 来说：
+
+- provider 层只负责连接、能力声明、错误归一化和流式输出，不决定某项任务交给哪个模型；
+- Jarvis 路由规则根据任务形状、所需能力、成本 / 延迟、风险和验收要求选模型，并保留可解释的 route evidence；
+- 当前只有 Ark 的 OpenAI-compatible provider 接线，没有第二种异构协议需求，抽取或引入 `pi-ai` 只会增加依赖与类型转换；
+- 等第二个官方 provider 或异构协议真实出现后，先做 adapter 层有界 spike，再用既有 JSONL 对成功率、park 率、成本与延迟做对照，验证通过才考虑长期采用。
+
 ## Jarvis Current Baseline
 
 Jarvis 已经具备几类显式路由，但它们主要服务安全、验收和工作形态。

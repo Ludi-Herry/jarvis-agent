@@ -113,6 +113,8 @@ Phase 3 v1 已解决早前「#2 客观路由」和「#6 裁判只读命令取证
 
 - **Hooks：已落地**——PreToolUse 阻断 + PostToolUse 咨询/反馈回灌 + result env + per-hook timeout + round/session lifecycle + 多来源配置合并，见 `docs/handoff-hooks.md`。剩余 defer：PostToolUse 输出不能阻断/改判；无人值守 bash 自治等 OS 沙箱。
 - **post-v1 standing goals**：GUI R6 收口后再考虑的持续健康能力，当前不是发布 blocker，也不新增 R10。完成物若值得长期成立，未来可登记为只读、可解释、低 flaky 的 predicate，映射到现有 `cron:daemon` + cwd 外 trusted `goal-setter-requirements` + `sandbox-command` + `observe`；repo 内 `goals/<name>.md` 只能做候选说明，不当完成授权来源；违约时只报警/park/列嫌疑清单，不自动修复；不新增 verifier / route / scheduler 抽象。
+- **post-v1 Pi Agent 分层借鉴触发条件（2026-07-30）**：只记录三个有真实需求才重开的方向，当前不引入 `pi-ai`、`pi-agent-core` 或 Pi Coding Agent 依赖。①出现第二个官方 provider 或第二种异构协议时，评估 `pi-ai` 的 provider adapter 分层；“根据任务自动挑选模型”继续由 Jarvis 自己的路由规则负责，按任务形状、能力、成本 / 延迟、风险和验收要求选模型，provider 层只处理协议与输出归一化。②Web、桌面或移动端需要共享同一会话时，借鉴 Pi SDK / RPC 的会话合同；Jarvis EventBus、JSONL、PermissionGate 与完成授权仍是单一真相源。③用户频繁需要中途插话或排队追问时，借鉴 steering / follow-up 队列语义；每条输入继续受预算、取消、审计和权限边界约束。当前只有 Ark 的 OpenAI-compatible 接线，没有第二种异构协议需求；R6 收口前维持零依赖，之后也只在对应触发条件出现时做有界 spike。
+- **post-v1 OpenUI / GenUI 展示层（2026-07-30）**：OpenUI 作为组件协议、流式 Renderer 与动态 Artifact 层候选，可直接连接 Jarvis，无需先引入 Pi。固定控制面继续承载急停、审批、human review、verdict、完成状态与 merge；动态生成只用于报告、表格、图表、表单和 Dashboard。首个 spike 必须在 R6 后以只读 `ObservationReport` / 已审计结果为输入，不接 `toolProvider`、MCP、mutation 或写操作，并保留固定文本回退；完整采用边界见 `docs/ai-coworker-readiness.md` 的 OpenUI 小节。
 - **skill 自动沉淀**：`propose_skill` 继续不做（见「方向决策」）。保留人工沉淀准则：高频、稳定、可验证、能减少人工验收成本的流程才新增 `SKILL.md`。
 
 ## skill 沉淀边界（保守准则）
