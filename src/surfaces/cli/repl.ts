@@ -32,7 +32,7 @@ import {
 } from '../../capabilities/subagents/index.js';
 import type { HookRunner } from '../../capabilities/hooks/index.js';
 import { initialRenderState, renderEvent } from './render.js';
-import { renderApprovalRequest, parseApprovalChoice } from './approval.js';
+import { renderApprovalRequest, parseApprovalChoice, safeInline } from './approval.js';
 
 export interface ReplDeps {
   model: ModelProvider;
@@ -170,7 +170,7 @@ export async function startRepl(deps: ReplDeps): Promise<void> {
 
   await runAdvisoryHook(deps.hooks?.sessionStart);
   try {
-    out.write(`Jarvis-Agent · ${deps.modelName}\n输入消息,Ctrl-C 退出(/exit 也可)\n\n`);
+    out.write(`Jarvis-Agent · ${safeInline(deps.modelName)}\n输入消息,Ctrl-C 退出(/exit 也可)\n\n`);
 
     for (;;) {
       out.write('› ');
@@ -212,7 +212,7 @@ export async function startRepl(deps: ReplDeps): Promise<void> {
         out.write(
           activeRun.signal.aborted
             ? '\n  · (已中断)\n'
-            : `\n  · 出错: ${err instanceof Error ? err.message : String(err)}\n`,
+            : `\n  · 出错: ${safeInline(err instanceof Error ? err.message : String(err))}\n`,
         );
       } finally {
         unsubscribe();

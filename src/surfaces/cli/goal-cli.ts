@@ -31,6 +31,7 @@ import {
   DefaultPermissionGate,
   FileSessionStore,
   InMemoryEventBus,
+  NO_DYNAMIC_ADDENDUM,
   createSessionComposition,
   createEmergencyStopSignal,
   createWsl2UnshareSandboxRunner,
@@ -221,6 +222,7 @@ async function main(): Promise<void> {
       permissionMode: 'interactive',
       toolSchemas: [...tools.schemasForModel(), updateGoalToolSchema()],
       systemPrompt: BUILDER_PROMPT,
+      dynamicAddendum: NO_DYNAMIC_ADDENDUM,
     }),
   });
 

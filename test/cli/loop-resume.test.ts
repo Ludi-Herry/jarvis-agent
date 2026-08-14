@@ -2,9 +2,14 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { loadLoopGoalResume } from '../../src/surfaces/cli/loop-resume.js';
+import { formatLoopCliError, loadLoopGoalResume } from '../../src/surfaces/cli/loop-resume.js';
 import { FileGoalStore, hashObjective } from '../../src/capabilities/index.js';
-import { FileSessionStore, createModelRequestReceipt, createSessionComposition } from '../../src/runtime/index.js';
+import {
+  FileSessionStore,
+  NO_DYNAMIC_ADDENDUM,
+  createModelRequestReceipt,
+  createSessionComposition,
+} from '../../src/runtime/index.js';
 import type { Message } from '../../src/core/index.js';
 
 let dir: string;
@@ -14,6 +19,7 @@ const composition = createSessionComposition({
   permissionMode: 'interactive',
   toolSchemas: [],
   systemPrompt: 'test prompt',
+  dynamicAddendum: NO_DYNAMIC_ADDENDUM,
 });
 
 beforeEach(async () => {
@@ -54,7 +60,7 @@ describe('loadLoopGoalResume', () => {
     await sessionStore.writeHeader({ id: 'g1', model: 'm', cwd: dir, startedAt: 't0', composition });
     await sessionStore.sync(messages);
 
-    const loaded = await loadLoopGoalResume(goalPath, sessionPath, 'g1');
+    const loaded = await loadLoopGoalResume(goalPath, sessionPath, 'g1', dir, composition, 'm');
 
     expect(loaded.resume.goal.id).toBe('g1');
     expect(loaded.resume.rounds).toHaveLength(1);
@@ -62,6 +68,21 @@ describe('loadLoopGoalResume', () => {
     expect(loaded.initialCursor).toBe(messages.length);
     expect(loaded.sessionFormat).toBe('v2');
     expect(loaded.initialSequence).toBeGreaterThan(0);
+  });
+
+  it('requires a current composition proof for every v2 loop resume', async () => {
+    const goalPath = join(dir, 'g-proof.jsonl');
+    const sessionPath = join(dir, 's-proof.jsonl');
+    const goalStore = new FileGoalStore(goalPath);
+    await goalStore.writeCreated({
+      id: 'g1', objective: 'do the thing', objectiveHash: hashObjective('do the thing'), budget: { maxRounds: 3 },
+      pinned: [], sessionId: 'g1', createdAt: 't0',
+    });
+    const sessionStore = new FileSessionStore(sessionPath);
+    await sessionStore.writeHeader({ id: 'g1', model: 'm', cwd: dir, startedAt: 't0', composition });
+
+    await expect(loadLoopGoalResume(goalPath, sessionPath, 'g1'))
+      .rejects.toThrow(/current session composition proof is required/);
   });
 
   it('fails closed on duplicate goal-created headers instead of letting the later one overwrite replay state', async () => {
@@ -232,6 +253,7 @@ describe('loadLoopGoalResume', () => {
       permissionMode: 'interactive',
       toolSchemas: [],
       systemPrompt: 'test prompt',
+      dynamicAddendum: NO_DYNAMIC_ADDENDUM,
     });
 
     await expect(loadLoopGoalResume(goalPath, sessionPath, 'g1', dir, changed, 'm')).rejects.toThrow(/composition changed/);
@@ -252,10 +274,48 @@ describe('loadLoopGoalResume', () => {
     });
     const partial = createSessionComposition({
       root: 'loop', runtimeVersion: 'test', permissionMode: 'interactive', systemPrompt: 'test prompt',
+      dynamicAddendum: NO_DYNAMIC_ADDENDUM,
     });
     const sessionStore = new FileSessionStore(sessionPath);
     await sessionStore.writeHeader({ id: 'g1', model: 'm', cwd: dir, startedAt: 't0', composition: partial });
 
     await expect(loadLoopGoalResume(goalPath, sessionPath, 'g1', dir, composition, 'm')).rejects.toThrow(/coverage is partial/);
+  });
+
+  it('fails closed when an older v2 loop session lacks dynamic addendum provenance', async () => {
+    const goalPath = join(dir, 'g-dynamic-provenance.jsonl');
+    const sessionPath = join(dir, 's-dynamic-provenance.jsonl');
+    const goalStore = new FileGoalStore(goalPath);
+    await goalStore.writeCreated({
+      id: 'g1',
+      objective: 'do the thing',
+      objectiveHash: hashObjective('do the thing'),
+      budget: { maxRounds: 3 },
+      pinned: [],
+      sessionId: 'g1',
+      createdAt: 't0',
+    });
+    const oldComposition = createSessionComposition({
+      root: 'loop', runtimeVersion: 'test', permissionMode: 'interactive', toolSchemas: [], systemPrompt: 'test prompt',
+    });
+    const sessionStore = new FileSessionStore(sessionPath);
+    await sessionStore.writeHeader({ id: 'g1', model: 'm', cwd: dir, startedAt: 't0', composition: oldComposition });
+
+    await expect(loadLoopGoalResume(goalPath, sessionPath, 'g1', dir, composition, 'm'))
+      .rejects.toThrow(/dynamic addendum provenance is incomplete/);
+  });
+});
+
+describe('formatLoopCliError', () => {
+  it.each(['[loop resume]', '[loop] fatal:'])('single-lines hostile %s output', (prefix) => {
+    const escape = String.fromCharCode(27);
+    const attack = new Error(`blocked${escape}[2J${escape}[31m\r\nFORGED-LOOP-LINE`);
+
+    const text = formatLoopCliError(prefix, attack);
+
+    expect(text).not.toContain(escape);
+    expect(text).not.toContain('\r');
+    expect(text).not.toContain('\nFORGED-LOOP-LINE');
+    expect(text).toContain(`${prefix} blocked [2J [31m FORGED-LOOP-LINE`);
   });
 });

@@ -4,10 +4,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   FileSessionStore,
+  SessionCompositionMismatchError,
+  classifySessionFileError,
   createSessionComposition,
   createModelRequestReceipt,
   diffSessionComposition,
   loadSession,
+  loadResolvedSession,
   latestSessionPath,
   parseSessionLog,
   replayMessages,
@@ -20,12 +23,51 @@ import type { Message } from '../../src/core/types.js';
 const sys: Message = { role: 'system', content: 'sys' };
 const user = (c: string): Message => ({ role: 'user', content: c });
 const asst = (c: string): Message => ({ role: 'assistant', content: c });
+const noDynamicAddendum = { source: 'none-v1', manifest: null } as const;
+const resolveNoDynamicAddendum = (): undefined => undefined;
 const composition = createSessionComposition({
   root: 'repl',
   runtimeVersion: 'test',
   permissionMode: 'interactive',
   toolSchemas: [],
   systemPrompt: 'sys',
+  dynamicAddendum: noDynamicAddendum,
+});
+
+describe('session file error classification', () => {
+  it('maps only explicit ENOENT to not-found', () => {
+    expect(classifySessionFileError(Object.assign(new Error('missing'), { code: 'ENOENT' }))).toBe('not-found');
+  });
+
+  it.each(['EACCES', 'EPERM', 'EIO', 'UNKNOWN'])('maps %s to unreadable', (code) => {
+    expect(classifySessionFileError(Object.assign(new Error(`read failed: ${code}`), { code }))).toBe('unreadable');
+  });
+});
+
+describe('loadResolvedSession', () => {
+  const resolution = {
+    status: 'ok' as const,
+    sessionId: 's1',
+    file: 's1.jsonl',
+    path: 'H:\\fixture\\data\\sessions\\s1.jsonl',
+    mtimeMs: 0,
+  };
+
+  it('returns not-found when the resolved file disappears before the read', async () => {
+    const reader = async (): Promise<never> => { throw fsError('ENOENT'); };
+
+    await expect(loadResolvedSession(resolution, { requireHeader: true }, reader)).resolves.toMatchObject({
+      status: 'not-found',
+      sessionId: 's1',
+      path: resolution.path,
+    });
+  });
+
+  it.each(['EACCES', 'EPERM', 'EIO'])('does not swallow %s from the second read', async (code) => {
+    const reader = async (): Promise<never> => { throw fsError(code); };
+
+    await expect(loadResolvedSession(resolution, { requireHeader: true }, reader)).rejects.toMatchObject({ code });
+  });
 });
 
 describe('parseSessionLog + replayMessages (pure)', () => {
@@ -138,6 +180,17 @@ describe('FileSessionStore', () => {
     await writeFile(path, serializeRecord({ t: 'message', message: user('orphan') }), 'utf8');
 
     await expect(loadSession(path, { requireHeader: true })).rejects.toThrow('session state is corrupt: missing header');
+  });
+
+  it('fails closed when the requested file id differs from the durable session header id', async () => {
+    await writeFile(
+      path,
+      serializeRecord({ t: 'session', id: 'different-id', model: 'm', cwd: dir, startedAt: 'now' }),
+      'utf8',
+    );
+
+    await expect(loadSession(path, { requireHeader: true, expectedSessionId: 's1' }))
+      .rejects.toThrow(/header id .* does not match requested session id/);
   });
 
   it('writes a contiguous v2 envelope and preserves request/tool receipts outside message replay', async () => {
@@ -478,6 +531,7 @@ describe('FileSessionStore', () => {
       permissionMode: 'unattended',
       toolSchemas: [],
       systemPrompt: 'sys',
+      dynamicAddendum: noDynamicAddendum,
     });
     expect(diffSessionComposition(composition, changed).map((item) => item.field)).toEqual(
       expect.arrayContaining(['root', 'runtimeVersion', 'permissionMode']),
@@ -490,21 +544,158 @@ describe('FileSessionStore', () => {
       root: 'repl', runtimeVersion: 'test', permissionMode: 'interactive',
       toolSchemas: [{ name: 'read', description: 'read', parameters: { type: 'object' } }],
       systemPrompt: 'prompt A',
+      dynamicAddendum: noDynamicAddendum,
     });
     const changedTool = createSessionComposition({
       root: 'repl', runtimeVersion: 'test', permissionMode: 'interactive',
       toolSchemas: [{ name: 'vision', description: 'vision', parameters: { type: 'object' } }],
       systemPrompt: 'prompt A',
+      dynamicAddendum: noDynamicAddendum,
     });
     const changedPrompt = createSessionComposition({
       root: 'repl', runtimeVersion: 'test', permissionMode: 'interactive',
       toolSchemas: [{ name: 'read', description: 'read', parameters: { type: 'object' } }],
       systemPrompt: 'prompt B',
+      dynamicAddendum: noDynamicAddendum,
     });
 
     expect(baseline.coverage).toBe('full');
     expect(diffSessionComposition(baseline, changedTool).map((item) => item.field)).toContain('toolsetHash');
     expect(diffSessionComposition(baseline, changedPrompt).map((item) => item.field)).toContain('systemPromptHash');
+  });
+
+  it('detects dynamic addendum source and manifest drift without persisting the manifest body', () => {
+    const baseline = createSessionComposition({
+      root: 'repl', runtimeVersion: 'test', permissionMode: 'interactive', toolSchemas: [], systemPrompt: 'sys',
+      dynamicAddendum: { source: 'skill-registry-v1', manifest: [{ name: 'commit', body: 'A' }] },
+    });
+    const changedManifest = createSessionComposition({
+      root: 'repl', runtimeVersion: 'test', permissionMode: 'interactive', toolSchemas: [], systemPrompt: 'sys',
+      dynamicAddendum: { source: 'skill-registry-v1', manifest: [{ name: 'commit', body: 'B' }] },
+    });
+    const changedSource = createSessionComposition({
+      root: 'repl', runtimeVersion: 'test', permissionMode: 'interactive', toolSchemas: [], systemPrompt: 'sys',
+      dynamicAddendum: { source: 'skill-registry-v2', manifest: [{ name: 'commit', body: 'A' }] },
+    });
+
+    expect(baseline).not.toHaveProperty('dynamicAddendumManifest');
+    expect(diffSessionComposition(baseline, changedManifest).map((item) => item.field)).toContain('dynamicAddendumManifestHash');
+    expect(diffSessionComposition(baseline, changedSource).map((item) => item.field)).toContain('dynamicAddendumSource');
+  });
+
+  it('validates every request addendum against the first user activation in its run', async () => {
+    const dynamicAddendum = {
+      source: 'skill-registry-v1',
+      manifest: [{ name: 'commit', triggers: ['commit'], body: 'RULES' }],
+    } as const;
+    const expectedComposition = createSessionComposition({
+      root: 'repl', runtimeVersion: 'test', permissionMode: 'interactive', toolSchemas: [], systemPrompt: 'sys',
+      dynamicAddendum,
+    });
+    const resolve = (text: string): string => `catalog\n${text.includes('commit') ? 'RULES' : ''}`;
+    const messages1: Message[] = [sys, user('please commit this')];
+    const assistant1: Message = { role: 'assistant', requestId: 'req-1', content: 'working' };
+    const messages2: Message[] = [...messages1, assistant1, user('[PostToolUse feedback]')];
+    const store = new FileSessionStore(path);
+    await store.writeHeader({ id: 's1', model: 'm', cwd: dir, startedAt: 'now', composition: expectedComposition });
+    await store.sync(messages1);
+    await store.recordRequest(createModelRequestReceipt({
+      requestId: 'req-1', runId: 'run-1', turn: 0, messages: messages1, systemAddendum: resolve('please commit this'), tools: [],
+    }));
+    await store.sync([...messages1, assistant1]);
+    await store.sync(messages2);
+    await store.recordRequest(createModelRequestReceipt({
+      requestId: 'req-2', runId: 'run-1', turn: 1, messages: messages2, systemAddendum: resolve('please commit this'), tools: [],
+    }));
+    await store.sync([...messages2, { role: 'assistant', requestId: 'req-2', content: 'done' }]);
+
+    await expect(loadSession(path, {
+      requireHeader: true,
+      resume: { expectedComposition, resolveDynamicAddendum: resolve },
+    })).resolves.toMatchObject({ requests: [{ requestId: 'req-1' }, { requestId: 'req-2' }] });
+  });
+
+  it('fails resume as needs-human composition drift before evaluating stale request addenda', async () => {
+    const recordedComposition = createSessionComposition({
+      root: 'repl', runtimeVersion: 'test', permissionMode: 'interactive', toolSchemas: [], systemPrompt: 'sys',
+      dynamicAddendum: { source: 'skill-registry-v1', manifest: [{ name: 'commit', body: 'old' }] },
+    });
+    const currentComposition = createSessionComposition({
+      root: 'repl', runtimeVersion: 'test', permissionMode: 'interactive', toolSchemas: [], systemPrompt: 'sys',
+      dynamicAddendum: { source: 'skill-registry-v1', manifest: [{ name: 'commit', body: 'new' }] },
+    });
+    const store = new FileSessionStore(path);
+    await store.writeHeader({ id: 's1', model: 'm', cwd: dir, startedAt: 'now', composition: recordedComposition });
+    await store.sync([sys, user('commit')]);
+
+    const error = await loadSession(path, {
+      requireHeader: true,
+      resume: { expectedComposition: currentComposition, resolveDynamicAddendum: () => 'new' },
+    }).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(SessionCompositionMismatchError);
+    expect(error).toMatchObject({ differences: [expect.objectContaining({ field: 'dynamicAddendumManifestHash' })] });
+  });
+
+  it('fails resume when an older v2 header lacks dynamic provenance', async () => {
+    const legacyV2Composition = createSessionComposition({
+      root: 'repl', runtimeVersion: 'test', permissionMode: 'interactive', toolSchemas: [], systemPrompt: 'sys',
+    });
+    const store = new FileSessionStore(path);
+    await store.writeHeader({ id: 's1', model: 'm', cwd: dir, startedAt: 'now', composition: legacyV2Composition });
+
+    await expect(loadSession(path, {
+      requireHeader: true,
+      resume: { expectedComposition: composition, resolveDynamicAddendum: resolveNoDynamicAddendum },
+    })).rejects.toBeInstanceOf(SessionCompositionMismatchError);
+  });
+
+  it('treats a request addendum mismatch under identical provenance as corrupt state', async () => {
+    const dynamicComposition = createSessionComposition({
+      root: 'repl', runtimeVersion: 'test', permissionMode: 'interactive', toolSchemas: [], systemPrompt: 'sys',
+      dynamicAddendum: { source: 'skill-registry-v1', manifest: [{ name: 'commit', body: 'RULES' }] },
+    });
+    const messages: Message[] = [sys, user('commit')];
+    const store = new FileSessionStore(path);
+    await store.writeHeader({ id: 's1', model: 'm', cwd: dir, startedAt: 'now', composition: dynamicComposition });
+    await store.sync(messages);
+    await store.recordRequest(createModelRequestReceipt({
+      requestId: 'req-1', runId: 'run-1', turn: 0, messages, systemAddendum: 'forged', tools: [],
+    }));
+
+    await expect(loadSession(path, {
+      requireHeader: true,
+      resume: { expectedComposition: dynamicComposition, resolveDynamicAddendum: () => 'expected' },
+    })).rejects.toThrow(/dynamic addendum receipt mismatch/);
+  });
+
+  it('fails closed when a dynamic request has no durable user activation to replay', async () => {
+    const dynamicComposition = createSessionComposition({
+      root: 'repl', runtimeVersion: 'test', permissionMode: 'interactive', toolSchemas: [], systemPrompt: 'sys',
+      dynamicAddendum: { source: 'skill-registry-v1', manifest: [] },
+    });
+    const messages: Message[] = [sys];
+    const store = new FileSessionStore(path);
+    await store.writeHeader({ id: 's1', model: 'm', cwd: dir, startedAt: 'now', composition: dynamicComposition });
+    await store.sync(messages);
+    await store.recordRequest(createModelRequestReceipt({
+      requestId: 'req-1', runId: 'run-1', turn: 0, messages, systemAddendum: '', tools: [],
+    }));
+
+    await expect(loadSession(path, {
+      requireHeader: true,
+      resume: { expectedComposition: dynamicComposition, resolveDynamicAddendum: () => '' },
+    })).rejects.toThrow(/dynamic addendum activation is ambiguous/);
+  });
+
+  it('rejects a v2 header with only one half of dynamic provenance as an invalid record', async () => {
+    const store = new FileSessionStore(path);
+    await store.writeHeader({ id: 's1', model: 'm', cwd: dir, startedAt: 'now', composition });
+    const [headerLine] = (await readFile(path, 'utf8')).trim().split('\n');
+    const header = JSON.parse(headerLine) as { composition: Record<string, unknown> };
+    delete header.composition.dynamicAddendumManifestHash;
+    await writeFile(path, `${JSON.stringify(header)}\n`, 'utf8');
+
+    await expect(loadSession(path, { requireHeader: true })).rejects.toThrow(/invalid-record/);
   });
 });
 
@@ -529,3 +720,7 @@ describe('latestSessionPath', () => {
     expect(await latestSessionPath(dir)).toBe(join(dir, 'new.jsonl'));
   });
 });
+
+function fsError(code: string): Error & { code: string } {
+  return Object.assign(new Error(`${code}: fixture filesystem failure`), { code });
+}

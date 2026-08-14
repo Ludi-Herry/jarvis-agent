@@ -4,9 +4,17 @@ import { stat } from 'node:fs/promises';
 import { extname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Command, CommanderError } from 'commander';
+import { classifySessionFileError } from '../../runtime/index.js';
 import { CLI_EXIT, type CliExitCode } from './exit-codes.js';
 import { collectDoctorReport, doctorExitCode, formatDoctorReport } from './doctor.js';
+import {
+  buildSessionsListReport,
+  buildSessionsShowReport,
+  formatSessionsListReport,
+  formatSessionsShowReport,
+} from './sessions.js';
 import { JARVIS_VERSION } from './package-info.js';
+import { safeInline } from './approval.js';
 
 type ForwardTarget =
   | 'index'
@@ -22,13 +30,28 @@ export async function runJarvisCli(): Promise<void> {
   let extracted: { argv: string[]; cwd: string };
   try {
     extracted = extractGlobalCwd(process.argv.slice(2), process.cwd());
-    const cwdInfo = await stat(extracted.cwd).catch(() => null);
-    if (cwdInfo === null) throw new Error(`--cwd does not exist: ${extracted.cwd}`);
-    if (!cwdInfo.isDirectory()) throw new Error(`--cwd is not a directory: ${extracted.cwd}`);
+  } catch (err) {
+    console.error(`[jarvis] ${safeInline(err instanceof Error ? err.message : String(err))}`);
+    process.exitCode = CLI_EXIT.USAGE;
+    return;
+  }
+
+  let cwdInfo;
+  try {
+    cwdInfo = await stat(extracted.cwd);
+  } catch (err) {
+    reportCwdAccessFailure(extracted.cwd, 'inspect', err);
+    return;
+  }
+  if (!cwdInfo.isDirectory()) {
+    console.error(`[jarvis] --cwd is not a directory: ${safeInline(extracted.cwd)}`);
+    process.exitCode = CLI_EXIT.USAGE;
+    return;
+  }
+  try {
     process.chdir(extracted.cwd);
   } catch (err) {
-    console.error(`[jarvis] ${err instanceof Error ? err.message : String(err)}`);
-    process.exitCode = CLI_EXIT.USAGE;
+    reportCwdAccessFailure(extracted.cwd, 'enter', err);
     return;
   }
 
@@ -56,6 +79,7 @@ Examples:
   jarvis run "inspect this repository"
   jarvis goal "fix the failing test"
   jarvis status --json
+  jarvis sessions list
   jarvis doctor
 
 Compatibility: existing npm run dev|goal|loop|cron|observe commands remain available.`);
@@ -136,6 +160,61 @@ Credential values are never printed. The sandbox command probe is local and does
       setExit(doctorExitCode(report));
     });
 
+  const sessions = program.command('sessions').description('inspect recorded sessions (read-only; no provider, no completion authority)');
+  sessions.action(() => sessions.help());
+  sessions
+    .command('list')
+    .description('list sessions with identity, integrity, pending effects, and resume summaries')
+    .option('--json', 'print the versioned SessionsListReport JSON contract')
+    .allowExcessArguments(false)
+    .addHelpText('after', `
+Examples:
+  jarvis sessions list
+  jarvis sessions list --json
+Exit codes: 0 ok, 2 usage error, 7 damaged session state.`)
+    .action(async (options: { json?: boolean }) => {
+      try {
+        const { report, exitCode } = await buildSessionsListReport({ cwd: extracted.cwd });
+        if (options.json) console.log(JSON.stringify(report, null, 2));
+        else process.stdout.write(formatSessionsListReport(report));
+        setExit(exitCode);
+      } catch (err) {
+        console.error(`[sessions] ${safeInline(err instanceof Error ? err.message : String(err))}`);
+        setExit(CLI_EXIT.RUNTIME);
+      }
+    });
+  sessions
+    .command('show <session-id>')
+    .description('show one session: header, counts, composition, pending effects, integrity, and resume advice')
+    .option('--json', 'print the versioned SessionsShowReport JSON contract')
+    .allowExcessArguments(false)
+    .addHelpText('after', `
+Examples:
+  jarvis sessions show <session-id>
+  jarvis sessions show <session-id> --json
+Exit codes: 0 ok, 2 unknown or unsafe session id, 7 damaged session state.`)
+    .action(async (sessionId: string, options: { json?: boolean }) => {
+      try {
+        const result = await buildSessionsShowReport({ cwd: extracted.cwd, sessionId });
+        if (result.status === 'invalid-session-id') {
+          console.error(`[sessions] ${safeInline(result.reason)}`);
+          setExit(CLI_EXIT.USAGE);
+          return;
+        }
+        if (result.status === 'not-found') {
+          console.error(`[sessions] session not found: ${safeInline(result.sessionId)} (expected ${safeInline(result.path)})`);
+          setExit(CLI_EXIT.USAGE);
+          return;
+        }
+        if (options.json) console.log(JSON.stringify(result.report, null, 2));
+        else process.stdout.write(formatSessionsShowReport(result.report));
+        setExit(result.exitCode);
+      } catch (err) {
+        console.error(`[sessions] ${safeInline(err instanceof Error ? err.message : String(err))}`);
+        setExit(CLI_EXIT.RUNTIME);
+      }
+    });
+
   try {
     await program.parseAsync(['node', 'jarvis', ...extracted.argv]);
   } catch (err) {
@@ -149,6 +228,20 @@ Credential values are never printed. The sandbox command probe is local and does
     }
     throw err;
   }
+}
+
+function reportCwdAccessFailure(cwd: string, operation: 'inspect' | 'enter', err: unknown): void {
+  if (classifySessionFileError(err) === 'not-found') {
+    console.error(`[jarvis] --cwd does not exist: ${safeInline(cwd)}`);
+    process.exitCode = CLI_EXIT.USAGE;
+    return;
+  }
+  const code = typeof err === 'object' && err !== null && 'code' in err && typeof err.code === 'string'
+    ? `${err.code}: `
+    : '';
+  const detail = err instanceof Error ? err.message : String(err);
+  console.error(`[jarvis] cannot ${operation} --cwd ${safeInline(cwd)}: ${safeInline(`${code}${detail}`)}`);
+  process.exitCode = CLI_EXIT.STATE_CORRUPT;
 }
 
 function addPassthrough(
@@ -241,7 +334,7 @@ export function forwardChildProcess(
       resolveExit(code);
     };
     child.once('error', (err) => {
-      console.error(`[jarvis] failed to start child process: ${err.message}`);
+      console.error(`[jarvis] failed to start child process: ${safeInline(err.message)}`);
       finish(CLI_EXIT.RUNTIME);
     });
     child.once('exit', (code, signal) => {
@@ -253,7 +346,7 @@ export function forwardChildProcess(
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   runJarvisCli().catch((err: unknown) => {
-    console.error('[jarvis] fatal:', err instanceof Error ? err.message : err);
+    console.error('[jarvis] fatal:', safeInline(err instanceof Error ? err.message : String(err)));
     process.exitCode = CLI_EXIT.RUNTIME;
   });
 }

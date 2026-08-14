@@ -8,7 +8,7 @@
  */
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { Command } from 'commander';
 import {
   DefaultContextManager,
@@ -26,6 +26,7 @@ import {
 } from '../../core/index.js';
 import {
   SkillRegistry,
+  SKILL_REGISTRY_ADDENDUM_SOURCE,
   delegateToolSchema,
   loadRoster,
   loadRuleLayers,
@@ -34,12 +35,14 @@ import {
 } from '../../capabilities/index.js';
 import {
   createSessionComposition,
-  diffSessionComposition,
   defaultPolicy,
   FileSessionStore,
-  loadSession,
   latestSessionPath,
+  resolveSessionFilePath,
+  type SessionFileResolution,
 } from '../../runtime/index.js';
+import { safeInline } from './approval.js';
+import { loadResumeSessionForCli } from './repl-resume.js';
 import { startRepl } from './repl.js';
 import { buildSystemPrompt } from './system-prompt.js';
 import { JARVIS_VERSION } from './package-info.js';
@@ -70,12 +73,61 @@ program
   .option('--resume [id]', 'resume the latest session (or a specific <id>) from data/sessions/')
   .option('-p, --prompt <text>', 'run this prompt before entering interactive input')
   .action(async (opts: { cwd: string; maxTurns: number; resume?: string | boolean; prompt?: string }) => {
+    const sessionsDir = join(opts.cwd, 'data', 'sessions');
+    let resumeFile: Extract<SessionFileResolution, { status: 'ok' }> | undefined;
+    if (opts.resume) {
+      let requestedId: string;
+      if (typeof opts.resume === 'string') {
+        requestedId = opts.resume;
+      } else {
+        let latest: string | null;
+        try {
+          latest = await latestSessionPath(sessionsDir);
+        } catch (err) {
+          console.error(`[resume] cannot inspect data/sessions: ${safeInline(err instanceof Error ? err.message : String(err))}`);
+          process.exitCode = CLI_EXIT.STATE_CORRUPT;
+          return;
+        }
+        if (latest === null) {
+          console.error('没有可恢复的会话(data/sessions/ 为空)。');
+          process.exitCode = CLI_EXIT.USAGE;
+          return;
+        }
+        requestedId = basename(latest, '.jsonl');
+      }
+
+      let resolution;
+      try {
+        resolution = await resolveSessionFilePath({ cwd: opts.cwd, sessionId: requestedId });
+      } catch (err) {
+        console.error(`[resume] cannot resolve session path: ${safeInline(err instanceof Error ? err.message : String(err))}`);
+        process.exitCode = CLI_EXIT.STATE_CORRUPT;
+        return;
+      }
+      if (resolution.status === 'invalid-session-id') {
+        console.error(`[resume] ${safeInline(resolution.reason)}`);
+        process.exitCode = CLI_EXIT.USAGE;
+        return;
+      }
+      if (resolution.status === 'not-found') {
+        console.error(`[resume] session not found: ${safeInline(resolution.sessionId)} (expected ${safeInline(resolution.path)})`);
+        process.exitCode = CLI_EXIT.USAGE;
+        return;
+      }
+      if (resolution.status !== 'ok') {
+        console.error(`[resume] ${safeInline(resolution.reason)} (${safeInline(resolution.path)})`);
+        process.exitCode = CLI_EXIT.STATE_CORRUPT;
+        return;
+      }
+      resumeFile = resolution;
+    }
+
     let config;
     try {
       assertKeyNotInLaunchEnv(ARK_KEY_IN_LAUNCH_ENV); // /proc safety: refuse a launch-env key on Linux
       config = loadDoubaoConfig();
     } catch (err) {
-      console.error(err instanceof Error ? err.message : String(err));
+      console.error(safeInline(err instanceof Error ? err.message : String(err)));
       process.exitCode = 1;
       return;
     }
@@ -98,7 +150,11 @@ program
       maxContextTokens: provider.capability.maxContextTokens,
       maxOutputTokens: OUTPUT_RESERVE_TOKENS,
     });
-    const skills = await SkillRegistry.load('skills');
+    const skills = await SkillRegistry.load(join(opts.cwd, 'skills'));
+    const dynamicAddendum = {
+      source: SKILL_REGISTRY_ADDENDUM_SOURCE,
+      manifest: skills.list(),
+    } as const;
     // Phase C: load agent roles from agents/ (capability-dispatch subagents). Empty → no task tool.
     const roster = await loadRoster(join(opts.cwd, 'agents'));
     const toolSchemas = [
@@ -130,42 +186,46 @@ program
       cwd: opts.cwd,
       shellPath: defaultShellPath(),
     });
-    if (hookWarning) console.error(`[hooks] ${hookWarning}`);
+    if (hookWarning) console.error(`[hooks] ${safeInline(hookWarning)}`);
 
     // Persistence: resume a prior session, or start (and log) a new one.
-    const sessionsDir = join(opts.cwd, 'data', 'sessions');
     const sessionComposition = createSessionComposition({
       root: 'repl',
       runtimeVersion: JARVIS_VERSION,
       permissionMode: 'interactive',
       toolSchemas,
       systemPrompt,
+      dynamicAddendum,
     });
     let store: FileSessionStore;
     let initialMessages: Message[] | undefined;
-    if (opts.resume) {
-      const path =
-        typeof opts.resume === 'string'
-          ? join(sessionsDir, `${opts.resume}.jsonl`)
-          : await latestSessionPath(sessionsDir);
-      if (path === null) {
-        console.error('没有可恢复的会话(data/sessions/ 为空)。');
-        process.exitCode = 1;
+    if (resumeFile !== undefined) {
+      const { path, sessionId } = resumeFile;
+      const loadResult = await loadResumeSessionForCli(resumeFile, {
+        requireHeader: true,
+        expectedSessionId: sessionId,
+        resume: {
+          expectedComposition: sessionComposition,
+          resolveDynamicAddendum: (activationText) => skills.systemAddendum(activationText),
+        },
+      });
+      if (loadResult.status === 'not-found') {
+        console.error(`[resume] session not found: ${safeInline(loadResult.sessionId)} (expected ${safeInline(loadResult.path)})`);
+        process.exitCode = loadResult.exitCode;
         return;
       }
-      let loaded;
-      try {
-        loaded = await loadSession(path, { requireHeader: true });
-      } catch (err) {
-        console.error(`[resume] ${err instanceof Error ? err.message : String(err)}`);
-        process.exitCode = CLI_EXIT.STATE_CORRUPT;
+      if (loadResult.status === 'failed') {
+        console.error(`[resume] ${safeInline(loadResult.error instanceof Error ? loadResult.error.message : String(loadResult.error))}`);
+        process.exitCode = loadResult.exitCode;
         return;
       }
+      const loaded = loadResult.loaded;
       if (loaded.pendingTools.length > 0) {
         const pending = loaded.pendingTools[0];
         console.error(
           `[resume] session has ${loaded.pendingTools.length} unresolved tool execution(s); ` +
-          `first=${pending.toolName}/${pending.callId} reason=${pending.reason}. Inspect the workspace before continuing.`,
+          `first=${safeInline(pending.toolName)}/${safeInline(pending.callId)} reason=${pending.reason}. `
+            + 'Inspect the workspace before continuing.',
         );
         process.exitCode = CLI_EXIT.NEEDS_HUMAN;
         return;
@@ -176,17 +236,10 @@ program
         return;
       }
       if ('schemaVersion' in loaded.header) {
-        if (loaded.header.composition.coverage !== 'full' || sessionComposition.coverage !== 'full') {
-          console.error('[resume] session composition coverage is partial; fork into a fully recorded v2 session before continuing.');
-          process.exitCode = CLI_EXIT.NEEDS_HUMAN;
-          return;
-        }
-        const differences = diffSessionComposition(loaded.header.composition, sessionComposition);
-        if (differences.length > 0) {
-          console.error(`[resume] session composition changed: ${differences.map((item) => `${item.field}=${item.recorded ?? '-'}->${item.current ?? '-'}`).join(', ')}`);
-          process.exitCode = CLI_EXIT.NEEDS_HUMAN;
-          return;
-        }
+        console.log(
+          `[resume] compatibility: exact; dynamic composition matched: ${safeInline(sessionComposition.dynamicAddendumSource ?? '-')}`
+            + ` ${safeInline(sessionComposition.dynamicAddendumManifestHash ?? '-')} (${loaded.requests.length} request receipt(s))`,
+        );
       } else {
         console.error('[resume] legacy v1 session: tool-receipt and composition coverage are unavailable.');
       }
@@ -195,7 +248,7 @@ program
         format: loaded.format,
         initialSequence: loaded.lastSequence,
       });
-      console.log(`已恢复会话 ${loaded.header?.id ?? path}(${loaded.messages.length} 条消息)\n`);
+      console.log(`已恢复会话 ${safeInline(loaded.header?.id ?? path)}(${loaded.messages.length} 条消息)\n`);
     } else {
       const id = new Date().toISOString().replace(/[:.]/g, '-');
       store = new FileSessionStore(join(sessionsDir, `${id}.jsonl`));
@@ -228,6 +281,6 @@ program
   });
 
 program.parseAsync().catch((err: unknown) => {
-  console.error('[cli] fatal:', err instanceof Error ? err.message : err);
+  console.error('[cli] fatal:', safeInline(err instanceof Error ? err.message : String(err)));
   process.exitCode = 1;
 });

@@ -1,18 +1,24 @@
 import { readFile } from 'node:fs/promises';
 import { isGoalRecord, replayGoal, type GoalResumeState } from '../../capabilities/index.js';
 import {
-  diffSessionComposition,
   loadSession,
+  resolveNoDynamicAddendum,
   type SessionComposition,
   type SessionFormat,
 } from '../../runtime/index.js';
 import { assertOperationalJsonlIntegrity, parseJsonlWithDiagnostics } from '../../runtime/jsonl-integrity.js';
+import { safeInline } from './approval.js';
 
 export interface LoadedLoopGoalResume {
   resume: GoalResumeState;
   initialCursor: number;
   sessionFormat: SessionFormat;
   initialSequence: number;
+}
+
+export function formatLoopCliError(prefix: string, err: unknown): string {
+  const detail = safeInline(err instanceof Error ? err.message : String(err));
+  return prefix === '' ? detail : `${prefix} ${detail}`;
 }
 
 export async function loadLoopGoalResume(
@@ -32,7 +38,17 @@ export async function loadLoopGoalResume(
   if (!replayedGoal.goal) throw new Error(`cannot resume in-flight goal ${goalId}: missing goal-created`);
   if (replayedGoal.goal.id !== goalId) throw new Error(`cannot resume in-flight goal ${goalId}: goal log belongs to ${replayedGoal.goal.id}`);
 
-  const replayedSession = await loadSession(sessionPath, { validateIntegrity: true });
+  const replayedSession = await loadSession(sessionPath, {
+    validateIntegrity: true,
+    ...(expectedComposition === undefined
+      ? {}
+      : {
+          resume: {
+            expectedComposition,
+            resolveDynamicAddendum: resolveNoDynamicAddendum,
+          },
+        }),
+  });
   if (!replayedSession.header) throw new Error(`cannot resume in-flight goal ${goalId}: missing session header`);
   if (replayedSession.header.id !== goalId) {
     throw new Error(`cannot resume in-flight goal ${goalId}: session log belongs to ${replayedSession.header.id}`);
@@ -50,16 +66,10 @@ export async function loadLoopGoalResume(
       `first=${pending.toolName}/${pending.callId} reason=${pending.reason}`,
     );
   }
-  if (expectedComposition && 'schemaVersion' in replayedSession.header) {
-    if (replayedSession.header.composition.coverage !== 'full' || expectedComposition.coverage !== 'full') {
-      throw new Error(`cannot resume in-flight goal ${goalId}: session composition coverage is partial`);
-    }
-    const differences = diffSessionComposition(replayedSession.header.composition, expectedComposition);
-    if (differences.length > 0) {
-      throw new Error(
-        `cannot resume in-flight goal ${goalId}: session composition changed (${differences.map((item) => item.field).join(', ')})`,
-      );
-    }
+  if (replayedSession.format === 'v2' && expectedComposition === undefined) {
+    throw new Error(
+      `cannot resume in-flight goal ${goalId}: current session composition proof is required for v2 resume`,
+    );
   }
   const resume: GoalResumeState = {
     goal: replayedGoal.goal,

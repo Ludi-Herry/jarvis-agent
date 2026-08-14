@@ -4,8 +4,8 @@
  * read compatibility with the original message/compaction format.
  */
 import { createHash } from 'node:crypto';
-import { appendFile, mkdir, readFile, readdir, stat } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { appendFile, lstat, mkdir, readFile, readdir, realpath } from 'node:fs/promises';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { FileReceipt, Message, ToolCall, ToolResult, ToolSchema } from '../../core/types.js';
 import {
   assertOperationalJsonlIntegrity,
@@ -27,6 +27,15 @@ export interface SessionComposition {
   coverage: 'full' | 'partial';
   toolsetHash?: string;
   systemPromptHash?: string;
+  /** Versioned identity of the deterministic per-run addendum resolver. */
+  dynamicAddendumSource?: string;
+  /** Hash of the resolver's complete source manifest; the manifest body is not duplicated here. */
+  dynamicAddendumManifestHash?: string;
+}
+
+export interface SessionDynamicAddendumInput {
+  source: string;
+  manifest: unknown;
 }
 
 export interface SessionCompositionInput {
@@ -35,12 +44,203 @@ export interface SessionCompositionInput {
   permissionMode: SessionPermissionMode;
   toolSchemas?: readonly ToolSchema[];
   systemPrompt?: string;
+  dynamicAddendum?: SessionDynamicAddendumInput;
 }
 
 export interface SessionCompositionDifference {
   field: keyof SessionComposition;
   recorded: string | undefined;
   current: string | undefined;
+}
+
+export type SessionDynamicAddendumResolver = (activationText: string) => string | undefined;
+
+export interface SessionResumeValidation {
+  expectedComposition: SessionComposition;
+  resolveDynamicAddendum: SessionDynamicAddendumResolver;
+}
+
+export interface LoadSessionOptions {
+  requireHeader?: boolean;
+  validateIntegrity?: boolean;
+  /** File-name identity expected by an explicit/latest resume selection. */
+  expectedSessionId?: string;
+  /** Resume-only proof. Observers can omit it and remain non-authoritative. */
+  resume?: SessionResumeValidation;
+}
+
+export class SessionCompositionMismatchError extends Error {
+  readonly differences: SessionCompositionDifference[];
+
+  constructor(message: string, differences: SessionCompositionDifference[] = []) {
+    super(message);
+    this.name = 'SessionCompositionMismatchError';
+    this.differences = differences;
+  }
+}
+
+export const NO_DYNAMIC_ADDENDUM = Object.freeze({
+  source: 'none-v1',
+  manifest: null,
+}) satisfies SessionDynamicAddendumInput;
+
+export const resolveNoDynamicAddendum: SessionDynamicAddendumResolver = () => undefined;
+
+const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/;
+const WINDOWS_DEVICE_STEM = /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/iu;
+
+export type SessionIdCheck = { ok: true } | { ok: false; reason: string };
+
+/**
+ * Session ids are durable file names on every supported platform. Keep the
+ * accepted language deliberately narrower than either POSIX or Windows so the
+ * same id cannot name two files after Windows strips a suffix or resolves a
+ * device alias.
+ */
+export function validateSessionId(id: string): SessionIdCheck {
+  if (id.trim() === '') return { ok: false, reason: 'session id must not be empty' };
+  if (/[. ]$/u.test(id)) {
+    return {
+      ok: false,
+      reason: `session id has a Windows-ambiguous trailing dot or space: ${JSON.stringify(id.slice(0, 80))}`,
+    };
+  }
+  if (!SESSION_ID_PATTERN.test(id)) {
+    return {
+      ok: false,
+      reason: `session id is not a safe identifier: ${JSON.stringify(id.slice(0, 80))}`
+        + ' (expected letters, digits, ".", "_", "-"; no separators, absolute paths, or Windows namespaced paths)',
+    };
+  }
+  const windowsStem = id.split('.', 1)[0];
+  if (WINDOWS_DEVICE_STEM.test(windowsStem)) {
+    return {
+      ok: false,
+      reason: `session id uses a reserved Windows device name: ${JSON.stringify(id.slice(0, 80))}`,
+    };
+  }
+  return { ok: true };
+}
+
+export type SessionFileResolution =
+  | { status: 'ok'; sessionId: string; file: string; path: string; mtimeMs: number }
+  | { status: 'invalid-session-id'; sessionId: string; reason: string }
+  | { status: 'not-found'; sessionId: string; file: string; path: string }
+  | { status: 'unreadable' | 'unsafe-path'; sessionId: string; file: string; path: string; reason: string };
+
+/**
+ * Resolve one session id without following a symlink/junction out of the
+ * workspace. Inspection and execution both call this boundary before reading
+ * JSONL so they cannot disagree about which file an id denotes.
+ */
+export async function resolveSessionFilePath(input: {
+  cwd: string;
+  sessionId: string;
+}): Promise<SessionFileResolution> {
+  const idCheck = validateSessionId(input.sessionId);
+  if (!idCheck.ok) {
+    return { status: 'invalid-session-id', sessionId: input.sessionId, reason: idCheck.reason };
+  }
+
+  const dataDir = join(input.cwd, 'data');
+  const sessionsDir = join(dataDir, 'sessions');
+  const file = `${input.sessionId}.jsonl`;
+  const path = join(sessionsDir, file);
+  const components = [
+    { path: dataDir, kind: 'directory' as const },
+    { path: sessionsDir, kind: 'directory' as const },
+    { path, kind: 'file' as const },
+  ];
+  let fileMtimeMs = 0;
+
+  for (const component of components) {
+    let info;
+    try {
+      info = await lstat(component.path);
+    } catch (err) {
+      return sessionFileFailure(err, input.sessionId, file, path, `cannot inspect ${component.kind}`);
+    }
+    if (info.isSymbolicLink()) {
+      return {
+        status: 'unsafe-path',
+        sessionId: input.sessionId,
+        file,
+        path,
+        reason: `unsafe session path: ${component.kind} is a symbolic link or reparse point`,
+      };
+    }
+    if (component.kind === 'directory' && !info.isDirectory()) {
+      return {
+        status: 'unreadable',
+        sessionId: input.sessionId,
+        file,
+        path,
+        reason: `session path is unreadable: expected directory at ${component.path}`,
+      };
+    }
+    if (component.kind === 'file') {
+      if (!info.isFile()) {
+        return {
+          status: 'unreadable',
+          sessionId: input.sessionId,
+          file,
+          path,
+          reason: `session path is unreadable: expected a regular file at ${component.path}`,
+        };
+      }
+      fileMtimeMs = info.mtimeMs;
+    }
+  }
+
+  try {
+    const [canonicalCwd, canonicalFile] = await Promise.all([realpath(input.cwd), realpath(path)]);
+    const canonicalSessionsDir = resolve(canonicalCwd, 'data', 'sessions');
+    const local = relative(canonicalSessionsDir, canonicalFile);
+    if (local === '' || local === '..' || local.startsWith(`..${sep}`) || isAbsolute(local)) {
+      return {
+        status: 'unsafe-path',
+        sessionId: input.sessionId,
+        file,
+        path,
+        reason: 'unsafe session path: canonical target escapes data/sessions',
+      };
+    }
+  } catch (err) {
+    return sessionFileFailure(err, input.sessionId, file, path, 'cannot canonicalize session path');
+  }
+
+  return { status: 'ok', sessionId: input.sessionId, file, path, mtimeMs: fileMtimeMs };
+}
+
+function sessionFileFailure(
+  err: unknown,
+  sessionId: string,
+  file: string,
+  path: string,
+  operation: string,
+): Exclude<SessionFileResolution, { status: 'ok' | 'invalid-session-id' }> {
+  if (classifySessionFileError(err) === 'not-found') return { status: 'not-found', sessionId, file, path };
+  return {
+    status: 'unreadable',
+    sessionId,
+    file,
+    path,
+    reason: `${operation}: ${describeFsError(err)}`,
+  };
+}
+
+export function classifySessionFileError(err: unknown): 'not-found' | 'unreadable' {
+  return isNotFoundError(err) ? 'not-found' : 'unreadable';
+}
+
+function describeFsError(err: unknown): string {
+  if (!(err instanceof Error)) return String(err);
+  const code = 'code' in err && typeof err.code === 'string' ? `${err.code}: ` : '';
+  return `${code}${err.message}`;
+}
+
+function isNotFoundError(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && 'code' in err && (err as { code?: unknown }).code === 'ENOENT';
 }
 
 interface LegacySessionHeader {
@@ -215,6 +415,12 @@ export function createSessionComposition(input: SessionCompositionInput): Sessio
     coverage: input.toolSchemas !== undefined && input.systemPrompt !== undefined ? 'full' : 'partial',
     ...(input.toolSchemas === undefined ? {} : { toolsetHash: digestValue(input.toolSchemas) }),
     ...(input.systemPrompt === undefined ? {} : { systemPromptHash: digestValue(input.systemPrompt) }),
+    ...(input.dynamicAddendum === undefined
+      ? {}
+      : {
+          dynamicAddendumSource: input.dynamicAddendum.source,
+          dynamicAddendumManifestHash: digestValue(input.dynamicAddendum.manifest),
+        }),
   };
 }
 
@@ -229,6 +435,8 @@ export function diffSessionComposition(
     'coverage',
     'toolsetHash',
     'systemPromptHash',
+    'dynamicAddendumSource',
+    'dynamicAddendumManifestHash',
   ];
   return fields.flatMap((field) => {
     const left = recorded[field];
@@ -290,12 +498,18 @@ function isV2SessionRecord(value: unknown): value is V2SessionRecord {
 
 function isSessionComposition(value: unknown): value is SessionComposition {
   if (!isJsonObject(value)) return false;
+  const hasDynamicSource = value.dynamicAddendumSource !== undefined;
+  const hasDynamicManifest = value.dynamicAddendumManifestHash !== undefined;
   return (value.root === 'repl' || value.root === 'goal' || value.root === 'loop')
     && typeof value.runtimeVersion === 'string'
     && (value.permissionMode === 'interactive' || value.permissionMode === 'unattended' || value.permissionMode === 'worktree-unattended')
     && (value.coverage === 'full' || value.coverage === 'partial')
     && (value.toolsetHash === undefined || typeof value.toolsetHash === 'string')
-    && (value.systemPromptHash === undefined || typeof value.systemPromptHash === 'string');
+    && (value.systemPromptHash === undefined || typeof value.systemPromptHash === 'string')
+    && hasDynamicSource === hasDynamicManifest
+    && (value.dynamicAddendumSource === undefined
+      || (typeof value.dynamicAddendumSource === 'string' && value.dynamicAddendumSource.trim() !== ''))
+    && (value.dynamicAddendumManifestHash === undefined || typeof value.dynamicAddendumManifestHash === 'string');
 }
 
 function isToolReceipt(value: Record<string, unknown>): boolean {
@@ -600,12 +814,12 @@ export class FileSessionStore implements SessionStore {
 
 export async function loadSession(
   path: string,
-  options: { requireHeader?: boolean; validateIntegrity?: boolean } = {},
+  options: LoadSessionOptions = {},
 ): Promise<LoadedSession> {
   const text = await readFile(path, 'utf8');
   const parsed = parseJsonlWithDiagnostics(text, isSessionRecord);
   const replayed = replaySession(parsed.records);
-  if (options.requireHeader || options.validateIntegrity) {
+  if (options.requireHeader || options.validateIntegrity || options.resume !== undefined) {
     assertOperationalJsonlIntegrity(
       'session',
       parsed.malformed,
@@ -613,7 +827,115 @@ export async function loadSession(
     );
     assertSessionSemantics(parsed.records);
   }
+  if (options.expectedSessionId !== undefined && replayed.header?.id !== options.expectedSessionId) {
+    throw new Error(
+      `session state is corrupt: header id ${replayed.header?.id ?? '(missing)'}`
+        + ` does not match requested session id ${options.expectedSessionId}`,
+    );
+  }
+  if (options.resume !== undefined && replayed.header && isV2Record(replayed.header)) {
+    assertResumeComposition(replayed.header.composition, options.resume.expectedComposition);
+    assertDynamicAddendumReceipts(parsed.records, options.resume.resolveDynamicAddendum);
+  }
   return replayed;
+}
+
+export type ResolvedSessionLoadResult =
+  | { status: 'ok'; loaded: LoadedSession }
+  | { status: 'not-found'; sessionId: string; file: string; path: string };
+
+/**
+ * Read a path that already passed resolveSessionFilePath. A disappearance in
+ * the check-to-read window remains a not-found result; every other read or
+ * semantic error stays intact for the caller to report as unreadable,
+ * incompatible, or corrupt.
+ */
+export async function loadResolvedSession(
+  resolution: Extract<SessionFileResolution, { status: 'ok' }>,
+  options: LoadSessionOptions = {},
+  reader: (path: string, options?: LoadSessionOptions) => Promise<LoadedSession> = loadSession,
+): Promise<ResolvedSessionLoadResult> {
+  try {
+    return { status: 'ok', loaded: await reader(resolution.path, options) };
+  } catch (err) {
+    if (classifySessionFileError(err) === 'not-found') {
+      return {
+        status: 'not-found',
+        sessionId: resolution.sessionId,
+        file: resolution.file,
+        path: resolution.path,
+      };
+    }
+    throw err;
+  }
+}
+
+function assertResumeComposition(recorded: SessionComposition, current: SessionComposition): void {
+  const differences = diffSessionComposition(recorded, current);
+  if (recorded.coverage !== 'full' || current.coverage !== 'full') {
+    throw new SessionCompositionMismatchError(
+      'session base composition coverage is partial; restore the recorded sources or fork into a new v2 session',
+      differences,
+    );
+  }
+  if (
+    recorded.dynamicAddendumSource === undefined
+    || recorded.dynamicAddendumManifestHash === undefined
+    || current.dynamicAddendumSource === undefined
+    || current.dynamicAddendumManifestHash === undefined
+  ) {
+    throw new SessionCompositionMismatchError(
+      'session dynamic addendum provenance is incomplete; restore the recorded sources or fork into a new v2 session',
+      differences,
+    );
+  }
+  if (differences.length > 0) {
+    throw new SessionCompositionMismatchError(
+      `session composition changed (${differences.map((item) => item.field).join(', ')}); `
+        + `current dynamic source=${current.dynamicAddendumSource}; restore the recorded sources or fork into a new v2 session`,
+      differences,
+    );
+  }
+}
+
+function assertDynamicAddendumReceipts(
+  records: readonly SessionRecord[],
+  resolveDynamicAddendum: SessionDynamicAddendumResolver,
+): void {
+  let projectedMessages: Message[] = [];
+  const expectedHashByRun = new Map<string, string | undefined>();
+  for (let index = 0; index < records.length; index++) {
+    const record = records[index];
+    if (!isV2Record(record)) continue;
+    if (record.t === 'message') {
+      projectedMessages.push(record.message);
+      continue;
+    }
+    if (record.t === 'compaction') {
+      projectedMessages = [...record.messages];
+      continue;
+    }
+    if (record.t !== 'request') continue;
+
+    if (!expectedHashByRun.has(record.runId)) {
+      const activation = [...projectedMessages].reverse().find(
+        (message): message is Extract<Message, { role: 'user' }> => message.role === 'user',
+      );
+      if (activation === undefined) {
+        throw new Error(
+          `session state is corrupt at record ${index + 1}: dynamic addendum activation is ambiguous for run ${record.runId}`,
+        );
+      }
+      const expected = resolveDynamicAddendum(activation.content);
+      expectedHashByRun.set(record.runId, expected === undefined ? undefined : digestValue(expected));
+    }
+    const expectedHash = expectedHashByRun.get(record.runId);
+    if (record.systemAddendumHash !== expectedHash) {
+      throw new Error(
+        `session state is corrupt at record ${index + 1}: dynamic addendum receipt mismatch for request ${record.requestId}`,
+      );
+    }
+  }
 }
 
 export function sessionSemanticIssues(records: readonly SessionRecord[]): SessionSemanticIssue[] {
@@ -823,15 +1145,24 @@ export async function latestSessionPath(dir: string): Promise<string | null> {
   let entries: string[];
   try {
     entries = await readdir(dir);
-  } catch {
-    return null;
+  } catch (err) {
+    if (isNotFoundError(err)) return null;
+    throw err;
   }
   const sessions = entries.filter((entry) => entry.endsWith('.jsonl'));
   if (sessions.length === 0) return null;
   let newest: { path: string; mtimeMs: number } | null = null;
   for (const name of sessions) {
     const full = join(dir, name);
-    const info = await stat(full);
+    let info;
+    try {
+      // lstat keeps latest-session discovery from following a file symlink.
+      // The selected id still passes through resolveSessionFilePath before read.
+      info = await lstat(full);
+    } catch (err) {
+      if (isNotFoundError(err)) continue;
+      throw err;
+    }
     if (newest === null || info.mtimeMs > newest.mtimeMs) newest = { path: full, mtimeMs: info.mtimeMs };
   }
   return newest?.path ?? null;

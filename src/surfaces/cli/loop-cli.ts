@@ -59,6 +59,8 @@ import {
   DefaultPermissionGate,
   FileSessionStore,
   InMemoryEventBus,
+  NO_DYNAMIC_ADDENDUM,
+  SessionCompositionMismatchError,
   createSessionComposition,
   createEmergencyStopSignal,
   createWsl2UnshareSandboxRunner,
@@ -116,7 +118,7 @@ import { createInteractiveApprover, readlineApproverIo } from './interactive-app
 import { parseLoopArgs } from './loop-args.js';
 import { assertParallelHooksCompatible } from './loop-guards.js';
 import { createGoalHookResolver, preloadGoalHookOverrides } from './loop-hooks.js';
-import { loadLoopGoalResume, type LoadedLoopGoalResume } from './loop-resume.js';
+import { formatLoopCliError, loadLoopGoalResume, type LoadedLoopGoalResume } from './loop-resume.js';
 import { initialRenderState, renderEvent } from './render.js';
 import { CLI_EXIT, exitCodeForLoop } from './exit-codes.js';
 import { decideGitTrust } from './git-trust.js';
@@ -165,7 +167,7 @@ async function main(): Promise<void> {
   try {
     args = parseLoopArgs(process.argv.slice(2));
   } catch (err) {
-    console.error(err instanceof Error ? err.message : String(err));
+    console.error(formatLoopCliError('', err));
     process.exitCode = CLI_EXIT.USAGE;
     return;
   }
@@ -196,7 +198,7 @@ async function main(): Promise<void> {
     assertKeyNotInLaunchEnv(ARK_KEY_IN_LAUNCH_ENV); // /proc safety: refuse a launch-env key on Linux
     config = loadDoubaoConfig();
   } catch (err) {
-    console.error(err instanceof Error ? err.message : String(err));
+    console.error(formatLoopCliError('', err));
     process.exitCode = CLI_EXIT.USAGE;
     return;
   }
@@ -235,7 +237,7 @@ async function main(): Promise<void> {
         realpath: async (p) => realpath(p).catch(() => null),
       });
     } catch (err) {
-      console.error(`[loop verifier] ${err instanceof Error ? err.message : String(err)}`);
+      console.error(formatLoopCliError('[loop verifier]', err));
       process.exitCode = CLI_EXIT.USAGE;
       return;
     }
@@ -251,7 +253,7 @@ async function main(): Promise<void> {
         realpath: async (p) => realpath(p).catch(() => null),
       });
     } catch (err) {
-      console.error(`[loop hooks] ${err instanceof Error ? err.message : String(err)}`);
+      console.error(formatLoopCliError('[loop hooks]', err));
       process.exitCode = CLI_EXIT.USAGE;
       return;
     }
@@ -268,7 +270,7 @@ async function main(): Promise<void> {
         realpath: async (p) => realpath(p).catch(() => null),
       });
     } catch (err) {
-      console.error(`[loop sandbox checks] ${err instanceof Error ? err.message : String(err)}`);
+      console.error(formatLoopCliError('[loop sandbox checks]', err));
       process.exitCode = CLI_EXIT.USAGE;
       return;
     }
@@ -285,7 +287,7 @@ async function main(): Promise<void> {
         realpath: async (p) => realpath(p).catch(() => null),
       });
     } catch (err) {
-      console.error(`[loop goal-setter requirements] ${err instanceof Error ? err.message : String(err)}`);
+      console.error(formatLoopCliError('[loop goal-setter requirements]', err));
       process.exitCode = CLI_EXIT.USAGE;
       return;
     }
@@ -319,7 +321,7 @@ async function main(): Promise<void> {
     }
     const replay = await loadLoop(latest);
     if (replay.contract === undefined || replay.id === undefined) {
-      console.error(`loop 日志损坏或缺少 header: ${latest}`);
+      console.error(`loop 日志损坏或缺少 header: ${safeInline(latest)}`);
       process.exitCode = CLI_EXIT.STATE_CORRUPT;
       return;
     }
@@ -347,7 +349,7 @@ async function main(): Promise<void> {
     }
     objectives = loadObjectives(file);
     if (objectives.length === 0) {
-      console.error(`objectives file is empty or unreadable: ${file}`);
+      console.error(`objectives file is empty or unreadable: ${safeInline(file)}`);
       process.exitCode = CLI_EXIT.USAGE;
       return;
     }
@@ -371,21 +373,21 @@ async function main(): Promise<void> {
   try {
     if (resume) assertResumeVerifierMapMatches(replayVerifierMapPath, verifierMap?.path, noVerifierMap);
   } catch (err) {
-    console.error(`[loop verifier] ${err instanceof Error ? err.message : String(err)}`);
+    console.error(formatLoopCliError('[loop verifier]', err));
     process.exitCode = CLI_EXIT.USAGE;
     return;
   }
   try {
     if (resume) assertResumeHookMapMatches(replayHookMapPath, hookMap?.path);
   } catch (err) {
-    console.error(`[loop hooks] ${err instanceof Error ? err.message : String(err)}`);
+    console.error(formatLoopCliError('[loop hooks]', err));
     process.exitCode = CLI_EXIT.USAGE;
     return;
   }
   try {
     if (resume) assertResumeSandboxCheckMapMatches(replaySandboxCheckMapPath, sandboxCheckMap?.path);
   } catch (err) {
-    console.error(`[loop sandbox checks] ${err instanceof Error ? err.message : String(err)}`);
+    console.error(formatLoopCliError('[loop sandbox checks]', err));
     process.exitCode = CLI_EXIT.USAGE;
     return;
   }
@@ -402,7 +404,7 @@ async function main(): Promise<void> {
       );
     }
   } catch (err) {
-    console.error(`[loop goal-setter requirements] ${err instanceof Error ? err.message : String(err)}`);
+    console.error(formatLoopCliError('[loop goal-setter requirements]', err));
     process.exitCode = CLI_EXIT.USAGE;
     return;
   }
@@ -432,7 +434,7 @@ async function main(): Promise<void> {
       map: goalSetterRequirementsMap,
     });
   } catch (err) {
-    console.error(`[loop config] ${err instanceof Error ? err.message : String(err)}`);
+    console.error(formatLoopCliError('[loop config]', err));
     process.exitCode = CLI_EXIT.USAGE;
     return;
   }
@@ -447,7 +449,7 @@ async function main(): Promise<void> {
       verifierHealthTripped;
     if (needsHuman && !force) {
       const why = seedHalted ?? (verifierHealthTripped ? 'verifier-health' : 'consecutive-blocked');
-      console.error(`该 loop 处于需人工检查状态(${why})。确认裁判/状态无误后,用 --resume --force 续跑。`);
+      console.error(`该 loop 处于需人工检查状态(${safeInline(why)})。确认裁判/状态无误后,用 --resume --force 续跑。`);
       process.exitCode = CLI_EXIT.NEEDS_HUMAN;
       return;
     }
@@ -469,7 +471,7 @@ async function main(): Promise<void> {
     try {
       await assertWorktreeRootOutsideCwd(worktreeBaseRoot, cwd);
     } catch (err) {
-      console.error(`[worktree] ${err instanceof Error ? err.message : String(err)}`);
+      console.error(formatLoopCliError('[worktree]', err));
       process.exitCode = CLI_EXIT.USAGE;
       return;
     }
@@ -477,7 +479,7 @@ async function main(): Promise<void> {
   // Hooks: trusted sources only. Resolve and preload before writing loop-created, so bad configs or
   // parallel incompatibility fail without polluting data/loops with an unusable latest loop.
   const { hooks, warning: hookWarning } = await resolveHooks({ hooksPath: JARVIS_HOOKS_LAUNCH, cwd, shellPath });
-  if (hookWarning) console.error(`[hooks] ${hookWarning}`);
+  if (hookWarning) console.error(formatLoopCliError('[hooks]', hookWarning));
   const hooksForGoal = createGoalHookResolver({
     globalHooks: hooks,
     hookPathByIndex: hookPlan.hookPathByIndex,
@@ -491,7 +493,7 @@ async function main(): Promise<void> {
     assertParallelHooksCompatible(parallelMode, hooks !== undefined || hookPlan.overrideCount > 0);
     await preloadGoalHookOverrides(hooksForGoal, hookPlan.hookPathByIndex.keys());
   } catch (err) {
-    console.error(`[hooks] ${err instanceof Error ? err.message : String(err)}`);
+    console.error(formatLoopCliError('[hooks]', err));
     process.exitCode = CLI_EXIT.USAGE;
     return;
   }
@@ -583,6 +585,7 @@ async function main(): Promise<void> {
     permissionMode: unattended ? (parallelMode ? 'worktree-unattended' : 'unattended') : 'interactive',
     toolSchemas: [...goalTools.schemasForModel(), updateGoalToolSchema()],
     systemPrompt: BUILDER_PROMPT,
+    dynamicAddendum: NO_DYNAMIC_ADDENDUM,
   });
 
   console.log(`Jarvis-Agent loop mode - ${safeInline(config.model)}`);
@@ -633,7 +636,7 @@ async function main(): Promise<void> {
   console.log(
     vision.enabled
       ? `vision: enabled (${safeInline(vision.config.model)}), builder-only, gated as network`
-      : `vision: disabled (${vision.reason})`,
+      : `vision: disabled (${safeInline(vision.reason)})`,
   );
   console.log(
     shadowGitEnabled
@@ -833,10 +836,12 @@ async function main(): Promise<void> {
         await loadResumeFor(index, goalId, goalCwd, loopSessionComposition(resumeTools));
       }
     } catch (err) {
-      console.error(`[loop resume] ${err instanceof Error ? err.message : String(err)}`);
+      console.error(formatLoopCliError('[loop resume]', err));
       emergencyStop.dispose();
       rl?.close();
-      process.exitCode = CLI_EXIT.STATE_CORRUPT;
+      process.exitCode = err instanceof SessionCompositionMismatchError
+        ? CLI_EXIT.NEEDS_HUMAN
+        : CLI_EXIT.STATE_CORRUPT;
       return;
     }
   }
@@ -926,8 +931,10 @@ async function snapshotBaseline(shellPath: string, cwd: string, signal?: AbortSi
 }
 
 main().catch((err: unknown) => {
-  console.error('\n[loop] fatal:', err instanceof Error ? err.message : err);
-  process.exitCode = CLI_EXIT.RUNTIME;
+  console.error(formatLoopCliError('[loop] fatal:', err));
+  process.exitCode = err instanceof SessionCompositionMismatchError
+    ? CLI_EXIT.NEEDS_HUMAN
+    : CLI_EXIT.RUNTIME;
 });
 
 async function runAdvisoryHook(fn: (() => Promise<void>) | undefined): Promise<void> {

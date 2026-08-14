@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { startRepl } from '../../src/surfaces/cli/repl.js';
+import { SkillRegistry, SKILL_REGISTRY_ADDENDUM_SOURCE } from '../../src/capabilities/index.js';
 import { InMemoryToolRegistry } from '../../src/core/tools/registry.js';
 import { readTool, writeTool } from '../../src/core/tools/builtins.js';
 import { readFile } from 'node:fs/promises';
@@ -16,6 +17,7 @@ import type { ToolDefinition } from '../../src/core/tools/types.js';
 interface Step {
   text?: string;
   toolCalls?: ToolCall[];
+  error?: Error;
 }
 const composition = createSessionComposition({
   root: 'repl',
@@ -40,6 +42,7 @@ function fakeModel(steps: Step[]): { provider: ModelProvider; seen: number[] } {
       seen.push(messages.length);
       const step = steps[Math.min(i, steps.length - 1)];
       i++;
+      if (step.error !== undefined) throw step.error;
       const text = step.text ?? '';
       if (text.length > 0) yield { type: 'text', text };
       const toolCalls = step.toolCalls ?? [];
@@ -92,6 +95,49 @@ afterEach(async () => {
 });
 
 describe('startRepl', () => {
+  it('single-lines control sequences in the model banner', async () => {
+    const attack = `model${String.fromCharCode(27)}[2J${String.fromCharCode(27)}[31m\r\nFORGED-BANNER`;
+    const out = sink();
+
+    await startRepl({
+      model: fakeModel([{ text: '' }]).provider,
+      tools: new InMemoryToolRegistry(),
+      cwd: dir,
+      modelName: attack,
+      systemPrompt: 'sys',
+      maxTurns: 1,
+      input: inputOf(['/exit']),
+      output: out.stream,
+    });
+
+    expect(out.text()).not.toContain(String.fromCharCode(27));
+    expect(out.text()).not.toContain('\r');
+    expect(out.text()).not.toContain('\nFORGED-BANNER');
+    expect(out.text()).toContain('Jarvis-Agent · model [2J [31m FORGED-BANNER');
+  });
+
+  it('single-lines control sequences in provider run errors', async () => {
+    const attack = `provider${String.fromCharCode(27)}[2J${String.fromCharCode(27)}[31m\r\nFORGED-REPL-LINE`;
+    const { provider } = fakeModel([{ error: new Error(attack) }]);
+    const out = sink();
+
+    await startRepl({
+      model: provider,
+      tools: new InMemoryToolRegistry(),
+      cwd: dir,
+      modelName: 'fake-model',
+      systemPrompt: 'sys',
+      maxTurns: 1,
+      input: inputOf(['trigger', '/exit']),
+      output: out.stream,
+    });
+
+    expect(out.text()).not.toContain(String.fromCharCode(27));
+    expect(out.text()).not.toContain('\r');
+    expect(out.text()).not.toContain('\nFORGED-REPL-LINE');
+    expect(out.text()).toContain('出错: provider [2J [31m FORGED-REPL-LINE');
+  });
+
   it('runs an initial prompt before reading interactive input', async () => {
     const tools = new InMemoryToolRegistry();
     const { provider, seen } = fakeModel([{ text: 'initial answer' }]);
@@ -333,6 +379,48 @@ describe('startRepl', () => {
     // and the log now replays to the whole continuous conversation
     const final = await loadSession(path);
     expect(final.messages.map((m) => ('content' in m ? m.content : ''))).toEqual(['SYS', 'q1', 'a1', 'q2', 'a2']);
+  });
+
+  it('persists skill addendum receipts that the same dynamic composition can prove on resume', async () => {
+    const path = join(dir, 'dynamic-session.jsonl');
+    const skills = new SkillRegistry([{
+      name: 'git-commit',
+      description: 'write a commit',
+      triggers: ['commit'],
+      body: 'FULL-COMMIT-RULES',
+    }]);
+    const dynamicComposition = createSessionComposition({
+      root: 'repl',
+      runtimeVersion: 'test',
+      permissionMode: 'interactive',
+      toolSchemas: [],
+      systemPrompt: 'SYS',
+      dynamicAddendum: { source: SKILL_REGISTRY_ADDENDUM_SOURCE, manifest: skills.list() },
+    });
+    const store = new FileSessionStore(path);
+    await store.writeHeader({ id: 'dynamic', model: 'fake', cwd: dir, startedAt: 'now', composition: dynamicComposition });
+    const { provider } = fakeModel([{ text: 'done' }]);
+
+    await startRepl({
+      model: provider,
+      tools: new InMemoryToolRegistry(),
+      skills,
+      cwd: dir,
+      modelName: 'fake-model',
+      systemPrompt: 'SYS',
+      maxTurns: 5,
+      input: inputOf(['please commit this']),
+      output: sink().stream,
+      store,
+    });
+
+    await expect(loadSession(path, {
+      requireHeader: true,
+      resume: {
+        expectedComposition: dynamicComposition,
+        resolveDynamicAddendum: (activationText) => skills.systemAddendum(activationText),
+      },
+    })).resolves.toMatchObject({ requests: [expect.objectContaining({ systemAddendumHash: expect.stringMatching(/^sha256\./) })] });
   });
 
   it('ignores blank lines and exits on /exit', async () => {

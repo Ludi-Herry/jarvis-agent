@@ -26,6 +26,9 @@ export interface Skill {
   body: string;
 }
 
+/** Bump when catalog formatting or trigger/body selection semantics change. */
+export const SKILL_REGISTRY_ADDENDUM_SOURCE = 'skill-registry-v1';
+
 /** Scan `dir` for `<dir>/<skill>/SKILL.md` and parse each into a {@link Skill}. A missing
  *  directory yields `[]` (no skills installed is not an error); a folder without a SKILL.md
  *  is skipped. */
