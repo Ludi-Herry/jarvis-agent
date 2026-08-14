@@ -3,6 +3,7 @@ export interface LoopCliArgs {
   force: boolean;
   unattended: boolean;
   noVerifierMap: boolean;
+  allowNoGit: boolean;
   failOnWorktreeChange?: boolean;
   parallel: number;
   verifierMapPath?: string;
@@ -21,6 +22,7 @@ export function parseLoopArgs(argv: string[]): LoopCliArgs {
     force: false,
     unattended: false,
     noVerifierMap: false,
+    allowNoGit: false,
     parallel: 1,
     positional: [],
   };
@@ -41,6 +43,10 @@ export function parseLoopArgs(argv: string[]): LoopCliArgs {
     }
     if (arg === '--fail-on-worktree-change') {
       parsed.failOnWorktreeChange = true;
+      continue;
+    }
+    if (arg === '--allow-no-git') {
+      parsed.allowNoGit = true;
       continue;
     }
     if (arg === '--verifier-map') {
@@ -105,6 +111,9 @@ export function parseLoopArgs(argv: string[]): LoopCliArgs {
   }
   if (parsed.resume && parsed.parallel > 1 && parsed.worktreeRootPath === undefined) {
     throw new Error('--worktree-root is required for parallel resume');
+  }
+  if (parsed.allowNoGit && parsed.parallel > 1) {
+    throw new Error('--allow-no-git cannot be combined with parallel worktree mode');
   }
 
   return parsed;

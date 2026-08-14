@@ -24,10 +24,30 @@ export type Event =
   | { type: 'state'; phase: string }
   | { type: 'usage'; inputTokens: number; outputTokens: number }
   | { type: 'final'; text: string }
-  | { type: 'halt'; reason: 'maxTurns' | 'budget' | 'error' | 'truncated' | 'filtered' | 'guardrail' | 'emergency-stop' }
+  | {
+      type: 'halt';
+      reason:
+        | 'maxTurns'
+        | 'budget'
+        | 'error'
+        | 'truncated'
+        | 'filtered'
+        | 'paused'
+        | 'refused'
+        | 'unknown'
+        | 'turnTimeout'
+        | 'toolExecutionUnknown'
+        | 'goalTimeout'
+        | 'guardrail'
+        | 'emergency-stop';
+      /** Provider finish reason before normalization; present for abnormal model completions. */
+      rawFinishReason?: string;
+      /** Applied hard deadline; present for turn/goal timeout halts. */
+      timeoutMs?: number;
+    }
   // Phase D — goal autonomy. Inlined string unions (not imported from capabilities/goal) so the
   // runtime EventBus carries no back-dependency on the capabilities layer.
-  | { type: 'verdict'; goalId: string; outcome: 'verified' | 'rejected' | 'couldNotVerify'; rationale: string }
+  | { type: 'verdict'; goalId: string; outcome: 'verified' | 'checksOnly' | 'rejected' | 'couldNotVerify'; rationale: string }
   | { type: 'goal_state'; goalId: string; state: 'active' | 'complete' | 'blocked' }
   // Read-only round/budget telemetry for GUI/status surfaces. These events are advisory and cannot
   // grant or replace completion authority.
@@ -53,7 +73,7 @@ export type Event =
       maxTotalTurns?: number;
       maxTotalTokens?: number;
       claimStatus?: 'complete' | 'blocked';
-      verdict?: 'verified' | 'rejected' | 'couldNotVerify';
+      verdict?: 'verified' | 'checksOnly' | 'rejected' | 'couldNotVerify';
       state: 'active' | 'complete' | 'blocked';
     }
   // Phase E — multi-goal Loop scheduling. The ONE machine-actionable moment an operator/GUI must act
@@ -63,6 +83,7 @@ export type Event =
       loopId: string;
       reason:
         | 'queue-empty'
+        | 'blocked-goals'
         | 'max-goals'
         | 'token-budget'
         | 'wall-clock'

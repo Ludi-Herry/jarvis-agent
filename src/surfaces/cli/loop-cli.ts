@@ -59,6 +59,7 @@ import {
   DefaultPermissionGate,
   FileSessionStore,
   InMemoryEventBus,
+  createSessionComposition,
   createEmergencyStopSignal,
   createWsl2UnshareSandboxRunner,
   type Approver,
@@ -93,6 +94,7 @@ import {
   runLoop,
   runParallelLoop,
   snapshotWorktreeStatus,
+  updateGoalToolSchema,
   type LoadedLoopVerifierMap,
   type LoadedLoopHookMap,
   type LoadedLoopSandboxCheckMap,
@@ -107,6 +109,7 @@ import {
 } from '../../capabilities/index.js';
 import type { ModelProvider } from '../../core/index.js';
 import { safeInline } from './approval.js';
+import { formatLoopTerminalGuidance } from './terminal-guidance.js';
 import { createApprovalEventApprover, FileApprovalAuditStore } from './approval-events.js';
 import { registerBuilderSandboxTools } from './builder-sandbox-tools.js';
 import { createInteractiveApprover, readlineApproverIo } from './interactive-approver.js';
@@ -115,6 +118,9 @@ import { assertParallelHooksCompatible } from './loop-guards.js';
 import { createGoalHookResolver, preloadGoalHookOverrides } from './loop-hooks.js';
 import { loadLoopGoalResume, type LoadedLoopGoalResume } from './loop-resume.js';
 import { initialRenderState, renderEvent } from './render.js';
+import { CLI_EXIT, exitCodeForLoop } from './exit-codes.js';
+import { decideGitTrust } from './git-trust.js';
+import { JARVIS_VERSION } from './package-info.js';
 
 // Capture BEFORE the runtime .env load (see goal-cli): a key here came from the shell LAUNCH env
 // (in /proc on Linux); the guard refuses it so the provider key only ever arrives via .env.
@@ -134,6 +140,7 @@ const MAX_TOTAL_TOKENS = 4_000_000;
 // notices (goal-loop's overBudget() blocks the goal once its own usage crosses this). Bounds the
 // composite ceiling to cumulative + one perGoalBudget rather than cumulative + an 8-round goal.
 const PER_GOAL_MAX_TOKENS = 1_000_000;
+const PER_GOAL_MAX_WALL_CLOCK_MS = 15 * 60 * 1000;
 const MAX_WALL_CLOCK_MS = 2 * 60 * 60 * 1000; // 2h per invocation
 const MAX_CONSECUTIVE_BLOCKED = 3;
 const CNV_WINDOW = 3;
@@ -143,6 +150,7 @@ const PER_ROUND_MAX_TURNS = 16;
 const BUILDER_PROMPT = [
   'You are an autonomous coding assistant working in a terminal to complete one goal.',
   'Use the read / write / grep / bash tools to make progress. Paths are relative to the project root. Dangerous or secret-touching actions may be blocked or require approval.',
+  'Read an existing file before changing it and pass the returned version as write.expectedVersion. Use createOnly:true for a new path.',
   'You may call sandboxed_check with check=typecheck|lint|test|build to run project checks inside an OS sandbox. Use its stdout/stderr to keep fixing failures.',
   'You may call browser_smoke with profile=static-dist to open dist/index.html with a preinstalled browser inside the OS sandbox. Use the result as feedback only.',
   'When you believe the goal is complete, call update_goal(complete) and end the round; the harness will independently rerun project checks to verify it.',
@@ -150,7 +158,7 @@ const BUILDER_PROMPT = [
 ].join('\n');
 
 /** Hand-to-human halt reasons. A `--resume` past one of these requires `--force`. */
-const NEEDS_HUMAN: ReadonlySet<string> = new Set(['verifier-health', 'consecutive-blocked']);
+const NEEDS_HUMAN: ReadonlySet<string> = new Set(['verifier-health', 'consecutive-blocked', 'blocked-goals']);
 
 async function main(): Promise<void> {
   let args;
@@ -158,7 +166,7 @@ async function main(): Promise<void> {
     args = parseLoopArgs(process.argv.slice(2));
   } catch (err) {
     console.error(err instanceof Error ? err.message : String(err));
-    process.exitCode = 1;
+    process.exitCode = CLI_EXIT.USAGE;
     return;
   }
   const {
@@ -166,6 +174,7 @@ async function main(): Promise<void> {
     force,
     unattended,
     noVerifierMap,
+    allowNoGit,
     positional,
     verifierMapPath,
     hookMapPath,
@@ -178,7 +187,7 @@ async function main(): Promise<void> {
   const parallelMode = parallel > 1;
   if (noVerifierMap) {
     console.error('--no-verifier-map is unsafe for resume; use --verifier-map <trusted empty map>');
-    process.exitCode = 1;
+    process.exitCode = CLI_EXIT.USAGE;
     return;
   }
 
@@ -188,7 +197,7 @@ async function main(): Promise<void> {
     config = loadDoubaoConfig();
   } catch (err) {
     console.error(err instanceof Error ? err.message : String(err));
-    process.exitCode = 1;
+    process.exitCode = CLI_EXIT.USAGE;
     return;
   }
 
@@ -202,6 +211,19 @@ async function main(): Promise<void> {
   const forbiddenSandboxCheckMapRoots = Array.from(
     new Set([cwd, findWorkspaceRoot(cwd), ...(parallelMode ? [worktreeBaseRoot] : [])]),
   );
+  const repositoryBaseline = await snapshotBaseline(shellPath, cwd);
+  const gitTrust = decideGitTrust(repositoryBaseline !== undefined, allowNoGit);
+  if (gitTrust === 'reject') {
+    console.error(
+      '[loop] No usable Git baseline was found. Autonomous loop mode requires Git for tamper detection. ' +
+        'Initialize/commit the repository, or rerun a serial loop with --allow-no-git to accept checks-only results.',
+    );
+    process.exitCode = CLI_EXIT.USAGE;
+    return;
+  }
+  if (gitTrust === 'checks-only') {
+    console.error('[loop] WARNING: --allow-no-git enabled; verified completion is disabled and checks-only is the highest possible outcome.');
+  }
 
   let verifierMap: LoadedLoopVerifierMap | undefined;
   if (verifierMapPath !== undefined) {
@@ -214,7 +236,7 @@ async function main(): Promise<void> {
       });
     } catch (err) {
       console.error(`[loop verifier] ${err instanceof Error ? err.message : String(err)}`);
-      process.exitCode = 1;
+      process.exitCode = CLI_EXIT.USAGE;
       return;
     }
   }
@@ -230,7 +252,7 @@ async function main(): Promise<void> {
       });
     } catch (err) {
       console.error(`[loop hooks] ${err instanceof Error ? err.message : String(err)}`);
-      process.exitCode = 1;
+      process.exitCode = CLI_EXIT.USAGE;
       return;
     }
   }
@@ -247,7 +269,7 @@ async function main(): Promise<void> {
       });
     } catch (err) {
       console.error(`[loop sandbox checks] ${err instanceof Error ? err.message : String(err)}`);
-      process.exitCode = 1;
+      process.exitCode = CLI_EXIT.USAGE;
       return;
     }
   }
@@ -264,7 +286,7 @@ async function main(): Promise<void> {
       });
     } catch (err) {
       console.error(`[loop goal-setter requirements] ${err instanceof Error ? err.message : String(err)}`);
-      process.exitCode = 1;
+      process.exitCode = CLI_EXIT.USAGE;
       return;
     }
   }
@@ -292,13 +314,13 @@ async function main(): Promise<void> {
     const latest = await latestLoopPath(loopsDir);
     if (latest === null) {
       console.error('No resumable loop found (data/loops/ is empty).');
-      process.exitCode = 1;
+      process.exitCode = CLI_EXIT.NEEDS_HUMAN;
       return;
     }
     const replay = await loadLoop(latest);
     if (replay.contract === undefined || replay.id === undefined) {
-      console.error(`loop 鏃ュ織鎹熷潖鎴栫己灏?header: ${latest}`);
-      process.exitCode = 1;
+      console.error(`loop 日志损坏或缺少 header: ${latest}`);
+      process.exitCode = CLI_EXIT.STATE_CORRUPT;
       return;
     }
     loopId = replay.id;
@@ -320,13 +342,13 @@ async function main(): Promise<void> {
     const file = positional[0];
     if (!file) {
       console.error('Usage: npm run loop -- <objectives-file>  (one objective per line; # comments and blank lines are ignored)');
-      process.exitCode = 1;
+      process.exitCode = CLI_EXIT.USAGE;
       return;
     }
     objectives = loadObjectives(file);
     if (objectives.length === 0) {
       console.error(`objectives file is empty or unreadable: ${file}`);
-      process.exitCode = 1;
+      process.exitCode = CLI_EXIT.USAGE;
       return;
     }
     loopId = new Date().toISOString().replace(/[:.]/g, '-');
@@ -337,7 +359,11 @@ async function main(): Promise<void> {
       maxConsecutiveBlocked: MAX_CONSECUTIVE_BLOCKED,
       cnvWindow: CNV_WINDOW,
       cnvThreshold: CNV_THRESHOLD,
-      perGoalBudget: { maxRounds: PER_GOAL_ROUNDS, maxTotalTokens: PER_GOAL_MAX_TOKENS },
+      perGoalBudget: {
+        maxRounds: PER_GOAL_ROUNDS,
+        maxTotalTokens: PER_GOAL_MAX_TOKENS,
+        maxWallClockMs: PER_GOAL_MAX_WALL_CLOCK_MS,
+      },
     };
     loopPath = join(loopsDir, `${loopId}.jsonl`);
   }
@@ -346,21 +372,21 @@ async function main(): Promise<void> {
     if (resume) assertResumeVerifierMapMatches(replayVerifierMapPath, verifierMap?.path, noVerifierMap);
   } catch (err) {
     console.error(`[loop verifier] ${err instanceof Error ? err.message : String(err)}`);
-    process.exitCode = 1;
+    process.exitCode = CLI_EXIT.USAGE;
     return;
   }
   try {
     if (resume) assertResumeHookMapMatches(replayHookMapPath, hookMap?.path);
   } catch (err) {
     console.error(`[loop hooks] ${err instanceof Error ? err.message : String(err)}`);
-    process.exitCode = 1;
+    process.exitCode = CLI_EXIT.USAGE;
     return;
   }
   try {
     if (resume) assertResumeSandboxCheckMapMatches(replaySandboxCheckMapPath, sandboxCheckMap?.path);
   } catch (err) {
     console.error(`[loop sandbox checks] ${err instanceof Error ? err.message : String(err)}`);
-    process.exitCode = 1;
+    process.exitCode = CLI_EXIT.USAGE;
     return;
   }
   try {
@@ -377,7 +403,7 @@ async function main(): Promise<void> {
     }
   } catch (err) {
     console.error(`[loop goal-setter requirements] ${err instanceof Error ? err.message : String(err)}`);
-    process.exitCode = 1;
+    process.exitCode = CLI_EXIT.USAGE;
     return;
   }
 
@@ -407,7 +433,7 @@ async function main(): Promise<void> {
     });
   } catch (err) {
     console.error(`[loop config] ${err instanceof Error ? err.message : String(err)}`);
-    process.exitCode = 1;
+    process.exitCode = CLI_EXIT.USAGE;
     return;
   }
   if (seedOutcomes !== undefined) seedOutcomes = attachTrustedVerifierKeys(seedOutcomes, verifierPlan.decisions);
@@ -422,7 +448,7 @@ async function main(): Promise<void> {
     if (needsHuman && !force) {
       const why = seedHalted ?? (verifierHealthTripped ? 'verifier-health' : 'consecutive-blocked');
       console.error(`该 loop 处于需人工检查状态(${why})。确认裁判/状态无误后,用 --resume --force 续跑。`);
-      process.exitCode = 1;
+      process.exitCode = CLI_EXIT.NEEDS_HUMAN;
       return;
     }
   }
@@ -444,7 +470,7 @@ async function main(): Promise<void> {
       await assertWorktreeRootOutsideCwd(worktreeBaseRoot, cwd);
     } catch (err) {
       console.error(`[worktree] ${err instanceof Error ? err.message : String(err)}`);
-      process.exitCode = 1;
+      process.exitCode = CLI_EXIT.USAGE;
       return;
     }
   }
@@ -466,7 +492,7 @@ async function main(): Promise<void> {
     await preloadGoalHookOverrides(hooksForGoal, hookPlan.hookPathByIndex.keys());
   } catch (err) {
     console.error(`[hooks] ${err instanceof Error ? err.message : String(err)}`);
-    process.exitCode = 1;
+    process.exitCode = CLI_EXIT.USAGE;
     return;
   }
   if (!resume) {
@@ -543,12 +569,32 @@ async function main(): Promise<void> {
   // never silently sends an image out; the builder's vision call blocks exactly like its write/bash.
   const vision = resolveVisionConfig(process.env, config);
   const visionTool = vision.enabled ? createVisionTool(createVisionComplete(vision.config)) : undefined;
+  const buildGoalTools = () => {
+    const sandboxRunner = createWsl2UnshareSandboxRunner();
+    const goalTools = buildDefaultRegistry();
+    goalTools.register(createBashTool());
+    registerBuilderSandboxTools(goalTools, sandboxRunner);
+    if (visionTool) goalTools.register(visionTool);
+    return { tools: goalTools, sandboxRunner };
+  };
+  const loopSessionComposition = (goalTools: ReturnType<typeof buildGoalTools>['tools']) => createSessionComposition({
+    root: 'loop',
+    runtimeVersion: JARVIS_VERSION,
+    permissionMode: unattended ? (parallelMode ? 'worktree-unattended' : 'unattended') : 'interactive',
+    toolSchemas: [...goalTools.schemasForModel(), updateGoalToolSchema()],
+    systemPrompt: BUILDER_PROMPT,
+  });
 
   console.log(`Jarvis-Agent loop mode - ${safeInline(config.model)}`);
   console.log(`Queue: ${objectives.length} goals${resume ? ` (resume, recheck ${seedInFlight?.size ?? 0} logged attempts)` : ''}`);
   console.log(parallelMode ? `Parallel: ${parallel} worktree goals, root ${safeInline(worktreeRoot)}` : 'Parallel: disabled');
   console.log(`Approval: ${unattended ? 'unattended (fail-closed)' : 'attended (interactive)'}`);
   console.log(`Worktree baseline: ${failOnWorktreeChange ? 'forbid changes' : 'audit changes'}`);
+  console.log(
+    repositoryBaseline
+      ? `Trust: Git tamper baseline ${repositoryBaseline.headSha.slice(0, 8)}`
+      : 'Trust: checks-only (--allow-no-git); verified completion disabled',
+  );
   const enabledVerifierCount = verifierPlan.decisions.filter(
     (decision, index) =>
       decision.enabled &&
@@ -610,12 +656,24 @@ async function main(): Promise<void> {
     return path;
   };
   const resumeCache = new Map<number, LoadedLoopGoalResume>();
-  const loadResumeFor = async (index: number, goalId: string, goalCwd: string): Promise<LoadedLoopGoalResume> => {
+  const loadResumeFor = async (
+    index: number,
+    goalId: string,
+    goalCwd: string,
+    expectedComposition: ReturnType<typeof createSessionComposition>,
+  ): Promise<LoadedLoopGoalResume> => {
     const cached = resumeCache.get(index);
     if (cached !== undefined) return cached;
     const goalPath = join(cwd, 'data', 'goals', `${goalId}.jsonl`);
     const sessionPath = join(cwd, 'data', 'sessions', `${goalId}.jsonl`);
-    const loaded = await loadLoopGoalResume(goalPath, sessionPath, goalId, goalCwd);
+    const loaded = await loadLoopGoalResume(
+      goalPath,
+      sessionPath,
+      goalId,
+      goalCwd,
+      expectedComposition,
+      config.model,
+    );
     resumeCache.set(index, loaded);
     return loaded;
   };
@@ -627,15 +685,14 @@ async function main(): Promise<void> {
     const goalCwd = await goalCwdFor(attempt.index, attempt.resumed);
     const goalHooks = await hooksForGoal(attempt.index);
     const goalHookOverride = hookPlan.hookPathByIndex.has(attempt.index);
-    const tools = buildDefaultRegistry();
-    tools.register(createBashTool());
-    const goalSandboxRunner = createWsl2UnshareSandboxRunner();
-    registerBuilderSandboxTools(tools, goalSandboxRunner);
-    if (visionTool) tools.register(visionTool); // opt-in vision (network -> gate ask / unattended deny)
+    const { tools, sandboxRunner: goalSandboxRunner } = buildGoalTools();
+    const sessionComposition = loopSessionComposition(tools);
 
     const goalPath = join(cwd, 'data', 'goals', `${goalId}.jsonl`);
     const sessionPath = join(cwd, 'data', 'sessions', `${goalId}.jsonl`);
-    const loadedResume = attempt.resumed ? await loadResumeFor(attempt.index, goalId, goalCwd) : undefined;
+    const loadedResume = attempt.resumed
+      ? await loadResumeFor(attempt.index, goalId, goalCwd, sessionComposition)
+      : undefined;
     const resumeState = loadedResume?.resume;
     const verifierDecision = verifierPlan.decisions[attempt.index];
     if (verifierDecision === undefined) {
@@ -682,9 +739,18 @@ async function main(): Promise<void> {
     const baseline = await snapshotBaseline(shellPath, goalCwd, emergencyStop.signal);
     const worktreeBaseline = await snapshotWorktreeStatus(shellPath, goalCwd, emergencyStop.signal);
     const goalStore = new FileGoalStore(goalPath);
-    const sessionStore = new FileSessionStore(sessionPath, loadedResume?.initialCursor ?? 0);
+    const sessionStore = new FileSessionStore(sessionPath, loadedResume?.initialCursor ?? 0, {
+      format: loadedResume?.sessionFormat ?? 'v2',
+      initialSequence: loadedResume?.initialSequence ?? 0,
+    });
     if (!attempt.resumed) {
-      await sessionStore.writeHeader({ id: goalId, model: config.model, cwd: goalCwd, startedAt: new Date().toISOString() });
+      await sessionStore.writeHeader({
+        id: goalId,
+        model: config.model,
+        cwd: goalCwd,
+        startedAt: new Date().toISOString(),
+        composition: sessionComposition,
+      });
     }
     const goalGate = parallelMode
       ? new DefaultPermissionGate({
@@ -755,6 +821,7 @@ async function main(): Promise<void> {
               : undefined,
       rounds: result.rounds,
       tokens: result.tokens,
+      haltReason: result.haltReason,
     };
   };
 
@@ -762,13 +829,14 @@ async function main(): Promise<void> {
     try {
       for (const [index, goalId] of seedInFlight) {
         const goalCwd = await goalCwdFor(index, true);
-        await loadResumeFor(index, goalId, goalCwd);
+        const { tools: resumeTools } = buildGoalTools();
+        await loadResumeFor(index, goalId, goalCwd, loopSessionComposition(resumeTools));
       }
     } catch (err) {
       console.error(`[loop resume] ${err instanceof Error ? err.message : String(err)}`);
       emergencyStop.dispose();
       rl?.close();
-      process.exitCode = 1;
+      process.exitCode = CLI_EXIT.STATE_CORRUPT;
       return;
     }
   }
@@ -794,17 +862,26 @@ async function main(): Promise<void> {
       : await runLoop({ id: loopId, objectives, contract }, loopDeps);
     console.log(
       `\n=== loop ${result.reason} - this run started=${result.started} completed=${result.completed} blocked=${result.blocked} ` +
+        `needsVerification=${result.needsVerification} runtimeFailures=${result.runtimeFailures} ` +
         `- cumulative finished=${result.goalsFinished}/${objectives.length} tokens=${result.cumulativeTokens} ===`,
     );
+    if (result.reason !== 'queue-empty') {
+      for (const line of formatLoopTerminalGuidance({
+        reason: safeInline(result.reason),
+        needsVerification: result.needsVerification,
+        runtimeFailures: result.runtimeFailures,
+        loopLogPath: safeInline(loopPath),
+      })) console.log(line);
+    }
     if (parallelMode) console.log(`Worktrees kept for inspection: ${safeInline(worktreeRoot)}`);
-    if (NEEDS_HUMAN.has(result.reason)) process.exitCode = 1;
+    process.exitCode = exitCodeForLoop(result);
   } catch (err) {
     if (emergencyStop.signal.aborted) {
       await loopStore.recordHalted('emergency-stop', new Date().toISOString()).catch(() => undefined);
       bus.emit({ type: 'loop_halt', loopId, reason: 'emergency-stop' });
       bus.emit({ type: 'halt', reason: 'emergency-stop' });
       console.error('\n[loop] emergency stop requested; no new goals will launch and JSONL logs were left in place.');
-      process.exitCode = 1;
+      process.exitCode = CLI_EXIT.INTERRUPTED;
       return;
     }
     throw err;
@@ -841,7 +918,7 @@ function findWorkspaceRoot(cwd: string): string {
   }
 }
 
-/** Snapshot the leg-2 baseline (current HEAD sha). Undefined when not a git repo (leg 2 inert). */
+/** Snapshot the leg-2 baseline. Production callers reject absence unless checks-only is explicit. */
 async function snapshotBaseline(shellPath: string, cwd: string, signal?: AbortSignal): Promise<TestBaseline | undefined> {
   const res = await runCommand(shellPath, 'git rev-parse HEAD', cwd, 10_000, 1_000, signal);
   if (res.code !== 0) return undefined;
@@ -850,7 +927,7 @@ async function snapshotBaseline(shellPath: string, cwd: string, signal?: AbortSi
 
 main().catch((err: unknown) => {
   console.error('\n[loop] fatal:', err instanceof Error ? err.message : err);
-  process.exitCode = 1;
+  process.exitCode = CLI_EXIT.RUNTIME;
 });
 
 async function runAdvisoryHook(fn: (() => Promise<void>) | undefined): Promise<void> {

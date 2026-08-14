@@ -1,6 +1,13 @@
 import { appendFile, mkdir, readFile, readdir } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { redactSecrets } from '../../core/model/errors.js';
+import {
+  assertOperationalJsonlIntegrity,
+  hasFiniteNumberFields,
+  hasStringFields,
+  isJsonObject,
+  parseJsonlWithDiagnostics,
+} from '../../runtime/jsonl-integrity.js';
 import type {
   DeterministicChecks,
   GoalState,
@@ -11,12 +18,12 @@ import type {
 } from './goal.js';
 import { decideVerdict } from './verdict.js';
 import {
-  parseGoalLog,
+  isGoalRecord,
   replayGoal,
   serializeGoalRecord,
 } from './goal-store.js';
 import {
-  parseLoopLog,
+  isLoopRecord,
   serializeLoopRecord,
   type LoopRecord,
 } from './loop-store.js';
@@ -167,18 +174,23 @@ export async function applyHumanReviewDecision(
 }
 
 export function parseHumanReviewAuditLog(text: string): HumanReviewAuditRecord[] {
-  const records: HumanReviewAuditRecord[] = [];
-  for (const line of text.split('\n')) {
-    const trimmed = line.trim();
-    if (trimmed === '') continue;
-    try {
-      const parsed = JSON.parse(trimmed) as HumanReviewAuditRecord;
-      if (parsed.t === 'human-review-decision') records.push(parsed);
-    } catch {
-      // crash-truncated tail: ignore, matching the goal/loop stores.
-    }
-  }
-  return records;
+  return parseJsonlWithDiagnostics(text, isHumanReviewAuditRecord).records;
+}
+
+export function isHumanReviewAuditRecord(value: unknown): value is HumanReviewAuditRecord {
+  return isJsonObject(value)
+    && value.t === 'human-review-decision'
+    && hasStringFields(value, 'goalId', 'reviewer', 'at')
+    && hasFiniteNumberFields(value, 'previousRound')
+    && Array.isArray(value.decisions)
+    && value.decisions.every((decision) => isJsonObject(decision)
+      && hasStringFields(decision, 'requirementId', 'note')
+      && (decision.decision === 'approve' || decision.decision === 'reject'))
+    && (value.verdict === 'verified'
+      || value.verdict === 'checksOnly'
+      || value.verdict === 'rejected'
+      || value.verdict === 'couldNotVerify')
+    && (value.state === 'active' || value.state === 'complete' || value.state === 'blocked');
 }
 
 async function loadPendingHumanReview(dataDir: string, goalId: string): Promise<PendingHumanReview | undefined> {
@@ -189,8 +201,9 @@ async function loadPendingHumanReview(dataDir: string, goalId: string): Promise<
   } catch {
     return undefined;
   }
-  const records = parseGoalLog(text);
-  const { goal, rounds } = replayGoal(records);
+  const parsed = parseJsonlWithDiagnostics(text, isGoalRecord);
+  const { goal, rounds } = replayGoal(parsed.records);
+  assertOperationalJsonlIntegrity('goal', parsed.malformed, goal !== undefined);
   const latestRound = rounds.at(-1);
   const report = latestRound?.verdict?.report;
   if (
@@ -389,7 +402,13 @@ async function findLoopForGoal(
   let found: { path: string; loopId: string; index: number; verifierKey?: string } | undefined;
   for (const entry of entries) {
     const path = join(dataDir, 'loops', entry);
-    const records = parseLoopLog(await readFile(path, 'utf8'));
+    const parsed = parseJsonlWithDiagnostics(await readFile(path, 'utf8'), isLoopRecord);
+    const records = parsed.records;
+    assertOperationalJsonlIntegrity(
+      'loop',
+      parsed.malformed,
+      records.some((record) => record.t === 'loop-created'),
+    );
     const loopId = records.find((record): record is Extract<LoopRecord, { t: 'loop-created' }> => record.t === 'loop-created')
       ?.id ?? basename(entry, '.jsonl');
     for (const record of records) {
@@ -409,12 +428,11 @@ async function findLoopForGoal(
 }
 
 async function totalTokensFromLatestGoal(dataDir: string, goalId: string): Promise<number> {
-  try {
-    const text = await readFile(join(dataDir, 'goals', `${goalId}.jsonl`), 'utf8');
-    return replayGoal(parseGoalLog(text)).rounds.reduce((sum, round) => sum + (round.tokens ?? 0), 0);
-  } catch {
-    return 0;
-  }
+  const text = await readFile(join(dataDir, 'goals', `${goalId}.jsonl`), 'utf8');
+  const parsed = parseJsonlWithDiagnostics(text, isGoalRecord);
+  const replayed = replayGoal(parsed.records);
+  assertOperationalJsonlIntegrity('goal', parsed.malformed, replayed.goal !== undefined);
+  return replayed.rounds.reduce((sum, round) => sum + (round.tokens ?? 0), 0);
 }
 
 async function jsonlEntries(dir: string): Promise<string[]> {

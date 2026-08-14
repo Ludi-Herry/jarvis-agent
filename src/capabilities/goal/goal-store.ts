@@ -20,6 +20,13 @@
 import { appendFile, mkdir, readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { dirname } from 'node:path';
+import {
+  assertOperationalJsonlIntegrity,
+  hasFiniteNumberFields,
+  hasStringFields,
+  isJsonObject,
+  parseJsonlWithDiagnostics,
+} from '../../runtime/jsonl-integrity.js';
 import type {
   DeterministicChecks,
   Goal,
@@ -47,11 +54,152 @@ export type GoalRecord =
       sessionId: string;
       createdAt: string;
     }
-  | { t: 'goal-round'; round: number; turns?: number; tokens?: number; claim?: GoalClaim; checks?: DeterministicChecks; verdict?: Verdict; at: string }
+  | {
+      t: 'goal-round';
+      round: number;
+      turns?: number;
+      tokens?: number;
+      claim?: GoalClaim;
+      checks?: DeterministicChecks;
+      verdict?: Verdict;
+      /** Abnormal builder/goal stop retained with the round for durable audit. */
+      haltReason?: string;
+      rawFinishReason?: string;
+      timeoutMs?: number;
+      at: string;
+    }
   | { t: 'goal-state'; state: GoalState; at: string };
 
 export type GoalCreatedRecord = Extract<GoalRecord, { t: 'goal-created' }>;
 export type GoalRoundRecord = Extract<GoalRecord, { t: 'goal-round' }>;
+
+export function isGoalRecord(value: unknown): value is GoalRecord {
+  if (!isJsonObject(value) || typeof value.t !== 'string') return false;
+  switch (value.t) {
+    case 'goal-created':
+      return hasStringFields(value, 'id', 'objective', 'objectiveHash', 'sessionId', 'createdAt')
+        && isGoalBudget(value.budget)
+        && (value.pinned === undefined || (Array.isArray(value.pinned) && value.pinned.every(isPinnedRequirement)))
+        && (value.testBaseline === undefined || isTestBaseline(value.testBaseline))
+        && (value.worktreeBaseline === undefined || isWorktreeBaseline(value.worktreeBaseline));
+    case 'goal-round':
+      return hasFiniteNumberFields(value, 'round')
+        && typeof value.at === 'string'
+        && optionalFiniteNumbers(value, 'turns', 'tokens', 'timeoutMs')
+        && optionalStrings(value, 'haltReason', 'rawFinishReason')
+        && (value.claim === undefined || isGoalClaim(value.claim))
+        && (value.checks === undefined || isDeterministicChecks(value.checks))
+        && (value.verdict === undefined || isVerdict(value.verdict));
+    case 'goal-state':
+      return (value.state === 'active' || value.state === 'complete' || value.state === 'blocked')
+        && typeof value.at === 'string';
+    default:
+      return false;
+  }
+}
+
+function isGoalBudget(value: unknown): boolean {
+  return isJsonObject(value)
+    && hasFiniteNumberFields(value, 'maxRounds')
+    && optionalFiniteNumbers(value, 'maxTotalTurns', 'maxTotalTokens', 'maxWallClockMs');
+}
+
+function isTestBaseline(value: unknown): boolean {
+  return isJsonObject(value)
+    && typeof value.headSha === 'string'
+    && Array.isArray(value.testFiles)
+    && value.testFiles.every((file) => isJsonObject(file) && hasStringFields(file, 'path', 'blobHash'));
+}
+
+function isWorktreeBaseline(value: unknown): boolean {
+  return isJsonObject(value)
+    && value.command === 'git status --porcelain --untracked-files=all'
+    && typeof value.baseline === 'string';
+}
+
+function isPinnedRequirement(value: unknown): boolean {
+  return isJsonObject(value)
+    && hasStringFields(value, 'id', 'text')
+    && (value.route === undefined || value.route === 'sandbox-command' || value.route === 'llm' || value.route === 'human');
+}
+
+function isGoalClaim(value: unknown): boolean {
+  return isJsonObject(value)
+    && (value.status === 'complete' || value.status === 'blocked')
+    && (value.verification === undefined || typeof value.verification === 'string');
+}
+
+function isDeterministicChecks(value: unknown): boolean {
+  return isJsonObject(value)
+    && typeof value.objectiveChecksPassed === 'boolean'
+    && Array.isArray(value.results)
+    && value.results.every(isCheckResult)
+    && (value.testTamper === 'clean' || value.testTamper === 'weakened-or-deleted' || value.testTamper === 'unavailable')
+    && typeof value.tamperReason === 'string'
+    && (value.heldOut === undefined || isHeldOut(value.heldOut))
+    && (value.worktreeStatus === undefined || isWorktreeStatus(value.worktreeStatus));
+}
+
+function isWorktreeStatus(value: unknown): boolean {
+  return isWorktreeBaseline(value)
+    && isJsonObject(value)
+    && (value.policy === 'audit' || value.policy === 'forbid')
+    && typeof value.current === 'string'
+    && typeof value.changed === 'boolean'
+    && Array.isArray(value.changedEntries)
+    && value.changedEntries.every((entry) => typeof entry === 'string')
+    && optionalStrings(value, 'trackedDiffHash', 'error');
+}
+
+function isCheckResult(value: unknown): boolean {
+  return isJsonObject(value)
+    && hasStringFields(value, 'command', 'output')
+    && (value.code === null || (typeof value.code === 'number' && Number.isFinite(value.code)));
+}
+
+function isHeldOut(value: unknown): boolean {
+  return isJsonObject(value)
+    && typeof value.passed === 'boolean'
+    && Array.isArray(value.results)
+    && value.results.every(isCheckResult);
+}
+
+function isVerdict(value: unknown): boolean {
+  return isJsonObject(value)
+    && (value.outcome === 'verified'
+      || value.outcome === 'checksOnly'
+      || value.outcome === 'rejected'
+      || value.outcome === 'couldNotVerify')
+    && typeof value.rationale === 'string'
+    && (value.report === undefined || isVerifierReport(value.report));
+}
+
+function isVerifierReport(value: unknown): boolean {
+  return isJsonObject(value)
+    && (value.feature === 'works' || value.feature === 'broken')
+    && hasStringFields(value, 'expected', 'observed', 'evidence', 'rationale')
+    && Array.isArray(value.couldNotVerify)
+    && value.couldNotVerify.every((item) => typeof item === 'string')
+    && Array.isArray(value.perRequirement)
+    && value.perRequirement.every((item) => isJsonObject(item)
+      && typeof item.requirementId === 'string'
+      && (item.strength === 'proves'
+        || item.strength === 'contradicts'
+        || item.strength === 'incomplete'
+        || item.strength === 'tooWeak'
+        || item.strength === 'missing'
+        || item.strength === 'cannotVerify')
+      && (item.scope === 'matched' || item.scope === 'narrowerThanClaim'));
+}
+
+function optionalFiniteNumbers(value: Record<string, unknown>, ...fields: string[]): boolean {
+  return fields.every((field) => value[field] === undefined
+    || (typeof value[field] === 'number' && Number.isFinite(value[field])));
+}
+
+function optionalStrings(value: Record<string, unknown>, ...fields: string[]): boolean {
+  return fields.every((field) => value[field] === undefined || typeof value[field] === 'string');
+}
 
 /** sha256 of the objective — stored at creation, asserted unchanged before each verification
  *  (objective is immutable; Part7). Also a restart-time integrity self-check. */
@@ -74,17 +222,7 @@ export function serializeGoalRecord(record: GoalRecord): string {
 
 /** Parse a JSONL goal log, skipping blank/corrupt lines (the crash-truncated tail). Pure. */
 export function parseGoalLog(text: string): GoalRecord[] {
-  const records: GoalRecord[] = [];
-  for (const line of text.split('\n')) {
-    const trimmed = line.trim();
-    if (trimmed === '') continue;
-    try {
-      records.push(JSON.parse(trimmed) as GoalRecord);
-    } catch {
-      // truncated/corrupt line — skip and recover the rest
-    }
-  }
-  return records;
+  return parseJsonlWithDiagnostics(text, isGoalRecord).records;
 }
 
 /** Fold records back into the current Goal + its round history. `goal-created` seeds the goal (state
@@ -151,5 +289,8 @@ export class FileGoalStore {
 /** Load and replay a goal log from disk. */
 export async function loadGoal(path: string): Promise<{ goal?: Goal; rounds: GoalRoundRecord[] }> {
   const text = await readFile(path, 'utf8');
-  return replayGoal(parseGoalLog(text));
+  const parsed = parseJsonlWithDiagnostics(text, isGoalRecord);
+  const replayed = replayGoal(parsed.records);
+  assertOperationalJsonlIntegrity('goal', parsed.malformed, replayed.goal !== undefined);
+  return replayed;
 }

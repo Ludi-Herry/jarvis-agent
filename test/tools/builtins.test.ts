@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtemp, rm, readFile, mkdir, writeFile, symlink } from 'node:fs/promises';
+import { link, mkdtemp, rm, readFile, mkdir, writeFile, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readTool, writeTool, grepTool } from '../../src/core/tools/builtins.js';
@@ -7,6 +7,7 @@ import type { ToolRunCtx } from '../../src/core/tools/types.js';
 
 let dir: string;
 let ctx: ToolRunCtx;
+const fileSymlinkIt = process.platform === 'win32' ? it.skip : it;
 
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), 'harness-tools-'));
@@ -23,6 +24,8 @@ describe('readTool', () => {
     const out = await readTool.run({ path: 'note.txt' }, ctx);
     expect(out.content).toBe('hello world');
     expect(out.error).toBeUndefined();
+    expect(out.fileReceipt).toMatchObject({ kind: 'read', path: 'note.txt' });
+    expect(out.fileReceipt?.kind === 'read' ? out.fileReceipt.version : '').toMatch(/^fv1\./);
   });
 
   it('returns a clean error (not a throw) for a missing file', async () => {
@@ -44,16 +47,105 @@ describe('readTool', () => {
 
 describe('writeTool', () => {
   it('writes a file and creates missing parent directories', async () => {
-    const out = await writeTool.run({ path: 'sub/deep/out.txt', content: 'data' }, ctx);
+    const out = await writeTool.run({ path: 'sub/deep/out.txt', content: 'data', createOnly: true }, ctx);
     expect(out.error).toBeUndefined();
-    expect(out.content).toMatch(/Wrote 4 chars/);
+    expect(out.content).toMatch(/Created sub\/deep\/out\.txt \(4 chars\)/);
+    expect(out.fileReceipt).toMatchObject({ kind: 'write', outcome: 'applied', precondition: 'createOnly' });
     const written = await readFile(join(dir, 'sub/deep/out.txt'), 'utf8');
     expect(written).toBe('data');
   });
 
+  it('requires a version for replacement and returns the new postVersion', async () => {
+    await writeFile(join(dir, 'note.txt'), 'before', 'utf8');
+    const read = await readTool.run({ path: 'note.txt' }, ctx);
+    const expectedVersion = read.fileReceipt?.kind === 'read' ? read.fileReceipt.version : '';
+
+    const out = await writeTool.run({ path: 'note.txt', content: 'after', expectedVersion }, ctx);
+
+    expect(out.error).toBeUndefined();
+    expect(out.fileReceipt).toMatchObject({
+      kind: 'write',
+      outcome: 'applied',
+      precondition: 'expectedVersion',
+      expectedVersion,
+    });
+    expect(out.fileReceipt?.kind === 'write' ? out.fileReceipt.postVersion : '').toMatch(/^fv1\./);
+    expect(await readFile(join(dir, 'note.txt'), 'utf8')).toBe('after');
+  });
+
+  it('rejects a stale expectedVersion without changing the newer file', async () => {
+    await writeFile(join(dir, 'note.txt'), 'baseline', 'utf8');
+    const read = await readTool.run({ path: 'note.txt' }, ctx);
+    const expectedVersion = read.fileReceipt?.kind === 'read' ? read.fileReceipt.version : '';
+    await writeFile(join(dir, 'note.txt'), 'external edit', 'utf8');
+
+    const out = await writeTool.run({ path: 'note.txt', content: 'agent edit', expectedVersion }, ctx);
+
+    expect(out.error).toMatch(/Write conflict/);
+    expect(out.fileReceipt).toMatchObject({ kind: 'write', outcome: 'conflict' });
+    expect(await readFile(join(dir, 'note.txt'), 'utf8')).toBe('external edit');
+  });
+
+  it('rejects createOnly when the target already exists', async () => {
+    await writeFile(join(dir, 'note.txt'), 'keep', 'utf8');
+
+    const out = await writeTool.run({ path: 'note.txt', content: 'replace', createOnly: true }, ctx);
+
+    expect(out.error).toMatch(/already exists/);
+    expect(out.fileReceipt).toMatchObject({ kind: 'write', outcome: 'conflict' });
+    expect(await readFile(join(dir, 'note.txt'), 'utf8')).toBe('keep');
+  });
+
+  it('rejects a direct unversioned write without touching the path', async () => {
+    const out = await writeTool.run({ path: 'note.txt', content: 'unsafe' }, ctx);
+
+    expect(out.error).toMatch(/exactly one precondition/);
+    await expect(readFile(join(dir, 'note.txt'), 'utf8')).rejects.toThrow();
+  });
+
+  it('serializes same-process updates so one stale contender loses', async () => {
+    await writeFile(join(dir, 'note.txt'), 'baseline', 'utf8');
+    const read = await readTool.run({ path: 'note.txt' }, ctx);
+    const expectedVersion = read.fileReceipt?.kind === 'read' ? read.fileReceipt.version : '';
+
+    const [first, second] = await Promise.all([
+      writeTool.run({ path: 'note.txt', content: 'first', expectedVersion }, ctx),
+      writeTool.run({ path: 'note.txt', content: 'second', expectedVersion }, ctx),
+    ]);
+
+    expect([first, second].filter((out) => out.fileReceipt?.kind === 'write' && out.fileReceipt.outcome === 'applied')).toHaveLength(1);
+    expect([first, second].filter((out) => out.fileReceipt?.kind === 'write' && out.fileReceipt.outcome === 'conflict')).toHaveLength(1);
+  });
+
+  fileSymlinkIt('refuses to replace a symbolic-link leaf with a regular file', async () => {
+    await writeFile(join(dir, 'target.txt'), 'baseline', 'utf8');
+    await symlink(join(dir, 'target.txt'), join(dir, 'link.txt'), 'file');
+    const read = await readTool.run({ path: 'link.txt' }, ctx);
+    const expectedVersion = read.fileReceipt?.kind === 'read' ? read.fileReceipt.version : '';
+
+    const out = await writeTool.run({ path: 'link.txt', content: 'agent edit', expectedVersion }, ctx);
+
+    expect(out.error).toMatch(/symbolic link/);
+    expect(out.fileReceipt).toMatchObject({ kind: 'write', outcome: 'conflict' });
+    expect(await readFile(join(dir, 'target.txt'), 'utf8')).toBe('baseline');
+  });
+
+  it('refuses to replace a multiply-linked file', async () => {
+    await writeFile(join(dir, 'target.txt'), 'baseline', 'utf8');
+    await link(join(dir, 'target.txt'), join(dir, 'alias.txt'));
+    const read = await readTool.run({ path: 'target.txt' }, ctx);
+    const expectedVersion = read.fileReceipt?.kind === 'read' ? read.fileReceipt.version : '';
+
+    const out = await writeTool.run({ path: 'target.txt', content: 'agent edit', expectedVersion }, ctx);
+
+    expect(out.error).toMatch(/multiple hard links/);
+    expect(out.fileReceipt).toMatchObject({ kind: 'write', outcome: 'conflict' });
+    expect(await readFile(join(dir, 'alias.txt'), 'utf8')).toBe('baseline');
+  });
+
   it('refuses to mutate git metadata', async () => {
     await writeFile(join(dir, '.git'), 'gitdir: original', 'utf8');
-    const out = await writeTool.run({ path: '.git', content: 'gitdir: pwned' }, ctx);
+    const out = await writeTool.run({ path: '.git', content: 'gitdir: pwned', expectedVersion: 'fv1.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' }, ctx);
 
     expect(out.error).toMatch(/git metadata/);
     expect(await readFile(join(dir, '.git'), 'utf8')).toBe('gitdir: original');
@@ -64,7 +156,7 @@ describe('writeTool', () => {
     await writeFile(join(dir, '.git', 'config'), 'original', 'utf8');
     await symlink(join(dir, '.git'), join(dir, 'safe_dir'), 'junction');
 
-    const out = await writeTool.run({ path: 'safe_dir/config', content: 'pwned' }, ctx);
+    const out = await writeTool.run({ path: 'safe_dir/config', content: 'pwned', createOnly: true }, ctx);
 
     expect(out.error).toMatch(/git metadata/);
     expect(await readFile(join(dir, '.git', 'config'), 'utf8')).toBe('original');
@@ -163,7 +255,7 @@ describe('path confinement (codex P1: cwd escape + symlink can dodge the secret 
   it('write: a symlinked dir cannot be used to write into a secret location', async () => {
     await mkdir(join(dir, '.ssh'), { recursive: true });
     await symlink(join(dir, '.ssh'), join(dir, 'safe_dir'), 'junction');
-    const out = await writeTool.run({ path: 'safe_dir/id_test', content: 'PWNED' }, ctx);
+    const out = await writeTool.run({ path: 'safe_dir/id_test', content: 'PWNED', createOnly: true }, ctx);
     expect(out.error).toMatch(/sensitive/);
     await expect(readFile(join(dir, '.ssh', 'id_test'), 'utf8')).rejects.toThrow(); // nothing written
   });

@@ -1,120 +1,595 @@
 /**
- * SessionStore — append-only JSONL persistence so a session survives a crash/exit and can be
- * resumed (persistence segment, plan §3.1). Durable, human-readable, no schema lock-in — the
- * single-user-friendly choice over a binary DB (plan §1 decisions).
- *
- * It persists the actual conversation `messages` (not EventBus events): events ≠ messages (an
- * assistant turn is assembled from deltas + tool calls, reasoning is dropped), so logging the
- * messages themselves is the faithful record (plan §1 decision 2). Each line is one record:
- *   {t:'session', …}     — the header (first line)
- *   {t:'message', message} — one conversation message, appended as it's added
- *   {t:'compaction', messages} — a full snapshot written when compaction rewrites the array
- * Compaction can't be expressed as an append over earlier lines (it mutates the middle), so it
- * records the full post-compaction array and replay resets to it (plan §1 decision 3).
- *
- * Crash safety: each record is one append; a crash can only truncate the LAST line, and the reader
- * skips any line that fails to parse — so resume recovers to the last complete record (decision 4).
- *
- * The store is injected into the loop (like ctx.context / ctx.gate). Pure parse/replay live here
- * too, so reconstruction is unit-testable without touching disk.
+ * Append-only Session JSONL. Version 2 adds sequence numbers, composition
+ * provenance, request receipts, and tool execution receipts while preserving
+ * read compatibility with the original message/compaction format.
  */
+import { createHash } from 'node:crypto';
 import { appendFile, mkdir, readFile, readdir, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import type { Message } from '../../core/types.js';
+import type { FileReceipt, Message, ToolCall, ToolResult, ToolSchema } from '../../core/types.js';
+import {
+  assertOperationalJsonlIntegrity,
+  hasStringFields,
+  isJsonObject,
+  parseJsonlWithDiagnostics,
+} from '../jsonl-integrity.js';
 
-/** One line of the session log. */
-export type SessionRecord =
-  | { t: 'session'; id: string; model: string; cwd: string; startedAt: string }
-  | { t: 'message'; message: Message }
-  | { t: 'compaction'; messages: Message[] };
+export const SESSION_SCHEMA_VERSION = 2 as const;
 
-export type SessionHeader = Extract<SessionRecord, { t: 'session' }>;
+export type SessionFormat = 'v1' | 'v2';
+export type SessionRoot = 'repl' | 'goal' | 'loop';
+export type SessionPermissionMode = 'interactive' | 'unattended' | 'worktree-unattended';
 
-/** The contract the loop depends on (injected as optional `ctx.store`). */
-export interface SessionStore {
-  /** Append every message past the persisted cursor (a pure-append growth). */
-  sync(messages: Message[]): Promise<void>;
-  /** Record a compaction: a full snapshot + reset the cursor (the array was rewritten). */
-  checkpoint(messages: Message[]): Promise<void>;
+export interface SessionComposition {
+  root: SessionRoot;
+  runtimeVersion: string;
+  permissionMode: SessionPermissionMode;
+  coverage: 'full' | 'partial';
+  toolsetHash?: string;
+  systemPromptHash?: string;
 }
 
-/** Serialize one record as a JSONL line (object + newline). */
+export interface SessionCompositionInput {
+  root: SessionRoot;
+  runtimeVersion: string;
+  permissionMode: SessionPermissionMode;
+  toolSchemas?: readonly ToolSchema[];
+  systemPrompt?: string;
+}
+
+export interface SessionCompositionDifference {
+  field: keyof SessionComposition;
+  recorded: string | undefined;
+  current: string | undefined;
+}
+
+interface LegacySessionHeader {
+  t: 'session';
+  id: string;
+  model: string;
+  cwd: string;
+  startedAt: string;
+}
+
+interface LegacyMessageRecord {
+  t: 'message';
+  message: Message;
+}
+
+interface LegacyCompactionRecord {
+  t: 'compaction';
+  messages: Message[];
+}
+
+interface V2Base {
+  schemaVersion: typeof SESSION_SCHEMA_VERSION;
+  seq: number;
+  at: string;
+}
+
+export interface V2SessionHeader extends V2Base {
+  t: 'session';
+  id: string;
+  model: string;
+  cwd: string;
+  startedAt: string;
+  composition: SessionComposition;
+  legacyImportedFrom?: string;
+}
+
+export interface ModelRequestReceipt {
+  t: 'request';
+  requestId: string;
+  runId: string;
+  turn: number;
+  messageCount: number;
+  messagesHash: string;
+  systemAddendumHash?: string;
+  toolCount: number;
+  toolsHash: string;
+}
+
+export interface ToolExecutionPlan {
+  t: 'tool';
+  phase: 'planned';
+  executionId: string;
+  requestId: string;
+  runId: string;
+  turn: number;
+  callIndex: number;
+  call: ToolCall;
+}
+
+export interface ToolCommitSummary {
+  callId: string;
+  contentLength: number;
+  contentHash: string;
+  error?: string;
+  fileReceipt?: FileReceipt;
+}
+
+export interface ToolExecutionCommit {
+  t: 'tool';
+  phase: 'committed';
+  executionId: string;
+  requestId: string;
+  runId: string;
+  turn: number;
+  callIndex: number;
+  result: ToolCommitSummary;
+}
+
+export interface ToolExecutionUnknown {
+  t: 'tool';
+  phase: 'unknown';
+  executionId: string;
+  requestId: string;
+  runId: string;
+  turn: number;
+  callIndex: number;
+  reason: string;
+}
+
+type V2SessionRecord =
+  | V2SessionHeader
+  | (V2Base & { t: 'message'; message: Message })
+  | (V2Base & { t: 'compaction'; messages: Message[] })
+  | (V2Base & ModelRequestReceipt)
+  | (V2Base & (ToolExecutionPlan | ToolExecutionCommit | ToolExecutionUnknown));
+
+type WithoutV2Base<T> = T extends V2Base ? Omit<T, keyof V2Base> : never;
+type V2SessionPayload = WithoutV2Base<V2SessionRecord>;
+
+export type SessionRecord =
+  | LegacySessionHeader
+  | LegacyMessageRecord
+  | LegacyCompactionRecord
+  | V2SessionRecord;
+
+export type SessionHeader = LegacySessionHeader | V2SessionHeader;
+
+export interface PendingToolExecution {
+  executionId?: string;
+  requestId?: string;
+  callId: string;
+  toolName: string;
+  reason: 'intent-without-plan' | 'planned-without-terminal' | 'unknown' | 'committed-without-message';
+}
+
+export interface SessionSemanticIssue {
+  kind: 'header' | 'mixed-version' | 'sequence' | 'receipt';
+  /** 1-based record position in the parsed stream. */
+  line: number;
+  detail: string;
+}
+
+export interface LoadedSession {
+  messages: Message[];
+  header?: SessionHeader;
+  format: SessionFormat;
+  lastSequence: number;
+  requests: Array<V2Base & ModelRequestReceipt>;
+  toolReceipts: Array<V2Base & (ToolExecutionPlan | ToolExecutionCommit | ToolExecutionUnknown)>;
+  pendingTools: PendingToolExecution[];
+}
+
+/** The contract the loop depends on. Receipt methods are optional for legacy/test stores. */
+export interface SessionStore {
+  readonly receiptFormat?: 'v2';
+  sync(messages: Message[]): Promise<void>;
+  checkpoint(messages: Message[]): Promise<void>;
+  recordRequest?(receipt: ModelRequestReceipt): Promise<void>;
+  recordToolPlanned?(receipt: ToolExecutionPlan): Promise<void>;
+  recordToolCommitted?(receipt: ToolExecutionCommit): Promise<void>;
+  recordToolUnknown?(receipt: ToolExecutionUnknown): Promise<void>;
+}
+
+export interface ModelRequestReceiptInput {
+  requestId: string;
+  runId: string;
+  turn: number;
+  messages: readonly Message[];
+  systemAddendum?: string;
+  tools: readonly ToolSchema[];
+}
+
+export function createModelRequestReceipt(input: ModelRequestReceiptInput): ModelRequestReceipt {
+  return {
+    t: 'request',
+    requestId: input.requestId,
+    runId: input.runId,
+    turn: input.turn,
+    messageCount: input.messages.length,
+    messagesHash: digestValue(input.messages),
+    ...(input.systemAddendum === undefined ? {} : { systemAddendumHash: digestValue(input.systemAddendum) }),
+    toolCount: input.tools.length,
+    toolsHash: digestValue(input.tools),
+  };
+}
+
+export function createSessionComposition(input: SessionCompositionInput): SessionComposition {
+  return {
+    root: input.root,
+    runtimeVersion: input.runtimeVersion,
+    permissionMode: input.permissionMode,
+    coverage: input.toolSchemas !== undefined && input.systemPrompt !== undefined ? 'full' : 'partial',
+    ...(input.toolSchemas === undefined ? {} : { toolsetHash: digestValue(input.toolSchemas) }),
+    ...(input.systemPrompt === undefined ? {} : { systemPromptHash: digestValue(input.systemPrompt) }),
+  };
+}
+
+export function diffSessionComposition(
+  recorded: SessionComposition,
+  current: SessionComposition,
+): SessionCompositionDifference[] {
+  const fields: Array<keyof SessionComposition> = [
+    'root',
+    'runtimeVersion',
+    'permissionMode',
+    'coverage',
+    'toolsetHash',
+    'systemPromptHash',
+  ];
+  return fields.flatMap((field) => {
+    const left = recorded[field];
+    const right = current[field];
+    return left === right ? [] : [{ field, recorded: left, current: right }];
+  });
+}
+
+export function summarizeToolResult(result: ToolResult): ToolCommitSummary {
+  return {
+    callId: result.callId,
+    contentLength: result.content.length,
+    contentHash: digestValue(result.content),
+    ...(result.error === undefined ? {} : { error: result.error }),
+    ...(result.fileReceipt === undefined ? {} : { fileReceipt: result.fileReceipt }),
+  };
+}
+
+export function isSessionRecord(value: unknown): value is SessionRecord {
+  if (!isJsonObject(value) || typeof value.t !== 'string') return false;
+  if (value.schemaVersion === SESSION_SCHEMA_VERSION) return isV2SessionRecord(value);
+  if ('schemaVersion' in value) return false;
+  switch (value.t) {
+    case 'session':
+      return hasStringFields(value, 'id', 'model', 'cwd', 'startedAt');
+    case 'message':
+      return isMessage(value.message);
+    case 'compaction':
+      return Array.isArray(value.messages) && value.messages.every(isMessage);
+    default:
+      return false;
+  }
+}
+
+function isV2SessionRecord(value: unknown): value is V2SessionRecord {
+  if (!isJsonObject(value) || value.schemaVersion !== SESSION_SCHEMA_VERSION) return false;
+  if (!Number.isInteger(value.seq) || (value.seq as number) < 1 || typeof value.at !== 'string') return false;
+  switch (value.t) {
+    case 'session':
+      return hasStringFields(value, 'id', 'model', 'cwd', 'startedAt')
+        && isSessionComposition(value.composition)
+        && (value.legacyImportedFrom === undefined || typeof value.legacyImportedFrom === 'string');
+    case 'message':
+      return isMessage(value.message);
+    case 'compaction':
+      return Array.isArray(value.messages) && value.messages.every(isMessage);
+    case 'request':
+      return hasStringFields(value, 'requestId', 'runId', 'messagesHash', 'toolsHash')
+        && Number.isInteger(value.turn) && (value.turn as number) >= 0
+        && Number.isInteger(value.messageCount) && (value.messageCount as number) >= 0
+        && Number.isInteger(value.toolCount) && (value.toolCount as number) >= 0
+        && (value.systemAddendumHash === undefined || typeof value.systemAddendumHash === 'string');
+    case 'tool':
+      return isToolReceipt(value);
+    default:
+      return false;
+  }
+}
+
+function isSessionComposition(value: unknown): value is SessionComposition {
+  if (!isJsonObject(value)) return false;
+  return (value.root === 'repl' || value.root === 'goal' || value.root === 'loop')
+    && typeof value.runtimeVersion === 'string'
+    && (value.permissionMode === 'interactive' || value.permissionMode === 'unattended' || value.permissionMode === 'worktree-unattended')
+    && (value.coverage === 'full' || value.coverage === 'partial')
+    && (value.toolsetHash === undefined || typeof value.toolsetHash === 'string')
+    && (value.systemPromptHash === undefined || typeof value.systemPromptHash === 'string');
+}
+
+function isToolReceipt(value: Record<string, unknown>): boolean {
+  if (!hasStringFields(value, 'executionId', 'requestId', 'runId')) return false;
+  if (!Number.isInteger(value.turn) || (value.turn as number) < 0) return false;
+  if (!Number.isInteger(value.callIndex) || (value.callIndex as number) < 0) return false;
+  switch (value.phase) {
+    case 'planned':
+      return isToolCall(value.call);
+    case 'committed':
+      return isToolCommitSummary(value.result);
+    case 'unknown':
+      return typeof value.reason === 'string';
+    default:
+      return false;
+  }
+}
+
+function isToolCommitSummary(value: unknown): value is ToolCommitSummary {
+  if (!isJsonObject(value) || !hasStringFields(value, 'callId', 'contentHash')) return false;
+  return Number.isInteger(value.contentLength) && (value.contentLength as number) >= 0
+    && (value.error === undefined || typeof value.error === 'string')
+    && (value.fileReceipt === undefined || isFileReceipt(value.fileReceipt));
+}
+
+function isFileReceipt(value: unknown): value is FileReceipt {
+  if (!isJsonObject(value) || typeof value.kind !== 'string' || typeof value.path !== 'string') return false;
+  if (value.kind === 'read') return typeof value.version === 'string';
+  return value.kind === 'write'
+    && (value.precondition === 'createOnly' || value.precondition === 'expectedVersion')
+    && (value.outcome === 'applied' || value.outcome === 'conflict' || value.outcome === 'unknown')
+    && (value.expectedVersion === undefined || typeof value.expectedVersion === 'string')
+    && (value.preVersion === undefined || typeof value.preVersion === 'string')
+    && (value.postVersion === undefined || typeof value.postVersion === 'string');
+}
+
+function isMessage(value: unknown): value is Message {
+  if (!isJsonObject(value) || typeof value.role !== 'string') return false;
+  switch (value.role) {
+    case 'system':
+    case 'user':
+      return typeof value.content === 'string';
+    case 'assistant':
+      return (value.content === undefined || typeof value.content === 'string')
+        && (value.reasoning === undefined || typeof value.reasoning === 'string')
+        && (value.requestId === undefined || typeof value.requestId === 'string')
+        && (value.toolCalls === undefined || (Array.isArray(value.toolCalls) && value.toolCalls.every(isToolCall)));
+    case 'tool':
+      return hasStringFields(value, 'toolCallId', 'content')
+        && (value.executionId === undefined || typeof value.executionId === 'string');
+    default:
+      return false;
+  }
+}
+
+function isToolCall(value: unknown): value is ToolCall {
+  return isJsonObject(value) && hasStringFields(value, 'id', 'name', 'arguments');
+}
+
 export function serializeRecord(record: SessionRecord): string {
   return `${JSON.stringify(record)}\n`;
 }
 
-/** Parse a JSONL log into records, skipping blank lines and any line that fails to parse — the
- *  latter is the crash-truncated tail (or rare corruption); best-effort recovery keeps the rest. */
 export function parseSessionLog(text: string): SessionRecord[] {
-  const records: SessionRecord[] = [];
-  for (const line of text.split('\n')) {
-    const trimmed = line.trim();
-    if (trimmed === '') continue;
-    try {
-      records.push(JSON.parse(trimmed) as SessionRecord);
-    } catch {
-      // truncated/corrupt line — skip it and recover the rest
-    }
-  }
-  return records;
+  return parseJsonlWithDiagnostics(text, isSessionRecord).records;
 }
 
-/** Fold records back into the conversation: `message` pushes, `compaction` replaces the whole array
- *  (so messages compacted away never reappear), `session` is the header. Pure. */
 export function replayMessages(records: SessionRecord[]): { messages: Message[]; header?: SessionHeader } {
+  const replayed = replaySession(records);
+  return { messages: replayed.messages, ...(replayed.header === undefined ? {} : { header: replayed.header }) };
+}
+
+export function replaySession(records: SessionRecord[]): LoadedSession {
   let messages: Message[] = [];
   let header: SessionHeader | undefined;
+  const requests: Array<V2Base & ModelRequestReceipt> = [];
+  const toolReceipts: Array<V2Base & (ToolExecutionPlan | ToolExecutionCommit | ToolExecutionUnknown)> = [];
+  // Only an append-only message record proves that a tool result reached the
+  // durable conversation. A later compaction snapshot may preserve that proof,
+  // but it may not create it retroactively.
+  const historicalToolProjections = new Set<string>();
+  // Tool intent has the same append-only authority. Compaction may remove an
+  // old assistant message from the active model projection, but it cannot erase
+  // an unresolved call that was already persisted.
+  const historicalAssistantIntents: Array<{ requestId: string; callIndex: number; call: ToolCall }> = [];
+  let format: SessionFormat = records.some(isV2Record) ? 'v2' : 'v1';
+  let lastSequence = 0;
   for (const record of records) {
+    if (isV2Record(record)) lastSequence = Math.max(lastSequence, record.seq);
     switch (record.t) {
       case 'session':
         header = record;
+        format = isV2Record(record) ? 'v2' : 'v1';
         break;
       case 'message':
         messages.push(record.message);
+        if (record.message.role === 'assistant' && record.message.requestId && record.message.toolCalls) {
+          const requestId = record.message.requestId;
+          record.message.toolCalls.forEach((call, callIndex) => {
+            historicalAssistantIntents.push({ requestId, callIndex, call });
+          });
+        }
+        if (record.message.role === 'tool' && record.message.executionId) {
+          historicalToolProjections.add(record.message.executionId);
+        }
         break;
       case 'compaction':
         messages = [...record.messages];
         break;
+      case 'request':
+        requests.push(record);
+        break;
+      case 'tool':
+        toolReceipts.push(record);
+        break;
     }
   }
-  return { messages, header };
+  return {
+    messages,
+    ...(header === undefined ? {} : { header }),
+    format,
+    lastSequence,
+    requests,
+    toolReceipts,
+    pendingTools: findPendingTools(
+      messages,
+      toolReceipts,
+      historicalToolProjections,
+      historicalAssistantIntents,
+    ),
+  };
 }
 
-/**
- * A file-backed append-only store. `cursor` is how many messages are already persisted; `sync`
- * appends the tail beyond it, `checkpoint` writes a compaction snapshot and resets the cursor to
- * the (now smaller) array length. On resume the store is constructed with the replayed message
- * count so it keeps appending after the existing history.
- */
+function findPendingTools(
+  messages: readonly Message[],
+  receipts: readonly (V2Base & (ToolExecutionPlan | ToolExecutionCommit | ToolExecutionUnknown))[],
+  historicalToolProjections: ReadonlySet<string>,
+  historicalAssistantIntents: ReadonlyArray<{ requestId: string; callIndex: number; call: ToolCall }>,
+): PendingToolExecution[] {
+  const pending: PendingToolExecution[] = [];
+  const plans = new Map<string, V2Base & ToolExecutionPlan>();
+  const terminals = new Map<string, V2Base & (ToolExecutionCommit | ToolExecutionUnknown)>();
+  for (const receipt of receipts) {
+    if (receipt.phase === 'planned') plans.set(receipt.executionId, receipt);
+    else terminals.set(receipt.executionId, receipt);
+  }
+  for (const plan of plans.values()) {
+    const terminal = terminals.get(plan.executionId);
+    if (terminal === undefined) {
+      pending.push(toolPending(plan, 'planned-without-terminal'));
+    } else if (terminal.phase === 'unknown') {
+      pending.push(toolPending(plan, 'unknown'));
+    } else if (!historicalToolProjections.has(plan.executionId)) {
+      pending.push(toolPending(plan, 'committed-without-message'));
+    }
+  }
+
+  const plannedIntents = new Set(
+    [...plans.values()].map((plan) => `${plan.requestId}:${plan.callIndex}`),
+  );
+  for (const intent of historicalAssistantIntents) {
+    if (!plannedIntents.has(`${intent.requestId}:${intent.callIndex}`)) {
+      pending.push({
+        requestId: intent.requestId,
+        callId: intent.call.id,
+        toolName: intent.call.name,
+        reason: 'intent-without-plan',
+      });
+    }
+  }
+
+  // Legacy logs have no request/execution ids. Pair their calls and results in order.
+  const legacyPending: ToolCall[] = [];
+  for (const message of messages) {
+    if (message.role === 'assistant' && !message.requestId && message.toolCalls) legacyPending.push(...message.toolCalls);
+    if (message.role === 'tool' && !message.executionId) {
+      const index = legacyPending.findIndex((call) => normalizeCallId(call.id) === normalizeCallId(message.toolCallId));
+      if (index >= 0) legacyPending.splice(index, 1);
+    }
+  }
+  for (const call of legacyPending) {
+    pending.push({ callId: call.id, toolName: call.name, reason: 'intent-without-plan' });
+  }
+  return pending;
+}
+
+function toolPending(plan: ToolExecutionPlan, reason: PendingToolExecution['reason']): PendingToolExecution {
+  return {
+    executionId: plan.executionId,
+    requestId: plan.requestId,
+    callId: plan.call.id,
+    toolName: plan.call.name,
+    reason,
+  };
+}
+
+function normalizeCallId(id: string): string {
+  return id.slice(0, 64);
+}
+
+export interface FileSessionStoreOptions {
+  format?: SessionFormat;
+  initialSequence?: number;
+}
+
+/** File-backed writer. New instances default to v2; legacy resumes opt into v1. */
 export class FileSessionStore implements SessionStore {
+  readonly receiptFormat?: 'v2';
   private cursor: number;
+  private sequence: number;
+  private readonly format: SessionFormat;
   private dirEnsured = false;
+  private writeQueue: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly path: string,
     initialCursor = 0,
+    options: FileSessionStoreOptions = {},
   ) {
     this.cursor = initialCursor;
+    this.format = options.format ?? 'v2';
+    this.receiptFormat = this.format === 'v2' ? 'v2' : undefined;
+    this.sequence = options.initialSequence ?? 0;
   }
 
-  /** Write the session header line. Call once when starting a NEW session (not on resume). */
-  async writeHeader(header: Omit<SessionHeader, 't'>): Promise<void> {
-    await this.append({ t: 'session', ...header });
+  async writeHeader(header: Omit<V2SessionHeader, keyof V2Base | 't'>): Promise<void> {
+    await this.enqueue(async () => {
+      if (this.format === 'v1') {
+        await this.appendRaw({
+          t: 'session',
+          id: header.id,
+          model: header.model,
+          cwd: header.cwd,
+          startedAt: header.startedAt,
+        });
+        return;
+      }
+      await this.appendV2({ t: 'session', ...header });
+    });
   }
 
   async sync(messages: Message[]): Promise<void> {
-    for (let i = this.cursor; i < messages.length; i++) {
-      await this.append({ t: 'message', message: messages[i] });
-    }
-    this.cursor = messages.length;
+    await this.enqueue(async () => {
+      for (let i = this.cursor; i < messages.length; i++) {
+        if (this.format === 'v1') await this.appendRaw({ t: 'message', message: messages[i] });
+        else await this.appendV2({ t: 'message', message: messages[i] });
+        this.cursor = i + 1;
+      }
+    });
   }
 
   async checkpoint(messages: Message[]): Promise<void> {
-    await this.append({ t: 'compaction', messages });
-    this.cursor = messages.length;
+    await this.enqueue(async () => {
+      if (this.format === 'v1') await this.appendRaw({ t: 'compaction', messages });
+      else await this.appendV2({ t: 'compaction', messages });
+      this.cursor = messages.length;
+    });
   }
 
-  private async append(record: SessionRecord): Promise<void> {
+  async recordRequest(receipt: ModelRequestReceipt): Promise<void> {
+    if (this.format === 'v1') return;
+    await this.enqueue(() => this.appendV2(receipt));
+  }
+
+  async recordToolPlanned(receipt: ToolExecutionPlan): Promise<void> {
+    if (this.format === 'v1') return;
+    await this.enqueue(() => this.appendV2(receipt));
+  }
+
+  async recordToolCommitted(receipt: ToolExecutionCommit): Promise<void> {
+    if (this.format === 'v1') return;
+    await this.enqueue(() => this.appendV2(receipt));
+  }
+
+  async recordToolUnknown(receipt: ToolExecutionUnknown): Promise<void> {
+    if (this.format === 'v1') return;
+    await this.enqueue(() => this.appendV2(receipt));
+  }
+
+  private async enqueue(action: () => Promise<void>): Promise<void> {
+    const run = this.writeQueue.then(action, action);
+    this.writeQueue = run.catch(() => undefined);
+    await run;
+  }
+
+  private async appendV2(
+    record: V2SessionPayload,
+  ): Promise<void> {
+    const next = this.sequence + 1;
+    await this.appendRaw({ ...record, schemaVersion: SESSION_SCHEMA_VERSION, seq: next, at: new Date().toISOString() } as V2SessionRecord);
+    this.sequence = next;
+  }
+
+  private async appendRaw(record: SessionRecord): Promise<void> {
     if (!this.dirEnsured) {
       await mkdir(dirname(this.path), { recursive: true });
       this.dirEnsured = true;
@@ -123,23 +598,236 @@ export class FileSessionStore implements SessionStore {
   }
 }
 
-/** Load and replay a session log from disk. */
-export async function loadSession(path: string): Promise<{ messages: Message[]; header?: SessionHeader }> {
+export async function loadSession(
+  path: string,
+  options: { requireHeader?: boolean; validateIntegrity?: boolean } = {},
+): Promise<LoadedSession> {
   const text = await readFile(path, 'utf8');
-  return replayMessages(parseSessionLog(text));
+  const parsed = parseJsonlWithDiagnostics(text, isSessionRecord);
+  const replayed = replaySession(parsed.records);
+  if (options.requireHeader || options.validateIntegrity) {
+    assertOperationalJsonlIntegrity(
+      'session',
+      parsed.malformed,
+      replayed.header !== undefined,
+    );
+    assertSessionSemantics(parsed.records);
+  }
+  return replayed;
 }
 
-/** The most recently modified `*.jsonl` session file in `dir`, or null if there are none. */
+export function sessionSemanticIssues(records: readonly SessionRecord[]): SessionSemanticIssue[] {
+  const headers = records.filter((record) => record.t === 'session');
+  if (headers.length !== 1 || records[0]?.t !== 'session') {
+    const misplaced = records.findIndex((record, index) => index > 0 && record.t === 'session');
+    return [{
+      kind: 'header',
+      line: misplaced >= 0 ? misplaced + 1 : 1,
+      detail: 'expected one header as the first record',
+    }];
+  }
+  const firstIsV2 = isV2Record(records[0]);
+  const mixedAt = records.findIndex((record) => isV2Record(record) !== firstIsV2);
+  if (mixedAt >= 0) {
+    return [{ kind: 'mixed-version', line: mixedAt + 1, detail: 'mixed v1/v2 records' }];
+  }
+  if (firstIsV2) {
+    for (let i = 0; i < records.length; i++) {
+      const record = records[i] as V2SessionRecord;
+      if (record.seq !== i + 1) {
+        return [{
+          kind: 'sequence',
+          line: i + 1,
+          detail: `sequence gap: expected ${i + 1}, found ${record.seq}`,
+        }];
+      }
+    }
+    const receiptIssue = sessionReceiptSemanticIssue(records as readonly V2SessionRecord[]);
+    if (receiptIssue) return [receiptIssue];
+  }
+  return [];
+}
+
+function sessionReceiptSemanticIssue(records: readonly V2SessionRecord[]): SessionSemanticIssue | undefined {
+  const requests = new Map<string, V2Base & ModelRequestReceipt>();
+  const assistantRequests = new Set<string>();
+  const historicalAssistantMessages = new Map<string, Extract<Message, { role: 'assistant' }>>();
+  const plans = new Map<string, V2Base & ToolExecutionPlan>();
+  const logicalExecutions = new Map<string, string>();
+  const terminals = new Map<string, V2Base & (ToolExecutionCommit | ToolExecutionUnknown)>();
+  const projectedTools = new Set<string>();
+  let projectedMessages: Message[] = [];
+
+  for (let index = 0; index < records.length; index++) {
+    const record = records[index];
+    const issue = (detail: string): SessionSemanticIssue => ({
+      kind: 'receipt',
+      line: index + 1,
+      detail,
+    });
+    switch (record.t) {
+      case 'session':
+        break;
+      case 'compaction': {
+        const snapshotRequests = new Set<string>();
+        const snapshotTools = new Set<string>();
+        for (const message of record.messages) {
+          if (message.role === 'assistant' && message.requestId) {
+            if (!requests.has(message.requestId)) return issue(`compaction references missing request ${message.requestId}`);
+            if (snapshotRequests.has(message.requestId)) return issue(`compaction duplicates assistant requestId ${message.requestId}`);
+            const historical = historicalAssistantMessages.get(message.requestId);
+            if (!historical || !assistantRequests.has(message.requestId)) {
+              return issue(`compaction introduces assistant request without historical message ${message.requestId}`);
+            }
+            if (!sameAssistantProjection(historical, message)) {
+              return issue(`compaction changes historical assistant request ${message.requestId}`);
+            }
+            snapshotRequests.add(message.requestId);
+          } else if (message.role === 'assistant' && message.toolCalls && message.toolCalls.length > 0) {
+            return issue('compaction contains tool-bearing assistant without requestId');
+          }
+          if (message.role === 'tool' && message.executionId) {
+            const terminal = terminals.get(message.executionId);
+            if (!terminal || terminal.phase !== 'committed') {
+              return issue(`compaction tool projection has no committed receipt ${message.executionId}`);
+            }
+            if (message.toolCallId !== terminal.result.callId) {
+              return issue(`compaction tool callId mismatch for ${message.executionId}`);
+            }
+            if (snapshotTools.has(message.executionId)) return issue(`compaction duplicates tool projection ${message.executionId}`);
+            if (!projectedTools.has(message.executionId)) {
+              return issue(`compaction introduces tool projection without historical message ${message.executionId}`);
+            }
+            snapshotTools.add(message.executionId);
+          } else if (message.role === 'tool') {
+            return issue('compaction contains tool message without executionId');
+          }
+        }
+        projectedMessages = [...record.messages];
+        break;
+      }
+      case 'request': {
+        if (requests.has(record.requestId)) return issue(`duplicate requestId ${record.requestId}`);
+        if (record.messageCount !== projectedMessages.length || record.messagesHash !== digestValue(projectedMessages)) {
+          return issue(`request message receipt mismatch for ${record.requestId}`);
+        }
+        requests.set(record.requestId, record);
+        break;
+      }
+      case 'message': {
+        const message = record.message;
+        if (message.role === 'assistant' && message.requestId) {
+          if (!requests.has(message.requestId)) return issue(`assistant references missing request ${message.requestId}`);
+          if (assistantRequests.has(message.requestId)) return issue(`duplicate assistant requestId ${message.requestId}`);
+          assistantRequests.add(message.requestId);
+          historicalAssistantMessages.set(message.requestId, message);
+        } else if (message.role === 'assistant' && message.toolCalls && message.toolCalls.length > 0) {
+          return issue('tool-bearing assistant message is missing requestId');
+        }
+        if (message.role === 'tool' && message.executionId) {
+          if (projectedTools.has(message.executionId)) return issue(`duplicate tool projection ${message.executionId}`);
+          const terminal = terminals.get(message.executionId);
+          if (!terminal || terminal.phase !== 'committed') {
+            return issue(`tool projection has no committed receipt ${message.executionId}`);
+          }
+          if (message.toolCallId !== terminal.result.callId) {
+            return issue(`tool projection callId mismatch for ${message.executionId}`);
+          }
+          projectedTools.add(message.executionId);
+        } else if (message.role === 'tool') {
+          return issue('tool message is missing executionId');
+        }
+        projectedMessages.push(message);
+        break;
+      }
+      case 'tool': {
+        if (record.phase === 'planned') {
+          if (plans.has(record.executionId)) return issue(`duplicate planned executionId ${record.executionId}`);
+          const request = requests.get(record.requestId);
+          if (!request) return issue(`planned tool references missing request ${record.requestId}`);
+          if (request.runId !== record.runId || request.turn !== record.turn) {
+            return issue(`planned tool request identity mismatch ${record.executionId}`);
+          }
+          const assistant = historicalAssistantMessages.get(record.requestId);
+          const intended = assistant?.toolCalls?.[record.callIndex];
+          if (!intended || !sameToolCall(intended, record.call)) {
+            return issue(`planned tool does not match assistant intent ${record.executionId}`);
+          }
+          const logicalKey = `${record.requestId}:${record.callIndex}`;
+          const priorExecution = logicalExecutions.get(logicalKey);
+          if (priorExecution !== undefined) {
+            return issue(`duplicate logical tool execution ${logicalKey} (${priorExecution}, ${record.executionId})`);
+          }
+          logicalExecutions.set(logicalKey, record.executionId);
+          plans.set(record.executionId, record);
+          break;
+        }
+        if (terminals.has(record.executionId)) return issue(`duplicate terminal executionId ${record.executionId}`);
+        const plan = plans.get(record.executionId);
+        if (!plan) return issue(`terminal receipt has no plan ${record.executionId}`);
+        if (
+          plan.requestId !== record.requestId
+          || plan.runId !== record.runId
+          || plan.turn !== record.turn
+          || plan.callIndex !== record.callIndex
+        ) {
+          return issue(`terminal identity mismatch for ${record.executionId}`);
+        }
+        if (record.phase === 'committed' && record.result.callId !== plan.call.id) {
+          return issue(`committed callId mismatch for ${record.executionId}`);
+        }
+        if (
+          record.phase === 'committed'
+          && record.result.fileReceipt?.kind === 'write'
+          && record.result.fileReceipt.outcome === 'unknown'
+        ) {
+          return issue(`committed receipt contains unknown file effect ${record.executionId}`);
+        }
+        terminals.set(record.executionId, record);
+        break;
+      }
+    }
+  }
+  return undefined;
+}
+
+function sameToolCall(left: ToolCall, right: ToolCall): boolean {
+  return left.id === right.id && left.name === right.name && left.arguments === right.arguments;
+}
+
+function sameAssistantProjection(
+  left: Extract<Message, { role: 'assistant' }>,
+  right: Extract<Message, { role: 'assistant' }>,
+): boolean {
+  if (
+    left.content !== right.content
+    || left.reasoning !== right.reasoning
+    || left.requestId !== right.requestId
+  ) return false;
+  const leftCalls = left.toolCalls ?? [];
+  const rightCalls = right.toolCalls ?? [];
+  return leftCalls.length === rightCalls.length
+    && leftCalls.every((call, index) => sameToolCall(call, rightCalls[index]));
+}
+
+function assertSessionSemantics(records: readonly SessionRecord[]): void {
+  const issue = sessionSemanticIssues(records)[0];
+  if (issue) throw new Error(`session state is corrupt at record ${issue.line}: ${issue.detail}`);
+}
+
+function isV2Record(record: SessionRecord): record is V2SessionRecord {
+  return 'schemaVersion' in record && record.schemaVersion === SESSION_SCHEMA_VERSION;
+}
+
 export async function latestSessionPath(dir: string): Promise<string | null> {
   let entries: string[];
   try {
     entries = await readdir(dir);
   } catch {
-    return null; // dir doesn't exist yet
+    return null;
   }
-  const sessions = entries.filter((e) => e.endsWith('.jsonl'));
+  const sessions = entries.filter((entry) => entry.endsWith('.jsonl'));
   if (sessions.length === 0) return null;
-
   let newest: { path: string; mtimeMs: number } | null = null;
   for (const name of sessions) {
     const full = join(dir, name);
@@ -147,4 +835,19 @@ export async function latestSessionPath(dir: string): Promise<string | null> {
     if (newest === null || info.mtimeMs > newest.mtimeMs) newest = { path: full, mtimeMs: info.mtimeMs };
   }
   return newest?.path ?? null;
+}
+
+function digestValue(value: unknown): string {
+  const json = JSON.stringify(sortValue(value));
+  return `sha256.${createHash('sha256').update(json).digest('base64url')}`;
+}
+
+function sortValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortValue);
+  if (!isJsonObject(value)) return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, child]) => [key, sortValue(child)]),
+  );
 }

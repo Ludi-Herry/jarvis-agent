@@ -1,8 +1,9 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { CLI_EXIT } from '../../src/surfaces/cli/exit-codes.js';
 
 describe('loop CLI sandbox-check-map trust boundary', () => {
   it('refuses a sandbox-check-map inside the repository root when launched from a subdirectory', async () => {
@@ -18,9 +19,13 @@ describe('loop CLI sandbox-check-map trust boundary', () => {
       await writeFile(mapPath, JSON.stringify({ goals: [] }), 'utf8');
       await writeFile(objectives, '', 'utf8');
 
-      const result = await runLoopCli([objectives, '--sandbox-check-map', mapPath, '--unattended'], cwd, home);
+      const result = await runLoopCli(
+        [objectives, '--sandbox-check-map', mapPath, '--allow-no-git', '--unattended'],
+        cwd,
+        home,
+      );
 
-      expect(result.code).toBe(1);
+      expect(result.code).toBe(CLI_EXIT.USAGE);
       const output = `${result.stdout}\n${result.stderr}`;
       expect(output).toContain('[loop sandbox checks]');
       expect(output).toContain('forbidden working tree');
@@ -36,6 +41,7 @@ describe('loop CLI sandbox-check-map trust boundary', () => {
     const home = await mkFixtureDir('jarvis-loop-sandbox-home-');
     const config = await mkFixtureDir('jarvis-loop-sandbox-config-');
     try {
+      initGitFixture(cwd);
       await writeFile(join(cwd, '.env'), 'ARK_API_KEY=test-key\n', 'utf8');
       const worktreeRoot = join(config, 'worktrees');
       await mkdir(worktreeRoot, { recursive: true });
@@ -50,7 +56,7 @@ describe('loop CLI sandbox-check-map trust boundary', () => {
         home,
       );
 
-      expect(result.code).toBe(1);
+      expect(result.code).toBe(CLI_EXIT.USAGE);
       const output = `${result.stdout}\n${result.stderr}`;
       expect(output).toContain('[loop sandbox checks]');
       expect(output).toContain('forbidden working tree');
@@ -77,9 +83,13 @@ describe('loop CLI goal-setter requirements map trust boundary', () => {
       await writeFile(mapPath, JSON.stringify({ version: 1, goals: [] }), 'utf8');
       await writeFile(objectives, '', 'utf8');
 
-      const result = await runLoopCli([objectives, '--goal-setter-requirements-map', mapPath, '--unattended'], cwd, home);
+      const result = await runLoopCli(
+        [objectives, '--goal-setter-requirements-map', mapPath, '--allow-no-git', '--unattended'],
+        cwd,
+        home,
+      );
 
-      expect(result.code).toBe(1);
+      expect(result.code).toBe(CLI_EXIT.USAGE);
       const output = `${result.stdout}\n${result.stderr}`;
       expect(output).toContain('[loop goal-setter requirements]');
       expect(output).toContain('forbidden working tree');
@@ -95,6 +105,7 @@ describe('loop CLI goal-setter requirements map trust boundary', () => {
     const home = await mkFixtureDir('jarvis-loop-requirements-home-');
     const config = await mkFixtureDir('jarvis-loop-requirements-config-');
     try {
+      initGitFixture(cwd);
       await writeFile(join(cwd, '.env'), 'ARK_API_KEY=test-key\n', 'utf8');
       const worktreeRoot = join(config, 'worktrees');
       await mkdir(worktreeRoot, { recursive: true });
@@ -109,7 +120,7 @@ describe('loop CLI goal-setter requirements map trust boundary', () => {
         home,
       );
 
-      expect(result.code).toBe(1);
+      expect(result.code).toBe(CLI_EXIT.USAGE);
       const output = `${result.stdout}\n${result.stderr}`;
       expect(output).toContain('[loop goal-setter requirements]');
       expect(output).toContain('forbidden working tree');
@@ -121,6 +132,16 @@ describe('loop CLI goal-setter requirements map trust boundary', () => {
     }
   });
 });
+
+function initGitFixture(cwd: string): void {
+  for (const args of [
+    ['init'],
+    ['-c', 'user.name=Jarvis Test', '-c', 'user.email=jarvis@example.test', 'commit', '--allow-empty', '-m', 'init'],
+  ]) {
+    const result = spawnSync('git', args, { cwd, encoding: 'utf8', windowsHide: true });
+    if (result.status !== 0) throw new Error(`${result.stdout}${result.stderr}`);
+  }
+}
 
 async function mkFixtureDir(prefix: string): Promise<string> {
   return mkdtemp(join(tmpdir(), prefix));

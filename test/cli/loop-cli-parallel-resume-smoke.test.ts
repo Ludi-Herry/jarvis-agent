@@ -1,9 +1,10 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { serializeLoopRecord, type LoopContract } from '../../src/capabilities/goal/index.js';
+import { CLI_EXIT } from '../../src/surfaces/cli/exit-codes.js';
 
 describe('loop CLI parallel resume smoke', () => {
   it('fails before appending new loop records when a resumed parallel worktree is missing', async () => {
@@ -11,6 +12,7 @@ describe('loop CLI parallel resume smoke', () => {
     const configDir = await mkdtemp(join(tmpdir(), 'jarvis-loop-cli-config-'));
     const home = await mkdtemp(join(tmpdir(), 'jarvis-loop-cli-home-'));
     try {
+      initGitFixture(cwd);
       await writeFile(join(cwd, '.env'), 'ARK_API_KEY=test-key\n', 'utf8');
       const verifierMap = join(configDir, 'loop-verifiers.json');
       const hookMap = join(configDir, 'loop-hooks.json');
@@ -66,7 +68,7 @@ describe('loop CLI parallel resume smoke', () => {
         home,
       );
 
-      expect(result.code).toBe(1);
+      expect(result.code).toBe(CLI_EXIT.STATE_CORRUPT);
       const output = `${result.stdout}\n${result.stderr}`;
       expect(output).toContain('missing resumed worktree');
       await expect(readFile(loopPath, 'utf8')).resolves.toBe(original);
@@ -77,6 +79,16 @@ describe('loop CLI parallel resume smoke', () => {
     }
   });
 });
+
+function initGitFixture(cwd: string): void {
+  for (const args of [
+    ['init'],
+    ['-c', 'user.name=Jarvis Test', '-c', 'user.email=jarvis@example.test', 'commit', '--allow-empty', '-m', 'init'],
+  ]) {
+    const result = spawnSync('git', args, { cwd, encoding: 'utf8', windowsHide: true });
+    if (result.status !== 0) throw new Error(`${result.stdout}${result.stderr}`);
+  }
+}
 
 function runLoopCli(args: string[], cwd: string, home: string): Promise<{ code: number | null; stdout: string; stderr: string }> {
   const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, USERPROFILE: home };

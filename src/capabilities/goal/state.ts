@@ -11,6 +11,7 @@ import type { GoalState, VerdictOutcome } from './goal.js';
  * Map a verifier verdict to the goal's next state. `forceBlocked` is the circuit-breaker's escape
  * hatch (a halt routes straight to `blocked`, bypassing the normal mapping). Default mapping:
  *  - verified       → complete   (a real, independently-checked finish)
+ *  - checksOnly     → blocked    (project checks passed; objective completion still needs evidence)
  *  - rejected       → active     (keep going, with a continuation carrying what was observed)
  *  - couldNotVerify → blocked    (fail-closed: hand to a human, NEVER treat as passed)
  */
@@ -19,6 +20,8 @@ export function advanceGoalState(outcome: VerdictOutcome, forceBlocked = false):
   switch (outcome) {
     case 'verified':
       return 'complete';
+    case 'checksOnly':
+      return 'blocked';
     case 'rejected':
       return 'active';
     case 'couldNotVerify':

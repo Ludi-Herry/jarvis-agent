@@ -10,7 +10,12 @@ import { createBashTool, defaultShellPath } from '../../src/core/tools/bash.js';
 import { DefaultContextManager } from '../../src/core/context/context-manager.js';
 import { InMemoryEventBus, type Event } from '../../src/runtime/event-bus.js';
 import { DefaultPermissionGate, type Approver } from '../../src/runtime/permission/permission-gate.js';
-import { FileSessionStore, loadSession, parseSessionLog } from '../../src/runtime/session/session-store.js';
+import {
+  FileSessionStore,
+  createSessionComposition,
+  loadSession,
+  parseSessionLog,
+} from '../../src/runtime/session/session-store.js';
 import type { Message, ToolCall, ToolResult } from '../../src/core/types.js';
 import type { FinishReason, ModelDelta, ModelProvider, ModelResult, Usage } from '../../src/core/model/types.js';
 import type { ToolDefinition } from '../../src/core/tools/types.js';
@@ -112,7 +117,7 @@ describe('runAgent — tool loop', () => {
     expect(toolResult).toMatchObject({ type: 'tool_result', out: { content: 'the sky is teal' } });
     // the result round-tripped into the conversation as a tool message
     expect(
-      messages.some((m) => m.role === 'tool' && m.content === 'the sky is teal'),
+      messages.some((m) => m.role === 'tool' && m.content.startsWith('the sky is teal')),
     ).toBe(true);
     // and the loop stopped naturally on the second (no-tool) turn
     expect(outcome).toEqual({ finalText: 'Per the file, the sky is teal.', turns: 2 });
@@ -247,7 +252,7 @@ describe('runAgent — tool call integrity (codex HIGH-1: gate TOCTOU)', () => {
   });
 });
 
-describe('runAgent — abnormal final turn (truncated / filtered)', () => {
+describe('runAgent — abnormal final turn', () => {
   it('halts instead of passing off a truncated no-tool reply as the final answer', async () => {
     const tools = new InMemoryToolRegistry();
     // No tools, finishReason = truncated (hit max output tokens): the half reply must NOT win.
@@ -264,7 +269,7 @@ describe('runAgent — abnormal final turn (truncated / filtered)', () => {
       budget: { maxTurns: 5 },
     });
 
-    expect(outcome).toEqual({ halted: 'truncated', turns: 1 });
+    expect(outcome).toEqual({ halted: 'truncated', turns: 1, rawFinishReason: 'stop' });
     expect(outcome.finalText).toBeUndefined(); // the truncated text is never surfaced as the answer
     expect(events.some((e) => e.type === 'halt' && e.reason === 'truncated')).toBe(true);
     expect(events.some((e) => e.type === 'final')).toBe(false);
@@ -285,8 +290,213 @@ describe('runAgent — abnormal final turn (truncated / filtered)', () => {
       budget: { maxTurns: 5 },
     });
 
-    expect(outcome).toEqual({ halted: 'filtered', turns: 1 });
+    expect(outcome).toEqual({ halted: 'filtered', turns: 1, rawFinishReason: 'stop' });
     expect(events.some((e) => e.type === 'halt' && e.reason === 'filtered')).toBe(true);
+  });
+
+  it.each(['paused', 'refused', 'unknown'] as const)(
+    'never publishes a no-tool %s turn as final and retains its raw reason',
+    async (finishReason) => {
+      const tools = new InMemoryToolRegistry();
+      const { provider } = scriptedModel([{ text: 'untrusted', finishReason }]);
+      const bus = new InMemoryEventBus();
+      const events = record(bus);
+      const messages: Message[] = [{ role: 'user', content: 'go' }];
+
+      const outcome = await runAgent({
+        model: provider,
+        tools,
+        bus,
+        messages,
+        toolCtx: { cwd: dir },
+        budget: { maxTurns: 5 },
+      });
+
+      expect(outcome).toEqual({ halted: finishReason, turns: 1, rawFinishReason: 'stop' });
+      expect(events.some((e) => e.type === 'final')).toBe(false);
+      expect(events).toContainEqual({ type: 'halt', reason: finishReason, rawFinishReason: 'stop' });
+    },
+  );
+
+  it.each(['refused', 'unknown', 'truncated'] as const)(
+    'halts a %s result carrying a tool call without dispatching the tool',
+    async (finishReason) => {
+      let toolRuns = 0;
+      const tools = new InMemoryToolRegistry();
+      tools.register({
+        ...okTool,
+        run: async () => {
+          toolRuns++;
+          return { content: 'must not run' };
+        },
+      });
+      const { provider } = scriptedModel([{
+        text: 'untrusted',
+        finishReason,
+        toolCalls: [{ id: 'late', name: 'ok', arguments: '{}' }],
+      }]);
+      const bus = new InMemoryEventBus();
+      const events = record(bus);
+      const messages: Message[] = [{ role: 'user', content: 'go' }];
+
+      const outcome = await runAgent({
+        model: provider,
+        tools,
+        bus,
+        messages,
+        toolCtx: { cwd: dir },
+        budget: { maxTurns: 5 },
+      });
+
+      expect(outcome.halted).toBe(finishReason);
+      expect(toolRuns).toBe(0);
+      expect(events.some((event) => event.type === 'tool_call' || event.type === 'tool_result' || event.type === 'final')).toBe(false);
+      expect(messages.at(-1)).toMatchObject({ role: 'assistant', content: 'untrusted' });
+      expect(messages.at(-1)).not.toHaveProperty('toolCalls');
+    },
+  );
+});
+
+describe('runAgent — hard model turn deadline', () => {
+  it('returns on the configured deadline even when the provider ignores AbortSignal', async () => {
+    let providerSignal: AbortSignal | undefined;
+    const provider: ModelProvider = {
+      capability: {
+        maxContextTokens: 1000,
+        maxOutputTokens: 100,
+        thinking: false,
+        toolUse: true,
+        imageIn: false,
+        videoIn: false,
+      },
+      async *call(_messages, _tools, signal): AsyncGenerator<ModelDelta, ModelResult> {
+        providerSignal = signal;
+        yield* [];
+        await new Promise<never>(() => undefined); // deliberately ignores `signal`
+        return { text: '', toolCalls: [], usage: { inputTokens: 0, outputTokens: 0 }, finishReason: 'completed', rawFinishReason: 'stop' };
+      },
+      withThinking: () => provider,
+      withMaxCompletionTokens: () => provider,
+    };
+    const bus = new InMemoryEventBus();
+    const events = record(bus);
+
+    const outcome = await runAgent({
+      model: provider,
+      tools: new InMemoryToolRegistry(),
+      bus,
+      messages: [{ role: 'user', content: 'go' }],
+      toolCtx: { cwd: dir },
+      budget: { maxTurns: 5 },
+      turnTimeoutMs: 20,
+    });
+
+    expect(outcome).toEqual({ halted: 'turnTimeout', turns: 1, timeoutMs: 20 });
+    expect(providerSignal?.aborted).toBe(true);
+    expect(events).toContainEqual({ type: 'halt', reason: 'turnTimeout', timeoutMs: 20 });
+  });
+
+  it.each([
+    { kind: 'final' as const, toolCalls: [] as ToolCall[] },
+    { kind: 'tool call' as const, toolCalls: [{ id: 'late', name: 'ok', arguments: '{}' }] },
+  ])('treats external abort as an independent winner and suppresses a late $kind', async ({ toolCalls }) => {
+    let release!: () => void;
+    let toolRuns = 0;
+    const provider: ModelProvider = {
+      capability: {
+        maxContextTokens: 1000,
+        maxOutputTokens: 100,
+        thinking: false,
+        toolUse: true,
+        imageIn: false,
+        videoIn: false,
+      },
+      async *call(): AsyncGenerator<ModelDelta, ModelResult> {
+        yield* [];
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        }); // deliberately ignores the supplied signal
+        return {
+          text: toolCalls.length === 0 ? 'late final' : '',
+          toolCalls,
+          usage: { inputTokens: 1, outputTokens: 1 },
+          finishReason: toolCalls.length === 0 ? 'completed' : 'tool_calls',
+          rawFinishReason: toolCalls.length === 0 ? 'stop' : 'tool_calls',
+        };
+      },
+      withThinking: () => provider,
+      withMaxCompletionTokens: () => provider,
+    };
+    const tools = new InMemoryToolRegistry();
+    tools.register({
+      ...okTool,
+      run: async () => {
+        toolRuns++;
+        return { content: 'must not run' };
+      },
+    });
+    const bus = new InMemoryEventBus();
+    const events = record(bus);
+    const controller = new AbortController();
+    const pending = runAgent({
+      model: provider,
+      tools,
+      bus,
+      messages: [{ role: 'user', content: 'go' }],
+      toolCtx: { cwd: dir },
+      budget: { maxTurns: 5 },
+      signal: controller.signal,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(toolRuns).toBe(0);
+    expect(events.some((event) => event.type === 'usage'
+      || event.type === 'final'
+      || event.type === 'tool_call'
+      || event.type === 'tool_result')).toBe(false);
+  });
+
+  it('does not emit a late final when external abort wins during terminal session persistence', async () => {
+    let releaseSync!: () => void;
+    let markSyncStarted!: () => void;
+    const syncStarted = new Promise<void>((resolve) => {
+      markSyncStarted = resolve;
+    });
+    const store: SessionStore = {
+      sync: async () => {
+        markSyncStarted();
+        await new Promise<void>((resolve) => {
+          releaseSync = resolve;
+        });
+      },
+      checkpoint: async () => {},
+    };
+    const { provider } = scriptedModel([{ text: 'final' }]);
+    const bus = new InMemoryEventBus();
+    const events = record(bus);
+    const controller = new AbortController();
+    const pending = runAgent({
+      model: provider,
+      tools: new InMemoryToolRegistry(),
+      bus,
+      messages: [{ role: 'user', content: 'go' }],
+      toolCtx: { cwd: dir },
+      budget: { maxTurns: 5 },
+      store,
+      signal: controller.signal,
+    });
+
+    await syncStarted;
+    controller.abort();
+    releaseSync();
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+
+    expect(events.some((event) => event.type === 'final')).toBe(false);
   });
 });
 
@@ -535,7 +745,7 @@ describe('runAgent — permission gate (B1)', () => {
     const approver: Approver = async () => 'allow-once';
     const { provider } = scriptedModel([
       {
-        toolCalls: [{ id: 'c1', name: 'write', arguments: '{"path":"note.txt","content":"hello"}' }],
+        toolCalls: [{ id: 'c1', name: 'write', arguments: '{"path":"note.txt","content":"hello","createOnly":true}' }],
       },
       { text: 'done' },
     ]);
@@ -562,7 +772,7 @@ describe('runAgent — permission gate (B1)', () => {
     const tools = new InMemoryToolRegistry();
     tools.register(writeTool);
     const { provider } = scriptedModel([
-      { toolCalls: [{ id: 'c1', name: 'write', arguments: '{"path":"blocked.txt","content":"x"}' }] },
+      { toolCalls: [{ id: 'c1', name: 'write', arguments: '{"path":"blocked.txt","content":"x","createOnly":true}' }] },
       { text: 'understood' },
     ]);
     const bus = new InMemoryEventBus();
@@ -587,7 +797,7 @@ describe('runAgent — permission gate (B1)', () => {
     const tools = new InMemoryToolRegistry();
     tools.register(writeTool);
     const { provider } = scriptedModel([
-      { toolCalls: [{ id: 'c1', name: 'write', arguments: '{"path":"src/worktree.txt","content":"ok"}' }] },
+      { toolCalls: [{ id: 'c1', name: 'write', arguments: '{"path":"src/worktree.txt","content":"ok","createOnly":true}' }] },
       { text: 'done' },
     ]);
     const bus = new InMemoryEventBus();
@@ -993,6 +1203,14 @@ describe('runAgent — PostToolUse feedback (slice-2)', () => {
 });
 
 describe('runAgent — session persistence (store)', () => {
+  const composition = createSessionComposition({
+    root: 'repl',
+    runtimeVersion: 'test',
+    permissionMode: 'interactive',
+    toolSchemas: [],
+    systemPrompt: 'sys',
+  });
+
   it('persists every message the loop produces (user/assistant/tool) to the session log', async () => {
     await writeFile(join(dir, 'fact.txt'), 'X', 'utf8');
     const tools = new InMemoryToolRegistry();
@@ -1055,9 +1273,10 @@ describe('runAgent — session persistence (store)', () => {
 
     const raw = await readFile(path, 'utf8');
     expect(parseSessionLog(raw).some((r) => r.t === 'compaction')).toBe(true); // a checkpoint was written
-    const { messages: replayed } = await loadSession(path);
+    const { messages: replayed, pendingTools } = await loadSession(path);
     expect(replayed).toEqual(messages); // replay matches the final (compacted) in-memory state
     expect(replayed.some((m) => m.content === 'old q1')).toBe(false); // discarded prefix not resurrected
+    expect(pendingTools).toEqual([]); // the durable historical tool message remains proof across compaction
   });
 
   it('does not persist when no store is given (pre-persistence behavior)', async () => {
@@ -1073,6 +1292,176 @@ describe('runAgent — session persistence (store)', () => {
       budget: { maxTurns: 5 },
     });
     expect(outcome.finalText).toBe('hi');
+  });
+
+  it('persists request, assistant intent, plan, commit, and tool message in execution order', async () => {
+    await writeFile(join(dir, 'fact.txt'), 'X', 'utf8');
+    const tools = new InMemoryToolRegistry();
+    tools.register(readTool);
+    const { provider } = scriptedModel([
+      { toolCalls: [{ id: 'c1', name: 'read', arguments: '{"path":"fact.txt"}' }] },
+      { text: 'done' },
+    ]);
+    const path = join(dir, 'receipt-order.jsonl');
+    const store = new FileSessionStore(path);
+    await store.writeHeader({ id: 's1', model: 'm', cwd: dir, startedAt: 't0', composition });
+
+    await runAgent({
+      model: provider,
+      tools,
+      bus: new InMemoryEventBus(),
+      messages: [{ role: 'system', content: 'sys' }, { role: 'user', content: 'read fact' }],
+      toolCtx: { cwd: dir },
+      budget: { maxTurns: 5 },
+      store,
+      systemAddendum: 'skill body',
+    });
+
+    const records = parseSessionLog(await readFile(path, 'utf8'));
+    const firstRequest = records.findIndex((record) => record.t === 'request');
+    const assistantIntent = records.findIndex(
+      (record) => record.t === 'message' && record.message.role === 'assistant' && record.message.toolCalls?.length === 1,
+    );
+    const planned = records.findIndex((record) => record.t === 'tool' && record.phase === 'planned');
+    const committed = records.findIndex((record) => record.t === 'tool' && record.phase === 'committed');
+    const toolMessage = records.findIndex((record) => record.t === 'message' && record.message.role === 'tool');
+    expect(firstRequest).toBeGreaterThan(0);
+    expect(firstRequest).toBeLessThan(assistantIntent);
+    expect(assistantIntent).toBeLessThan(planned);
+    expect(planned).toBeLessThan(committed);
+    expect(committed).toBeLessThan(toolMessage);
+
+    const loaded = await loadSession(path, { requireHeader: true });
+    expect(loaded.pendingTools).toEqual([]);
+    expect(loaded.requests[0]).toMatchObject({
+      systemAddendumHash: expect.stringMatching(/^sha256\./),
+      messageCount: 2,
+      toolCount: 1,
+      toolsHash: expect.stringMatching(/^sha256\./),
+    });
+    expect(loaded.requests[0]).not.toHaveProperty('systemAddendum');
+    expect(await readFile(path, 'utf8')).not.toContain('skill body');
+    const persistedTool = loaded.messages.find((message) => message.role === 'tool');
+    expect(persistedTool?.role === 'tool' ? persistedTool.content : '').toContain('[jarvis-file-receipt]');
+  });
+
+  it('records an unknown pending effect when cancellation lands after a tool side effect', async () => {
+    const controller = new AbortController();
+    const tools = new InMemoryToolRegistry();
+    const sideEffectThenAbort: ToolDefinition = {
+      name: 'side_effect_then_abort',
+      description: 'test only',
+      capability: 'writes-files',
+      inputSchema: z.object({}),
+      run: async () => {
+        await writeFile(join(dir, 'effect.txt'), 'applied', 'utf8');
+        controller.abort();
+        return { content: 'returned after side effect' };
+      },
+    };
+    tools.register(sideEffectThenAbort);
+    const { provider } = scriptedModel([
+      { toolCalls: [{ id: 'c1', name: 'side_effect_then_abort', arguments: '{}' }] },
+    ]);
+    const path = join(dir, 'unknown-effect.jsonl');
+    const store = new FileSessionStore(path);
+    await store.writeHeader({ id: 's1', model: 'm', cwd: dir, startedAt: 't0', composition });
+
+    await expect(runAgent({
+      model: provider,
+      tools,
+      bus: new InMemoryEventBus(),
+      messages: [{ role: 'user', content: 'go' }],
+      toolCtx: { cwd: dir },
+      budget: { maxTurns: 5 },
+      store,
+      signal: controller.signal,
+    })).rejects.toMatchObject({ name: 'AbortError' });
+
+    expect(await readFile(join(dir, 'effect.txt'), 'utf8')).toBe('applied');
+    const loaded = await loadSession(path, { requireHeader: true });
+    expect(loaded.pendingTools).toEqual([
+      expect.objectContaining({ toolName: 'side_effect_then_abort', reason: 'unknown' }),
+    ]);
+  });
+
+  it('halts and preserves an unknown receipt when a dispatched tool writes and then throws', async () => {
+    const tools = new InMemoryToolRegistry();
+    tools.register({
+      name: 'write_then_throw',
+      description: 'test only',
+      capability: 'writes-files',
+      inputSchema: z.object({}),
+      run: async () => {
+        await writeFile(join(dir, 'effect.txt'), 'applied', 'utf8');
+        throw new Error('late failure');
+      },
+    });
+    const { provider, calls } = scriptedModel([
+      { toolCalls: [{ id: 'c1', name: 'write_then_throw', arguments: '{}' }] },
+      { text: 'must not become final' },
+    ]);
+    const bus = new InMemoryEventBus();
+    const events = record(bus);
+    const path = join(dir, 'throw-after-effect.jsonl');
+    const store = new FileSessionStore(path);
+    await store.writeHeader({ id: 's1', model: 'm', cwd: dir, startedAt: 't0', composition });
+
+    const outcome = await runAgent({
+      model: provider,
+      tools,
+      bus,
+      messages: [{ role: 'user', content: 'go' }],
+      toolCtx: { cwd: dir },
+      budget: { maxTurns: 5 },
+      store,
+    });
+
+    expect(outcome).toEqual({ halted: 'toolExecutionUnknown', turns: 1 });
+    expect(calls()).toBe(1);
+    expect(events).toContainEqual({ type: 'halt', reason: 'toolExecutionUnknown' });
+    expect(events.some((event) => event.type === 'final' || event.type === 'tool_result')).toBe(false);
+    expect(await readFile(join(dir, 'effect.txt'), 'utf8')).toBe('applied');
+    await expect(loadSession(path, { requireHeader: true })).resolves.toMatchObject({
+      pendingTools: [expect.objectContaining({ toolName: 'write_then_throw', reason: 'unknown' })],
+    });
+  });
+
+  it('halts when a managed file tool explicitly reports an unknown post-state', async () => {
+    const tools = new InMemoryToolRegistry();
+    tools.register({
+      name: 'uncertain_write',
+      description: 'test only',
+      capability: 'writes-files',
+      inputSchema: z.object({}),
+      run: async () => ({
+        content: '',
+        error: 'post-write verification failed',
+        fileReceipt: { kind: 'write', path: 'a.txt', precondition: 'createOnly', outcome: 'unknown' },
+      }),
+    });
+    const { provider } = scriptedModel([
+      { toolCalls: [{ id: 'c1', name: 'uncertain_write', arguments: '{}' }] },
+      { text: 'must not become final' },
+    ]);
+    const path = join(dir, 'explicit-unknown.jsonl');
+    const store = new FileSessionStore(path);
+    await store.writeHeader({ id: 's1', model: 'm', cwd: dir, startedAt: 't0', composition });
+
+    const outcome = await runAgent({
+      model: provider,
+      tools,
+      bus: new InMemoryEventBus(),
+      messages: [{ role: 'user', content: 'go' }],
+      toolCtx: { cwd: dir },
+      budget: { maxTurns: 5 },
+      store,
+    });
+
+    expect(outcome).toEqual({ halted: 'toolExecutionUnknown', turns: 1 });
+    await expect(loadSession(path, { requireHeader: true })).resolves.toMatchObject({
+      pendingTools: [expect.objectContaining({ toolName: 'uncertain_write', reason: 'unknown' })],
+    });
   });
 });
 

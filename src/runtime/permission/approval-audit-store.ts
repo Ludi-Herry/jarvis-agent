@@ -1,5 +1,6 @@
 import { appendFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import { hasStringFields, isJsonObject, parseJsonlWithDiagnostics } from '../jsonl-integrity.js';
 import type { Approval, ApprovalRequest } from './permission-gate.js';
 
 export type ApprovalAuditDecision = Approval | 'error';
@@ -29,6 +30,26 @@ export interface ApprovalAuditStore {
   append(record: ApprovalAuditRecord): Promise<void>;
 }
 
+export function isApprovalAuditRecord(value: unknown): value is ApprovalAuditRecord {
+  if (!isJsonObject(value) || typeof value.t !== 'string') return false;
+  if (value.t === 'approval-request') {
+    return hasStringFields(value, 'requestId', 'toolName', 'reason', 'detail', 'at')
+      && (value.capability === 'read-only'
+        || value.capability === 'writes-files'
+        || value.capability === 'executes-code'
+        || value.capability === 'network');
+  }
+  if (value.t === 'approval-result') {
+    return hasStringFields(value, 'requestId', 'toolName', 'at')
+      && (value.decision === 'allow-once'
+        || value.decision === 'allow-session'
+        || value.decision === 'deny'
+        || value.decision === 'error')
+      && (value.error === undefined || typeof value.error === 'string');
+  }
+  return false;
+}
+
 export class FileApprovalAuditStore implements ApprovalAuditStore {
   private dirEnsured = false;
 
@@ -44,15 +65,5 @@ export class FileApprovalAuditStore implements ApprovalAuditStore {
 }
 
 export function parseApprovalAuditLog(text: string): ApprovalAuditRecord[] {
-  const records: ApprovalAuditRecord[] = [];
-  for (const line of text.split('\n')) {
-    const trimmed = line.trim();
-    if (trimmed === '') continue;
-    try {
-      records.push(JSON.parse(trimmed) as ApprovalAuditRecord);
-    } catch {
-      // Keep crash-truncated tails from breaking audit replay.
-    }
-  }
-  return records;
+  return parseJsonlWithDiagnostics(text, isApprovalAuditRecord).records;
 }

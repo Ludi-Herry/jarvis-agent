@@ -85,7 +85,7 @@ export type VerifierResolution =
  * different model. The independence assertion (verifier model ≠ builder model) is done HERE, at the
  * config-string layer, because {@link ModelProvider} exposes no model-id getter — the only place the
  * two model ids are comparable. Three outcomes:
- *  - unset → disabled (the batch-1 deterministic-only fallback);
+ *  - unset → disabled (routine checks remain checks-only unless held-out evidence is configured);
  *  - set and ≠ the builder model → enabled (a genuinely different model);
  *  - set and === the builder model → DISABLED with a loud reason. Same-model independence is theater
  *    (a Doubao variant judging another Doubao variant of the SAME id shares all blind spots), so we
@@ -97,7 +97,7 @@ export function resolveVerifierConfig(
 ): VerifierResolution {
   const model = env.ARK_VERIFIER_MODEL?.trim();
   if (!model) {
-    return { enabled: false, reason: 'ARK_VERIFIER_MODEL not set — leg 3 disabled (deterministic legs only)' };
+    return { enabled: false, reason: 'ARK_VERIFIER_MODEL not set — leg 3 disabled (routine checks are checks-only)' };
   }
   if (model === builderConfig.model) {
     return {

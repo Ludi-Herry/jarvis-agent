@@ -13,6 +13,7 @@ import {
 import { assertKeyNotInLaunchEnv, defaultShellPath, runCommand } from '../../core/index.js';
 import { safeInline } from './approval.js';
 import { buildLoopCronCommand, parseCronArgs } from './cron-args.js';
+import { CLI_EXIT, exitCodeForCron } from './exit-codes.js';
 
 const LOOP_CRON_TIMEOUT_MS = 3 * 60 * 60 * 1000;
 const LOOP_CRON_LOCK_STALE_MS = LOOP_CRON_TIMEOUT_MS + 5 * 60 * 1000;
@@ -25,7 +26,7 @@ async function main(): Promise<void> {
     args = parseCronArgs(process.argv.slice(2));
   } catch (err) {
     console.error(err instanceof Error ? err.message : String(err));
-    process.exitCode = 1;
+    process.exitCode = CLI_EXIT.USAGE;
     return;
   }
 
@@ -34,7 +35,7 @@ async function main(): Promise<void> {
     assertKeyNotInLaunchEnv(ARK_KEY_IN_LAUNCH_ENV);
   } catch (err) {
     console.error(`[cron] ${err instanceof Error ? err.message : String(err)}`);
-    process.exitCode = 1;
+    process.exitCode = CLI_EXIT.USAGE;
     return;
   }
 
@@ -48,7 +49,7 @@ async function main(): Promise<void> {
     });
   } catch (err) {
     console.error(`[cron] ${err instanceof Error ? err.message : String(err)}`);
-    process.exitCode = 1;
+    process.exitCode = CLI_EXIT.USAGE;
     return;
   }
 
@@ -58,7 +59,7 @@ async function main(): Promise<void> {
   }).tryAcquire();
   if (lock === null) {
     console.error('[cron] cron scan lock is held or unrecoverable; skipped');
-    process.exitCode = 1;
+    process.exitCode = CLI_EXIT.RUNTIME;
     return;
   }
   const store = new FileLoopCronStore(cronLogPath);
@@ -80,7 +81,8 @@ async function main(): Promise<void> {
       shouldStop: () => emergencyStop.signal.aborted,
       runTask: async (task) => runCronTask(task, shellPath, cwd, emergencyStop.signal),
     });
-    console.log(`cron scan complete: triggered=${result.triggered} skipped=${result.skipped}`);
+    console.log(`cron scan complete: triggered=${result.triggered} failed=${result.failed} skipped=${result.skipped}`);
+    process.exitCode = exitCodeForCron(result, emergencyStop.signal.aborted);
   } finally {
     emergencyStop.dispose();
     await lock.release();
@@ -103,5 +105,5 @@ async function runCronTask(task: LoopCronTask, shellPath: string, cwd: string, s
 
 main().catch((err: unknown) => {
   console.error('\n[cron] fatal:', err instanceof Error ? err.message : err);
-  process.exitCode = 1;
+  process.exitCode = CLI_EXIT.RUNTIME;
 });

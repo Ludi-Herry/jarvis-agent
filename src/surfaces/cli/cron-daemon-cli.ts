@@ -18,6 +18,7 @@ import { assertKeyNotInLaunchEnv, defaultShellPath, runCommand } from '../../cor
 import { safeInline } from './approval.js';
 import { buildLoopCronCommand } from './cron-args.js';
 import { parseCronDaemonArgs } from './cron-daemon-args.js';
+import { CLI_EXIT } from './exit-codes.js';
 
 const LOOP_CRON_TIMEOUT_MS = 3 * 60 * 60 * 1000;
 const LOOP_CRON_LOCK_STALE_MS = LOOP_CRON_TIMEOUT_MS + 5 * 60 * 1000;
@@ -30,7 +31,7 @@ async function main(): Promise<void> {
     args = parseCronDaemonArgs(process.argv.slice(2));
   } catch (err) {
     console.error(err instanceof Error ? err.message : String(err));
-    process.exitCode = 1;
+    process.exitCode = CLI_EXIT.USAGE;
     return;
   }
 
@@ -39,7 +40,7 @@ async function main(): Promise<void> {
     assertKeyNotInLaunchEnv(ARK_KEY_IN_LAUNCH_ENV);
   } catch (err) {
     console.error(`[cron:daemon] ${err instanceof Error ? err.message : String(err)}`);
-    process.exitCode = 1;
+    process.exitCode = CLI_EXIT.USAGE;
     return;
   }
 
@@ -53,7 +54,7 @@ async function main(): Promise<void> {
     });
   } catch (err) {
     console.error(`[cron:daemon] ${err instanceof Error ? err.message : String(err)}`);
-    process.exitCode = 1;
+    process.exitCode = CLI_EXIT.USAGE;
     return;
   }
 
@@ -65,7 +66,7 @@ async function main(): Promise<void> {
   }).tryAcquire();
   if (daemonLock === null) {
     console.error('[cron:daemon] daemon lock is held or unrecoverable; exiting');
-    process.exitCode = 1;
+    process.exitCode = CLI_EXIT.NEEDS_HUMAN;
     return;
   }
 
@@ -117,7 +118,7 @@ async function main(): Promise<void> {
   } catch (err) {
     await daemonStore.append({ t: 'daemon-stopped', reason: 'error', at: new Date().toISOString() }).catch(() => undefined);
     console.error(`[cron:daemon] ${err instanceof Error ? err.message : String(err)}`);
-    process.exitCode = 1;
+    process.exitCode = CLI_EXIT.RUNTIME;
   } finally {
     emergencyStop.dispose();
     stop.dispose();
@@ -159,7 +160,9 @@ async function runDaemonScan(opts: {
       runTask: async (task) => runCronTask(task, opts.shellPath, opts.cwd, opts.signal),
     });
     await opts.daemonStore.append({ t: 'scan-finished', at: new Date().toISOString(), ...result });
-    console.log(`cron daemon scan complete: triggered=${result.triggered} skipped=${result.skipped} parked=${result.parked}`);
+    console.log(
+      `cron daemon scan complete: triggered=${result.triggered} failed=${result.failed} skipped=${result.skipped} parked=${result.parked}`,
+    );
   } finally {
     await scanLock.release();
   }
@@ -181,5 +184,5 @@ async function runCronTask(task: LoopCronTask, shellPath: string, cwd: string, s
 
 main().catch((err: unknown) => {
   console.error('\n[cron:daemon] fatal:', err instanceof Error ? err.message : err);
-  process.exitCode = 1;
+  process.exitCode = CLI_EXIT.RUNTIME;
 });

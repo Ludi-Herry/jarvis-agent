@@ -78,8 +78,8 @@ export interface CheckDeps {
 /**
  * Run both deterministic legs. Leg 1 re-runs every check command and ANDs the real exit codes (empty
  * command list → fail closed). Leg 2 diffs the whole worktree vs the baseline and classifies tampering
- * over test files AND check-oracle files. No baseline (not a git repo) → leg 2 is inert (clean) — a
- * known gap; but a PRESENT baseline whose git diff fails or truncates fails CLOSED, not clean.
+ * over test files AND check-oracle files. No baseline produces `unavailable`, which can never grant a
+ * verified verdict. A PRESENT baseline whose git diff fails or truncates fails CLOSED, not clean.
  */
 export async function runDeterministicChecks(
   deps: CheckDeps,
@@ -116,7 +116,7 @@ export async function runDeterministicChecks(
 
   const tamper = baseline
     ? await scanTestTamper(deps, baseline)
-    : { testTamper: 'clean' as const, tamperReason: '' };
+    : { testTamper: 'unavailable' as const, tamperReason: 'no Git baseline available' };
 
   // Held-out leg (the hidden-assertion leg). Run ONLY when leg 1 is green: a red leg 1 already rejects,
   // and the held-out leg's whole point is the "weak self-written tests pass (leg 1 green) but the real

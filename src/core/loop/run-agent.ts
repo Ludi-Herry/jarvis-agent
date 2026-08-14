@@ -13,14 +13,35 @@
  * awaits this for the lifecycle. Compaction (decideCompact + ContextManager) is A3; the seam
  * is marked below.
  */
-import type { Message, ToolCall, ToolResult } from '../types.js';
+import { randomUUID } from 'node:crypto';
+import type { Message, ToolCall, ToolResult, ToolSchema } from '../types.js';
 import type { ModelProvider, ModelResult } from '../model/types.js';
 import type { ToolRegistry, ToolRunCtx, ToolCapability } from '../tools/types.js';
 import type { ContextManager } from '../context/context-manager.js';
 import type { EventBus } from '../../runtime/event-bus.js';
 import type { PermissionGate } from '../../runtime/permission/permission-gate.js';
-import type { SessionStore } from '../../runtime/session/session-store.js';
+import {
+  createModelRequestReceipt,
+  summarizeToolResult,
+  type SessionStore,
+  type ToolExecutionPlan,
+} from '../../runtime/session/session-store.js';
 import { type Budget, decideStop, projectedNextInput, withinBudget } from './decisions.js';
+
+/** A model turn must never be able to hold the host forever. The timer is a hard
+ * race, not merely an AbortSignal, because a provider can ignore cancellation. */
+export const DEFAULT_MODEL_TURN_TIMEOUT_MS = 120_000;
+
+/** Machine-readable abnormal outcomes from one builder/verifier run. */
+export type RunHaltReason =
+  | 'maxTurns'
+  | 'truncated'
+  | 'filtered'
+  | 'paused'
+  | 'refused'
+  | 'unknown'
+  | 'turnTimeout'
+  | 'toolExecutionUnknown';
 
 /** Everything the loop needs, injected so the loop owns no globals and stays testable. */
 export interface AgentContext {
@@ -62,26 +83,67 @@ export interface AgentContext {
    *  folded into the system message at send time only — never stored in `messages`, so it
    *  refreshes each run and is never compacted. */
   systemAddendum?: string;
+  /** Hard wall-clock limit for each individual model stream. The default is
+   * {@link DEFAULT_MODEL_TURN_TIMEOUT_MS}; exposed here so focused callers/tests
+   * can use a short deadline without changing process-wide state. */
+  turnTimeoutMs?: number;
   signal?: AbortSignal;
 }
 
 /** How the loop ended. Exactly one of `finalText` (natural stop) / `halted` (abnormal stop) is
- *  set; `turns` is the number of model turns executed. `halted` says why: the `maxTurns` guardrail,
- *  or a final turn that was `truncated` (hit max output tokens) / `filtered` (content filter) and
- *  so wasn't a trustworthy answer. */
+ *  set; `turns` is the number of model turns started. `halted` identifies a
+ *  guardrail or an untrustworthy terminal model state. `rawFinishReason` retains
+ *  the provider string for a model-finish halt, and `timeoutMs` records an applied
+ *  hard deadline for timeout halts. */
 export interface RunOutcome {
   finalText?: string;
-  halted?: 'maxTurns' | 'truncated' | 'filtered';
+  halted?: RunHaltReason;
   turns: number;
+  rawFinishReason?: string;
+  timeoutMs?: number;
 }
 
 export async function runAgent(ctx: AgentContext): Promise<RunOutcome> {
   let turn = 0;
+  const receiptMode = ctx.store?.receiptFormat === 'v2';
+  const runId = receiptMode ? randomUUID() : undefined;
 
   while (withinBudget(turn, ctx.budget)) {
-    await runAdvisoryHook(ctx.hooks?.roundStart);
+    throwIfAborted(ctx.signal);
+    // Persist the exact canonical input prefix before hooks or provider I/O. Goal
+    // roots rely on this to make their initial system/objective crash-recoverable.
+    await ctx.store?.sync(ctx.messages);
+    throwIfAborted(ctx.signal);
+    await runAdvisoryHook(ctx.hooks?.roundStart, ctx.signal);
+    let roundEndStarted = false;
     try {
-      const res = await streamTurn(ctx);
+      let res: ModelResult;
+      const request = modelRequestSnapshot(ctx);
+      const requestId = runId ? randomUUID() : undefined;
+      try {
+        if (requestId && runId) {
+          await ctx.store?.recordRequest?.(createModelRequestReceipt({
+            requestId,
+            runId,
+            turn,
+            messages: ctx.messages,
+            ...(ctx.systemAddendum === undefined ? {} : { systemAddendum: ctx.systemAddendum }),
+            tools: request.tools,
+          }));
+          throwIfAborted(ctx.signal);
+        }
+        res = await streamTurn(ctx, request);
+      } catch (err) {
+        if (err instanceof ModelTurnTimeoutError) {
+          roundEndStarted = true;
+          await runAdvisoryHook(ctx.hooks?.roundEnd, ctx.signal);
+          throwIfAborted(ctx.signal);
+          ctx.bus.emit({ type: 'halt', reason: 'turnTimeout', timeoutMs: err.timeoutMs });
+          return { halted: 'turnTimeout', turns: turn + 1, timeoutMs: err.timeoutMs };
+        }
+        throw err;
+      }
+      throwIfAborted(ctx.signal);
 
       // The model's own token report for this turn (never estimated).
       ctx.bus.emit({
@@ -90,17 +152,31 @@ export async function runAgent(ctx: AgentContext): Promise<RunOutcome> {
         outputTokens: res.usage.outputTokens,
       });
 
-      // Record the assistant turn BEFORE running tools so the conversation stays well-formed
-      // (assistant-with-tool_calls, then the matching tool messages).
-      ctx.messages.push(assistantMessage(res));
-
       const stop = decideStop(res);
+      // Record the assistant turn before any matching tool messages. When a
+      // contradictory/abnormal finish carried partial calls, strip those calls
+      // from the replayable conversation: they were deliberately not dispatched,
+      // and persisting orphan calls would make a later resume wire-invalid.
+      ctx.messages.push(assistantMessage(
+        stop.done && stop.reason === 'halt' ? { ...res, toolCalls: [] } : res,
+        requestId,
+      ));
+      // A tool-bearing assistant turn is the durable execution intent. It must
+      // reach disk before approval or any tool side effect can begin.
+      await ctx.store?.sync(ctx.messages);
+      throwIfAborted(ctx.signal);
       if (stop.done) {
-        await ctx.store?.sync(ctx.messages); // persist the (final or truncated) assistant turn before stopping
+        // Keep the terminal event as the last externally visible fact. A goal
+        // deadline can fire while a persistence or lifecycle hook await is in
+        // flight; both must finish and re-check cancellation before final/halt.
+        roundEndStarted = true;
+        await runAdvisoryHook(ctx.hooks?.roundEnd, ctx.signal);
+        throwIfAborted(ctx.signal);
         if (stop.reason === 'halt') {
-          // truncated/filtered: the turn produced no trustworthy answer — halt, don't pass it off as final.
-          ctx.bus.emit({ type: 'halt', reason: stop.cause });
-          return { halted: stop.cause, turns: turn + 1 };
+          // Any non-completed no-tool turn produced no trustworthy answer — halt,
+          // retain the raw provider reason, and never pass its text off as final.
+          ctx.bus.emit({ type: 'halt', reason: stop.cause, rawFinishReason: res.rawFinishReason });
+          return { halted: stop.cause, turns: turn + 1, rawFinishReason: res.rawFinishReason };
         }
         ctx.bus.emit({ type: 'final', text: res.text });
         return { finalText: res.text, turns: turn + 1 };
@@ -108,23 +184,78 @@ export async function runAgent(ctx: AgentContext): Promise<RunOutcome> {
 
       let appendedToolChars = 0;
       const postFeedbacks: PostFeedback[] = [];
-      for (const rawCall of res.toolCalls) {
+      for (let callIndex = 0; callIndex < res.toolCalls.length; callIndex++) {
+        const rawCall = res.toolCalls[callIndex];
+        throwIfAborted(ctx.signal);
         // Freeze a snapshot so the EXACT call the gate approves is the one tools.run executes — a
         // subscriber (or anything holding the emitted event across an async approver) cannot mutate
         // `arguments` between approval and execution. This makes "the string parsed == the string
         // executed" structural rather than a convention (closes the gatedRun TOCTOU).
         const call = Object.freeze({ ...rawCall });
+        const executionId = requestId && runId ? randomUUID() : undefined;
+        const plan: ToolExecutionPlan | undefined = executionId && requestId && runId
+          ? { t: 'tool', phase: 'planned', executionId, requestId, runId, turn, callIndex, call }
+          : undefined;
+        if (plan) {
+          await ctx.store?.recordToolPlanned?.(plan);
+          throwIfAborted(ctx.signal);
+        }
         ctx.bus.emit({ type: 'tool_call', call });
         // Gate the call BEFORE the side effect (B1) — the seam A2 deliberately left here. A denied
         // call never reaches the tool; its reason becomes the result so the model can change course.
         // gatedRun also collects any PostToolUse hook output into `postFeedbacks` (advisory, additive).
-        const ran = await gatedRun(ctx, call, postFeedbacks);
+        let ran: ToolResult;
+        try {
+          ran = await gatedRun(ctx, call);
+        } catch (err) {
+          if (plan) await recordUnknownBestEffort(ctx.store, plan, err);
+          throw err;
+        }
+        throwIfAborted(ctx.signal);
+        if (isUnknownToolExecution(ran)) {
+          const reason = ran.error ?? `Tool ${call.name} returned an unknown execution state`;
+          if (plan) await recordUnknownBestEffort(ctx.store, plan, reason);
+          roundEndStarted = true;
+          await runAdvisoryHook(ctx.hooks?.roundEnd, ctx.signal);
+          throwIfAborted(ctx.signal);
+          ctx.bus.emit({ type: 'halt', reason: 'toolExecutionUnknown' });
+          return { halted: 'toolExecutionUnknown', turns: turn + 1 };
+        }
+        if (plan) {
+          try {
+            await ctx.store?.recordToolCommitted?.({
+              t: 'tool',
+              phase: 'committed',
+              executionId: plan.executionId,
+              requestId: plan.requestId,
+              runId: plan.runId,
+              turn: plan.turn,
+              callIndex: plan.callIndex,
+              result: summarizeToolResult(ran),
+            });
+          } catch (err) {
+            await recordUnknownBestEffort(ctx.store, plan, err);
+            throw err;
+          }
+        }
+        await runPostToolHook(ctx, call, ran, postFeedbacks);
+        throwIfAborted(ctx.signal);
         // Budget oversized output to disk BEFORE it enters the context (A3); a no-op without
         // a context manager or for small results.
         const out = ctx.context ? await ctx.context.budgetToolResult(ran) : ran;
+        throwIfAborted(ctx.signal);
         const content = toolMessageContent(out);
-        ctx.messages.push({ role: 'tool', toolCallId: out.callId, content });
+        ctx.messages.push({
+          role: 'tool',
+          toolCallId: out.callId,
+          content,
+          ...(executionId === undefined ? {} : { executionId }),
+        });
         appendedToolChars += content.length;
+        // Settle each tool independently. A crash during a later call preserves
+        // the exact prefix that completed and leaves the later call pending.
+        await ctx.store?.sync(ctx.messages);
+        throwIfAborted(ctx.signal);
         ctx.bus.emit({ type: 'tool_result', out });
       }
 
@@ -135,6 +266,7 @@ export async function runAgent(ctx: AgentContext): Promise<RunOutcome> {
       // Emit per-hook for observability; count its chars toward the compaction projection; it is
       // persisted by the turn-end store?.sync below like any other message.
       if (postFeedbacks.length > 0) {
+        throwIfAborted(ctx.signal);
         for (const f of postFeedbacks) {
           ctx.bus.emit({ type: 'hook_output', hook: 'PostToolUse', toolName: f.toolName, output: f.output });
         }
@@ -153,6 +285,7 @@ export async function runAgent(ctx: AgentContext): Promise<RunOutcome> {
       };
       let compacted = false;
       if (ctx.context?.shouldCompact(projectedUsage)) {
+        throwIfAborted(ctx.signal);
         ctx.bus.emit({ type: 'state', phase: 'compacting' });
         try {
           await ctx.context.compact(ctx.messages, ctx.signal);
@@ -173,49 +306,151 @@ export async function runAgent(ctx: AgentContext): Promise<RunOutcome> {
       } else {
         await ctx.store?.sync(ctx.messages);
       }
+      throwIfAborted(ctx.signal);
 
       turn++;
     } finally {
-      await runAdvisoryHook(ctx.hooks?.roundEnd);
+      if (!roundEndStarted) await runAdvisoryHook(ctx.hooks?.roundEnd, ctx.signal);
     }
   }
 
+  throwIfAborted(ctx.signal);
   ctx.bus.emit({ type: 'halt', reason: 'maxTurns' });
   return { halted: 'maxTurns', turns: turn };
 }
 
-async function runAdvisoryHook(fn: (() => Promise<void>) | undefined): Promise<void> {
+async function runAdvisoryHook(
+  fn: (() => Promise<void>) | undefined,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (!fn) return;
+  throwIfAborted(signal);
+  const pending = Promise.resolve().then(fn);
+  void pending.catch(() => undefined);
+  let abortListener: (() => void) | undefined;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    if (!signal) return;
+    abortListener = () => reject(createAbortError());
+    signal.addEventListener('abort', abortListener, { once: true });
+  });
   try {
-    await fn?.();
+    await Promise.race([pending, aborted]);
   } catch {
+    if (signal?.aborted) throw createAbortError();
     // lifecycle hooks are notification-only
+  } finally {
+    if (signal && abortListener) signal.removeEventListener('abort', abortListener);
+  }
+  throwIfAborted(signal);
+}
+
+/** Thrown only by the hard host-side turn deadline. Kept private so callers use
+ * the stable {@link RunOutcome} / EventBus contract rather than implementation errors. */
+class ModelTurnTimeoutError extends Error {
+  constructor(readonly timeoutMs: number) {
+    super(`model turn timed out after ${timeoutMs}ms`);
+    this.name = 'ModelTurnTimeoutError';
   }
 }
 
-/** Drive one model stream to completion, emitting text increments as `message_delta`, and
- *  return the aggregated result. Tool-call deltas are partial, so the assembled tool calls
- *  are emitted by the caller AFTER the stream; reasoning has no A-phase event yet. */
-async function streamTurn(ctx: AgentContext): Promise<ModelResult> {
-  const sent = withSystemAddendum(ctx.messages, ctx.systemAddendum);
-  const stream = ctx.model.call(sent, ctx.tools.schemasForModel(), ctx.signal);
-  let next = await stream.next();
-  while (!next.done) {
-    const delta = next.value;
-    if (delta.type === 'text' && delta.text.length > 0) {
-      ctx.bus.emit({ type: 'message_delta', text: delta.text });
+/** Drive one model stream to completion under a hard wall-clock deadline. The
+ * provider receives a composed AbortSignal for best-effort cancellation, while
+ * Promise.race still returns if that provider ignores the signal. The losing
+ * stream promise is explicitly observed so a late rejection cannot become an
+ * unhandled rejection after the host has already returned. */
+interface ModelRequestSnapshot {
+  messages: Message[];
+  tools: ToolSchema[];
+}
+
+function modelRequestSnapshot(ctx: AgentContext): ModelRequestSnapshot {
+  return {
+    messages: withSystemAddendum(ctx.messages, ctx.systemAddendum),
+    tools: ctx.tools.schemasForModel(),
+  };
+}
+
+async function streamTurn(ctx: AgentContext, request: ModelRequestSnapshot): Promise<ModelResult> {
+  throwIfAborted(ctx.signal);
+  const timeoutMs = resolveTimeoutMs(ctx.turnTimeoutMs, DEFAULT_MODEL_TURN_TIMEOUT_MS);
+  const timeoutController = new AbortController();
+  const signal = ctx.signal ? AbortSignal.any([ctx.signal, timeoutController.signal]) : timeoutController.signal;
+  let inactive = false;
+  const run = (async (): Promise<ModelResult> => {
+    const stream = ctx.model.call(request.messages, request.tools, signal);
+    let next = await stream.next();
+    while (!next.done) {
+      const delta = next.value;
+      // A provider may keep yielding even after ignoring our abort. Once the hard
+      // deadline wins, those stale deltas must not leak into a later UI turn.
+      if (!inactive && !ctx.signal?.aborted && delta.type === 'text' && delta.text.length > 0) {
+        ctx.bus.emit({ type: 'message_delta', text: delta.text });
+      }
+      next = await stream.next();
     }
-    next = await stream.next();
+    return next.value;
+  })();
+  // `run` can finish/reject long after the timeout winner. Mark the rejection as
+  // handled now; Promise.race alone does not make that intent obvious and future
+  // refactors must not turn an ignored provider into process-level noise.
+  void run.catch(() => undefined);
+
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_resolve, reject) => {
+    timeout = setTimeout(() => {
+      inactive = true;
+      timeoutController.abort();
+      reject(new ModelTurnTimeoutError(timeoutMs));
+    }, timeoutMs);
+  });
+  let abortListener: (() => void) | undefined;
+  const abortPromise = new Promise<never>((_resolve, reject) => {
+    if (!ctx.signal) return;
+    abortListener = () => {
+      inactive = true;
+      reject(createAbortError());
+    };
+    ctx.signal.addEventListener('abort', abortListener, { once: true });
+  });
+  try {
+    const result = await Promise.race([run, timeoutPromise, abortPromise]);
+    throwIfAborted(ctx.signal);
+    return result;
+  } finally {
+    inactive = true;
+    if (timeout) clearTimeout(timeout);
+    if (ctx.signal && abortListener) ctx.signal.removeEventListener('abort', abortListener);
   }
-  return next.value;
+}
+
+/** External cancellation is a separate race winner. The name matches the
+ * platform convention so callers can distinguish interruption from provider
+ * and deadline failures without importing a core-only error class. */
+function createAbortError(): Error {
+  const err = new Error('agent run aborted');
+  err.name = 'AbortError';
+  return err;
+}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw createAbortError();
+}
+
+/** Invalid external values never disable the liveness guard. A finite zero/negative
+ * override means "time out immediately", which is useful for deterministic tests. */
+function resolveTimeoutMs(value: number | undefined, fallback: number): number {
+  if (value === undefined || !Number.isFinite(value)) return fallback;
+  return Math.max(0, Math.floor(value));
 }
 
 /** Build the assistant message to round-trip: content + reasoning + tool calls, each
  *  included only when present so we never send empty noise the endpoint may reject. */
-function assistantMessage(res: ModelResult): Message {
+function assistantMessage(res: ModelResult, requestId?: string): Message {
   const msg: Extract<Message, { role: 'assistant' }> = { role: 'assistant' };
   if (res.text.length > 0) msg.content = res.text;
   if (res.reasoning) msg.reasoning = res.reasoning;
   if (res.toolCalls.length > 0) msg.toolCalls = res.toolCalls;
+  if (requestId) msg.requestId = requestId;
   return msg;
 }
 
@@ -252,7 +487,8 @@ function postFeedbackMessage(feedbacks: PostFeedback[]): string {
  *  Order is the safety contract: the gate's hard checks decide FIRST — a gate deny returns before
  *  hooks are consulted, so a PreToolUse hook can never unlock it (it can only block a call the gate
  *  already allowed; fail-closed). PostToolUse runs after the side effect, advisory only. */
-async function gatedRun(ctx: AgentContext, call: ToolCall, feedbacks: PostFeedback[]): Promise<ToolResult> {
+async function gatedRun(ctx: AgentContext, call: ToolCall): Promise<ToolResult> {
+  throwIfAborted(ctx.signal);
   // Pass the turn's abort signal so a long-running tool (bash) can be cancelled on Ctrl-C.
   const runCtx = ctx.signal ? { ...ctx.toolCtx, signal: ctx.signal } : ctx.toolCtx;
   // Only classify the call when something consumes it (gate or hooks). With neither, the path stays
@@ -263,36 +499,82 @@ async function gatedRun(ctx: AgentContext, call: ToolCall, feedbacks: PostFeedba
   // after the hard checks and never unlock them).
   if (ctx.gate) {
     const verdict = await ctx.gate.check(call, capability);
+    throwIfAborted(ctx.signal);
     if (!verdict.allowed) return { callId: call.id, content: '', error: `Permission denied: ${verdict.reason}` };
   }
   // PreToolUse hooks run only on a gate-allowed call and can ONLY block (fail-closed), never allow.
   if (ctx.hooks) {
     const pre = await ctx.hooks.preToolUse(call, capability);
+    throwIfAborted(ctx.signal);
     if (pre.blocked) return { callId: call.id, content: '', error: `Permission denied: ${pre.reason}` };
   }
 
+  throwIfAborted(ctx.signal);
   const result = await ctx.tools.run(call, runCtx);
+  throwIfAborted(ctx.signal);
 
-  // PostToolUse hooks: advisory, off the critical path. Two guards keep observability from breaking
-  // the tool it observes: (1) a frozen shallow copy is passed, so a hooks impl can't mutate the real
-  // result the loop returns; (2) any throw is swallowed HERE (not just in the runner). Same discipline
-  // as goal-loop's snapshotShadow, robust to any hooks implementation.
-  if (ctx.hooks) {
-    try {
-      const feedback = await ctx.hooks.postToolUse(call, Object.freeze({ ...result }));
-      // Additive only: collect the hook's output for the caller to fold into the conversation AFTER all
-      // tool results. Never mutate `result` — PostToolUse stays advisory.
-      if (feedback) feedbacks.push({ toolName: call.name, output: feedback });
-    } catch {
-      // a post-hook failure is not a tool failure
-    }
-  }
   return result;
+}
+
+function isUnknownToolExecution(result: ToolResult): boolean {
+  return result.executionUnknown === true
+    || (result.fileReceipt?.kind === 'write' && result.fileReceipt.outcome === 'unknown');
+}
+
+async function runPostToolHook(
+  ctx: AgentContext,
+  call: ToolCall,
+  result: ToolResult,
+  feedbacks: PostFeedback[],
+): Promise<void> {
+  if (!ctx.hooks) return;
+  const pending = Promise.resolve().then(() => ctx.hooks?.postToolUse(call, Object.freeze({ ...result })));
+  void pending.catch(() => undefined);
+  let abortListener: (() => void) | undefined;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    if (!ctx.signal) return;
+    abortListener = () => reject(createAbortError());
+    ctx.signal.addEventListener('abort', abortListener, { once: true });
+  });
+  try {
+    const feedback = await Promise.race([pending, aborted]);
+    throwIfAborted(ctx.signal);
+    if (feedback) feedbacks.push({ toolName: call.name, output: feedback });
+  } catch {
+    if (ctx.signal?.aborted) throw createAbortError();
+    // PostToolUse is advisory; a failure cannot rewrite the committed tool result.
+  } finally {
+    if (ctx.signal && abortListener) ctx.signal.removeEventListener('abort', abortListener);
+  }
+}
+
+async function recordUnknownBestEffort(
+  store: SessionStore | undefined,
+  plan: ToolExecutionPlan,
+  err: unknown,
+): Promise<void> {
+  try {
+    await store?.recordToolUnknown?.({
+      t: 'tool',
+      phase: 'unknown',
+      executionId: plan.executionId,
+      requestId: plan.requestId,
+      runId: plan.runId,
+      turn: plan.turn,
+      callIndex: plan.callIndex,
+      reason: err instanceof Error ? `${err.name}: ${err.message}` : String(err),
+    });
+  } catch {
+    // The persisted assistant intent/plan remains unresolved and resume blocks.
+  }
 }
 
 /** A tool's failure is surfaced to the model as text (so it can recover), not hidden. */
 function toolMessageContent(out: ToolResult): string {
-  return out.error !== undefined ? `ERROR: ${out.error}` : out.content;
+  const content = out.error !== undefined ? `ERROR: ${out.error}` : out.content;
+  return out.fileReceipt === undefined
+    ? content
+    : `${content}\n[jarvis-file-receipt] ${JSON.stringify(out.fileReceipt)}`;
 }
 
 /** Fold the per-run system addendum into the leading system message for THIS send only,

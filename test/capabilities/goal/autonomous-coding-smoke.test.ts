@@ -137,6 +137,7 @@ function codingModel(): ModelProvider & { sawRedBeforeFix(): boolean; sawGreenBe
       expect(tools.map((tool) => tool.name)).toEqual(expect.arrayContaining(['write', 'sandboxed_check', 'update_goal']));
       const lastSandboxFeedback = latestToolMessage(messages, '[sandboxed check: test]');
       const updateGoalResult = latestToolMessage(messages, 'Completion claim recorded');
+      const currentAddVersion = latestPostVersion(messages);
       let toolCalls: ToolCall[] = [];
       let text = '';
 
@@ -150,7 +151,7 @@ function codingModel(): ModelProvider & { sawRedBeforeFix(): boolean; sawGreenBe
       } else if (lastSandboxFeedback.includes('[exit code: 1]')) {
         redSeen = true;
         toolCalls = [
-          writeCall('write-fix', 'export function add(a, b) {\n  return a + b;\n}\n'),
+          writeCall('write-fix', 'export function add(a, b) {\n  return a + b;\n}\n', currentAddVersion),
           sandboxedTestCall('test-green', 'confirm the fix'),
         ];
       } else if (lastSandboxFeedback.includes('[exit code: 0]')) {
@@ -209,8 +210,14 @@ function greenButNoClaimModel(): ModelProvider {
   return provider;
 }
 
-function writeCall(id: string, content: string): ToolCall {
-  return { id, name: 'write', arguments: JSON.stringify({ path: 'src/add.js', content }) };
+function writeCall(id: string, content: string, expectedVersion?: string): ToolCall {
+  return {
+    id,
+    name: 'write',
+    arguments: JSON.stringify(expectedVersion
+      ? { path: 'src/add.js', content, expectedVersion }
+      : { path: 'src/add.js', content, createOnly: true }),
+  };
 }
 
 function sandboxedTestCall(id: string, reason: string): ToolCall {
@@ -224,6 +231,14 @@ function latestToolMessage(messages: readonly { role: string; content?: string }
     .at(-1) ?? '';
 }
 
+function latestPostVersion(messages: readonly { role: string; content?: string }[]): string | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const match = messages[i].content?.match(/postVersion=(fv1\.[A-Za-z0-9_-]{43})/);
+    if (match) return match[1];
+  }
+  return undefined;
+}
+
 function npmTestCheck(runs: NpmRun[]): NonNullable<GoalRunDeps['check']> {
   return async (deps) => {
     const run = runNpmTest(deps.cwd);
@@ -233,6 +248,10 @@ function npmTestCheck(runs: NpmRun[]): NonNullable<GoalRunDeps['check']> {
       results: [{ command: 'npm test', code: run.code, output: run.output }],
       testTamper: 'clean',
       tamperReason: '',
+      heldOut: {
+        passed: run.code === 0,
+        results: [{ command: 'npm test', code: run.code, output: run.output }],
+      },
     };
   };
 }

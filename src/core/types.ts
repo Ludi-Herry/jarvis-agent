@@ -16,12 +16,30 @@ export interface ToolCall {
   arguments: string;
 }
 
+/** Narrow, host-authored evidence for the built-in file tools. */
+export type FileReceipt =
+  | { kind: 'read'; path: string; version: string }
+  | {
+      kind: 'write';
+      path: string;
+      precondition: 'createOnly' | 'expectedVersion';
+      outcome: 'applied' | 'conflict' | 'unknown';
+      expectedVersion?: string;
+      preVersion?: string;
+      postVersion?: string;
+    };
+
 /** The outcome of running a tool. Minimal in A1 (only the EventBus references it);
  *  the ToolRegistry (A2) owns the richer shape and execution. */
 export interface ToolResult {
   callId: string;
   content: string;
   error?: string;
+  /** The tool body was dispatched but the host could not prove its terminal side-effect state.
+   *  Consumers must halt and reconcile; this result must never be recorded as committed. */
+  executionUnknown?: true;
+  /** Present only for the built-in read/write tools. Session receipts preserve it. */
+  fileReceipt?: FileReceipt;
 }
 
 /** A tool advertised to the model. `parameters` is a JSON Schema object. The
@@ -39,5 +57,5 @@ export interface ToolSchema {
 export type Message =
   | { role: 'system'; content: string }
   | { role: 'user'; content: string }
-  | { role: 'assistant'; content?: string; reasoning?: string; toolCalls?: ToolCall[] }
-  | { role: 'tool'; toolCallId: string; content: string };
+  | { role: 'assistant'; content?: string; reasoning?: string; toolCalls?: ToolCall[]; requestId?: string }
+  | { role: 'tool'; toolCallId: string; content: string; executionId?: string };

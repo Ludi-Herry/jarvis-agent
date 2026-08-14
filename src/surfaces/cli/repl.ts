@@ -63,6 +63,8 @@ export interface ReplDeps {
   store?: SessionStore;
   /** Seed the conversation from a resumed session. When absent/empty, a fresh system prompt is used. */
   initialMessages?: Message[];
+  /** Optional first prompt supplied by `jarvis run <prompt>` before interactive input begins. */
+  initialPrompt?: string;
   input?: NodeJS.ReadableStream;
   output?: NodeJS.WritableStream;
 }
@@ -81,7 +83,7 @@ export async function startRepl(deps: ReplDeps): Promise<void> {
   let inApproval = false;
 
   // --- single on-demand line queue (shared by the main prompt and the approval prompt) ---
-  const queue: string[] = [];
+  const queue: string[] = deps.initialPrompt?.trim() ? [deps.initialPrompt] : [];
   let waiter: ((line: string | null) => void) | null = null;
   let closed = false;
   const deliver = (line: string | null): void => {

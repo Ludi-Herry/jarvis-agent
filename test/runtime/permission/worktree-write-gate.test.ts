@@ -29,7 +29,7 @@ describe('PermissionGate — unattended goal worktree writes', () => {
   it('allows the built-in write tool inside the injected goal worktree without an approver', async () => {
     const gate = new DefaultPermissionGate({ goalWorktreeWriteRoot: worktree });
 
-    const out = await gate.check(call('write', { path: 'src/a.ts', content: 'x' }), 'writes-files');
+    const out = await gate.check(call('write', { path: 'src/a.ts', content: 'x', createOnly: true }), 'writes-files');
 
     expect(out).toMatchObject({ allowed: true, source: 'goal-worktree' });
   });
@@ -37,8 +37,8 @@ describe('PermissionGate — unattended goal worktree writes', () => {
   it('denies parent-directory and absolute escapes instead of falling through to approval', async () => {
     const gate = new DefaultPermissionGate({ goalWorktreeWriteRoot: worktree });
 
-    const parentEscape = await gate.check(call('write', { path: '../host-checkout/pwn.txt', content: 'x' }), 'writes-files');
-    const absoluteEscape = await gate.check(call('write', { path: join(outside, 'pwn.txt'), content: 'x' }), 'writes-files');
+    const parentEscape = await gate.check(call('write', { path: '../host-checkout/pwn.txt', content: 'x', createOnly: true }), 'writes-files');
+    const absoluteEscape = await gate.check(call('write', { path: join(outside, 'pwn.txt'), content: 'x', createOnly: true }), 'writes-files');
 
     expect(parentEscape).toMatchObject({ allowed: false, source: 'goal-worktree' });
     expect(absoluteEscape).toMatchObject({ allowed: false, source: 'goal-worktree' });
@@ -47,8 +47,8 @@ describe('PermissionGate — unattended goal worktree writes', () => {
   it('denies git metadata even though it sits under the worktree root', async () => {
     const gate = new DefaultPermissionGate({ goalWorktreeWriteRoot: worktree });
 
-    const dotGitFile = await gate.check(call('write', { path: '.git', content: 'gitdir: elsewhere' }), 'writes-files');
-    const nestedDotGit = await gate.check(call('write', { path: 'sub/.git/config', content: '[core]' }), 'writes-files');
+    const dotGitFile = await gate.check(call('write', { path: '.git', content: 'gitdir: elsewhere', createOnly: true }), 'writes-files');
+    const nestedDotGit = await gate.check(call('write', { path: 'sub/.git/config', content: '[core]', createOnly: true }), 'writes-files');
 
     expect(dotGitFile).toMatchObject({ allowed: false, source: 'goal-worktree' });
     expect(nestedDotGit).toMatchObject({ allowed: false, source: 'goal-worktree' });
@@ -58,7 +58,7 @@ describe('PermissionGate — unattended goal worktree writes', () => {
     await symlink(outside, join(worktree, 'link-out'), process.platform === 'win32' ? 'junction' : 'dir');
     const gate = new DefaultPermissionGate({ goalWorktreeWriteRoot: worktree });
 
-    const out = await gate.check(call('write', { path: 'link-out/pwn.txt', content: 'x' }), 'writes-files');
+    const out = await gate.check(call('write', { path: 'link-out/pwn.txt', content: 'x', createOnly: true }), 'writes-files');
 
     expect(out).toMatchObject({ allowed: false, source: 'goal-worktree' });
   });
@@ -69,7 +69,7 @@ describe('PermissionGate — unattended goal worktree writes', () => {
     await symlink(join(worktree, '.git'), join(worktree, 'link-git'), process.platform === 'win32' ? 'junction' : 'dir');
     const gate = new DefaultPermissionGate({ goalWorktreeWriteRoot: worktree });
 
-    const out = await gate.check(call('write', { path: 'link-git/config', content: 'x' }), 'writes-files');
+    const out = await gate.check(call('write', { path: 'link-git/config', content: 'x', createOnly: true }), 'writes-files');
 
     expect(out).toMatchObject({ allowed: false, source: 'goal-worktree' });
     expect(out.reason).toMatch(/git metadata/);
@@ -78,7 +78,7 @@ describe('PermissionGate — unattended goal worktree writes', () => {
   it('normalizes Windows namespaced roots before checking containment', async () => {
     const gate = new DefaultPermissionGate({ goalWorktreeWriteRoot: toNamespacedPath(worktree) });
 
-    const out = await gate.check(call('write', { path: 'src/a.ts', content: 'x' }), 'writes-files');
+    const out = await gate.check(call('write', { path: 'src/a.ts', content: 'x', createOnly: true }), 'writes-files');
 
     expect(out).toMatchObject({ allowed: true, source: 'goal-worktree' });
   });
@@ -89,6 +89,15 @@ describe('PermissionGate — unattended goal worktree writes', () => {
     const out = await gate.check(call('bash', { command: 'echo hi' }), 'executes-code');
 
     expect(out).toMatchObject({ allowed: false, source: 'fail-closed' });
+  });
+
+  it('rejects an unversioned write before unattended auto-allow', async () => {
+    const gate = new DefaultPermissionGate({ goalWorktreeWriteRoot: worktree });
+
+    const out = await gate.check(call('write', { path: 'src/a.ts', content: 'x' }), 'writes-files');
+
+    expect(out).toMatchObject({ allowed: false, source: 'goal-worktree' });
+    expect(out.reason).toMatch(/precondition/);
   });
 
   it('keeps network and unknown write-like tools fail-closed without an approver', async () => {

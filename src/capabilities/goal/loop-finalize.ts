@@ -26,6 +26,8 @@ export type LoopFinalizeReason =
   | 'missing-verdict'
   | 'missing-goal-evidence'
   | 'goal-mismatch'
+  | 'session-receipts-unavailable'
+  | 'pending-tool-effects'
   | 'missing-human-review-audit'
   | 'missing-worktree'
   | 'conflict'
@@ -61,6 +63,8 @@ export interface LoopFinalizeGoalEvidence {
   objective?: string;
   sessionId?: string;
   sessionCwd?: string;
+  sessionFormat?: 'v1' | 'v2';
+  sessionPendingTools?: number;
   pinnedCount?: number;
   hasVerifierReport?: boolean;
   worktreeDiffHash?: string;
@@ -118,6 +122,12 @@ export function buildLoopFinalizeReport(
       ((evidence.pinnedCount ?? 0) > 0 && evidence.hasVerifierReport === false)
     ) {
       return { ...base, decision: 'park', reason: 'goal-mismatch' };
+    }
+    if (evidence.sessionFormat !== 'v2' || evidence.sessionPendingTools === undefined) {
+      return { ...base, decision: 'park', reason: 'session-receipts-unavailable' };
+    }
+    if (evidence.sessionPendingTools > 0) {
+      return { ...base, decision: 'park', reason: 'pending-tool-effects' };
     }
     if (evidence.requiresHumanReviewAudit && !evidence.hasHumanReviewAudit) {
       return { ...base, decision: 'park', reason: 'missing-human-review-audit' };

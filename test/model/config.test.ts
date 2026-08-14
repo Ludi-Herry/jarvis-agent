@@ -51,7 +51,7 @@ describe('resolveVerifierConfig — leg 3 enablement + config-layer independence
     model: 'doubao-builder',
   };
 
-  it('disabled when ARK_VERIFIER_MODEL is unset (batch-1 deterministic-only fallback)', () => {
+  it('disables leg 3 when ARK_VERIFIER_MODEL is unset', () => {
     const r = resolveVerifierConfig({}, builder);
     expect(r.enabled).toBe(false);
     if (!r.enabled) expect(r.reason).toContain('not set');

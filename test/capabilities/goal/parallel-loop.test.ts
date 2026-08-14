@@ -152,6 +152,32 @@ describe('runParallelLoop', () => {
     expect(result.blocked).toBe(1);
   });
 
+  it('keeps a goal timeout out of verifier-health and records it as a runtime failure', async () => {
+    const bus = new InMemoryEventBus();
+    const { store, records } = fakeStore();
+
+    const result = await runParallelLoop(
+      { id: 'L', objectives: ['a'], contract: contract({ cnvWindow: 1, cnvThreshold: 1 }) },
+      {
+        bus,
+        loopStore: store,
+        maxParallel: 1,
+        runOne: async () => ({
+          state: 'blocked',
+          outcome: 'couldNotVerify',
+          haltReason: 'goalTimeout',
+          rounds: 1,
+          tokens: 0,
+        }),
+      },
+    );
+
+    expect(result).toMatchObject({ reason: 'blocked-goals', needsVerification: 1, runtimeFailures: 1 });
+    expect(records).toContainEqual(
+      expect.objectContaining({ t: 'goal-finished', haltReason: 'goalTimeout' }),
+    );
+  });
+
   it('counts completion exactly from runOne summaries', async () => {
     const bus = new InMemoryEventBus();
     const { store, records } = fakeStore();

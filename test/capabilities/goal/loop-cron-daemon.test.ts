@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -48,6 +48,46 @@ describe('loop cron daemon replay', () => {
     await expect(loadLoopCronDaemonState(dir)).rejects.toThrow(/cron daemon state cannot be read/);
   });
 
+  it('fails closed when a daemon log contains an invalid middle record', async () => {
+    const path = join(dir, 'daemon-corrupt.jsonl');
+    await writeFile(path, [
+      JSON.stringify({
+        t: 'task-started',
+        taskId: 'task-a',
+        scheduledFor: '2026-07-01T00:00:00.000Z',
+        startedAt: '2026-07-01T00:01:00.000Z',
+      }),
+      '{}',
+      JSON.stringify({
+        t: 'task-finished',
+        taskId: 'task-a',
+        scheduledFor: '2026-07-01T00:00:00.000Z',
+        startedAt: '2026-07-01T00:01:00.000Z',
+        finishedAt: '2026-07-01T00:02:00.000Z',
+        exitCode: 0,
+      }),
+    ].join('\n'));
+
+    await expect(loadLoopCronDaemonState(path)).rejects.toThrow(/cron daemon state is corrupt at line 2/);
+  });
+
+  it('recovers daemon state when only the final append is truncated', async () => {
+    const path = join(dir, 'daemon-truncated.jsonl');
+    await writeFile(path, [
+      JSON.stringify({
+        t: 'task-started',
+        taskId: 'task-a',
+        scheduledFor: '2026-07-01T00:00:00.000Z',
+        startedAt: '2026-07-01T00:01:00.000Z',
+      }),
+      '{',
+    ].join('\n'));
+
+    const state = await loadLoopCronDaemonState(path);
+
+    expect(state.parkedTaskIds).toEqual(new Set(['task-a']));
+  });
+
   it('parks a task that started without a matching finish and skips truncated tails', () => {
     const records = parseLoopCronDaemonLog(
       [
@@ -89,7 +129,7 @@ describe('runLoopCronDaemonOnce', () => {
       runTask: async () => ({ exitCode: 0, loopId: 'L1' }),
     });
 
-    expect(result).toEqual({ triggered: 1, skipped: 0, parked: 0 });
+    expect(result).toEqual({ triggered: 1, skipped: 0, failed: 0, parked: 0 });
     const daemonText = await readFile(daemonPath, 'utf8');
     expect(daemonText).toContain('"t":"task-started"');
     expect(daemonText).toContain('"t":"task-finished"');
@@ -120,7 +160,7 @@ describe('runLoopCronDaemonOnce', () => {
       },
     });
 
-    expect(result).toEqual({ triggered: 0, skipped: 0, parked: 1 });
+    expect(result).toEqual({ triggered: 0, skipped: 0, failed: 0, parked: 1 });
     expect(seen).toEqual([]);
     await expect(readFile(cronPath, 'utf8')).rejects.toThrow();
     await expect(readFile(daemonPath, 'utf8')).resolves.toContain('"t":"task-parked"');
@@ -160,7 +200,7 @@ describe('runLoopCronDaemonOnce', () => {
       },
     );
 
-    expect(result).toEqual({ triggered: 1, skipped: 0, parked: 0 });
+    expect(result).toEqual({ triggered: 1, skipped: 0, failed: 0, parked: 0 });
     expect(seen).toEqual(['task-a']);
     const daemonText = await readFile(daemonPath, 'utf8');
     expect(daemonText).toContain('"taskId":"task-a"');

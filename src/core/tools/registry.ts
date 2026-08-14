@@ -11,7 +11,7 @@
  * `schemasForModel()` advertises each tool in the normalized, `$defs`-free shape strict
  * endpoints (Doubao/ARK) require (json-schema.ts).
  */
-import type { ToolCall, ToolResult } from '../types.js';
+import type { ToolCall, ToolResult, ToolSchema } from '../types.js';
 import { zodToParameters } from './json-schema.js';
 import type { ToolCapability, ToolDefinition, ToolRegistry, ToolRunCtx } from './types.js';
 
@@ -34,11 +34,7 @@ export class InMemoryToolRegistry implements ToolRegistry {
   }
 
   schemasForModel(): ToolSchemaList {
-    return [...this.tools.values()].map((tool) => ({
-      name: tool.name,
-      description: tool.description,
-      parameters: zodToParameters(tool.inputSchema),
-    }));
+    return [...this.tools.values()].map(toolDefinitionSchema);
   }
 
   async run(call: ToolCall, ctx: ToolRunCtx): Promise<ToolResult> {
@@ -72,9 +68,18 @@ export class InMemoryToolRegistry implements ToolRegistry {
         callId,
         content: out.content,
         ...(out.error !== undefined ? { error: out.error } : {}),
+        ...(out.executionUnknown === true ? { executionUnknown: true as const } : {}),
+        ...(out.fileReceipt !== undefined ? { fileReceipt: out.fileReceipt } : {}),
       };
     } catch (err) {
-      return { callId, content: '', error: `Tool ${call.name} threw: ${message(err)}` };
+      // Validation failures above are known no-execution outcomes. Once tool.run starts,
+      // a throw cannot prove whether an external side effect happened before the error.
+      return {
+        callId,
+        content: '',
+        error: `Tool ${call.name} threw after dispatch: ${message(err)}`,
+        executionUnknown: true,
+      };
     }
   }
 
@@ -89,6 +94,18 @@ export class InMemoryToolRegistry implements ToolRegistry {
     }
     return r;
   }
+}
+
+/** Convert one definition through the exact registry schema path. Capability-owned
+ *  conditional tools use this to hash the schema before their runtime closure exists. */
+export function toolDefinitionSchema(
+  tool: Pick<ToolDefinition, 'name' | 'description' | 'inputSchema'>,
+): ToolSchema {
+  return {
+    name: tool.name,
+    description: tool.description,
+    parameters: zodToParameters(tool.inputSchema),
+  };
 }
 
 /** Local alias so the return type reads cleanly; identical to ToolRegistry's. */

@@ -1,28 +1,34 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import {
-  parseSessionLog,
+  isSessionRecord,
+  replaySession,
+  sessionSemanticIssues,
+  type SessionFormat,
   type SessionRecord,
 } from '../../runtime/session/session-store.js';
-import { parseApprovalAuditLog, type ApprovalAuditDecision, type ApprovalAuditRecord } from '../../runtime/permission/index.js';
+import { parseJsonlWithDiagnostics, type JsonlMalformedLine, type JsonlRecordValidator } from '../../runtime/jsonl-integrity.js';
+import { type ApprovalAuditDecision, type ApprovalAuditRecord } from '../../runtime/permission/index.js';
+import { isApprovalAuditRecord } from '../../runtime/permission/approval-audit-store.js';
 import {
-  parseLoopCronDaemonLog,
+  isLoopCronDaemonRecord,
   type LoopCronDaemonRecord,
 } from './loop-cron-daemon.js';
-import { parseLoopCronLog, type LoopCronRecord } from './loop-cron.js';
+import { isLoopCronRecord, type LoopCronRecord } from './loop-cron.js';
 import {
-  parseGoalLog,
+  isGoalRecord,
   replayGoal,
   type GoalRecord,
   type GoalRoundRecord,
 } from './goal-store.js';
 import {
-  parseLoopLog,
+  isLoopRecord,
   type LoopCreatedRecord,
   type LoopRecord,
 } from './loop-store.js';
 import type { GoalState, VerdictOutcome, WorktreeChangePolicy } from './goal.js';
 import type { LoopHaltReason } from './loop.js';
+import { decideVerdict } from './verdict.js';
 
 export interface ObservationLog<T> {
   path: string;
@@ -37,6 +43,7 @@ export interface ObservationInput {
   cron?: ObservationLog<LoopCronRecord>;
   cronDaemon?: ObservationLog<LoopCronDaemonRecord>;
   approvals?: Array<ObservationLog<ApprovalAuditRecord>>;
+  integrity?: ObservationIntegrityIssue[];
 }
 
 export interface ObservationReportOptions {
@@ -65,6 +72,7 @@ export interface ObservationReport {
     canCompleteGoals: false;
     canCompleteLoops: false;
   };
+  integrity: ObservationIntegrity;
   status: {
     sessions: { total: number };
     goals: { total: number; byState: Record<GoalState, number> };
@@ -101,6 +109,31 @@ export interface ObservationReport {
   };
 }
 
+export type ObservationIntegrityIssue =
+  | {
+    kind:
+      | 'malformed-middle'
+      | 'malformed-tail'
+      | 'invalid-record'
+      | 'session-header'
+      | 'session-mixed-version'
+      | 'session-sequence'
+      | 'session-receipt';
+    path: string;
+    line: number;
+  }
+  | { kind: 'unreadable'; path: string };
+
+export interface ObservationIntegrity {
+  status: 'complete' | 'partial';
+  corruptLineCount: number;
+  unreadableFileCount: number;
+  affected: ObservationIntegrityIssue[];
+  omittedAffectedCount: number;
+}
+
+const MAX_REPORTED_INTEGRITY_ISSUES = 50;
+
 export type ObservationActivityKind = 'session' | 'goal' | 'loop' | 'cron' | 'cron-daemon' | 'approval';
 export type ObservationActivityTone = 'neutral' | 'info' | 'good' | 'warn' | 'danger';
 
@@ -121,6 +154,8 @@ export interface SessionSummary {
   cwd: string;
   startedAt: string;
   messages: number;
+  format: SessionFormat;
+  pendingTools: number;
 }
 
 export interface GoalSummary {
@@ -130,10 +165,13 @@ export interface GoalSummary {
   state: GoalState;
   recordedState: GoalState;
   effectiveState: GoalState | 'interrupted';
-  effectiveReason?: LoopHaltReason;
-  effectiveSource?: { kind: 'loop-halt'; loopId: string };
+  effectiveReason?: LoopHaltReason | 'verdict-mismatch';
+  effectiveSource?: { kind: 'loop-halt'; loopId: string } | { kind: 'verdict-recheck' };
   rounds: number;
+  /** Effective verdict after replaying persisted evidence through the current pure decision point. */
   verdict?: VerdictOutcome;
+  /** Original persisted outcome when current decision semantics disagree. */
+  recordedVerdict?: VerdictOutcome;
   lastAt?: string;
 }
 
@@ -156,7 +194,10 @@ export interface LoopSummary {
   blocked: number;
   inFlight: number;
   tokens: number;
+  /** Effective halt reason. Legacy queue-empty records with blocked goals are normalized fail-closed. */
   halted?: LoopHaltReason;
+  /** Original persisted reason when it disagrees with the effective halt reason. */
+  recordedHalt?: LoopHaltReason;
   lastAt?: string;
 }
 
@@ -166,6 +207,8 @@ export interface CronAttemptSummary {
   startedAt: string;
   finishedAt: string;
   loopId?: string;
+  /** A recorded zero exit contradicted by its linked loop containing blocked goals. */
+  inconsistent?: true;
 }
 
 export interface TrustedContractSummary {
@@ -212,6 +255,7 @@ export function buildObservationReport(input: ObservationInput, options: Observa
   const cronRecords = input.cron?.records ?? [];
   const daemonRecords = input.cronDaemon?.records ?? [];
   const approvalRecords = (input.approvals ?? []).flatMap((log) => log.records);
+  const integrity = summarizeIntegrity(input.integrity ?? []);
 
   const sessionSummaries = sessions.map(summarizeSession).filter((summary): summary is SessionSummary => summary !== undefined);
   const recordedGoalSummaries = goals.map(summarizeGoal).filter((summary): summary is GoalSummary => summary !== undefined);
@@ -240,13 +284,17 @@ export function buildObservationReport(input: ObservationInput, options: Observa
       },
     },
     authority: { mode: 'observation-only', canCompleteGoals: false, canCompleteLoops: false },
+    integrity,
     status: {
       sessions: { total: sessionSummaries.length },
       goals: { total: goalSummaries.length, byState: countGoalsByState(goalSummaries) },
       loops: { total: loopSummaries.length },
       cron: {
         attempts: cronRecords.filter((record) => record.t === 'cron-attempt').length,
-        ...optional('lastAttempt', summarizeCronAttempt(last(cronRecords.filter((record) => record.t === 'cron-attempt')))),
+        ...optional(
+          'lastAttempt',
+          summarizeCronAttempt(last(cronRecords.filter((record) => record.t === 'cron-attempt')), loopSummaries),
+        ),
       },
       cronDaemon: summarizeCronDaemon(daemonRecords),
       ...optional('latestSession', latestBy(sessionSummaries, (summary) => summary.startedAt)),
@@ -277,22 +325,38 @@ export function buildObservationReport(input: ObservationInput, options: Observa
 }
 
 export async function loadWorkspaceObservation(dataDir: string): Promise<ObservationReport> {
-  const [sessions, goals, loops, cron, cronDaemon, approvals] = await Promise.all([
-    readJsonlDir(join(dataDir, 'sessions'), parseSessionLog),
-    readJsonlDir(join(dataDir, 'goals'), parseGoalLog),
-    readJsonlDir(join(dataDir, 'loops'), parseLoopLog),
-    readJsonlFile(join(dataDir, 'cron', 'loop-cron.jsonl'), parseLoopCronLog),
-    readJsonlFile(join(dataDir, 'cron', 'loop-cron-daemon.jsonl'), parseLoopCronDaemonLog),
-    readJsonlDir(join(dataDir, 'approvals'), parseApprovalAuditLog),
+  const [sessionResult, goalResult, loopResult, cronResult, cronDaemonResult, approvalResult] = await Promise.all([
+    readJsonlDir(join(dataDir, 'sessions'), isSessionRecord, dataDir),
+    readJsonlDir(join(dataDir, 'goals'), isGoalRecord, dataDir),
+    readJsonlDir(join(dataDir, 'loops'), isLoopRecord, dataDir),
+    readJsonlFile(join(dataDir, 'cron', 'loop-cron.jsonl'), isLoopCronRecord, dataDir),
+    readJsonlFile(join(dataDir, 'cron', 'loop-cron-daemon.jsonl'), isLoopCronDaemonRecord, dataDir),
+    readJsonlDir(join(dataDir, 'approvals'), isApprovalAuditRecord, dataDir),
   ]);
+  const sessionSemanticIntegrity = sessionResult.logs.flatMap((log) =>
+    sessionSemanticIssues(log.records).map((issue) => ({
+      kind: `session-${issue.kind}` as const,
+      path: localPath(dataDir, log.path),
+      line: issue.line,
+    })),
+  );
 
   return buildObservationReport({
-    sessions,
-    goals,
-    loops,
-    ...(cron === undefined ? {} : { cron }),
-    ...(cronDaemon === undefined ? {} : { cronDaemon }),
-    approvals,
+    sessions: sessionResult.logs,
+    goals: goalResult.logs,
+    loops: loopResult.logs,
+    ...(cronResult.logs[0] === undefined ? {} : { cron: cronResult.logs[0] }),
+    ...(cronDaemonResult.logs[0] === undefined ? {} : { cronDaemon: cronDaemonResult.logs[0] }),
+    approvals: approvalResult.logs,
+    integrity: [
+      ...sessionResult.integrity,
+      ...sessionSemanticIntegrity,
+      ...goalResult.integrity,
+      ...loopResult.integrity,
+      ...cronResult.integrity,
+      ...cronDaemonResult.integrity,
+      ...approvalResult.integrity,
+    ],
   }, { sourceDataDir: dataDir });
 }
 
@@ -300,6 +364,7 @@ export function formatObservationReport(report: ObservationReport): string {
   const lines = [
     'Observation: status/usage/audit (read-only)',
     'completion authority: none',
+    `integrity: ${report.integrity.status} corruptLines=${report.integrity.corruptLineCount} unreadableFiles=${report.integrity.unreadableFileCount}`,
     `sessions: ${report.status.sessions.total} messages=${report.usage.sessionMessages} compactions=${report.usage.sessionCompactions}`,
     `goals: ${report.status.goals.total} active=${report.status.goals.byState.active} complete=${report.status.goals.byState.complete} blocked=${report.status.goals.byState.blocked}`,
     `loops: ${report.status.loops.total} loopTokens=${report.usage.loopTokens} loopFinishedGoals=${report.usage.loopFinishedGoals}`,
@@ -308,16 +373,32 @@ export function formatObservationReport(report: ObservationReport): string {
     `audit: trusted contracts=${report.audit.trustedContracts.length} worktree statuses=${report.audit.worktreeStatus.length} sandbox evidence: ${report.audit.sandboxEvidence.length} approvals=${report.audit.approvals.requests}/${report.audit.approvals.results}`,
   ];
 
+  if (report.integrity.status === 'partial') {
+    lines.push('integrity affected:');
+    for (const issue of report.integrity.affected) {
+      const location = issue.kind === 'unreadable' ? issue.path : `${issue.path}:${issue.line}`;
+      lines.push(`- ${issue.kind} ${location}`);
+    }
+    if (report.integrity.omittedAffectedCount > 0) {
+      lines.push(`- ${report.integrity.omittedAffectedCount} additional affected locations omitted`);
+    }
+  }
+
   if (report.status.latestSession) {
     const session = report.status.latestSession;
-    lines.push(`latest session: ${session.id} model=${session.model} messages=${session.messages}`);
+    lines.push(`latest session: ${session.id} model=${session.model} format=${session.format} messages=${session.messages} pendingTools=${session.pendingTools}`);
+    if (session.pendingTools > 0) {
+      lines.push('session action: resume is blocked until pending tool effects are reviewed');
+    }
   }
   if (report.status.latestGoal) {
     const goal = report.status.latestGoal;
     const state = goal.effectiveState === goal.recordedState
       ? goal.effectiveState
-      : `${goal.effectiveState} recorded=${goal.recordedState} reason=${goal.effectiveReason ?? '-'} source=${goal.effectiveSource ? `loop:${goal.effectiveSource.loopId}` : '-'}`;
-    lines.push(`latest goal: ${goal.id} ${state} verdict=${goal.verdict ?? '-'} rounds=${goal.rounds}`);
+      : `${goal.effectiveState} recorded=${goal.recordedState} reason=${goal.effectiveReason ?? '-'} source=${effectiveSourceLabel(goal.effectiveSource)}`;
+    lines.push(
+      `latest goal: ${goal.id} ${state} verdict=${goal.verdict ?? '-'}${goal.recordedVerdict === undefined ? '' : ` recordedVerdict=${goal.recordedVerdict}`} rounds=${goal.rounds}`,
+    );
   }
   if (report.status.latestGoalBudget) {
     const budget = report.status.latestGoalBudget;
@@ -327,11 +408,15 @@ export function formatObservationReport(report: ObservationReport): string {
   }
   if (report.status.latestLoop) {
     const loop = report.status.latestLoop;
-    lines.push(`latest loop: ${loop.id} completed=${loop.completed}/${loop.objectives} blocked=${loop.blocked} inFlight=${loop.inFlight} halted=${loop.halted ?? '-'}`);
+    lines.push(
+      `latest loop: ${loop.id} completed=${loop.completed}/${loop.objectives} blocked=${loop.blocked} inFlight=${loop.inFlight} halted=${loop.halted ?? '-'}${loop.recordedHalt === undefined ? '' : ` recorded=${loop.recordedHalt}`}`,
+    );
   }
   if (report.status.cron.lastAttempt) {
     const cron = report.status.cron.lastAttempt;
-    lines.push(`latest cron: ${cron.taskId} exit=${cron.exitCode ?? 'null'}${cron.loopId ? ` loop=${cron.loopId}` : ''}`);
+    lines.push(
+      `latest cron: ${cron.taskId} exit=${cron.exitCode ?? 'null'}${cron.loopId ? ` loop=${cron.loopId}` : ''}${cron.inconsistent ? ' inconsistent=blocked-loop-reported-success' : ''}`,
+    );
   }
   if (report.activity.recent.length > 0) {
     lines.push('recent activity:');
@@ -344,7 +429,8 @@ export function formatObservationReport(report: ObservationReport): string {
 }
 
 function summarizeSession(log: ObservationLog<SessionRecord>): SessionSummary | undefined {
-  const header = log.records.find((record) => record.t === 'session');
+  const replayed = replaySession(log.records);
+  const header = replayed.header;
   if (header === undefined) return undefined;
   return {
     id: header.id,
@@ -352,6 +438,8 @@ function summarizeSession(log: ObservationLog<SessionRecord>): SessionSummary | 
     cwd: header.cwd,
     startedAt: header.startedAt,
     messages: log.records.filter((record) => record.t === 'message').length,
+    format: replayed.format,
+    pendingTools: replayed.pendingTools.length,
   };
 }
 
@@ -359,14 +447,20 @@ function summarizeGoal(log: ObservationLog<GoalRecord>): GoalSummary | undefined
   const { goal, rounds } = replayGoal(log.records);
   if (goal === undefined) return undefined;
   const latestRound = last(rounds);
+  const recordedVerdict = latestRound?.verdict?.outcome;
+  const effectiveVerdict = recomputeRoundVerdict(latestRound, goal.pinned);
+  const verdictMismatch = recordedVerdict !== undefined && effectiveVerdict !== undefined && recordedVerdict !== effectiveVerdict;
+  const effectiveState = goal.state === 'complete' && effectiveVerdict !== 'verified' ? 'blocked' : goal.state;
   return {
     id: goal.id,
     objective: goal.objective,
     state: goal.state,
     recordedState: goal.state,
-    effectiveState: goal.state,
+    effectiveState,
+    ...(effectiveState === goal.state ? {} : { effectiveReason: 'verdict-mismatch' as const, effectiveSource: { kind: 'verdict-recheck' as const } }),
     rounds: rounds.length,
-    ...(latestRound?.verdict?.outcome === undefined ? {} : { verdict: latestRound.verdict.outcome }),
+    ...(effectiveVerdict === undefined ? {} : { verdict: effectiveVerdict }),
+    ...(verdictMismatch ? { recordedVerdict } : {}),
     ...optional('lastAt', lastTimestamp(log.records)),
   };
 }
@@ -458,26 +552,32 @@ function summarizeLoop(log: ObservationLog<LoopRecord>): LoopSummary | undefined
   }
 
   const finishedValues = [...finished.values()];
+  const blocked = finishedValues.filter((record) => record.state === 'blocked').length;
+  const effectiveHalt = effectiveLoopHalt(halted, blocked);
   return {
     id: created.id,
     objectives: created.objectives.length,
     completed: finishedValues.filter((record) => record.state === 'complete').length,
-    blocked: finishedValues.filter((record) => record.state === 'blocked').length,
+    blocked,
     inFlight: [...started.keys()].filter((index) => !finished.has(index)).length,
     tokens: finishedValues.reduce((sum, record) => sum + record.tokens, 0),
-    ...(halted === undefined ? {} : { halted }),
+    ...(effectiveHalt === undefined ? {} : { halted: effectiveHalt }),
+    ...(halted !== undefined && effectiveHalt !== halted ? { recordedHalt: halted } : {}),
     ...optional('lastAt', lastTimestamp(log.records)),
   };
 }
 
-function summarizeCronAttempt(record: LoopCronRecord | undefined): CronAttemptSummary | undefined {
+function summarizeCronAttempt(record: LoopCronRecord | undefined, loops: readonly LoopSummary[]): CronAttemptSummary | undefined {
   if (record === undefined || record.t !== 'cron-attempt') return undefined;
+  const linkedLoop = record.loopId === undefined ? undefined : loops.find((loop) => loop.id === record.loopId);
+  const inconsistent = record.exitCode === 0 && linkedLoop !== undefined && linkedLoop.blocked > 0;
   return {
     taskId: record.taskId,
     exitCode: record.exitCode,
     startedAt: record.startedAt,
     finishedAt: record.finishedAt,
     ...(record.loopId === undefined ? {} : { loopId: record.loopId }),
+    ...(inconsistent ? { inconsistent: true as const } : {}),
   };
 }
 
@@ -498,9 +598,9 @@ function summarizeCronDaemon(records: LoopCronDaemonRecord[]): ObservationReport
 
 function countGoalsByState(goals: GoalSummary[]): Record<GoalState, number> {
   return {
-    active: goals.filter((goal) => goal.state === 'active').length,
-    complete: goals.filter((goal) => goal.state === 'complete').length,
-    blocked: goals.filter((goal) => goal.state === 'blocked').length,
+    active: goals.filter((goal) => goal.effectiveState === 'active' || goal.effectiveState === 'interrupted').length,
+    complete: goals.filter((goal) => goal.effectiveState === 'complete').length,
+    blocked: goals.filter((goal) => goal.effectiveState === 'blocked').length,
   };
 }
 
@@ -600,6 +700,12 @@ function summarizeApprovals(records: ApprovalAuditRecord[]): ApprovalAuditSummar
 
 function recentActivity(input: ObservationInput): ObservationActivityItem[] {
   const items: ObservationActivityItem[] = [];
+  const blockedLoopIds = new Set(
+    (input.loops ?? [])
+      .filter((log) => log.records.some((record) => record.t === 'goal-finished' && record.state === 'blocked'))
+      .map((log) => log.records.find((record) => record.t === 'loop-created')?.id)
+      .filter((id): id is string => id !== undefined),
+  );
 
   for (const log of input.sessions ?? []) {
     const header = log.records.find((record) => record.t === 'session');
@@ -619,6 +725,7 @@ function recentActivity(input: ObservationInput): ObservationActivityItem[] {
   for (const log of input.goals ?? []) {
     const created = log.records.find((record) => record.t === 'goal-created');
     const goalId = created?.id ?? 'unknown-goal';
+    const summary = summarizeGoal(log);
     for (const [index, record] of log.records.entries()) {
       if (record.t === 'goal-created') {
         items.push({
@@ -632,7 +739,8 @@ function recentActivity(input: ObservationInput): ObservationActivityItem[] {
           meta: [`max rounds ${record.budget.maxRounds}`, `session ${record.sessionId}`],
         });
       } else if (record.t === 'goal-round') {
-        const outcome = record.verdict?.outcome;
+        const recordedOutcome = record.verdict?.outcome;
+        const outcome = recomputeRoundVerdict(record, created?.pinned ?? []);
         items.push({
           id: activityId('goal-round', log.path, index),
           kind: 'goal',
@@ -641,15 +749,21 @@ function recentActivity(input: ObservationInput): ObservationActivityItem[] {
           tone: verdictTone(outcome),
           at: record.at,
           source: log.path,
-          meta: [`goal ${goalId}`, `turns ${record.turns ?? 0}`, `tokens ${record.tokens ?? 0}`],
+          meta: [
+            `goal ${goalId}`,
+            ...(recordedOutcome !== undefined && recordedOutcome !== outcome ? [`recorded ${recordedOutcome}`] : []),
+            `turns ${record.turns ?? 0}`,
+            `tokens ${record.tokens ?? 0}`,
+          ],
         });
       } else if (record.t === 'goal-state') {
+        const effectiveState = record.state === 'complete' && summary?.effectiveState === 'blocked' ? 'blocked' : record.state;
         items.push({
           id: activityId('goal-state', log.path, index),
           kind: 'goal',
-          title: `Goal ${record.state}`,
-          detail: goalId,
-          tone: goalStateTone(record.state),
+          title: `Goal ${effectiveState}`,
+          detail: effectiveState === record.state ? goalId : `${goalId} / recorded ${record.state}`,
+          tone: goalStateTone(effectiveState),
           at: record.at,
           source: log.path,
           meta: [],
@@ -661,6 +775,7 @@ function recentActivity(input: ObservationInput): ObservationActivityItem[] {
   for (const log of input.loops ?? []) {
     const created = log.records.find((record) => record.t === 'loop-created');
     const loopId = created?.id ?? 'unknown-loop';
+    const blocked = log.records.filter((record) => record.t === 'goal-finished' && record.state === 'blocked').length;
     for (const [index, record] of log.records.entries()) {
       if (record.t === 'loop-created') {
         items.push({
@@ -696,15 +811,16 @@ function recentActivity(input: ObservationInput): ObservationActivityItem[] {
           meta: [`rounds ${record.rounds}`, `tokens ${record.tokens}`],
         });
       } else if (record.t === 'loop-halted') {
+        const effectiveReason = effectiveLoopHalt(record.reason, blocked) ?? record.reason;
         items.push({
           id: activityId('loop-halted', log.path, index),
           kind: 'loop',
           title: 'Loop halted',
-          detail: record.reason,
-          tone: haltTone(record.reason),
+          detail: effectiveReason,
+          tone: haltTone(effectiveReason),
           at: record.at,
           source: log.path,
-          meta: [`loop ${loopId}`],
+          meta: [`loop ${loopId}`, ...(effectiveReason === record.reason ? [] : [`recorded ${record.reason}`])],
         });
       }
     }
@@ -713,12 +829,13 @@ function recentActivity(input: ObservationInput): ObservationActivityItem[] {
   const cron = input.cron;
   if (cron !== undefined) {
     for (const [index, record] of cron.records.entries()) {
+      const inconsistent = record.exitCode === 0 && record.loopId !== undefined && blockedLoopIds.has(record.loopId);
       items.push({
         id: activityId('cron', cron.path, index),
         kind: 'cron',
         title: `Cron ${record.taskId}`,
-        detail: `exit ${record.exitCode ?? 'null'}`,
-        tone: record.exitCode === 0 ? 'good' : 'warn',
+        detail: `exit ${record.exitCode ?? 'null'}${inconsistent ? ' / linked loop has blocked goals' : ''}`,
+        tone: record.exitCode === 0 && !inconsistent ? 'good' : 'warn',
         at: record.finishedAt,
         source: cron.path,
         meta: record.loopId === undefined ? [`next ${record.nextRunAt}`] : [`loop ${record.loopId}`, `next ${record.nextRunAt}`],
@@ -728,8 +845,19 @@ function recentActivity(input: ObservationInput): ObservationActivityItem[] {
 
   const daemon = input.cronDaemon;
   if (daemon !== undefined) {
+    let scanInconsistent = false;
     for (const [index, record] of daemon.records.entries()) {
-      items.push(cronDaemonActivity(daemon.path, index, record));
+      if (record.t === 'scan-started') scanInconsistent = false;
+      if (
+        record.t === 'task-finished' &&
+        record.exitCode === 0 &&
+        record.loopId !== undefined &&
+        blockedLoopIds.has(record.loopId)
+      ) {
+        scanInconsistent = true;
+      }
+      items.push(cronDaemonActivity(daemon.path, index, record, blockedLoopIds, scanInconsistent));
+      if (record.t === 'scan-finished') scanInconsistent = false;
     }
   }
 
@@ -766,7 +894,13 @@ function recentActivity(input: ObservationInput): ObservationActivityItem[] {
     .slice(0, 20);
 }
 
-function cronDaemonActivity(path: string, index: number, record: LoopCronDaemonRecord): ObservationActivityItem {
+function cronDaemonActivity(
+  path: string,
+  index: number,
+  record: LoopCronDaemonRecord,
+  blockedLoopIds: ReadonlySet<string>,
+  scanInconsistent: boolean,
+): ObservationActivityItem {
   const base = {
     id: activityId('cron-daemon', path, index),
     kind: 'cron-daemon' as const,
@@ -781,14 +915,32 @@ function cronDaemonActivity(path: string, index: number, record: LoopCronDaemonR
       return { ...base, title: 'Cron daemon stopped', detail: record.reason, tone: record.reason === 'completed' ? 'good' : 'warn', at: record.at, meta: [] };
     case 'scan-started':
       return { ...base, title: 'Cron scan started', detail: 'checking scheduled tasks', tone: 'info', at: record.at, meta: [] };
-    case 'scan-finished':
-      return { ...base, title: 'Cron scan finished', detail: `${record.triggered} triggered, ${record.skipped} skipped`, tone: record.parked > 0 ? 'warn' : 'good', at: record.at, meta: [`parked ${record.parked}`] };
+    case 'scan-finished': {
+      const failed = record.failed ?? 0;
+      return {
+        ...base,
+        title: 'Cron scan finished',
+        detail: `${record.triggered} triggered, ${failed} failed, ${record.skipped} skipped${scanInconsistent ? ' / legacy linked-loop inconsistency' : ''}`,
+        tone: record.parked > 0 || failed > 0 || scanInconsistent ? 'warn' : 'good',
+        at: record.at,
+        meta: [`parked ${record.parked}`],
+      };
+    }
     case 'scan-skipped':
       return { ...base, title: 'Cron scan skipped', detail: record.reason, tone: 'warn', at: record.at, meta: [] };
     case 'task-started':
       return { ...base, title: `Cron task ${record.taskId} started`, detail: record.command ?? record.scheduledFor, tone: 'info', at: record.startedAt, meta: [] };
-    case 'task-finished':
-      return { ...base, title: `Cron task ${record.taskId} finished`, detail: `exit ${record.exitCode ?? 'null'}`, tone: record.exitCode === 0 ? 'good' : 'warn', at: record.finishedAt, meta: record.loopId === undefined ? [] : [`loop ${record.loopId}`] };
+    case 'task-finished': {
+      const inconsistent = record.exitCode === 0 && record.loopId !== undefined && blockedLoopIds.has(record.loopId);
+      return {
+        ...base,
+        title: `Cron task ${record.taskId} finished`,
+        detail: `exit ${record.exitCode ?? 'null'}${inconsistent ? ' / linked loop has blocked goals' : ''}`,
+        tone: record.exitCode === 0 && !inconsistent ? 'good' : 'warn',
+        at: record.finishedAt,
+        meta: record.loopId === undefined ? [] : [`loop ${record.loopId}`],
+      };
+    }
     case 'task-parked':
       return { ...base, title: `Cron task ${record.taskId} parked`, detail: record.reason, tone: 'warn', at: record.at, meta: [] };
   }
@@ -809,12 +961,29 @@ function goalStateTone(state: GoalState): ObservationActivityTone {
 
 function verdictTone(outcome: VerdictOutcome | undefined): ObservationActivityTone {
   if (outcome === 'verified') return 'good';
-  if (outcome === 'rejected' || outcome === 'couldNotVerify') return 'warn';
+  if (outcome === 'checksOnly' || outcome === 'rejected' || outcome === 'couldNotVerify') return 'warn';
   return 'info';
 }
 
 function haltTone(reason: LoopHaltReason): ObservationActivityTone {
   return reason === 'queue-empty' ? 'good' : 'warn';
+}
+
+function effectiveLoopHalt(recorded: LoopHaltReason | undefined, blocked: number): LoopHaltReason | undefined {
+  return recorded === 'queue-empty' && blocked > 0 ? 'blocked-goals' : recorded;
+}
+
+function recomputeRoundVerdict(
+  round: GoalRoundRecord | undefined,
+  pinned: Parameters<typeof decideVerdict>[2],
+): VerdictOutcome | undefined {
+  if (round?.checks === undefined) return round?.verdict?.outcome;
+  return decideVerdict(round.checks, round.verdict?.report, pinned).outcome;
+}
+
+function effectiveSourceLabel(source: GoalSummary['effectiveSource']): string {
+  if (source === undefined) return '-';
+  return source.kind === 'loop-halt' ? `loop:${source.loopId}` : 'verdict-recheck';
 }
 
 function approvalTone(decision: ApprovalAuditDecision): ObservationActivityTone {
@@ -884,34 +1053,79 @@ function stringField(record: Record<string, unknown>, key: string): string | und
   return typeof value === 'string' ? value : undefined;
 }
 
+interface JsonlReadResult<T> {
+  logs: Array<ObservationLog<T>>;
+  integrity: ObservationIntegrityIssue[];
+}
+
 async function readJsonlDir<T>(
   dir: string,
-  parse: (text: string) => T[],
-): Promise<Array<ObservationLog<T>>> {
+  validate: JsonlRecordValidator<T>,
+  dataDir: string,
+): Promise<JsonlReadResult<T>> {
   let entries: string[];
   try {
     entries = await readdir(dir);
-  } catch {
-    return [];
+  } catch (err) {
+    if (isNotFound(err)) return { logs: [], integrity: [] };
+    return { logs: [], integrity: [{ kind: 'unreadable', path: localPath(dataDir, dir) }] };
   }
-  const logs = await Promise.all(
+  const files = await Promise.all(
     entries
       .filter((entry) => entry.endsWith('.jsonl'))
-      .map((entry) => readJsonlFile(join(dir, entry), parse)),
+      .sort()
+      .map((entry) => readJsonlFile(join(dir, entry), validate, dataDir)),
   );
-  return logs.filter((log): log is ObservationLog<T> => log !== undefined);
+  return {
+    logs: files.flatMap((file) => file.logs),
+    integrity: files.flatMap((file) => file.integrity),
+  };
 }
 
 async function readJsonlFile<T>(
   path: string,
-  parse: (text: string) => T[],
-): Promise<ObservationLog<T> | undefined> {
+  validate: JsonlRecordValidator<T>,
+  dataDir: string,
+): Promise<JsonlReadResult<T>> {
   try {
     const [text, info] = await Promise.all([readFile(path, 'utf8'), stat(path)]);
-    return { path, records: parse(text), mtimeMs: info.mtimeMs };
-  } catch {
-    return undefined;
+    const parsed = parseJsonlWithDiagnostics(text, validate);
+    return {
+      logs: [{ path, records: parsed.records, mtimeMs: info.mtimeMs }],
+      integrity: parsed.malformed.map((issue) => malformedIssue(dataDir, path, issue)),
+    };
+  } catch (err) {
+    if (isNotFound(err)) return { logs: [], integrity: [] };
+    return { logs: [], integrity: [{ kind: 'unreadable', path: localPath(dataDir, path) }] };
   }
+}
+
+function summarizeIntegrity(issues: readonly ObservationIntegrityIssue[]): ObservationIntegrity {
+  const corruptLineCount = issues.filter((issue) => issue.kind !== 'unreadable').length;
+  const unreadableFileCount = new Set(issues
+    .filter((issue): issue is Extract<ObservationIntegrityIssue, { kind: 'unreadable' }> => issue.kind === 'unreadable')
+    .map((issue) => issue.path)).size;
+  const affected = issues.slice(0, MAX_REPORTED_INTEGRITY_ISSUES);
+  return {
+    status: issues.length === 0 ? 'complete' : 'partial',
+    corruptLineCount,
+    unreadableFileCount,
+    affected,
+    omittedAffectedCount: issues.length - affected.length,
+  };
+}
+
+function malformedIssue(dataDir: string, path: string, issue: JsonlMalformedLine): ObservationIntegrityIssue {
+  return { ...issue, path: localPath(dataDir, path) };
+}
+
+function localPath(dataDir: string, path: string): string {
+  const local = relative(dataDir, path);
+  return (local === '' ? '.' : local).replaceAll('\\', '/');
+}
+
+function isNotFound(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && 'code' in err && (err as { code?: unknown }).code === 'ENOENT';
 }
 
 function lastTimestamp(records: Array<{ at?: string; createdAt?: string; startedAt?: string; finishedAt?: string }>): string | undefined {

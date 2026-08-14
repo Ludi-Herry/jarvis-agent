@@ -12,10 +12,12 @@
  * ToolRunResult with `error` set so the model gets a clean, actionable message instead of
  * a stack trace. The registry separately catches anything UNexpected that throws.
  */
-import { readFile, writeFile, mkdir, readdir, stat } from 'node:fs/promises';
-import { dirname, relative, join } from 'node:path';
+import { open, readFile, lstat, mkdir, readdir, rename, stat, unlink } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { basename, dirname, relative, join } from 'node:path';
 import { z } from 'zod';
 import { isGitMetadataPath, isSensitivePath } from '../../runtime/permission/index.js';
+import { fileVersion, isFileVersion } from './file-version.js';
 import { safeResolve } from './safe-path.js';
 import type { ToolDefinition } from './types.js';
 
@@ -28,7 +30,9 @@ const GREP_SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'coverage']);
 
 export const readTool: ToolDefinition<{ path: string }> = {
   name: 'read',
-  description: 'Read a UTF-8 text file and return its full contents. Path is relative to the project root.',
+  description:
+    'Read a UTF-8 text file and return its full contents plus an opaque file version. ' +
+    'Pass that version as write.expectedVersion when updating the file.',
   capability: 'read-only',
   inputSchema: z.object({
     path: z.string().describe('File path to read, relative to the project root.'),
@@ -37,38 +41,244 @@ export const readTool: ToolDefinition<{ path: string }> = {
     const safe = await safeResolve(ctx.cwd, path);
     if (!safe.ok) return { content: '', error: `Cannot read ${path}: ${safe.reason}` };
     try {
-      const content = await readFile(safe.abs, 'utf8');
-      return { content };
+      const bytes = await readFile(safe.abs);
+      return {
+        content: bytes.toString('utf8'),
+        fileReceipt: { kind: 'read', path, version: fileVersion(bytes) },
+      };
     } catch (err) {
       return { content: '', error: `Cannot read ${path}: ${message(err)}` };
     }
   },
 };
 
-export const writeTool: ToolDefinition<{ path: string; content: string }> = {
+const writeInputSchema = z.object({
+  path: z.string().describe('File path to write, relative to the project root.'),
+  content: z.string().describe('Full UTF-8 file contents to write.'),
+  expectedVersion: z
+    .string()
+    .refine(isFileVersion, 'expectedVersion must be an fv1 token returned by read')
+    .optional()
+    .describe('Required when replacing an existing file; use the exact version returned by read.'),
+  createOnly: z
+    .literal(true)
+    .optional()
+    .describe('Required when creating a new file; fails if the target already exists.'),
+}).superRefine((input, ctx) => {
+  const count = (input.expectedVersion === undefined ? 0 : 1) + (input.createOnly === true ? 1 : 0);
+  if (count !== 1) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'provide exactly one write precondition: expectedVersion or createOnly:true',
+    });
+  }
+});
+
+type WriteInput = z.infer<typeof writeInputSchema>;
+
+export const writeTool: ToolDefinition<WriteInput> = {
   name: 'write',
   description:
-    'Write (overwrite) a UTF-8 text file, creating parent directories as needed. Path is relative to the project root.',
+    'Create or replace a UTF-8 text file with an explicit concurrency precondition. ' +
+    'Use createOnly:true for a new path, or read first and pass expectedVersion for an existing file. ' +
+    'A successful result returns postVersion.',
   capability: 'writes-files',
-  inputSchema: z.object({
-    path: z.string().describe('File path to write, relative to the project root.'),
-    content: z.string().describe('Full file contents to write.'),
-  }),
-  run: async ({ path, content }, ctx) => {
+  inputSchema: writeInputSchema,
+  run: async ({ path, content, expectedVersion, createOnly }, ctx) => {
+    const precondition = createOnly === true ? 'createOnly' : 'expectedVersion';
+    if ((createOnly === true) === (expectedVersion !== undefined)) {
+      return {
+        content: '',
+        error: `Cannot write ${path}: provide exactly one precondition (expectedVersion or createOnly:true)`,
+        fileReceipt: { kind: 'write', path, precondition, outcome: 'conflict' },
+      };
+    }
     const safe = await safeResolve(ctx.cwd, path);
     if (!safe.ok) return { content: '', error: `Cannot write ${path}: ${safe.reason}` };
     if (isGitMetadataPath(ctx.cwd, safe.abs)) {
       return { content: '', error: `Cannot write ${path}: refusing to mutate git metadata` };
     }
-    try {
-      await mkdir(dirname(safe.abs), { recursive: true });
-      await writeFile(safe.abs, content, 'utf8');
-      return { content: `Wrote ${content.length} chars to ${path}` };
-    } catch (err) {
-      return { content: '', error: `Cannot write ${path}: ${message(err)}` };
-    }
+    return withWriteLock(safe.abs, async () => {
+      if (createOnly === true) return createFile(path, safe.abs, content, ctx.cwd);
+      return replaceFile(path, safe.abs, content, expectedVersion as string, ctx.cwd);
+    });
   },
 };
+
+const writeLocks = new Map<string, Promise<void>>();
+
+/** Serialize writes made by this process to the same path. External processes remain outside this lock. */
+async function withWriteLock<T>(path: string, action: () => Promise<T>): Promise<T> {
+  const key = process.platform === 'win32' ? path.toLowerCase() : path;
+  const previous = writeLocks.get(key) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const queued = previous.then(() => current);
+  writeLocks.set(key, queued);
+  await previous;
+  try {
+    return await action();
+  } finally {
+    release();
+    if (writeLocks.get(key) === queued) writeLocks.delete(key);
+  }
+}
+
+async function createFile(path: string, abs: string, content: string, cwd: string) {
+  const receipt = { kind: 'write' as const, path, precondition: 'createOnly' as const };
+  try {
+    await mkdir(dirname(abs), { recursive: true });
+    const checked = await safeResolve(cwd, path);
+    if (!checked.ok || checked.abs !== abs) {
+      return {
+        content: '',
+        error: `Cannot write ${path}: ${checked.ok ? 'resolved target changed during write' : checked.reason}`,
+        fileReceipt: { ...receipt, outcome: 'unknown' as const },
+      };
+    }
+    const handle = await open(abs, 'wx');
+    try {
+      await handle.writeFile(content, 'utf8');
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    const postVersion = fileVersion(await readFile(abs));
+    const intendedVersion = fileVersion(Buffer.from(content, 'utf8'));
+    if (postVersion !== intendedVersion) {
+      return {
+        content: '',
+        error: `Cannot confirm write ${path}: file changed during post-write verification`,
+        fileReceipt: { ...receipt, outcome: 'unknown' as const, postVersion },
+      };
+    }
+    return {
+      content: `Created ${path} (${content.length} chars); postVersion=${postVersion}`,
+      fileReceipt: { ...receipt, outcome: 'applied' as const, postVersion },
+    };
+  } catch (err) {
+    const outcome = errorCode(err) === 'EEXIST' ? 'conflict' as const : 'unknown' as const;
+    return {
+      content: '',
+      error: outcome === 'conflict'
+        ? `Cannot create ${path}: target already exists; read it and retry with expectedVersion`
+        : `Cannot write ${path}: ${message(err)}`,
+      fileReceipt: { ...receipt, outcome },
+    };
+  }
+}
+
+async function replaceFile(path: string, abs: string, content: string, expectedVersion: string, cwd: string) {
+  const receipt = { kind: 'write' as const, path, precondition: 'expectedVersion' as const, expectedVersion };
+  let preVersion: string;
+  let originalMode: number;
+  try {
+    const [bytes, info, leaf] = await Promise.all([readFile(abs), stat(abs), lstat(abs)]);
+    if (leaf.isSymbolicLink()) {
+      return {
+        content: '',
+        error: `Cannot replace ${path}: the target is a symbolic link; write the real project path explicitly`,
+        fileReceipt: { ...receipt, outcome: 'conflict' as const },
+      };
+    }
+    if (info.nlink > 1) {
+      return {
+        content: '',
+        error: `Cannot replace ${path}: the target has multiple hard links; write an independent project path`,
+        fileReceipt: { ...receipt, outcome: 'conflict' as const },
+      };
+    }
+    preVersion = fileVersion(bytes);
+    originalMode = info.mode;
+  } catch (err) {
+    const outcome = errorCode(err) === 'ENOENT' ? 'conflict' as const : 'unknown' as const;
+    return {
+      content: '',
+      error: outcome === 'conflict'
+        ? `Cannot replace ${path}: target does not exist; retry with createOnly:true`
+        : `Cannot read current version of ${path}: ${message(err)}`,
+      fileReceipt: { ...receipt, outcome },
+    };
+  }
+  if (preVersion !== expectedVersion) {
+    return {
+      content: '',
+      error: `Write conflict for ${path}: expected ${expectedVersion}, current version is ${preVersion}; read again before retrying`,
+      fileReceipt: { ...receipt, outcome: 'conflict' as const, preVersion },
+    };
+  }
+
+  const temp = join(dirname(abs), `.jarvis-write-${basename(abs)}-${randomUUID()}.tmp`);
+  let tempExists = false;
+  try {
+    const handle = await open(temp, 'wx', originalMode);
+    tempExists = true;
+    try {
+      await handle.writeFile(content, 'utf8');
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+
+    const checked = await safeResolve(cwd, path);
+    if (!checked.ok || checked.abs !== abs) {
+      return {
+        content: '',
+        error: `Cannot replace ${path}: ${checked.ok ? 'resolved target changed during write' : checked.reason}`,
+        fileReceipt: { ...receipt, outcome: 'unknown' as const, preVersion },
+      };
+    }
+    const [beforeBytes, beforeLeaf] = await Promise.all([readFile(abs), lstat(abs)]);
+    if (beforeLeaf.isSymbolicLink()) {
+      return {
+        content: '',
+        error: `Cannot replace ${path}: the target became a symbolic link before commit`,
+        fileReceipt: { ...receipt, outcome: 'conflict' as const, preVersion },
+      };
+    }
+    if (beforeLeaf.nlink > 1 || beforeLeaf.mode !== originalMode) {
+      return {
+        content: '',
+        error: `Write conflict for ${path}: file metadata changed before commit; read again before retrying`,
+        fileReceipt: { ...receipt, outcome: 'conflict' as const, preVersion },
+      };
+    }
+    const beforeCommit = fileVersion(beforeBytes);
+    if (beforeCommit !== expectedVersion) {
+      return {
+        content: '',
+        error: `Write conflict for ${path}: file changed before commit; read again before retrying`,
+        fileReceipt: { ...receipt, outcome: 'conflict' as const, preVersion: beforeCommit },
+      };
+    }
+
+    await rename(temp, abs);
+    tempExists = false;
+    const postVersion = fileVersion(await readFile(abs));
+    const intendedVersion = fileVersion(Buffer.from(content, 'utf8'));
+    if (postVersion !== intendedVersion) {
+      return {
+        content: '',
+        error: `Cannot confirm write ${path}: file changed during post-write verification`,
+        fileReceipt: { ...receipt, outcome: 'unknown' as const, preVersion, postVersion },
+      };
+    }
+    return {
+      content: `Wrote ${content.length} chars to ${path}; postVersion=${postVersion}`,
+      fileReceipt: { ...receipt, outcome: 'applied' as const, preVersion, postVersion },
+    };
+  } catch (err) {
+    return {
+      content: '',
+      error: `Cannot write ${path}: ${message(err)}`,
+      fileReceipt: { ...receipt, outcome: 'unknown' as const, preVersion },
+    };
+  } finally {
+    if (tempExists) await unlink(temp).catch(() => undefined);
+  }
+}
 
 export const grepTool: ToolDefinition<{ pattern: string; path?: string }> = {
   name: 'grep',
@@ -207,4 +417,10 @@ async function searchFile(file: string, knownSize: number | undefined, state: Gr
 
 function message(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function errorCode(err: unknown): string | undefined {
+  return typeof err === 'object' && err !== null && 'code' in err && typeof err.code === 'string'
+    ? err.code
+    : undefined;
 }

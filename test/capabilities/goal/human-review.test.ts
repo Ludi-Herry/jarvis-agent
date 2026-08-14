@@ -75,6 +75,23 @@ describe('human review capability', () => {
     expect(pending).toEqual([]);
   });
 
+  it('fails closed when a parked goal log contains a structurally invalid middle record', async () => {
+    const goalId = 'g-corrupt';
+    await writeParkedGoal(goalId, [{ id: 'r1', text: 'Luis confirms the copy reads naturally' }]);
+    const path = join(dataDir, 'goals', `${goalId}.jsonl`);
+    const lines = (await readFile(path, 'utf8')).split('\n');
+    lines.splice(1, 0, '{}');
+    await writeFile(path, lines.join('\n'), 'utf8');
+
+    await expect(listPendingHumanReviews(dataDir)).rejects.toThrow('goal state is corrupt at line 2 (invalid-record)');
+    await expect(applyHumanReviewDecision({
+      dataDir,
+      goalId,
+      reviewer: 'Luis',
+      decisions: [{ requirementId: 'r1', decision: 'approve', note: 'must not apply' }],
+    })).rejects.toThrow('goal state is corrupt at line 2 (invalid-record)');
+  });
+
   it('applies an approval as verifier evidence, appends audit, and updates loop finish state', async () => {
     const pinned = [{ id: 'r1', text: 'Luis confirms the copy reads naturally' }];
     await writeParkedGoal('g-human', pinned);

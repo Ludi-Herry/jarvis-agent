@@ -49,6 +49,8 @@ export interface SpawnResult {
   ok: boolean;
   summary: string;
   turns: number;
+  /** Child execution crossed a side-effect boundary without a provable terminal state. */
+  executionUnknown?: true;
 }
 
 /** Everything the manager needs, injected so it owns no globals (mirrors AgentContext). A nested
@@ -147,8 +149,9 @@ export class SubagentManager {
       });
       return summarize(outcome, role.name);
     } catch (err) {
-      // A throwing child loop is a non-answer → fail closed (also keeps a panel's Promise.all alive).
-      return fail(role.name, `subagent errored: ${message(err)}`);
+      // A child loop throw may follow a side effect. Preserve that uncertainty through
+      // the delegate tool so the parent task halts instead of treating it as recoverable text.
+      return { ...fail(role.name, `subagent errored: ${message(err)}`), executionUnknown: true };
     }
   }
 
@@ -218,6 +221,7 @@ function summarize(outcome: RunOutcome, role: string): SpawnResult {
     ok: false,
     summary: `subagent produced no answer (halted: ${outcome.halted ?? 'unknown'})`,
     turns: outcome.turns,
+    ...(outcome.halted === 'toolExecutionUnknown' ? { executionUnknown: true as const } : {}),
   };
 }
 

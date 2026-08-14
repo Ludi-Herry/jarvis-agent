@@ -52,10 +52,9 @@ export interface ToolRegistry {
   /** OpenAI-compatible tool schemas, normalized: `$defs`/`$ref` deref'd (inlined) and
    *  `type` filled — strict endpoints (Doubao/ARK) reject `$defs`. See json-schema.ts. */
   schemasForModel(): ToolSchema[];
-  /** Run one tool call. NEVER throws for tool-level failures — an unknown name, invalid
-   *  JSON arguments, schema-invalid input, or a throwing `run` all come back normalized
-   *  as {@link ToolResult} with `error` set, so the AgentLoop can feed the failure back
-   *  to the model instead of crashing the turn. */
+  /** Run one tool call. NEVER throws for tool-level failures. Failures before dispatch are
+   *  known errors; a throwing tool body is returned with `executionUnknown:true` because
+   *  an external side effect may already have happened. */
   run(call: ToolCall, ctx: ToolRunCtx): Promise<ToolResult>;
   /** A NEW registry exposing only the named subset of this one's tools (same {@link ToolDefinition}
    *  references — `run` closures intact). Unknown names are skipped. Used by the SubagentManager to

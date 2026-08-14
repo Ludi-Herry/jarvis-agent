@@ -43,7 +43,11 @@ export function buildGuiTimeline(report: ObservationReport, stop: EmergencyStopS
       detail: `${loop.completed}/${loop.objectives} complete, ${loop.blocked} blocked, ${loop.inFlight} in flight`,
       tone: loop.halted === undefined || loop.halted === 'queue-empty' ? 'good' : 'warn',
       at: loop.lastAt,
-      meta: [`halt ${loop.halted ?? '-'}`, `tokens ${loop.tokens}`],
+      meta: [
+        `halt ${loop.halted ?? '-'}`,
+        ...(loop.recordedHalt === undefined ? [] : [`recorded ${loop.recordedHalt}`]),
+        `tokens ${loop.tokens}`,
+      ],
     });
   }
 
@@ -55,7 +59,7 @@ export function buildGuiTimeline(report: ObservationReport, stop: EmergencyStopS
       : [
           `recorded ${goal.recordedState}`,
           `reason ${goal.effectiveReason ?? '-'}`,
-          `source ${goal.effectiveSource ? `loop ${goal.effectiveSource.loopId}` : '-'}`,
+          `source ${goal.effectiveSource ? (goal.effectiveSource.kind === 'loop-halt' ? `loop ${goal.effectiveSource.loopId}` : 'verdict recheck') : '-'}`,
         ];
     items.push({
       id: `goal-${goal.id}`,
@@ -64,7 +68,13 @@ export function buildGuiTimeline(report: ObservationReport, stop: EmergencyStopS
       detail: goal.objective,
       tone: effectiveState === 'complete' ? 'good' : effectiveState === 'blocked' || effectiveState === 'interrupted' ? 'warn' : 'info',
       at: goal.lastAt,
-      meta: [`state ${effectiveState}`, ...effectiveMeta, `verdict ${goal.verdict ?? '-'}`, `rounds ${goal.rounds}`],
+      meta: [
+        `state ${effectiveState}`,
+        ...effectiveMeta,
+        `verdict ${goal.verdict ?? '-'}`,
+        ...(goal.recordedVerdict === undefined ? [] : [`recorded verdict ${goal.recordedVerdict}`]),
+        `rounds ${goal.rounds}`,
+      ],
     });
   }
 
@@ -135,8 +145,8 @@ export function buildGuiTimeline(report: ObservationReport, stop: EmergencyStopS
       id: `cron-${cron.taskId}`,
       kind: 'cron',
       title: `Cron ${cron.taskId}`,
-      detail: `exit ${cron.exitCode ?? 'null'}`,
-      tone: cron.exitCode === 0 ? 'good' : 'warn',
+      detail: `exit ${cron.exitCode ?? 'null'}${cron.inconsistent ? ' / linked loop has blocked goals' : ''}`,
+      tone: cron.exitCode === 0 && !cron.inconsistent ? 'good' : 'warn',
       at: cron.finishedAt,
       meta: cron.loopId ? [`loop ${cron.loopId}`] : [],
     });
@@ -148,8 +158,8 @@ export function buildGuiTimeline(report: ObservationReport, stop: EmergencyStopS
       id: `session-${session.id}`,
       kind: 'session',
       title: `Session ${session.id}`,
-      detail: `${session.messages} messages`,
-      tone: 'neutral',
+      detail: `${session.messages} messages / ${session.format} / ${session.pendingTools} pending tool effects`,
+      tone: session.pendingTools > 0 ? 'warn' : 'neutral',
       at: session.startedAt,
       meta: [session.model],
     });

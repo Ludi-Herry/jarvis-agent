@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { CLI_EXIT } from '../../src/surfaces/cli/exit-codes.js';
 
 describe('cron daemon CLI smoke', () => {
   const signalIt = process.platform === 'win32' ? it.skip : it;
@@ -42,7 +43,7 @@ describe('cron daemon CLI smoke', () => {
 
       const result = await runCronDaemonCli(['--cron-map', cronMap], cwd);
 
-      expect(result.code).toBe(1);
+      expect(result.code).toBe(CLI_EXIT.NEEDS_HUMAN);
       expect(`${result.stdout}\n${result.stderr}`).toContain('daemon lock');
     } finally {
       await rm(cwd, { recursive: true, force: true });

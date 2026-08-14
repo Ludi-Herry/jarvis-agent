@@ -9,8 +9,9 @@ import { InMemoryToolRegistry } from './registry.js';
 import { readTool, writeTool, grepTool } from './builtins.js';
 import type { ToolRegistry } from './types.js';
 
-export { InMemoryToolRegistry } from './registry.js';
+export { InMemoryToolRegistry, toolDefinitionSchema } from './registry.js';
 export { readTool, writeTool, grepTool } from './builtins.js';
+export { fileVersion, isFileVersion } from './file-version.js';
 export { createBashTool, type BashToolOptions } from './bash.js';
 export {
   createSandboxedBuilderCheckTool,

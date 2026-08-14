@@ -11,41 +11,62 @@
  * the UI renders `⏺ task(role=…)` + `↳ summary` with no new event type (plan decision 1).
  */
 import { z } from 'zod';
+import type { ToolSchema } from '../../core/types.js';
+import { toolDefinitionSchema } from '../../core/tools/registry.js';
 import type { ToolDefinition } from '../../core/tools/types.js';
-import { rosterCatalog } from './roster.js';
+import { rosterCatalog, type AgentRole } from './roster.js';
 import type { SubagentManager } from './subagent-manager.js';
 
 /** The delegate tool's name — shared so the manager can exclude the inherited copy when re-binding
  *  a child's `task` to the child manager (depth decremented). */
 export const TASK_TOOL_NAME = 'task';
 
+const delegateInputSchema = z.object({
+  role: z.string().describe('The role to delegate to — one of the listed role names.'),
+  task: z.string().describe('A self-contained description of the subtask for the subagent.'),
+});
+
 /** Build the `task` tool bound to `manager`. The description lists the roster so the model routes by
  *  role name. A child manager gets its own bound copy via SubagentManagerDeps.makeDelegateTool. */
 export function createDelegateTool(
   manager: SubagentManager,
 ): ToolDefinition<{ role: string; task: string }> {
-  const catalog = rosterCatalog(manager.roster());
-  const description = [
-    'Delegate a self-contained subtask to a specialist subagent; returns a condensed summary.',
-    'Use it when a subtask is outside your strengths, or would produce a lot of intermediate work',
-    'you only need summarized. Pick one role by name:',
-    catalog === '' ? '(no roles configured)' : catalog,
-  ].join('\n');
-
   return {
     name: TASK_TOOL_NAME,
-    description,
+    description: delegateDescription(manager.roster()),
     capability: 'read-only',
-    inputSchema: z.object({
-      role: z.string().describe('The role to delegate to — one of the listed role names.'),
-      task: z.string().describe('A self-contained description of the subtask for the subagent.'),
-    }),
+    inputSchema: delegateInputSchema,
     run: async ({ role, task }, ctx) => {
       // Pass the turn's abort signal so Ctrl-C on the parent kills work inside the child (R8).
       const result = await manager.spawn(role, task, ctx.signal);
       // The child's summary becomes the tool result. A refused/halted spawn comes back as `error`
       // so the parent model sees it failed and can change course (same shape as a tool failure).
-      return result.ok ? { content: result.summary } : { content: '', error: result.summary };
+      return result.ok
+        ? { content: result.summary }
+        : {
+            content: '',
+            error: result.summary,
+            ...(result.executionUnknown === true ? { executionUnknown: true as const } : {}),
+          };
     },
   };
+}
+
+/** Exact model-facing schema for the roster-dependent delegate tool. */
+export function delegateToolSchema(roster: readonly AgentRole[]): ToolSchema {
+  return toolDefinitionSchema({
+    name: TASK_TOOL_NAME,
+    description: delegateDescription(roster),
+    inputSchema: delegateInputSchema,
+  });
+}
+
+function delegateDescription(roster: readonly AgentRole[]): string {
+  const catalog = rosterCatalog(roster);
+  return [
+    'Delegate a self-contained subtask to a specialist subagent; returns a condensed summary.',
+    'Use it when a subtask is outside your strengths, or would produce a lot of intermediate work',
+    'you only need summarized. Pick one role by name:',
+    catalog === '' ? '(no roles configured)' : catalog,
+  ].join('\n');
 }

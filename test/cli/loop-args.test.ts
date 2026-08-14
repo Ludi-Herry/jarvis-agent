@@ -18,6 +18,7 @@ describe('parseLoopArgs', () => {
       force: false,
       unattended: false,
       noVerifierMap: false,
+      allowNoGit: false,
       parallel: 1,
       verifierMapPath: 'C:\\trusted\\loop-verifiers.json',
       hookMapPath: 'C:\\trusted\\loop-hooks.json',
@@ -32,6 +33,7 @@ describe('parseLoopArgs', () => {
       force: true,
       unattended: true,
       noVerifierMap: false,
+      allowNoGit: false,
       parallel: 1,
       verifierMapPath: '/trusted/map.json',
       positional: [],
@@ -44,6 +46,7 @@ describe('parseLoopArgs', () => {
       force: false,
       unattended: false,
       noVerifierMap: true,
+      allowNoGit: false,
       parallel: 1,
       positional: [],
     });
@@ -55,6 +58,7 @@ describe('parseLoopArgs', () => {
       force: false,
       unattended: false,
       noVerifierMap: false,
+      allowNoGit: false,
       parallel: 3,
       worktreeRootPath: 'C:\\jarvis\\worktrees',
       positional: ['objectives.txt'],
@@ -67,6 +71,7 @@ describe('parseLoopArgs', () => {
       force: false,
       unattended: false,
       noVerifierMap: false,
+      allowNoGit: false,
       parallel: 1,
       goalSetterRequirementsMapPath: 'C:\\trusted\\loop-requirements.json',
       positional: ['objectives.txt'],
@@ -79,6 +84,7 @@ describe('parseLoopArgs', () => {
       force: false,
       unattended: false,
       noVerifierMap: false,
+      allowNoGit: false,
       parallel: 1,
       failOnWorktreeChange: true,
       positional: ['objectives.txt'],
@@ -129,6 +135,7 @@ describe('parseLoopArgs', () => {
       force: false,
       unattended: false,
       noVerifierMap: false,
+      allowNoGit: false,
       parallel: 2,
       worktreeRootPath: 'C:\\trusted\\worktrees',
       verifierMapPath: '/trusted/map.json',
@@ -138,6 +145,19 @@ describe('parseLoopArgs', () => {
 
   it('rejects parallel resume without an explicit worktree root from the current command', () => {
     expect(() => parseLoopArgs(['--resume', '--parallel', '2', '--verifier-map', '/trusted/map.json'])).toThrow(/--worktree-root is required/);
+  });
+
+  it('accepts no-Git checks-only mode for a serial loop and rejects it for parallel worktrees', () => {
+    expect(parseLoopArgs(['objectives.txt', '--allow-no-git'])).toEqual({
+      resume: false,
+      force: false,
+      unattended: false,
+      noVerifierMap: false,
+      allowNoGit: true,
+      parallel: 1,
+      positional: ['objectives.txt'],
+    });
+    expect(() => parseLoopArgs(['objectives.txt', '--allow-no-git', '--parallel', '2'])).toThrow(/cannot be combined/);
   });
 
   it('rejects unknown flags so typoed safety config is visible', () => {

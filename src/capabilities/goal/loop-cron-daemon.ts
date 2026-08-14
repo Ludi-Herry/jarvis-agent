@@ -1,5 +1,12 @@
 import { appendFile, mkdir, readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import {
+  assertOperationalJsonlIntegrity,
+  hasFiniteNumberFields,
+  hasStringFields,
+  isJsonObject,
+  parseJsonlWithDiagnostics,
+} from '../../runtime/jsonl-integrity.js';
 import type { LoopCronConfig, LoopCronTask } from './loop-cron-config.js';
 import { runLoopCronOnce, type LoopCronState, type LoopCronStore, type LoopCronTaskResult } from './loop-cron.js';
 
@@ -8,7 +15,7 @@ export type LoopCronDaemonRecord =
   | { t: 'daemon-heartbeat'; at: string; nextWakeAt: string }
   | { t: 'daemon-stopped'; reason: 'signal' | 'completed' | 'error'; at: string }
   | { t: 'scan-started'; at: string }
-  | { t: 'scan-finished'; at: string; triggered: number; skipped: number; parked: number }
+  | { t: 'scan-finished'; at: string; triggered: number; skipped: number; parked: number; failed?: number }
   | { t: 'scan-skipped'; at: string; reason: 'scan-lock-held' }
   | { t: 'task-started'; taskId: string; scheduledFor: string; startedAt: string; command?: string }
   | { t: 'task-finished'; taskId: string; scheduledFor: string; startedAt: string; finishedAt: string; exitCode: number | null; loopId?: string }
@@ -25,6 +32,7 @@ export interface LoopCronDaemonStore {
 export interface LoopCronDaemonRunResult {
   triggered: number;
   skipped: number;
+  failed: number;
   parked: number;
 }
 
@@ -34,18 +42,39 @@ export interface LoopCronDaemonSignalState {
   dispose(): void;
 }
 
-export function parseLoopCronDaemonLog(text: string): LoopCronDaemonRecord[] {
-  const records: LoopCronDaemonRecord[] = [];
-  for (const line of text.split('\n')) {
-    const trimmed = line.trim();
-    if (trimmed === '') continue;
-    try {
-      records.push(JSON.parse(trimmed) as LoopCronDaemonRecord);
-    } catch {
-      // Skip a crash-truncated tail line.
-    }
+export function isLoopCronDaemonRecord(value: unknown): value is LoopCronDaemonRecord {
+  if (!isJsonObject(value) || typeof value.t !== 'string') return false;
+  switch (value.t) {
+    case 'daemon-started':
+      return hasFiniteNumberFields(value, 'pid', 'pollMs') && hasStringFields(value, 'cronMapPath', 'startedAt');
+    case 'daemon-heartbeat':
+      return hasStringFields(value, 'at', 'nextWakeAt');
+    case 'daemon-stopped':
+      return (value.reason === 'signal' || value.reason === 'completed' || value.reason === 'error') && typeof value.at === 'string';
+    case 'scan-started':
+      return typeof value.at === 'string';
+    case 'scan-finished':
+      return typeof value.at === 'string'
+        && hasFiniteNumberFields(value, 'triggered', 'skipped', 'parked')
+        && (value.failed === undefined || (typeof value.failed === 'number' && Number.isFinite(value.failed)));
+    case 'scan-skipped':
+      return typeof value.at === 'string' && value.reason === 'scan-lock-held';
+    case 'task-started':
+      return hasStringFields(value, 'taskId', 'scheduledFor', 'startedAt')
+        && (value.command === undefined || typeof value.command === 'string');
+    case 'task-finished':
+      return hasStringFields(value, 'taskId', 'scheduledFor', 'startedAt', 'finishedAt')
+        && (value.exitCode === null || (typeof value.exitCode === 'number' && Number.isFinite(value.exitCode)))
+        && (value.loopId === undefined || typeof value.loopId === 'string');
+    case 'task-parked':
+      return hasStringFields(value, 'taskId', 'at') && value.reason === 'started-without-finished';
+    default:
+      return false;
   }
-  return records;
+}
+
+export function parseLoopCronDaemonLog(text: string): LoopCronDaemonRecord[] {
+  return parseJsonlWithDiagnostics(text, isLoopCronDaemonRecord).records;
 }
 
 export function replayLoopCronDaemonState(records: LoopCronDaemonRecord[]): LoopCronDaemonState {
@@ -73,7 +102,9 @@ export class FileLoopCronDaemonStore implements LoopCronDaemonStore {
 
 export async function loadLoopCronDaemonState(path: string): Promise<LoopCronDaemonState> {
   try {
-    return replayLoopCronDaemonState(parseLoopCronDaemonLog(await readFile(path, 'utf8')));
+    const parsed = parseJsonlWithDiagnostics(await readFile(path, 'utf8'), isLoopCronDaemonRecord);
+    assertOperationalJsonlIntegrity('cron daemon', parsed.malformed, true);
+    return replayLoopCronDaemonState(parsed.records);
   } catch (err) {
     if (isNotFound(err)) return { parkedTaskIds: new Set() };
     throw new Error(`cron daemon state cannot be read: ${path}: ${errorMessage(err)}`, { cause: err });

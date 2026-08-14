@@ -21,7 +21,7 @@ import type { SessionStore } from '../../runtime/session/session-store.js';
 import type { Message } from '../../core/types.js';
 import type { HookRunner } from '../hooks/index.js';
 import type { SandboxLimits, SandboxRunRequest, SandboxRunResult, SandboxRunner } from '../../runtime/sandbox/index.js';
-import { type AgentContext, type RunOutcome, runAgent } from '../../core/loop/run-agent.js';
+import { type AgentContext, type RunHaltReason, type RunOutcome, runAgent } from '../../core/loop/run-agent.js';
 import { hardenSandboxInspectionCommand, validateSandboxInspectionCommand } from '../../core/tools/sandboxed-inspection-command.js';
 import { redactSecrets } from '../../core/model/errors.js';
 import { decideVerdict } from './verdict.js';
@@ -170,12 +170,95 @@ export interface GoalRunDeps {
 /** Default judge turn ceiling — it should read a handful of files and report, not loop. */
 const DEFAULT_VERIFIER_MAX_TURNS = 12;
 
+/** An individual invocation of runGoal gets this wall-clock ceiling unless its
+ * GoalBudget explicitly narrows or widens it. A resumed goal gets a fresh
+ * invocation deadline; it does not inherit elapsed time from a prior process. */
+export const DEFAULT_GOAL_WALL_CLOCK_MS = 900_000;
+
+/** Goal-level liveness adds its outer deadline without leaking that capability
+ * concept back into the core AgentLoop vocabulary. */
+export type GoalHaltReason = RunHaltReason | 'goalTimeout';
+
 export interface GoalRunResult {
   goal: Goal;
   state: GoalState;
   rounds: number;
   tokens: number;
   finalVerdict?: Verdict;
+  /** Present when a model/goal liveness guardrail, rather than ordinary round
+   * exhaustion, caused this invocation to park the goal. */
+  haltReason?: GoalHaltReason;
+  /** Provider finish reason kept through the goal boundary for audit. */
+  rawFinishReason?: string;
+  /** Applied deadline for a turn/goal timeout halt. */
+  timeoutMs?: number;
+}
+
+interface GoalDeadline {
+  readonly signal: AbortSignal;
+  readonly timeoutMs: number;
+  readonly deadlineAt: number;
+  abort(): void;
+}
+
+/** Internal sentinel for the hard per-invocation deadline. It is intentionally
+ * converted into a normal blocked GoalRunResult at the goal boundary. */
+class GoalDeadlineError extends Error {
+  constructor(readonly timeoutMs: number) {
+    super(`goal invocation timed out after ${timeoutMs}ms`);
+    this.name = 'GoalDeadlineError';
+  }
+}
+
+function createGoalDeadline(parentSignal: AbortSignal | undefined, configuredMs: number | undefined): GoalDeadline {
+  const timeoutMs = resolveDeadlineMs(configuredMs, DEFAULT_GOAL_WALL_CLOCK_MS);
+  const controller = new AbortController();
+  const signal = parentSignal ? AbortSignal.any([parentSignal, controller.signal]) : controller.signal;
+  const deadlineAt = Date.now() + timeoutMs;
+  return {
+    signal,
+    timeoutMs,
+    deadlineAt,
+    abort: () => controller.abort(),
+  };
+}
+
+/** Race an operation against the absolute goal deadline. The operation is
+ * explicitly observed after a deadline win, so an injected runner/provider that
+ * ignores AbortSignal and later rejects cannot cause an unhandled rejection. */
+async function withinGoalDeadline<T>(deadline: GoalDeadline, operation: () => Promise<T>): Promise<T> {
+  const remainingMs = Math.max(0, deadlineRemainingMs(deadline));
+  if (remainingMs === 0) {
+    deadline.abort();
+    throw new GoalDeadlineError(deadline.timeoutMs);
+  }
+  const pending = Promise.resolve().then(operation);
+  void pending.catch(() => undefined);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      reject(new GoalDeadlineError(deadline.timeoutMs));
+      // Settle the public deadline first. Aborting the losing operation is
+      // synchronous and may reject its inner race immediately; it must never
+      // replace the canonical goalTimeout outcome with a generic AbortError.
+      deadline.abort();
+    }, remainingMs);
+  });
+  try {
+    return await Promise.race([pending, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/** Compute the time remaining before the absolute per-invocation deadline. */
+function deadlineRemainingMs(deadline: GoalDeadline): number {
+  return deadline.deadlineAt - Date.now();
+}
+
+function resolveDeadlineMs(value: number | undefined, fallback: number): number {
+  if (value === undefined || !Number.isFinite(value)) return fallback;
+  return Math.max(0, Math.floor(value));
 }
 
 export async function runGoal(spec: GoalSpec, deps: GoalRunDeps): Promise<GoalRunResult> {
@@ -183,6 +266,7 @@ export async function runGoal(spec: GoalSpec, deps: GoalRunDeps): Promise<GoalRu
   const check = deps.check ?? runDeterministicChecks;
   const runVerifierFn = deps.runVerifier ?? defaultRunVerifier;
   const stamp = (): string => new Date().toISOString();
+  const deadline = createGoalDeadline(deps.signal, spec.budget.maxWallClockMs);
 
   const resume = spec.resume;
   const objectiveHash = resume?.goal.objectiveHash ?? hashObjective(spec.objective);
@@ -214,14 +298,48 @@ export async function runGoal(spec: GoalSpec, deps: GoalRunDeps): Promise<GoalRu
     if (finalVerdict?.outcome !== 'verified') {
       throw new Error('resumed complete goal is missing a verified verdict');
     }
-    const verification = await verifyGoalCompletion(goal, deps, check, runVerifierFn, true);
+    const recheckRound = resume.rounds.length + 1;
+    let verification: VerificationRun;
+    try {
+      verification = await withinGoalDeadline(deadline, () =>
+        verifyGoalCompletion(goal, { ...deps, signal: deadline.signal }, check, runVerifierFn, true),
+      );
+    } catch (err) {
+      if (!(err instanceof GoalDeadlineError)) throw err;
+      const verdict: Verdict = {
+        outcome: 'couldNotVerify',
+        rationale: haltRationale('goalTimeout', undefined, err.timeoutMs),
+      };
+      deps.bus.emit({ type: 'halt', reason: 'goalTimeout', timeoutMs: err.timeoutMs });
+      deps.bus.emit({ type: 'verdict', goalId: goal.id, outcome: verdict.outcome, rationale: redactSecrets(verdict.rationale) });
+      await deps.goalStore?.recordRound({
+        round: recheckRound,
+        turns: 0,
+        tokens: 0,
+        claim: { status: 'complete' },
+        verdict,
+        haltReason: 'goalTimeout',
+        timeoutMs: err.timeoutMs,
+        at: stamp(),
+      });
+      const blocked = await transition(deps, goal, 'blocked', undefined, stamp);
+      goal = { ...goal, state: blocked };
+      return {
+        goal,
+        state: blocked,
+        rounds: recheckRound,
+        tokens: resumedTokens,
+        finalVerdict: verdict,
+        haltReason: 'goalTimeout',
+        timeoutMs: err.timeoutMs,
+      };
+    }
     deps.bus.emit({
       type: 'verdict',
       goalId: goal.id,
       outcome: verification.verdict.outcome,
       rationale: redactSecrets(verification.verdict.rationale),
     });
-    const recheckRound = resume.rounds.length + 1;
     await deps.goalStore?.recordRound({
       round: recheckRound,
       turns: 0,
@@ -284,6 +402,58 @@ export async function runGoal(spec: GoalSpec, deps: GoalRunDeps): Promise<GoalRu
   let totalTurns = sumRoundTurns(resume?.rounds ?? []);
   let finalVerdict: Verdict | undefined;
   let state: GoalState = 'active';
+  let haltReason: GoalHaltReason | undefined;
+  let rawFinishReason: string | undefined;
+  let timeoutMs: number | undefined;
+
+  const haltRoundFailClosed = async (
+    halted: GoalHaltReason,
+    input: {
+      round: number;
+      turns: number;
+      roundTokens: number;
+      totalTurns: number;
+      totalTokens: number;
+      claim?: { status: 'complete' | 'blocked' };
+      rawFinishReason?: string;
+      timeoutMs?: number;
+    },
+  ): Promise<void> => {
+    const rationale = haltRationale(halted, input.rawFinishReason, input.timeoutMs);
+    const verdict: Verdict = { outcome: 'couldNotVerify', rationale };
+    finalVerdict = verdict;
+    haltReason = halted;
+    rawFinishReason = input.rawFinishReason;
+    timeoutMs = input.timeoutMs;
+    // A goal timeout wins outside runAgent, so it needs its own auditable event.
+    // Other default runAgent halts already emitted their lower-level halt event.
+    if (halted === 'goalTimeout') {
+      deps.bus.emit({ type: 'halt', reason: 'goalTimeout', timeoutMs: input.timeoutMs });
+    }
+    deps.bus.emit({ type: 'verdict', goalId: goal.id, outcome: verdict.outcome, rationale: redactSecrets(verdict.rationale) });
+    await deps.goalStore?.recordRound({
+      round: input.round,
+      turns: input.turns,
+      tokens: input.roundTokens,
+      ...(input.claim === undefined ? {} : { claim: input.claim }),
+      verdict,
+      haltReason: halted,
+      ...(input.rawFinishReason === undefined ? {} : { rawFinishReason: input.rawFinishReason }),
+      ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
+      at: stamp(),
+    });
+    state = await transitionAfterSnapshots('blocked');
+    emitGoalRoundEnd(deps, goal, {
+      round: input.round,
+      turns: input.turns,
+      roundTokens: input.roundTokens,
+      totalTurns: input.totalTurns,
+      totalTokens: input.totalTokens,
+      ...(input.claim === undefined ? {} : { claimStatus: input.claim.status }),
+      verdict: verdict.outcome,
+      state,
+    });
+  };
 
   try {
     if (initialRejects >= MAX_CONSECUTIVE_REJECTS) {
@@ -295,21 +465,54 @@ export async function runGoal(spec: GoalSpec, deps: GoalRunDeps): Promise<GoalRu
       emitGoalRoundStart(deps, goal, round, totalTurns, totalTokens);
 
       const tokensBeforeRound = totalTokens;
-      const outcome = await run({
-        model: deps.model,
-        tools: deps.tools,
-        bus: deps.bus,
-        messages,
-        toolCtx: { cwd: deps.cwd, signal: deps.signal },
-        budget: { maxTurns: deps.perRoundMaxTurns },
-        context: deps.context,
-        gate: deps.gate,
-        hooks: deps.hooks,
-        store: deps.store,
-        signal: deps.signal,
-      });
+      let outcome: RunOutcome;
+      try {
+        outcome = await withinGoalDeadline(deadline, () =>
+          run({
+            model: deps.model,
+            tools: deps.tools,
+            bus: deps.bus,
+            messages,
+            toolCtx: { cwd: deps.cwd, signal: deadline.signal },
+            budget: { maxTurns: deps.perRoundMaxTurns },
+            context: deps.context,
+            gate: deps.gate,
+            hooks: deps.hooks,
+            store: deps.store,
+            signal: deadline.signal,
+          }),
+        );
+      } catch (err) {
+        if (err instanceof GoalDeadlineError) {
+          await haltRoundFailClosed('goalTimeout', {
+            round,
+            turns: 0,
+            roundTokens: totalTokens - tokensBeforeRound,
+            totalTurns,
+            totalTokens,
+            timeoutMs: err.timeoutMs,
+          });
+          break;
+        }
+        throw err;
+      }
       totalTurns += outcome.turns;
       const roundTokens = totalTokens - tokensBeforeRound;
+      const abnormalHalt = failClosedRunHalt(outcome);
+      if (abnormalHalt !== undefined) {
+        const claim = takeClaim(slot);
+        await haltRoundFailClosed(abnormalHalt, {
+          round,
+          turns: outcome.turns,
+          roundTokens,
+          totalTurns,
+          totalTokens,
+          ...(claim === undefined ? {} : { claim }),
+          ...(outcome.rawFinishReason === undefined ? {} : { rawFinishReason: outcome.rawFinishReason }),
+          ...(outcome.timeoutMs === undefined ? {} : { timeoutMs: outcome.timeoutMs }),
+        });
+        break;
+      }
       // shadow-git: snapshot the working tree after this round's builder work (audit + rollback of what
       // the agent changed). Best-effort and OFF the verdict path — wait only for the shadow index capture
       // here, then let commit/rev-parse finish in the queue before terminal state/return.
@@ -356,7 +559,27 @@ export async function runGoal(spec: GoalSpec, deps: GoalRunDeps): Promise<GoalRu
         break;
       }
 
-      const { checks, persistedChecks, verdict } = await verifyGoalCompletion(goal, deps, check, runVerifierFn, resume !== undefined);
+      let verification: VerificationRun;
+      try {
+        verification = await withinGoalDeadline(deadline, () =>
+          verifyGoalCompletion(goal, { ...deps, signal: deadline.signal }, check, runVerifierFn, resume !== undefined),
+        );
+      } catch (err) {
+        if (err instanceof GoalDeadlineError) {
+          await haltRoundFailClosed('goalTimeout', {
+            round,
+            turns: outcome.turns,
+            roundTokens,
+            totalTurns,
+            totalTokens,
+            claim,
+            timeoutMs: err.timeoutMs,
+          });
+          break;
+        }
+        throw err;
+      }
+      const { checks, persistedChecks, verdict } = verification;
       finalVerdict = verdict;
       // NOTE: no verifier-health (couldNotVerify-rate) monitor here. That signal is inherently
       // CROSS-GOAL — within one goal, couldNotVerify is terminal (→ blocked), so a per-goal monitor can
@@ -427,7 +650,16 @@ export async function runGoal(spec: GoalSpec, deps: GoalRunDeps): Promise<GoalRu
   }
 
   goal = { ...goal, state };
-  return { goal, state, rounds: round, tokens: totalTokens, finalVerdict };
+  return {
+    goal,
+    state,
+    rounds: round,
+    tokens: totalTokens,
+    ...(finalVerdict === undefined ? {} : { finalVerdict }),
+    ...(haltReason === undefined ? {} : { haltReason }),
+    ...(rawFinishReason === undefined ? {} : { rawFinishReason }),
+    ...(timeoutMs === undefined ? {} : { timeoutMs }),
+  };
 }
 
 function emitGoalRoundStart(
@@ -459,7 +691,7 @@ function emitGoalRoundEnd(
     totalTurns: number;
     totalTokens: number;
     claimStatus?: 'complete' | 'blocked';
-    verdict?: 'verified' | 'rejected' | 'couldNotVerify';
+    verdict?: 'verified' | 'checksOnly' | 'rejected' | 'couldNotVerify';
     state: GoalState;
   },
 ): void {
@@ -764,6 +996,23 @@ function overBudget(totalTurns: number, totalTokens: number, budget: GoalBudget)
   if (budget.maxTotalTurns !== undefined && totalTurns >= budget.maxTotalTurns) return true;
   if (budget.maxTotalTokens !== undefined && totalTokens >= budget.maxTotalTokens) return true;
   return false;
+}
+
+/** maxTurns remains a per-round backstop: the outer goal loop may continue with
+ * its normal continuation prompt. Every other missing-final outcome means the
+ * builder did not reach a trustworthy boundary and must park fail-closed. */
+function failClosedRunHalt(outcome: RunOutcome): RunHaltReason | undefined {
+  if (outcome.halted === 'maxTurns') return undefined;
+  if (outcome.halted !== undefined) return outcome.halted;
+  return outcome.finalText === undefined ? 'unknown' : undefined;
+}
+
+function haltRationale(halted: GoalHaltReason, rawFinishReason?: string, timeoutMs?: number): string {
+  if (halted === 'goalTimeout') return `goal invocation timed out after ${timeoutMs ?? DEFAULT_GOAL_WALL_CLOCK_MS}ms`;
+  if (halted === 'turnTimeout') return `model turn timed out after ${timeoutMs ?? 'the configured'}ms`;
+  if (halted === 'toolExecutionUnknown') return 'a tool may have produced an unresolved side effect; inspect the session and workspace';
+  const raw = rawFinishReason === undefined || rawFinishReason === '' ? '' : ` (provider finish reason: ${rawFinishReason})`;
+  return `builder halted without a trustworthy final answer: ${halted}${raw}`;
 }
 
 /** Build the rejection continuation from the REAL evidence, so the builder sees what failed. Covers a

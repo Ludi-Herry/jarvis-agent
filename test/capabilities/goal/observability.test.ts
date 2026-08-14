@@ -31,6 +31,47 @@ afterEach(async () => {
 });
 
 describe('buildObservationReport', () => {
+  it('downgrades a historical checks-only complete record in summaries, counts, and activity', () => {
+    const report = buildObservationReport({
+      goals: [{
+        path: 'data/goals/legacy.jsonl',
+        records: [
+          {
+            t: 'goal-created',
+            id: 'legacy',
+            objective: 'claim more than routine checks prove',
+            objectiveHash: 'hash',
+            budget: { maxRounds: 1 },
+            sessionId: 'legacy',
+            createdAt: '2026-07-01T00:00:00.000Z',
+          },
+          {
+            t: 'goal-round',
+            round: 1,
+            checks: { objectiveChecksPassed: true, results: [], testTamper: 'clean', tamperReason: '' },
+            verdict: { outcome: 'verified', rationale: 'legacy deterministic-only rule' },
+            at: '2026-07-01T00:00:01.000Z',
+          },
+          { t: 'goal-state', state: 'complete', at: '2026-07-01T00:00:02.000Z' },
+        ],
+      }],
+    });
+
+    expect(report.status.goals.byState).toEqual({ active: 0, complete: 0, blocked: 1 });
+    expect(report.status.latestGoal).toMatchObject({
+      state: 'complete',
+      recordedState: 'complete',
+      effectiveState: 'blocked',
+      effectiveReason: 'verdict-mismatch',
+      verdict: 'checksOnly',
+      recordedVerdict: 'verified',
+    });
+    expect(report.activity.recent).toContainEqual(expect.objectContaining({ title: 'Goal blocked', tone: 'warn' }));
+    expect(formatObservationReport(report)).toContain(
+      'latest goal: legacy blocked recorded=complete reason=verdict-mismatch source=verdict-recheck verdict=checksOnly recordedVerdict=verified',
+    );
+  });
+
   it('summarizes status, usage, and audit evidence without granting completion authority', () => {
     const input: ObservationInput = {
       sessions: [
@@ -201,9 +242,22 @@ describe('buildObservationReport', () => {
       },
     });
     expect(report.authority).toEqual({ canCompleteGoals: false, canCompleteLoops: false, mode: 'observation-only' });
+    expect(report.integrity).toEqual({
+      status: 'complete',
+      corruptLineCount: 0,
+      unreadableFileCount: 0,
+      affected: [],
+      omittedAffectedCount: 0,
+    });
     expect(report.status.latestGoal).toMatchObject({ id: 'g1', state: 'complete', verdict: 'verified', rounds: 1 });
-    expect(report.status.latestLoop).toMatchObject({ id: 'L1', completed: 1, blocked: 1, halted: 'queue-empty' });
-    expect(report.status.cron.lastAttempt).toMatchObject({ taskId: 'daily', exitCode: 0, loopId: 'L1' });
+    expect(report.status.latestLoop).toMatchObject({
+      id: 'L1',
+      completed: 1,
+      blocked: 1,
+      halted: 'blocked-goals',
+      recordedHalt: 'queue-empty',
+    });
+    expect(report.status.cron.lastAttempt).toMatchObject({ taskId: 'daily', exitCode: 0, loopId: 'L1', inconsistent: true });
     expect(report.status.latestGoalBudget).toMatchObject({
       goalId: 'g1',
       roundsUsed: 1,
@@ -244,13 +298,15 @@ describe('buildObservationReport', () => {
       errors: 0,
       sessionIds: ['goal-1'],
     });
-    expect(report.activity.recent[0]).toMatchObject({ kind: 'loop', title: 'Loop halted', detail: 'queue-empty' });
+    expect(report.activity.recent[0]).toMatchObject({ kind: 'loop', title: 'Loop halted', detail: 'blocked-goals', tone: 'warn' });
     expect(report.activity.recent).toContainEqual(expect.objectContaining({ kind: 'approval', title: 'Approval deny', detail: 'write' }));
 
     expect(formatObservationReport(report)).toContain('Observation: status/usage/audit (read-only)');
     expect(formatObservationReport(report)).toContain('completion authority: none');
     expect(formatObservationReport(report)).toContain('latest goal: g1 complete verdict=verified rounds=1');
     expect(formatObservationReport(report)).toContain('latest goal budget: g1 rounds=1/3 turns=2 tokens=42');
+    expect(formatObservationReport(report)).toContain('halted=blocked-goals recorded=queue-empty');
+    expect(formatObservationReport(report)).toContain('inconsistent=blocked-loop-reported-success');
     expect(formatObservationReport(report)).toContain('sandbox evidence: 1');
     expect(formatObservationReport(report)).toContain('recent activity:');
   });
@@ -304,6 +360,52 @@ describe('buildObservationReport', () => {
       'latest goal: L-stop-g0 interrupted recorded=active reason=emergency-stop source=loop:L-stop',
     );
   });
+
+  it('warns on legacy daemon success records linked to a blocked loop', () => {
+    const report = buildObservationReport({
+      loops: [
+        {
+          path: 'data/loops/L-old.jsonl',
+          records: [
+            { t: 'loop-created', id: 'L-old', contract: CONTRACT, objectives: ['inspect'], createdAt: 't0' },
+            { t: 'goal-finished', index: 0, goalId: 'g0', state: 'blocked', rounds: 1, tokens: 0, at: 't1' },
+            { t: 'loop-halted', reason: 'queue-empty', at: 't2' },
+          ],
+        },
+      ],
+      cronDaemon: {
+        path: 'data/cron/loop-cron-daemon.jsonl',
+        records: [
+          { t: 'scan-started', at: '2026-07-03T10:00:00.000Z' },
+          {
+            t: 'task-finished',
+            taskId: 'daily',
+            scheduledFor: '2026-07-03T10:00:00.000Z',
+            startedAt: '2026-07-03T10:00:01.000Z',
+            finishedAt: '2026-07-03T10:00:02.000Z',
+            exitCode: 0,
+            loopId: 'L-old',
+          },
+          { t: 'scan-finished', at: '2026-07-03T10:00:03.000Z', triggered: 1, skipped: 0, parked: 0 },
+        ],
+      },
+    });
+
+    expect(report.activity.recent).toContainEqual(
+      expect.objectContaining({
+        title: 'Cron task daily finished',
+        detail: 'exit 0 / linked loop has blocked goals',
+        tone: 'warn',
+      }),
+    );
+    expect(report.activity.recent).toContainEqual(
+      expect.objectContaining({
+        title: 'Cron scan finished',
+        detail: expect.stringContaining('legacy linked-loop inconsistency'),
+        tone: 'warn',
+      }),
+    );
+  });
 });
 
 describe('loadWorkspaceObservation', () => {
@@ -341,5 +443,103 @@ describe('loadWorkspaceObservation', () => {
     expect(report.usage.sessionMessages).toBe(1);
     expect(report.audit.approvals.denied).toBe(1);
     expect(report.activity.recent).toContainEqual(expect.objectContaining({ kind: 'approval', title: 'Approval deny' }));
+    expect(report.integrity).toEqual({
+      status: 'partial',
+      corruptLineCount: 1,
+      unreadableFileCount: 0,
+      affected: [{ kind: 'malformed-tail', path: 'sessions/s1.jsonl', line: 3 }],
+      omittedAffectedCount: 0,
+    });
+    expect(formatObservationReport(report)).toContain('integrity: partial corruptLines=1 unreadableFiles=0');
+    expect(formatObservationReport(report)).toContain('- malformed-tail sessions/s1.jsonl:3');
+  });
+
+  it('reports malformed middle lines and unreadable optional JSONL files while missing sources stay clean', async () => {
+    await mkdir(join(dir, 'data', 'sessions'), { recursive: true });
+    await writeFile(
+      join(dir, 'data', 'sessions', 's1.jsonl'),
+      '{"t":"session","id":"s1","model":"builder","cwd":"cwd","startedAt":"t0"}\n' +
+        '{not valid json}\n' +
+        '{"t":"message","message":{"role":"user","content":"hello"}}\n',
+      'utf8',
+    );
+    await mkdir(join(dir, 'data', 'cron', 'loop-cron.jsonl'), { recursive: true });
+
+    const report = await loadWorkspaceObservation(join(dir, 'data'));
+
+    expect(report.status.sessions.total).toBe(1);
+    expect(report.usage.sessionMessages).toBe(1);
+    expect(report.integrity).toEqual({
+      status: 'partial',
+      corruptLineCount: 1,
+      unreadableFileCount: 1,
+      affected: [
+        { kind: 'malformed-middle', path: 'sessions/s1.jsonl', line: 2 },
+        { kind: 'unreadable', path: 'cron/loop-cron.jsonl' },
+      ],
+      omittedAffectedCount: 0,
+    });
+  });
+
+  it('reports v2 sequence corruption and pending tool effects', async () => {
+    await mkdir(join(dir, 'data', 'sessions'), { recursive: true });
+    const records = [
+      {
+        schemaVersion: 2,
+        seq: 1,
+        at: 't0',
+        t: 'session',
+        id: 's-v2',
+        model: 'builder',
+        cwd: 'cwd',
+        startedAt: 't0',
+        composition: {
+          root: 'repl',
+          runtimeVersion: '0.1.0',
+          permissionMode: 'interactive',
+          coverage: 'partial',
+        },
+      },
+      {
+        schemaVersion: 2,
+        seq: 2,
+        at: 't1',
+        t: 'message',
+        message: {
+          role: 'assistant',
+          requestId: 'req-1',
+          toolCalls: [{ id: 'call-1', name: 'write', arguments: '{"path":"a.txt","content":"x","createOnly":true}' }],
+        },
+      },
+      {
+        schemaVersion: 2,
+        seq: 4,
+        at: 't2',
+        t: 'tool',
+        phase: 'planned',
+        executionId: 'exec-1',
+        requestId: 'req-1',
+        runId: 'run-1',
+        turn: 0,
+        callIndex: 0,
+        call: { id: 'call-1', name: 'write', arguments: '{"path":"a.txt","content":"x","createOnly":true}' },
+      },
+    ];
+    await writeFile(
+      join(dir, 'data', 'sessions', 's-v2.jsonl'),
+      `${records.map((record) => JSON.stringify(record)).join('\n')}\n`,
+      'utf8',
+    );
+
+    const report = await loadWorkspaceObservation(join(dir, 'data'));
+
+    expect(report.status.latestSession).toMatchObject({ id: 's-v2', format: 'v2', pendingTools: 1 });
+    expect(report.integrity).toMatchObject({
+      status: 'partial',
+      corruptLineCount: 1,
+      affected: [{ kind: 'session-sequence', path: 'sessions/s-v2.jsonl', line: 3 }],
+    });
+    expect(formatObservationReport(report)).toContain('format=v2 messages=1 pendingTools=1');
+    expect(formatObservationReport(report)).toContain('resume is blocked until pending tool effects are reviewed');
   });
 });

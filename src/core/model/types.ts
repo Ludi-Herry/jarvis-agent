@@ -17,7 +17,8 @@ export type FinishReason =
   | 'truncated'
   | 'filtered'
   | 'paused'
-  | 'other';
+  | 'refused'
+  | 'unknown';
 
 /** Requested thinking budget. Each provider clamps to what it supports — Doubao
  *  only distinguishes on/off, so low/medium/high all map to "enabled". */

@@ -214,10 +214,45 @@ describe('buildLoopFinalizeReport', () => {
       [1, 'proposal', 'verified-mergeable'],
     ]);
   });
+
+  it('parks verified goals when session receipts are unavailable or a tool effect is pending', () => {
+    const records: LoopRecord[] = [
+      { t: 'loop-created', id: 'L', contract: CONTRACT, objectives: ['legacy', 'pending'], createdAt: 't0' },
+      { t: 'goal-started', index: 0, goalId: 'g0', at: 't1' },
+      { t: 'goal-finished', index: 0, goalId: 'g0', state: 'complete', outcome: 'verified', rounds: 1, tokens: 1, at: 't2' },
+      { t: 'goal-started', index: 1, goalId: 'g1', at: 't3' },
+      { t: 'goal-finished', index: 1, goalId: 'g1', state: 'complete', outcome: 'verified', rounds: 1, tokens: 1, at: 't4' },
+    ];
+
+    const report = buildLoopFinalizeReport(
+      records,
+      new Map([[0, trackedDiff('wt/g0')], [1, trackedDiff('wt/g1')]]),
+      evidence([
+        { ...verified('g0', 'legacy', 'wt/g0'), sessionFormat: 'v1', sessionPendingTools: 0 },
+        { ...verified('g1', 'pending', 'wt/g1'), sessionPendingTools: 1 },
+      ]),
+    );
+
+    expect(report.proposals).toEqual([]);
+    expect(report.items.map((item) => [item.index, item.reason])).toEqual([
+      [0, 'session-receipts-unavailable'],
+      [1, 'pending-tool-effects'],
+    ]);
+  });
 });
 
 function verified(goalId: string, objective: string, sessionCwd: string): LoopFinalizeGoalEvidence {
-  return { goalId, objective, sessionId: goalId, sessionCwd, worktreeDiffHash: diffHash(sessionCwd), state: 'complete', outcome: 'verified' };
+  return {
+    goalId,
+    objective,
+    sessionId: goalId,
+    sessionCwd,
+    sessionFormat: 'v2',
+    sessionPendingTools: 0,
+    worktreeDiffHash: diffHash(sessionCwd),
+    state: 'complete',
+    outcome: 'verified',
+  };
 }
 
 function evidence(items: LoopFinalizeGoalEvidence[]): Map<string, LoopFinalizeGoalEvidence> {

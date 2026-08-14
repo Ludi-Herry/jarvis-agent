@@ -74,6 +74,8 @@ export async function runParallelLoop(spec: LoopSpec, deps: ParallelLoopDeps): P
   let started = 0;
   let completed = 0;
   let blocked = 0;
+  let needsVerification = 0;
+  let runtimeFailures = 0;
   let nextIndex = 0;
   let queueOrderCursor = 0;
   let reason: LoopHaltReason | undefined;
@@ -107,7 +109,7 @@ export async function runParallelLoop(spec: LoopSpec, deps: ParallelLoopDeps): P
       pendingQueueResults.delete(queueOrderCursor);
       if (result?.state === 'complete') {
         consecutiveBlocked = 0;
-      } else if (result?.outcome !== 'couldNotVerify') {
+      } else if (result?.outcome !== 'couldNotVerify' && result?.outcome !== 'checksOnly') {
         consecutiveBlocked++;
         if (consecutiveBlocked >= c.maxConsecutiveBlocked) {
           reason ??= 'consecutive-blocked';
@@ -134,6 +136,7 @@ export async function runParallelLoop(spec: LoopSpec, deps: ParallelLoopDeps): P
         state: result.state,
         outcome: result.outcome,
         verifierKey: result.verifierKey,
+        haltReason: result.haltReason,
         rounds: result.rounds,
         tokens,
         at: stamp(),
@@ -147,10 +150,13 @@ export async function runParallelLoop(spec: LoopSpec, deps: ParallelLoopDeps): P
         completed++;
       } else {
         blocked++;
+        if (result.outcome === 'checksOnly' || result.outcome === 'couldNotVerify') needsVerification++;
+        if (result.haltReason === 'turnTimeout' || result.haltReason === 'goalTimeout') runtimeFailures++;
       }
       pendingQueueResults.set(index, result);
       advanceQueueOrderBreakers();
       if (
+        result.haltReason === undefined &&
         result.outcome !== undefined &&
         monitorFor(result.verifierKey ?? DEFAULT_VERIFIER_HEALTH_KEY).record(result.outcome) === 'halt'
       ) {
@@ -193,11 +199,11 @@ export async function runParallelLoop(spec: LoopSpec, deps: ParallelLoopDeps): P
   }
 
   if (active.size > 0) await Promise.allSettled(active);
-  if (reason === undefined) reason = 'queue-empty';
+  if (reason === undefined) reason = blocked > 0 ? 'blocked-goals' : 'queue-empty';
 
   deps.bus.emit({ type: 'loop_halt', loopId: spec.id, reason });
   await deps.loopStore.recordHalted(reason, stamp());
-  return { loopId: spec.id, reason, started, completed, blocked, goalsFinished, cumulativeTokens };
+  return { loopId: spec.id, reason, started, completed, blocked, needsVerification, runtimeFailures, goalsFinished, cumulativeTokens };
 }
 
 function checkedTokens(result: GoalRunSummary): number {

@@ -4,10 +4,17 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadLoopGoalResume } from '../../src/surfaces/cli/loop-resume.js';
 import { FileGoalStore, hashObjective } from '../../src/capabilities/index.js';
-import { FileSessionStore } from '../../src/runtime/index.js';
+import { FileSessionStore, createModelRequestReceipt, createSessionComposition } from '../../src/runtime/index.js';
 import type { Message } from '../../src/core/index.js';
 
 let dir: string;
+const composition = createSessionComposition({
+  root: 'loop',
+  runtimeVersion: 'test',
+  permissionMode: 'interactive',
+  toolSchemas: [],
+  systemPrompt: 'test prompt',
+});
 
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), 'loop-resume-'));
@@ -44,7 +51,7 @@ describe('loadLoopGoalResume', () => {
       { role: 'assistant', content: 'working' },
     ];
     const sessionStore = new FileSessionStore(sessionPath);
-    await sessionStore.writeHeader({ id: 'g1', model: 'm', cwd: dir, startedAt: 't0' });
+    await sessionStore.writeHeader({ id: 'g1', model: 'm', cwd: dir, startedAt: 't0', composition });
     await sessionStore.sync(messages);
 
     const loaded = await loadLoopGoalResume(goalPath, sessionPath, 'g1');
@@ -53,6 +60,8 @@ describe('loadLoopGoalResume', () => {
     expect(loaded.resume.rounds).toHaveLength(1);
     expect(loaded.resume.messages).toEqual(messages);
     expect(loaded.initialCursor).toBe(messages.length);
+    expect(loaded.sessionFormat).toBe('v2');
+    expect(loaded.initialSequence).toBeGreaterThan(0);
   });
 
   it('fails closed on duplicate goal-created headers instead of letting the later one overwrite replay state', async () => {
@@ -71,7 +80,7 @@ describe('loadLoopGoalResume', () => {
     await goalStore.writeCreated(base);
     await goalStore.writeCreated({ ...base, budget: { maxRounds: 999 }, createdAt: 't1' });
     const sessionStore = new FileSessionStore(sessionPath);
-    await sessionStore.writeHeader({ id: 'g1', model: 'm', cwd: dir, startedAt: 't0' });
+    await sessionStore.writeHeader({ id: 'g1', model: 'm', cwd: dir, startedAt: 't0', composition });
 
     await expect(loadLoopGoalResume(goalPath, sessionPath, 'g1')).rejects.toThrow(/duplicate goal-created/);
   });
@@ -90,7 +99,7 @@ describe('loadLoopGoalResume', () => {
       createdAt: 't0',
     });
     const sessionStore = new FileSessionStore(sessionPath);
-    await sessionStore.writeHeader({ id: 'other', model: 'm', cwd: dir, startedAt: 't0' });
+    await sessionStore.writeHeader({ id: 'other', model: 'm', cwd: dir, startedAt: 't0', composition });
 
     await expect(loadLoopGoalResume(goalPath, sessionPath, 'g1')).rejects.toThrow(/session log belongs to other/);
   });
@@ -111,7 +120,7 @@ describe('loadLoopGoalResume', () => {
     const sessionStore = new FileSessionStore(sessionPath);
     await sessionStore.sync([{ role: 'user', content: 'forged message without header' }]);
 
-    await expect(loadLoopGoalResume(goalPath, sessionPath, 'g1')).rejects.toThrow(/missing session header/);
+    await expect(loadLoopGoalResume(goalPath, sessionPath, 'g1')).rejects.toThrow(/missing (session )?header/);
   });
 
   it('fails closed when the session cwd does not match the expected resumed worktree', async () => {
@@ -128,8 +137,125 @@ describe('loadLoopGoalResume', () => {
       createdAt: 't0',
     });
     const sessionStore = new FileSessionStore(sessionPath);
-    await sessionStore.writeHeader({ id: 'g1', model: 'm', cwd: join(dir, 'wrong-worktree'), startedAt: 't0' });
+    await sessionStore.writeHeader({ id: 'g1', model: 'm', cwd: join(dir, 'wrong-worktree'), startedAt: 't0', composition });
 
     await expect(loadLoopGoalResume(goalPath, sessionPath, 'g1', join(dir, 'expected-worktree'))).rejects.toThrow(/does not match/);
+  });
+
+  it('fails closed when a persisted tool intent has no terminal receipt', async () => {
+    const goalPath = join(dir, 'g-pending.jsonl');
+    const sessionPath = join(dir, 's-pending.jsonl');
+    const goalStore = new FileGoalStore(goalPath);
+    await goalStore.writeCreated({
+      id: 'g1',
+      objective: 'do the thing',
+      objectiveHash: hashObjective('do the thing'),
+      budget: { maxRounds: 3 },
+      pinned: [],
+      sessionId: 'g1',
+      createdAt: 't0',
+    });
+    const sessionStore = new FileSessionStore(sessionPath);
+    await sessionStore.writeHeader({ id: 'g1', model: 'm', cwd: dir, startedAt: 't0', composition });
+    const initialMessages: Message[] = [{ role: 'system', content: 'system' }];
+    await sessionStore.sync(initialMessages);
+    await sessionStore.recordRequest(createModelRequestReceipt({
+      requestId: 'req-1',
+      runId: 'run-1',
+      turn: 0,
+      messages: initialMessages,
+      tools: [],
+    }));
+    await sessionStore.sync([
+      ...initialMessages,
+      {
+        role: 'assistant',
+        requestId: 'req-1',
+        toolCalls: [{ id: 'call-1', name: 'write', arguments: '{"path":"a.txt","content":"x","createOnly":true}' }],
+      },
+    ]);
+
+    await expect(loadLoopGoalResume(goalPath, sessionPath, 'g1')).rejects.toThrow(/unresolved tool execution/);
+  });
+
+  it('fails closed when compaction omits a persisted assistant tool intent', async () => {
+    const goalPath = join(dir, 'g-compacted-pending.jsonl');
+    const sessionPath = join(dir, 's-compacted-pending.jsonl');
+    const goalStore = new FileGoalStore(goalPath);
+    await goalStore.writeCreated({
+      id: 'g1',
+      objective: 'do the thing',
+      objectiveHash: hashObjective('do the thing'),
+      budget: { maxRounds: 3 },
+      pinned: [],
+      sessionId: 'g1',
+      createdAt: 't0',
+    });
+    const sessionStore = new FileSessionStore(sessionPath);
+    await sessionStore.writeHeader({ id: 'g1', model: 'm', cwd: dir, startedAt: 't0', composition });
+    const initialMessages: Message[] = [{ role: 'system', content: 'system' }];
+    await sessionStore.sync(initialMessages);
+    await sessionStore.recordRequest(createModelRequestReceipt({
+      requestId: 'req-1', runId: 'run-1', turn: 0, messages: initialMessages, tools: [],
+    }));
+    await sessionStore.sync([
+      ...initialMessages,
+      {
+        role: 'assistant',
+        requestId: 'req-1',
+        toolCalls: [{ id: 'call-1', name: 'write', arguments: '{"path":"a.txt","content":"x","createOnly":true}' }],
+      },
+    ]);
+    await sessionStore.checkpoint(initialMessages);
+
+    await expect(loadLoopGoalResume(goalPath, sessionPath, 'g1')).rejects.toThrow(/unresolved tool execution/);
+  });
+
+  it('fails closed when the v2 composition changed', async () => {
+    const goalPath = join(dir, 'g-composition.jsonl');
+    const sessionPath = join(dir, 's-composition.jsonl');
+    const goalStore = new FileGoalStore(goalPath);
+    await goalStore.writeCreated({
+      id: 'g1',
+      objective: 'do the thing',
+      objectiveHash: hashObjective('do the thing'),
+      budget: { maxRounds: 3 },
+      pinned: [],
+      sessionId: 'g1',
+      createdAt: 't0',
+    });
+    const sessionStore = new FileSessionStore(sessionPath);
+    await sessionStore.writeHeader({ id: 'g1', model: 'm', cwd: dir, startedAt: 't0', composition });
+    const changed = createSessionComposition({
+      root: 'loop',
+      runtimeVersion: 'changed',
+      permissionMode: 'interactive',
+      toolSchemas: [],
+      systemPrompt: 'test prompt',
+    });
+
+    await expect(loadLoopGoalResume(goalPath, sessionPath, 'g1', dir, changed, 'm')).rejects.toThrow(/composition changed/);
+  });
+
+  it('fails closed when a v2 session has only partial composition coverage', async () => {
+    const goalPath = join(dir, 'g-partial-composition.jsonl');
+    const sessionPath = join(dir, 's-partial-composition.jsonl');
+    const goalStore = new FileGoalStore(goalPath);
+    await goalStore.writeCreated({
+      id: 'g1',
+      objective: 'do the thing',
+      objectiveHash: hashObjective('do the thing'),
+      budget: { maxRounds: 3 },
+      pinned: [],
+      sessionId: 'g1',
+      createdAt: 't0',
+    });
+    const partial = createSessionComposition({
+      root: 'loop', runtimeVersion: 'test', permissionMode: 'interactive', systemPrompt: 'test prompt',
+    });
+    const sessionStore = new FileSessionStore(sessionPath);
+    await sessionStore.writeHeader({ id: 'g1', model: 'm', cwd: dir, startedAt: 't0', composition: partial });
+
+    await expect(loadLoopGoalResume(goalPath, sessionPath, 'g1', dir, composition, 'm')).rejects.toThrow(/coverage is partial/);
   });
 });

@@ -1,14 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtemp, rm, readFile, writeFile, appendFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   FileSessionStore,
+  createSessionComposition,
+  createModelRequestReceipt,
+  diffSessionComposition,
   loadSession,
   latestSessionPath,
   parseSessionLog,
   replayMessages,
   serializeRecord,
+  summarizeToolResult,
   type SessionRecord,
 } from '../../src/runtime/session/session-store.js';
 import type { Message } from '../../src/core/types.js';
@@ -16,6 +20,13 @@ import type { Message } from '../../src/core/types.js';
 const sys: Message = { role: 'system', content: 'sys' };
 const user = (c: string): Message => ({ role: 'user', content: c });
 const asst = (c: string): Message => ({ role: 'assistant', content: c });
+const composition = createSessionComposition({
+  root: 'repl',
+  runtimeVersion: 'test',
+  permissionMode: 'interactive',
+  toolSchemas: [],
+  systemPrompt: 'sys',
+});
 
 describe('parseSessionLog + replayMessages (pure)', () => {
   it('round-trips messages: serialize → parse → replay reproduces the conversation', () => {
@@ -58,6 +69,7 @@ describe('FileSessionStore', () => {
   beforeEach(async () => {
     dir = await mkdtemp(join(tmpdir(), 'sessions-'));
     path = join(dir, 'sessions', 's1.jsonl');
+    await mkdir(join(dir, 'sessions'), { recursive: true });
   });
   afterEach(async () => {
     await rm(dir, { recursive: true, force: true });
@@ -65,7 +77,7 @@ describe('FileSessionStore', () => {
 
   it('writes a header and appends only the messages past the cursor on each sync', async () => {
     const store = new FileSessionStore(path);
-    await store.writeHeader({ id: 's1', model: 'm', cwd: dir, startedAt: 'now' });
+    await store.writeHeader({ id: 's1', model: 'm', cwd: dir, startedAt: 'now', composition });
     await store.sync([sys, user('q1')]);
     await store.sync([sys, user('q1'), asst('a1')]); // only a1 is new
     await store.sync([sys, user('q1'), asst('a1')]); // nothing new → no extra lines
@@ -90,12 +102,409 @@ describe('FileSessionStore', () => {
     await first.sync([sys, user('q1'), asst('a1')]);
 
     // simulate a fresh process: load, then continue with a new store seeded at the replayed count
-    const { messages } = await loadSession(path);
-    const resumed = new FileSessionStore(path, messages.length);
+    const { messages, format, lastSequence } = await loadSession(path);
+    const resumed = new FileSessionStore(path, messages.length, { format, initialSequence: lastSequence });
     await resumed.sync([...messages, user('q2'), asst('a2')]);
 
     const reloaded = await loadSession(path);
     expect(reloaded.messages).toEqual([sys, user('q1'), asst('a1'), user('q2'), asst('a2')]);
+  });
+
+  it('fails closed for operational resume when a middle record has invalid shape', async () => {
+    await writeFile(
+      path,
+      serializeRecord({ t: 'session', id: 's1', model: 'm', cwd: dir, startedAt: 'now' })
+        + '{}\n'
+        + serializeRecord({ t: 'message', message: user('still parseable') }),
+      'utf8',
+    );
+
+    await expect(loadSession(path, { requireHeader: true })).rejects.toThrow('session state is corrupt at line 2 (invalid-record)');
+  });
+
+  it('allows operational resume to recover a crash-truncated final append', async () => {
+    await writeFile(
+      path,
+      serializeRecord({ t: 'session', id: 's1', model: 'm', cwd: dir, startedAt: 'now' })
+        + serializeRecord({ t: 'message', message: user('kept') })
+        + '{"t":"message"',
+      'utf8',
+    );
+
+    await expect(loadSession(path, { requireHeader: true })).resolves.toMatchObject({ messages: [user('kept')] });
+  });
+
+  it('rejects operational resume when the session header is missing', async () => {
+    await writeFile(path, serializeRecord({ t: 'message', message: user('orphan') }), 'utf8');
+
+    await expect(loadSession(path, { requireHeader: true })).rejects.toThrow('session state is corrupt: missing header');
+  });
+
+  it('writes a contiguous v2 envelope and preserves request/tool receipts outside message replay', async () => {
+    const store = new FileSessionStore(path);
+    await store.writeHeader({ id: 's1', model: 'm', cwd: dir, startedAt: 'now', composition });
+    const assistant: Message = {
+      role: 'assistant',
+      requestId: 'req-1',
+      toolCalls: [{ id: 'call-1', name: 'read', arguments: '{"path":"a.txt"}' }],
+    };
+    await store.sync([sys, user('q')]);
+    await store.recordRequest(createModelRequestReceipt({
+      requestId: 'req-1',
+      runId: 'run-1',
+      turn: 0,
+      messages: [sys, user('q')],
+      systemAddendum: 'skill text',
+      tools: [{ name: 'read', description: 'read', parameters: { type: 'object' } }],
+    }));
+    await store.sync([sys, user('q'), assistant]);
+    await store.recordToolPlanned({
+      t: 'tool',
+      phase: 'planned',
+      executionId: 'exec-1',
+      requestId: 'req-1',
+      runId: 'run-1',
+      turn: 0,
+      callIndex: 0,
+      call: { id: 'call-1', name: 'read', arguments: '{"path":"a.txt"}' },
+    });
+    await store.recordToolCommitted({
+      t: 'tool',
+      phase: 'committed',
+      executionId: 'exec-1',
+      requestId: 'req-1',
+      runId: 'run-1',
+      turn: 0,
+      callIndex: 0,
+      result: summarizeToolResult({ callId: 'call-1', content: 'A' }),
+    });
+    const toolMessage: Message = { role: 'tool', toolCallId: 'call-1', content: 'A', executionId: 'exec-1' };
+    await store.sync([sys, user('q'), assistant, toolMessage]);
+
+    const rawRecords = parseSessionLog(await readFile(path, 'utf8'));
+    expect(rawRecords.every((record, index) => 'schemaVersion' in record && record.seq === index + 1)).toBe(true);
+    const loaded = await loadSession(path, { requireHeader: true });
+    expect(loaded.format).toBe('v2');
+    expect(loaded.requests).toHaveLength(1);
+    expect(loaded.requests[0]).toMatchObject({
+      messageCount: 2,
+      toolCount: 1,
+      messagesHash: expect.stringMatching(/^sha256\./),
+      systemAddendumHash: expect.stringMatching(/^sha256\./),
+      toolsHash: expect.stringMatching(/^sha256\./),
+    });
+    expect(loaded.requests[0]).not.toHaveProperty('systemAddendum');
+    expect(loaded.requests[0]).not.toHaveProperty('tools');
+    expect(loaded.toolReceipts).toHaveLength(2);
+    expect(loaded.pendingTools).toEqual([]);
+    expect(loaded.messages).toEqual([sys, user('q'), assistant, toolMessage]);
+  });
+
+  it('marks a persisted assistant tool intent without a terminal receipt as pending', async () => {
+    const store = new FileSessionStore(path);
+    await store.writeHeader({ id: 's1', model: 'm', cwd: dir, startedAt: 'now', composition });
+    await store.sync([sys]);
+    await store.recordRequest(createModelRequestReceipt({
+      requestId: 'req-1',
+      runId: 'run-1',
+      turn: 0,
+      messages: [sys],
+      tools: [],
+    }));
+    await store.sync([
+      sys,
+      {
+        role: 'assistant',
+        requestId: 'req-1',
+        toolCalls: [{ id: 'call-1', name: 'write', arguments: '{"path":"a.txt","createOnly":true,"content":"x"}' }],
+      },
+    ]);
+
+    const loaded = await loadSession(path, { requireHeader: true });
+
+    expect(loaded.pendingTools).toEqual([
+      expect.objectContaining({ callId: 'call-1', toolName: 'write', reason: 'intent-without-plan' }),
+    ]);
+  });
+
+  it('keeps a historical assistant intent pending when compaction omits it', async () => {
+    const store = new FileSessionStore(path);
+    const call = { id: 'call-1', name: 'write', arguments: '{"path":"a.txt","createOnly":true,"content":"x"}' };
+    const assistant: Message = { role: 'assistant', requestId: 'req-1', toolCalls: [call] };
+    await store.writeHeader({ id: 's1', model: 'm', cwd: dir, startedAt: 'now', composition });
+    await store.sync([sys]);
+    await store.recordRequest(createModelRequestReceipt({
+      requestId: 'req-1', runId: 'run-1', turn: 0, messages: [sys], tools: [],
+    }));
+    await store.sync([sys, assistant]);
+    await store.checkpoint([sys]);
+
+    await expect(loadSession(path, { requireHeader: true, validateIntegrity: true })).resolves.toMatchObject({
+      messages: [sys],
+      pendingTools: [expect.objectContaining({
+        requestId: 'req-1', callId: 'call-1', toolName: 'write', reason: 'intent-without-plan',
+      })],
+    });
+  });
+
+  it('rejects compaction that changes a historical assistant tool-call identity', async () => {
+    const store = new FileSessionStore(path);
+    const assistant: Message = {
+      role: 'assistant',
+      requestId: 'req-1',
+      toolCalls: [{ id: 'call-1', name: 'read', arguments: '{"path":"a.txt"}' }],
+    };
+    await store.writeHeader({ id: 's1', model: 'm', cwd: dir, startedAt: 'now', composition });
+    await store.sync([sys]);
+    await store.recordRequest(createModelRequestReceipt({
+      requestId: 'req-1', runId: 'run-1', turn: 0, messages: [sys], tools: [],
+    }));
+    await store.sync([sys, assistant]);
+    await store.checkpoint([sys, { role: 'assistant', requestId: 'req-1', toolCalls: [] }]);
+
+    await expect(loadSession(path, { requireHeader: true, validateIntegrity: true }))
+      .rejects.toThrow(/compaction changes historical assistant request req-1/);
+  });
+
+  it('fails closed on a v2 sequence gap', async () => {
+    const header: SessionRecord = {
+      schemaVersion: 2,
+      seq: 1,
+      at: 't0',
+      t: 'session',
+      id: 's1',
+      model: 'm',
+      cwd: dir,
+      startedAt: 't0',
+      composition,
+    };
+    const message: SessionRecord = {
+      schemaVersion: 2,
+      seq: 3,
+      at: 't1',
+      t: 'message',
+      message: user('gap'),
+    };
+    await writeFile(path, serializeRecord(header) + serializeRecord(message), 'utf8');
+
+    await expect(loadSession(path, { requireHeader: true })).rejects.toThrow(/sequence gap/);
+  });
+
+  it('fails closed when v1 and v2 records are mixed', async () => {
+    const header: SessionRecord = {
+      schemaVersion: 2,
+      seq: 1,
+      at: 't0',
+      t: 'session',
+      id: 's1',
+      model: 'm',
+      cwd: dir,
+      startedAt: 't0',
+      composition,
+    };
+    await writeFile(path, serializeRecord(header) + serializeRecord({ t: 'message', message: user('legacy') }), 'utf8');
+
+    await expect(loadSession(path, { requireHeader: true })).rejects.toThrow('mixed v1/v2 records');
+  });
+
+  it('fails closed when a request receipt does not match the persisted message prefix', async () => {
+    const store = new FileSessionStore(path);
+    await store.writeHeader({ id: 's1', model: 'm', cwd: dir, startedAt: 'now', composition });
+    await store.sync([sys, user('q')]);
+    await store.recordRequest({
+      ...createModelRequestReceipt({
+        requestId: 'req-1',
+        runId: 'run-1',
+        turn: 0,
+        messages: [sys, user('q')],
+        tools: [],
+      }),
+      messagesHash: 'sha256.tampered',
+    });
+
+    await expect(loadSession(path, { requireHeader: true })).rejects.toThrow('request message receipt mismatch');
+  });
+
+  it('fails closed on a duplicate planned execution id', async () => {
+    const store = new FileSessionStore(path);
+    const request = createModelRequestReceipt({
+      requestId: 'req-1',
+      runId: 'run-1',
+      turn: 0,
+      messages: [sys, user('q')],
+      tools: [],
+    });
+    const assistant: Message = {
+      role: 'assistant',
+      requestId: 'req-1',
+      toolCalls: [{ id: 'call-1', name: 'read', arguments: '{"path":"a.txt"}' }],
+    };
+    const plan = {
+      t: 'tool' as const,
+      phase: 'planned' as const,
+      executionId: 'exec-1',
+      requestId: 'req-1',
+      runId: 'run-1',
+      turn: 0,
+      callIndex: 0,
+      call: assistant.toolCalls![0],
+    };
+    await store.writeHeader({ id: 's1', model: 'm', cwd: dir, startedAt: 'now', composition });
+    await store.sync([sys, user('q')]);
+    await store.recordRequest(request);
+    await store.sync([sys, user('q'), assistant]);
+    await store.recordToolPlanned(plan);
+    await store.recordToolPlanned(plan);
+
+    await expect(loadSession(path, { requireHeader: true })).rejects.toThrow('duplicate planned executionId');
+  });
+
+  it('rejects receiptless v2 tool intent and tool projection identities', async () => {
+    const store = new FileSessionStore(path);
+    await store.writeHeader({ id: 's1', model: 'm', cwd: dir, startedAt: 'now', composition });
+    await store.sync([
+      sys,
+      { role: 'assistant', toolCalls: [{ id: 'call-1', name: 'read', arguments: '{"path":"a.txt"}' }] },
+      { role: 'tool', toolCallId: 'call-1', content: 'A' },
+    ]);
+
+    await expect(loadSession(path, { requireHeader: true })).rejects.toThrow(/tool-bearing assistant message is missing requestId/);
+  });
+
+  it('rejects two execution ids for the same request and call index', async () => {
+    const store = new FileSessionStore(path);
+    const call = { id: 'call-1', name: 'read', arguments: '{"path":"a.txt"}' };
+    const assistant: Message = { role: 'assistant', requestId: 'req-1', toolCalls: [call] };
+    await store.writeHeader({ id: 's1', model: 'm', cwd: dir, startedAt: 'now', composition });
+    await store.sync([sys]);
+    await store.recordRequest(createModelRequestReceipt({
+      requestId: 'req-1', runId: 'run-1', turn: 0, messages: [sys], tools: [],
+    }));
+    await store.sync([sys, assistant]);
+    for (const executionId of ['exec-1', 'exec-2']) {
+      await store.recordToolPlanned({
+        t: 'tool', phase: 'planned', executionId, requestId: 'req-1', runId: 'run-1', turn: 0, callIndex: 0, call,
+      });
+      await store.recordToolCommitted({
+        t: 'tool', phase: 'committed', executionId, requestId: 'req-1', runId: 'run-1', turn: 0, callIndex: 0,
+        result: summarizeToolResult({ callId: 'call-1', content: 'A' }),
+      });
+      await store.sync([
+        sys,
+        assistant,
+        ...['exec-1', 'exec-2'].slice(0, executionId === 'exec-1' ? 1 : 2).map((id) => ({
+          role: 'tool' as const, toolCallId: 'call-1', content: 'A', executionId: id,
+        })),
+      ]);
+    }
+
+    await expect(loadSession(path, { requireHeader: true })).rejects.toThrow(/duplicate logical tool execution/);
+  });
+
+  it('keeps a commit pending when compaction occurs without a historical tool message', async () => {
+    const store = new FileSessionStore(path);
+    const call = { id: 'call-1', name: 'read', arguments: '{"path":"a.txt"}' };
+    const assistant: Message = { role: 'assistant', requestId: 'req-1', toolCalls: [call] };
+    await store.writeHeader({ id: 's1', model: 'm', cwd: dir, startedAt: 'now', composition });
+    await store.sync([sys]);
+    await store.recordRequest(createModelRequestReceipt({
+      requestId: 'req-1', runId: 'run-1', turn: 0, messages: [sys], tools: [],
+    }));
+    await store.sync([sys, assistant]);
+    await store.recordToolPlanned({
+      t: 'tool', phase: 'planned', executionId: 'exec-1', requestId: 'req-1', runId: 'run-1', turn: 0, callIndex: 0, call,
+    });
+    await store.recordToolCommitted({
+      t: 'tool', phase: 'committed', executionId: 'exec-1', requestId: 'req-1', runId: 'run-1', turn: 0, callIndex: 0,
+      result: summarizeToolResult({ callId: 'call-1', content: 'A' }),
+    });
+    await store.checkpoint([sys, assistant]);
+
+    await expect(loadSession(path, { requireHeader: true })).resolves.toMatchObject({
+      pendingTools: [expect.objectContaining({ executionId: 'exec-1', reason: 'committed-without-message' })],
+    });
+  });
+
+  it('rejects a compaction snapshot that fabricates a tool projection', async () => {
+    const store = new FileSessionStore(path);
+    const call = { id: 'call-1', name: 'read', arguments: '{"path":"a.txt"}' };
+    const assistant: Message = { role: 'assistant', requestId: 'req-1', toolCalls: [call] };
+    await store.writeHeader({ id: 's1', model: 'm', cwd: dir, startedAt: 'now', composition });
+    await store.sync([sys]);
+    await store.recordRequest(createModelRequestReceipt({
+      requestId: 'req-1', runId: 'run-1', turn: 0, messages: [sys], tools: [],
+    }));
+    await store.sync([sys, assistant]);
+    await store.recordToolPlanned({
+      t: 'tool', phase: 'planned', executionId: 'exec-1', requestId: 'req-1', runId: 'run-1', turn: 0, callIndex: 0, call,
+    });
+    await store.recordToolCommitted({
+      t: 'tool', phase: 'committed', executionId: 'exec-1', requestId: 'req-1', runId: 'run-1', turn: 0, callIndex: 0,
+      result: summarizeToolResult({ callId: 'call-1', content: 'A' }),
+    });
+    await store.checkpoint([sys, assistant, { role: 'tool', toolCallId: 'call-1', content: 'A', executionId: 'exec-1' }]);
+
+    await expect(loadSession(path, { requireHeader: true })).rejects.toThrow(/compaction introduces tool projection without historical message/);
+  });
+
+  it('rejects an unknown file effect encoded as committed', async () => {
+    const store = new FileSessionStore(path);
+    const call = { id: 'call-1', name: 'write', arguments: '{"path":"a.txt","content":"x","createOnly":true}' };
+    const assistant: Message = { role: 'assistant', requestId: 'req-1', toolCalls: [call] };
+    await store.writeHeader({ id: 's1', model: 'm', cwd: dir, startedAt: 'now', composition });
+    await store.sync([sys]);
+    await store.recordRequest(createModelRequestReceipt({
+      requestId: 'req-1', runId: 'run-1', turn: 0, messages: [sys], tools: [],
+    }));
+    await store.sync([sys, assistant]);
+    await store.recordToolPlanned({
+      t: 'tool', phase: 'planned', executionId: 'exec-1', requestId: 'req-1', runId: 'run-1', turn: 0, callIndex: 0, call,
+    });
+    await store.recordToolCommitted({
+      t: 'tool', phase: 'committed', executionId: 'exec-1', requestId: 'req-1', runId: 'run-1', turn: 0, callIndex: 0,
+      result: summarizeToolResult({
+        callId: 'call-1', content: '', error: 'uncertain',
+        fileReceipt: { kind: 'write', path: 'a.txt', precondition: 'createOnly', outcome: 'unknown' },
+      }),
+    });
+
+    await expect(loadSession(path, { requireHeader: true })).rejects.toThrow(/committed receipt contains unknown file effect/);
+  });
+
+  it('reports composition differences without changing either input', () => {
+    const changed = createSessionComposition({
+      root: 'goal',
+      runtimeVersion: 'next',
+      permissionMode: 'unattended',
+      toolSchemas: [],
+      systemPrompt: 'sys',
+    });
+    expect(diffSessionComposition(composition, changed).map((item) => item.field)).toEqual(
+      expect.arrayContaining(['root', 'runtimeVersion', 'permissionMode']),
+    );
+    expect(composition.root).toBe('repl');
+  });
+
+  it('detects tool-schema and system-prompt drift under full composition coverage', () => {
+    const baseline = createSessionComposition({
+      root: 'repl', runtimeVersion: 'test', permissionMode: 'interactive',
+      toolSchemas: [{ name: 'read', description: 'read', parameters: { type: 'object' } }],
+      systemPrompt: 'prompt A',
+    });
+    const changedTool = createSessionComposition({
+      root: 'repl', runtimeVersion: 'test', permissionMode: 'interactive',
+      toolSchemas: [{ name: 'vision', description: 'vision', parameters: { type: 'object' } }],
+      systemPrompt: 'prompt A',
+    });
+    const changedPrompt = createSessionComposition({
+      root: 'repl', runtimeVersion: 'test', permissionMode: 'interactive',
+      toolSchemas: [{ name: 'read', description: 'read', parameters: { type: 'object' } }],
+      systemPrompt: 'prompt B',
+    });
+
+    expect(baseline.coverage).toBe('full');
+    expect(diffSessionComposition(baseline, changedTool).map((item) => item.field)).toContain('toolsetHash');
+    expect(diffSessionComposition(baseline, changedPrompt).map((item) => item.field)).toContain('systemPromptHash');
   });
 });
 

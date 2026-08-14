@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { CLI_EXIT } from '../../src/surfaces/cli/exit-codes.js';
 
 describe('cron CLI process boundary', () => {
   it('does not load .env before spawning loop-cli children', async () => {
@@ -28,7 +29,7 @@ describe('cron CLI process boundary', () => {
   it('fails the cron process when the scan lock cannot be acquired', async () => {
     const source = await readFile('src/surfaces/cli/cron-cli.ts', 'utf8');
     expect(source).toContain('if (lock === null)');
-    expect(source).toContain('process.exitCode = 1');
+    expect(source).toContain('process.exitCode = CLI_EXIT.RUNTIME');
   });
 
   it('exits non-zero without writing a cron attempt when a fresh scan lock exists', async () => {
@@ -58,7 +59,7 @@ describe('cron CLI process boundary', () => {
 
       const result = await runCronCli(['--cron-map', cronMap], cwd);
 
-      expect(result.code).toBe(1);
+      expect(result.code).toBe(CLI_EXIT.RUNTIME);
       expect(`${result.stdout}\n${result.stderr}`).toContain('cron scan lock');
       await expect(readFile(join(cwd, 'data', 'cron', 'loop-cron.jsonl'), 'utf8')).rejects.toThrow();
     } finally {

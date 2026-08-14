@@ -55,6 +55,7 @@ function scriptedRunOne(summaries: GoalRunSummary[]): {
 }
 
 const blockedCnv: GoalRunSummary = { state: 'blocked', outcome: 'couldNotVerify', rounds: 1 };
+const checksOnlyBlocked: GoalRunSummary = { state: 'blocked', outcome: 'checksOnly', rounds: 1 };
 const verified: GoalRunSummary = { state: 'complete', outcome: 'verified', rounds: 1 };
 const rejectedBlocked: GoalRunSummary = { state: 'blocked', outcome: 'rejected', rounds: 1 };
 
@@ -82,6 +83,12 @@ describe('VerifierHealthMonitor — the cross-goal health unit', () => {
     m.record('couldNotVerify');
     m.record('couldNotVerify');
     expect(m.record('couldNotVerify')).toBe('halt');
+  });
+
+  it('checksOnly outcomes are not verifier-health samples', () => {
+    const m = new VerifierHealthMonitor(1, 1);
+    expect(m.record('checksOnly')).toBe('continue');
+    expect(m.isTripped()).toBe(false);
   });
 
   it('isTripped reflects whether the window already holds T cnv (for resume re-assertion)', () => {
@@ -125,7 +132,7 @@ describe('runLoop — cross-goal verifier-health (load-bearing, real wiring)', (
       { id: 'L', objectives: ['a', 'b', 'c', 'd', 'e'], contract: contract({ cnvThreshold: 3, cnvWindow: 3 }) },
       { bus, loopStore: store, runOne },
     );
-    expect(result.reason).toBe('queue-empty');
+    expect(result.reason).toBe('blocked-goals');
     expect(result.started).toBe(5);
   });
 
@@ -157,7 +164,7 @@ describe('runLoop — cross-goal verifier-health (load-bearing, real wiring)', (
       { bus, loopStore: store, runOne },
     );
 
-    expect(result.reason).toBe('queue-empty');
+    expect(result.reason).toBe('blocked-goals');
     expect(result.started).toBe(3);
   });
 
@@ -169,7 +176,41 @@ describe('runLoop — cross-goal verifier-health (load-bearing, real wiring)', (
       { id: 'L', objectives: ['a', 'b', 'c', 'd', 'e'], contract: contract({ maxConsecutiveBlocked: 100 }) },
       { bus, loopStore: store, runOne },
     );
-    expect(result.reason).toBe('queue-empty');
+    expect(result.reason).toBe('blocked-goals');
+  });
+});
+
+describe('runLoop — trustworthy terminal status', () => {
+  it('draining a checks-only goal halts as blocked-goals and reports unverified work', async () => {
+    const bus = new InMemoryEventBus();
+    const { store, records } = fakeStore();
+    const { runOne } = scriptedRunOne([checksOnlyBlocked]);
+
+    const result = await runLoop(
+      { id: 'L', objectives: ['a'], contract: contract() },
+      { bus, loopStore: store, runOne },
+    );
+
+    expect(result).toMatchObject({ reason: 'blocked-goals', completed: 0, blocked: 1, needsVerification: 1 });
+    expect(records.at(-1)).toMatchObject({ t: 'loop-halted', reason: 'blocked-goals' });
+  });
+
+  it('propagates a goal liveness failure for runtime exit handling', async () => {
+    const bus = new InMemoryEventBus();
+    const { store, records } = fakeStore();
+    const { runOne } = scriptedRunOne([
+      { state: 'blocked', outcome: 'couldNotVerify', haltReason: 'turnTimeout', rounds: 1 },
+    ]);
+
+    const result = await runLoop(
+      { id: 'L', objectives: ['a'], contract: contract({ cnvWindow: 1, cnvThreshold: 1 }) },
+      { bus, loopStore: store, runOne },
+    );
+
+    expect(result).toMatchObject({ reason: 'blocked-goals', needsVerification: 1, runtimeFailures: 1 });
+    expect(records).toContainEqual(
+      expect.objectContaining({ t: 'goal-finished', haltReason: 'turnTimeout' }),
+    );
   });
 });
 
@@ -281,7 +322,7 @@ describe('runLoop — consecutive-blocked breaker', () => {
       { id: 'L', objectives: ['a', 'b', 'c', 'd'], contract: contract({ maxConsecutiveBlocked: 3 }) },
       { bus, loopStore: store, runOne },
     );
-    expect(result.reason).toBe('queue-empty');
+    expect(result.reason).toBe('blocked-goals');
     expect(result.started).toBe(4);
   });
 });
@@ -514,6 +555,7 @@ describe('runLoop — production composition (runOne = the REAL runGoal)', () =>
     results: [],
     testTamper: 'clean',
     tamperReason: '',
+    heldOut: { passed: true, results: [] },
   });
 
   it('drives a goal to complete through runGoal and runLoop reports completed=1', async () => {

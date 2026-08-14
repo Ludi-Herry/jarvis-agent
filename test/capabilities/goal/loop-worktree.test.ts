@@ -95,7 +95,7 @@ describe('loop worktree helpers', () => {
     });
 
     const read = await readTool.run({ path: 'node_modules/host-only.txt' }, { cwd: path });
-    const write = await writeTool.run({ path: 'node_modules/host-only.txt', content: 'pwned' }, { cwd: path });
+    const write = await writeTool.run({ path: 'node_modules/host-only.txt', content: 'pwned', createOnly: true }, { cwd: path });
     const grep = await grepTool.run({ pattern: 'host', path: 'node_modules' }, { cwd: path });
 
     expect(read.error).toMatch(/outside the project root/);

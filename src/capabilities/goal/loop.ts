@@ -35,7 +35,7 @@ export interface LoopContract {
   /** Wall-clock cap PER invocation (checked between goals; not cumulative — a crashed/idle process
    *  burns no wall-clock, stated honestly). */
   maxWallClockMs: number;
-  /** Consecutive blocked goals (couldNotVerify is NEUTRAL to this — see {@link VerifierHealthMonitor}). */
+  /** Consecutive blocked goals (couldNotVerify and checksOnly are neutral to this). */
   maxConsecutiveBlocked: number;
   /** Cross-goal health window size W. */
   cnvWindow: number;
@@ -45,9 +45,10 @@ export interface LoopContract {
   perGoalBudget: GoalBudget;
 }
 
-/** Why the loop stopped. All six are numeric/verifiable and recorded as `loop-halted`. */
+/** Why the loop stopped. Every reason is explicit, machine-readable, and recorded as `loop-halted`. */
 export type LoopHaltReason =
   | 'queue-empty'
+  | 'blocked-goals'
   | 'max-goals'
   | 'token-budget'
   | 'wall-clock'
@@ -59,12 +60,14 @@ export type LoopHaltReason =
  *  type and (deliberately) gives it NO handle on anything that could fake completion. */
 export interface GoalRunSummary {
   state: GoalState;
-  /** The verifier outcome, present only when leg 3 ran and produced one (→ feeds the health monitor). */
+  /** Harness outcome. Only judge-produced outcomes feed verifier health. */
   outcome?: VerdictOutcome;
   verifierKey?: string;
   rounds: number;
   /** Full builder-token total for this goal attempt, including any pre-crash resumed rounds. */
   tokens?: number;
+  /** Liveness halt propagated from runGoal so automation can distinguish timeout/runtime failure. */
+  haltReason?: string;
 }
 
 export interface VerifierOutcomeSample {
@@ -96,6 +99,7 @@ export interface LoopStore {
     state: GoalState;
     outcome?: VerdictOutcome;
     verifierKey?: string;
+    haltReason?: string;
     rounds: number;
     tokens: number;
     at: string;
@@ -134,6 +138,10 @@ export interface LoopRunResult {
   completed: number;
   /** Goals that finished `blocked` this invocation. */
   blocked: number;
+  /** Blocked goals whose checks passed but whose objective still lacks trusted completion evidence. */
+  needsVerification: number;
+  /** Goals parked by a provider/turn/goal liveness failure. */
+  runtimeFailures: number;
   /** Cumulative FINISHED goals (seed + this run) — the value the maxGoals ceiling is measured against. */
   goalsFinished: number;
   /** Cumulative tokens (seed + this run). */
@@ -160,7 +168,7 @@ export class VerifierHealthMonitor {
   ) {}
 
   record(outcome?: VerdictOutcome): 'continue' | 'halt' {
-    if (outcome === undefined) return 'continue'; // no verifier verdict → not a health sample
+    if (outcome === undefined || outcome === 'checksOnly') return 'continue'; // no judge verdict → not a health sample
     this.window.push(outcome === 'couldNotVerify');
     if (this.window.length > this.W) this.window.shift();
     return this.isTripped() ? 'halt' : 'continue';
@@ -226,6 +234,8 @@ export async function runLoop(spec: LoopSpec, deps: LoopDeps): Promise<LoopRunRe
   let started = 0;
   let completed = 0;
   let blocked = 0;
+  let needsVerification = 0;
+  let runtimeFailures = 0;
   let reason: LoopHaltReason | undefined;
 
   try {
@@ -289,6 +299,7 @@ export async function runLoop(spec: LoopSpec, deps: LoopDeps): Promise<LoopRunRe
         state: result.state,
         outcome,
         verifierKey: result.verifierKey,
+        haltReason: result.haltReason,
         rounds: result.rounds,
         tokens,
         at: stamp(),
@@ -302,24 +313,30 @@ export async function runLoop(spec: LoopSpec, deps: LoopDeps): Promise<LoopRunRe
         consecutiveBlocked = 0;
       } else {
         blocked++;
-        if (outcome !== 'couldNotVerify') consecutiveBlocked++; // cnv is neutral to consecutive-blocked
+        if (outcome === 'checksOnly' || outcome === 'couldNotVerify') needsVerification++;
+        if (result.haltReason === 'turnTimeout' || result.haltReason === 'goalTimeout') runtimeFailures++;
+        if (outcome !== 'couldNotVerify' && outcome !== 'checksOnly') consecutiveBlocked++;
       }
 
       if (consecutiveBlocked >= c.maxConsecutiveBlocked) {
         reason = 'consecutive-blocked';
         break;
       }
-      if (outcome !== undefined && monitorFor(result.verifierKey ?? DEFAULT_VERIFIER_HEALTH_KEY).record(outcome) === 'halt') {
+      if (
+        result.haltReason === undefined &&
+        outcome !== undefined &&
+        monitorFor(result.verifierKey ?? DEFAULT_VERIFIER_HEALTH_KEY).record(outcome) === 'halt'
+      ) {
         reason = 'verifier-health';
         break;
       }
     }
-    if (reason === undefined) reason = 'queue-empty'; // drained the whole tail
+    if (reason === undefined) reason = blocked > 0 ? 'blocked-goals' : 'queue-empty';
   } finally {
     unsubscribe();
   }
 
   deps.bus.emit({ type: 'loop_halt', loopId: spec.id, reason });
   await deps.loopStore.recordHalted(reason, stamp());
-  return { loopId: spec.id, reason, started, completed, blocked, goalsFinished, cumulativeTokens };
+  return { loopId: spec.id, reason, started, completed, blocked, needsVerification, runtimeFailures, goalsFinished, cumulativeTokens };
 }

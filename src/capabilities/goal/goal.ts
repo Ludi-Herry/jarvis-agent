@@ -12,17 +12,17 @@
  * Leg 3 (the independent LLM judge) is LANDED this batch: a goal carries the harness-pinned
  * requirement list (`pinned`), and once a verifier provider is configured `decideVerdict` scores a
  * present `VerifierReport` over the evidence_strength × claim_scope table (Part7 §4) instead of
- * failing it closed. With no verifier configured the `report===undefined` path is the batch-1
- * deterministic-only fallback, unchanged.
+ * failing it closed. With no verifier configured, routine project checks produce `checksOnly`;
+ * deterministic-only completion requires a passed held-out objective check.
  */
 
 /** The goal state machine (a subset for this batch: active → complete | blocked). `active` keeps the
  *  loop running; `complete` is a verified finish; `blocked` is fail-closed (handed to a human). */
 export type GoalState = 'active' | 'complete' | 'blocked';
 
-/** The verifier verdict — three states (Part7). `couldNotVerify` is the fail-closed third state that
- *  a binary allow/deny lacks: "couldn't prove done" must never collapse into "done". */
-export type VerdictOutcome = 'verified' | 'rejected' | 'couldNotVerify';
+/** Harness verdict. `checksOnly` records routine project health without objective-completion authority;
+ *  `couldNotVerify` is the fail-closed judge state. Neither may collapse into `verified`. */
+export type VerdictOutcome = 'verified' | 'checksOnly' | 'rejected' | 'couldNotVerify';
 
 /** What a builder claims when it calls `update_goal`. `verification` is the builder's self-report of
  *  what it ran — treated as a HINT only; the harness never trusts it to decide the verdict. */
@@ -51,7 +51,7 @@ export interface DeterministicChecks {
   /** What leg 1 actually ran — observable, and the basis for the rejection continuation. */
   results: Array<{ command: string; code: number | null; output: string }>;
   /** Leg 2: deterministic git-diff scan of the test files vs the goal's baseline. */
-  testTamper: 'clean' | 'weakened-or-deleted';
+  testTamper: 'clean' | 'weakened-or-deleted' | 'unavailable';
   /** Why leg 2 fired (for the continuation / verdict rationale), or '' when clean. */
   tamperReason: string;
   /** Worktree audit: status before the goal run vs status at verification time. */
@@ -135,10 +135,13 @@ export interface GoalBudget {
   maxTotalTurns?: number;
   /** Optional cap on cumulative tokens (summed from the bus `usage` events). */
   maxTotalTokens?: number;
+  /** Hard wall-clock ceiling per runGoal invocation. A resumed invocation gets a fresh ceiling. */
+  maxWallClockMs?: number;
 }
 
 /** Leg 2 baseline, snapshotted at goal creation so tamper detection is immune to pre-goal dirty
- *  changes and survives a restart (Part7 point 4). Absent when not a git repo. */
+ *  changes and survives a restart (Part7 point 4). Absent when not a git repo; production CLIs
+ *  reject that mode unless the operator explicitly accepts checks-only trust. */
 export interface TestBaseline {
   headSha: string;
   testFiles: Array<{ path: string; blobHash: string }>;
@@ -156,7 +159,7 @@ export interface Goal {
   /** Worktree status before this run; used for audit and optional no-change enforcement. */
   worktreeBaseline?: WorktreeStatusBaseline;
   /** Harness-pinned requirement list (leg 3), derived once at creation then immutable. Empty when no
-   *  verifier is configured (batch-1 deterministic-only fallback) — the verifier scores each entry. */
+   *  verifier is configured; a verifier scores each non-empty entry. */
   pinned: PinnedRequirement[];
   /** The conversation log id this goal drives (cross-reference; messages live in the SessionStore). */
   sessionId: string;

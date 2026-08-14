@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { z } from 'zod';
 import { InMemoryToolRegistry } from '../../../src/core/tools/registry.js';
 import { writeTool } from '../../../src/core/tools/builtins.js';
 import { runAgent } from '../../../src/core/loop/run-agent.js';
@@ -14,12 +15,18 @@ import {
 import {
   SubagentManager,
   createDelegateTool,
+  delegateToolSchema,
   TASK_TOOL_NAME,
   type RunAgent,
 } from '../../../src/capabilities/subagents/index.js';
 import type { AgentRole } from '../../../src/capabilities/subagents/roster.js';
 import type { ModelDelta, ModelProvider, ModelResult } from '../../../src/core/model/types.js';
 import type { Message, ToolCall } from '../../../src/core/types.js';
+import {
+  FileSessionStore,
+  createSessionComposition,
+  loadSession,
+} from '../../../src/runtime/session/session-store.js';
 
 const ROSTER: AgentRole[] = [
   { name: 'reader', description: 'reads files', systemPrompt: 'You read.', capability: ['read-only'] },
@@ -125,6 +132,9 @@ describe('createDelegateTool — shape', () => {
     expect(tool.capability).toBe('read-only'); // delegation itself produces no direct side effect
     expect(tool.description).toContain('reader');
     expect(tool.description).toContain('writer');
+    const registry = new InMemoryToolRegistry();
+    registry.register(tool);
+    expect(delegateToolSchema(ROSTER)).toEqual(registry.schemasForModel()[0]);
   });
 });
 
@@ -179,7 +189,7 @@ describe('delegating via `task` does NOT bypass write approval (decision 2)', ()
         {
           text: 'writing',
           toolCalls: [
-            { id: 'w1', name: 'write', arguments: JSON.stringify({ path: 'out.txt', content: 'hi' }) },
+            { id: 'w1', name: 'write', arguments: JSON.stringify({ path: 'out.txt', content: 'hi', createOnly: true }) },
           ],
         },
         { text: 'wrote out.txt' },
@@ -218,5 +228,64 @@ describe('delegating via `task` does NOT bypass write approval (decision 2)', ()
     expect(a.asks()).toBe(1); // ONLY the child write asked — the read-only `task` call did not
     expect(await readFile(join(dir, 'out.txt'), 'utf8')).toBe('hi');
     expect(outcome.finalText).toBeDefined();
+  });
+
+  it('propagates a child write-then-throw as an unresolved parent task effect', async () => {
+    const gate = new DefaultPermissionGate({ approver: fixedApprover('allow-once').approver });
+    const provider = routedModel(
+      [{ toolCalls: [{ id: 't1', name: TASK_TOOL_NAME, arguments: JSON.stringify({ role: 'writer', task: 'run it' }) }] }],
+      [{ toolCalls: [{ id: 'w1', name: 'child_write_then_throw', arguments: '{}' }] }],
+    );
+    const tools = new InMemoryToolRegistry();
+    tools.register({
+      name: 'child_write_then_throw',
+      description: 'test only',
+      capability: 'writes-files',
+      inputSchema: z.object({}),
+      run: async () => {
+        await writeFile(join(dir, 'child-effect.txt'), 'applied', 'utf8');
+        throw new Error('child late failure');
+      },
+    });
+    const manager = new SubagentManager({
+      provider,
+      registry: tools,
+      gate,
+      budget: { maxTurns: 6 },
+      roster: ROSTER,
+      cwd: dir,
+      remainingDepth: 2,
+      makeDelegateTool: (m) => createDelegateTool(m),
+      delegateToolName: TASK_TOOL_NAME,
+    });
+    tools.register(createDelegateTool(manager));
+    const sessionPath = join(dir, 'parent.jsonl');
+    const store = new FileSessionStore(sessionPath);
+    await store.writeHeader({
+      id: 'parent',
+      model: 'm',
+      cwd: dir,
+      startedAt: 't0',
+      composition: createSessionComposition({
+        root: 'repl', runtimeVersion: 'test', permissionMode: 'interactive', toolSchemas: tools.schemasForModel(), systemPrompt: 'MAIN',
+      }),
+    });
+
+    const outcome = await runAgent({
+      model: provider,
+      tools,
+      bus: new InMemoryEventBus(),
+      messages: [{ role: 'system', content: 'MAIN' }, { role: 'user', content: 'delegate' }],
+      toolCtx: { cwd: dir },
+      budget: { maxTurns: 6 },
+      gate,
+      store,
+    });
+
+    expect(outcome).toEqual({ halted: 'toolExecutionUnknown', turns: 1 });
+    expect(await readFile(join(dir, 'child-effect.txt'), 'utf8')).toBe('applied');
+    await expect(loadSession(sessionPath, { requireHeader: true })).resolves.toMatchObject({
+      pendingTools: [expect.objectContaining({ toolName: TASK_TOOL_NAME, reason: 'unknown' })],
+    });
   });
 });

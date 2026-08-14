@@ -137,9 +137,10 @@ describe('runDeterministicChecks — leg 1 trusts the real exit code', () => {
     expect(r.results.map((x) => x.code)).toEqual([0, 3]);
   });
 
-  it('with no baseline, leg 2 is inert (clean)', async () => {
+  it('with no baseline, leg 2 is unavailable and cannot authorize completion', async () => {
     const r = await runDeterministicChecks({ shellPath, cwd: process.cwd(), checkCommands: ['exit 0'] });
-    expect(r.testTamper).toBe('clean');
+    expect(r.testTamper).toBe('unavailable');
+    expect(r.tamperReason).toContain('no Git baseline');
   });
 
   it('fails closed when git diff fails against a PRESENT baseline (unreachable sha) — not silently clean', async () => {

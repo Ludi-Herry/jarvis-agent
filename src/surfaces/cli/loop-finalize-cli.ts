@@ -7,10 +7,10 @@ import {
   assertWorktreeRootOutsideCwd,
   buildLoopFinalizeReport,
   decideVerdict,
+  isGoalRecord,
+  isHumanReviewAuditRecord,
+  isLoopRecord,
   loopWorktreeRoot,
-  parseGoalLog,
-  parseHumanReviewAuditLog,
-  parseLoopLog,
   replayGoal,
   resolveExistingGoalWorktree,
   type FinalizeWorktreeStatus,
@@ -22,7 +22,8 @@ import {
   type VerifierReport,
 } from '../../capabilities/index.js';
 import { defaultShellPath, runCommand } from '../../core/index.js';
-import { parseSessionLog, replayMessages } from '../../runtime/index.js';
+import { loadSession } from '../../runtime/index.js';
+import { assertOperationalJsonlIntegrity, parseJsonlWithDiagnostics } from '../../runtime/jsonl-integrity.js';
 import { safeInline } from './approval.js';
 import { parseLoopFinalizeArgs } from './loop-finalize-args.js';
 
@@ -170,7 +171,13 @@ async function main(): Promise<void> {
 }
 
 async function readLoopRecords(path: string): Promise<LoopRecord[]> {
-  return parseLoopLog(await readFile(path, 'utf8'));
+  const parsed = parseJsonlWithDiagnostics(await readFile(path, 'utf8'), isLoopRecord);
+  assertOperationalJsonlIntegrity(
+    'loop',
+    parsed.malformed,
+    parsed.records.some((record) => record.t === 'loop-created'),
+  );
+  return parsed.records;
 }
 
 function latestLoopCreated(records: LoopRecord[], path: string, expectedId: string): LoopCreatedRecord {
@@ -202,10 +209,13 @@ async function readGoalEvidence(dataDir: string, goalId: string): Promise<LoopFi
   let text: string;
   try {
     text = await readFile(join(dataDir, 'goals', `${goalId}.jsonl`), 'utf8');
-  } catch {
-    return undefined;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw err;
   }
-  const replayed = replayGoal(parseGoalLog(text));
+  const parsed = parseJsonlWithDiagnostics(text, isGoalRecord);
+  const replayed = replayGoal(parsed.records);
+  assertOperationalJsonlIntegrity('goal', parsed.malformed, replayed.goal !== undefined);
   const latestRound = replayed.rounds.at(-1);
   const pinned = replayed.goal?.pinned ?? [];
   const hasVerifierReport = latestRound?.verdict?.report !== undefined;
@@ -230,6 +240,8 @@ async function readGoalEvidence(dataDir: string, goalId: string): Promise<LoopFi
     ...(replayed.goal?.objective === undefined ? {} : { objective: replayed.goal.objective }),
     ...(replayed.goal?.sessionId === undefined ? {} : { sessionId: replayed.goal.sessionId }),
     ...(session?.cwd === undefined ? {} : { sessionCwd: session.cwd }),
+    ...(session?.format === undefined ? {} : { sessionFormat: session.format }),
+    ...(session?.pendingTools === undefined ? {} : { sessionPendingTools: session.pendingTools }),
     pinnedCount: pinned.length,
     hasVerifierReport,
     ...(latestRound?.checks?.worktreeStatus?.trackedDiffHash === undefined
@@ -241,16 +253,20 @@ async function readGoalEvidence(dataDir: string, goalId: string): Promise<LoopFi
   };
 }
 
-async function readSessionEvidence(dataDir: string, sessionId: string): Promise<{ cwd?: string } | undefined> {
+async function readSessionEvidence(
+  dataDir: string,
+  sessionId: string,
+): Promise<{ cwd: string; format: 'v1' | 'v2'; pendingTools: number } | undefined> {
   if (!isSafeLogId(sessionId)) return undefined;
+  let loaded;
   try {
-    const text = await readFile(join(dataDir, 'sessions', `${sessionId}.jsonl`), 'utf8');
-    const header = replayMessages(parseSessionLog(text)).header;
-    if (header?.id !== sessionId) return undefined;
-    return { cwd: header.cwd };
+    loaded = await loadSession(join(dataDir, 'sessions', `${sessionId}.jsonl`), { validateIntegrity: true });
   } catch {
     return undefined;
   }
+  const header = loaded.header;
+  if (header?.id !== sessionId) return undefined;
+  return { cwd: header.cwd, format: loaded.format, pendingTools: loaded.pendingTools.length };
 }
 
 function reportNeedsHumanReviewAudit(report: VerifierReport | undefined): boolean {
@@ -266,21 +282,23 @@ async function hasMatchingHumanReviewAudit(
   outcome: unknown,
   requirementIds: readonly string[],
 ): Promise<boolean> {
+  let text: string;
   try {
-    const text = await readFile(join(dataDir, 'human-reviews', `${goalId}.jsonl`), 'utf8');
-    return parseHumanReviewAuditLog(text).some(
-      (record) =>
-        record.goalId === goalId &&
-        record.previousRound === previousRound &&
-        record.state === state &&
-        record.verdict === outcome &&
-        Array.isArray(record.decisions) &&
-        record.decisions.length > 0 &&
-        decisionsCoverRequirements(record.decisions, requirementIds, outcome),
-    );
+    text = await readFile(join(dataDir, 'human-reviews', `${goalId}.jsonl`), 'utf8');
   } catch {
     return false;
   }
+  const parsed = parseJsonlWithDiagnostics(text, isHumanReviewAuditRecord);
+  assertOperationalJsonlIntegrity('human review', parsed.malformed, true);
+  return parsed.records.some(
+    (record) =>
+      record.goalId === goalId &&
+      record.previousRound === previousRound &&
+      record.state === state &&
+      record.verdict === outcome &&
+      record.decisions.length > 0 &&
+      decisionsCoverRequirements(record.decisions, requirementIds, outcome),
+  );
 }
 
 function decisionsCoverRequirements(

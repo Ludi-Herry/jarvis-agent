@@ -10,13 +10,14 @@ const REPORT: ObservationReport = {
     scope: { sessions: true, goals: true, loops: true, cron: true, cronDaemon: true, approvals: true },
   },
   authority: { mode: 'observation-only', canCompleteGoals: false, canCompleteLoops: false },
+  integrity: { status: 'complete', corruptLineCount: 0, unreadableFileCount: 0, affected: [], omittedAffectedCount: 0 },
   status: {
     sessions: { total: 1 },
     goals: { total: 1, byState: { active: 0, complete: 1, blocked: 0 } },
     loops: { total: 1 },
     cron: { attempts: 1, lastAttempt: { taskId: 'daily', exitCode: 0, startedAt: '2026-07-03T11:00:00.000Z', finishedAt: '2026-07-03T11:01:00.000Z', loopId: 'L1' } },
     cronDaemon: { records: 0, parkedTasks: [] },
-    latestSession: { id: 's1', model: 'builder', cwd: 'H:\\jarvis-agent', startedAt: '2026-07-03T10:00:00.000Z', messages: 3 },
+    latestSession: { id: 's1', model: 'builder', cwd: 'H:\\jarvis-agent', startedAt: '2026-07-03T10:00:00.000Z', messages: 3, format: 'v2', pendingTools: 0 },
     latestGoal: { id: 'g1', objective: 'ship GUI', state: 'complete', recordedState: 'complete', effectiveState: 'complete', rounds: 1, verdict: 'verified', lastAt: '2026-07-03T11:30:00.000Z' },
     latestGoalBudget: { goalId: 'g1', roundsUsed: 1, maxRounds: 8, totalTurns: 2, totalTokens: 120, lastAt: '2026-07-03T11:30:00.000Z' },
     latestLoop: { id: 'L1', objectives: 1, completed: 1, blocked: 0, inFlight: 0, tokens: 120, halted: 'queue-empty', lastAt: '2026-07-03T11:31:00.000Z' },
@@ -74,6 +75,34 @@ describe('buildGuiTimeline', () => {
     });
 
     expect(items[0]).toMatchObject({ kind: 'control', tone: 'danger', detail: 'operator stop' });
+  });
+
+  it('warns when legacy success records disagree with blocked loop work', () => {
+    const report: ObservationReport = {
+      ...REPORT,
+      status: {
+        ...REPORT.status,
+        latestLoop: {
+          ...REPORT.status.latestLoop!,
+          completed: 0,
+          blocked: 1,
+          halted: 'blocked-goals',
+          recordedHalt: 'queue-empty',
+        },
+        cron: {
+          attempts: 1,
+          lastAttempt: { ...REPORT.status.cron.lastAttempt!, inconsistent: true },
+        },
+      },
+    };
+
+    const items = buildGuiTimeline(report, { path: 'stop.json', requested: false });
+
+    expect(items.find((item) => item.id === 'loop-L1')).toMatchObject({ tone: 'warn' });
+    expect(items.find((item) => item.id === 'cron-daily')).toMatchObject({
+      tone: 'warn',
+      detail: 'exit 0 / linked loop has blocked goals',
+    });
   });
 
   it('shows the effective interruption and preserves its recorded source state', () => {

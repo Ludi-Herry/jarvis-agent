@@ -30,6 +30,14 @@ export async function evaluateGoalWorktreeWrite(
   if (typeof target !== 'string' || target.trim() === '') {
     return { allowed: false, reason: 'goal worktree write requires a non-empty path string' };
   }
+  const hasExpectedVersion = typeof req.args.expectedVersion === 'string' && req.args.expectedVersion.length > 0;
+  const hasCreateOnly = req.args.createOnly === true;
+  if (hasExpectedVersion === hasCreateOnly) {
+    return {
+      allowed: false,
+      reason: 'goal worktree write requires exactly one precondition: expectedVersion or createOnly:true',
+    };
+  }
 
   const root = await realpath(resolve(req.root)).catch(() => resolve(req.root));
   const literal = resolve(root, target);
@@ -46,7 +54,7 @@ export async function evaluateGoalWorktreeWrite(
   const effectiveRefusal = refuseUnsafeTarget(root, effective, target, 'path resolves');
   if (effectiveRefusal !== undefined) return { allowed: false, reason: effectiveRefusal };
 
-  return { allowed: true, reason: `write target stays inside goal worktree: ${target}` };
+  return { allowed: true, reason: `preconditioned write target stays inside goal worktree: ${target}` };
 }
 
 export function isGitMetadataPath(root: string, candidate: string): boolean {

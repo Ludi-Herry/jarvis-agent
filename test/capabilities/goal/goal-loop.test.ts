@@ -18,7 +18,15 @@ import {
 import { InMemoryToolRegistry } from '../../../src/core/tools/registry.js';
 import { InMemoryEventBus, type Event } from '../../../src/runtime/event-bus.js';
 import type { ModelDelta, ModelProvider, ModelResult } from '../../../src/core/model/types.js';
+import type { RunOutcome } from '../../../src/core/loop/run-agent.js';
 import type { PinnedRequirement, VerifierReport } from '../../../src/capabilities/goal/goal.js';
+import { createUpdateGoalTool, updateGoalToolSchema } from '../../../src/capabilities/goal/update-goal-tool.js';
+
+it('hashes the exact runtime update_goal schema for session composition', () => {
+  const registry = new InMemoryToolRegistry();
+  registry.register(createUpdateGoalTool({}));
+  expect(updateGoalToolSchema()).toEqual(registry.schemasForModel()[0]);
+});
 
 function dummyProvider(): ModelProvider {
   const provider: ModelProvider = {
@@ -56,6 +64,13 @@ function claimingRun(status: 'complete' | 'blocked'): { run: NonNullable<GoalRun
 }
 
 const passingCheck: NonNullable<GoalRunDeps['check']> = async () => ({
+  objectiveChecksPassed: true,
+  results: [],
+  testTamper: 'clean',
+  tamperReason: '',
+  heldOut: { passed: true, results: [] },
+});
+const routineProjectCheck: NonNullable<GoalRunDeps['check']> = async () => ({
   objectiveChecksPassed: true,
   results: [],
   testTamper: 'clean',
@@ -112,7 +127,7 @@ function baseDeps(over: Partial<GoalRunDeps> = {}): GoalRunDeps {
 }
 
 describe('runGoal — verification gates completion', () => {
-  it('completes only when a completion claim is backed by clean checks', async () => {
+  it('completes only when a completion claim is backed by trusted held-out evidence', async () => {
     const { run, calls } = claimingRun('complete');
     const result = await runGoal(spec(), baseDeps({ run, check: passingCheck }));
     expect(result.state).toBe('complete');
@@ -652,6 +667,7 @@ describe('runGoal — resume', () => {
         results: [],
         testTamper: 'clean',
         tamperReason: '',
+        heldOut: { passed: true, results: [] },
       };
     };
     const priorGoal = {
@@ -723,6 +739,7 @@ describe('runGoal — resume', () => {
         results: [],
         testTamper: 'clean',
         tamperReason: '',
+        heldOut: { passed: true, results: [] },
       };
     };
     const priorGoal = {
@@ -912,16 +929,16 @@ describe('runGoal — leg 3 (independent judge) wiring', () => {
     expect(result.finalVerdict?.outcome).toBe('couldNotVerify');
   });
 
-  it('without a verifier provider the batch-1 deterministic-only path is unchanged (clean legs → verified)', async () => {
+  it('without trusted objective evidence routine project checks stay checksOnly', async () => {
     const { run } = claimingRun('complete');
     const spy = verifierSpy(perfectReport());
     const result = await runGoal(
       spec({ pinned: PINNED }), // pinned present but no verifierProvider → leg 3 stays off
-      baseDeps({ run, check: passingCheck, runVerifier: spy.fn }),
+      baseDeps({ run, check: routineProjectCheck, runVerifier: spy.fn }),
     );
     expect(spy.calls()).toBe(0); // no provider → judge never runs
-    expect(result.state).toBe('complete');
-    expect(result.finalVerdict?.outcome).toBe('verified');
+    expect(result.state).toBe('blocked');
+    expect(result.finalVerdict?.outcome).toBe('checksOnly');
   });
 });
 
@@ -1017,5 +1034,228 @@ describe('runGoal — held-out leg gates completion', () => {
     expect(persisted).not.toContain('hidden-assert'); // the secret command is not on disk
     expect(persisted).not.toContain('HIDDEN-SECRET-OUTPUT'); // nor its output
     expect(persisted).toContain('"passed":false'); // but the pass/fail WAS recorded (audit intact)
+  });
+});
+
+describe('runGoal — liveness deadlines and abnormal builder halts', () => {
+  it('keeps goalTimeout as the single terminal truth when the real agent receives a late tool call', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'goal-timeout-agent-'));
+    const path = join(dir, 'goal.jsonl');
+    let release!: () => void;
+    const provider: ModelProvider = {
+      ...dummyProvider(),
+      async *call(): AsyncGenerator<ModelDelta, ModelResult> {
+        yield* [];
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        }); // deliberately ignores AbortSignal
+        return {
+          text: '',
+          toolCalls: [{ id: 'late', name: 'update_goal', arguments: '{"status":"complete"}' }],
+          usage: { inputTokens: 1, outputTokens: 1 },
+          finishReason: 'tool_calls',
+          rawFinishReason: 'tool_calls',
+        };
+      },
+    };
+    provider.withThinking = () => provider;
+    provider.withMaxCompletionTokens = () => provider;
+    const bus = new InMemoryEventBus();
+    const events = record(bus);
+
+    try {
+      const result = await runGoal(
+        spec({ budget: { maxRounds: 5, maxWallClockMs: 50 } }),
+        baseDeps({ model: provider, bus, check: passingCheck, goalStore: new FileGoalStore(path) }),
+      );
+      expect(result).toMatchObject({ state: 'blocked', haltReason: 'goalTimeout' });
+      const beforeLateResult = await readFile(path, 'utf8');
+
+      release();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(events.some((event) => event.type === 'final' || event.type === 'tool_call' || event.type === 'tool_result')).toBe(false);
+      expect(await readFile(path, 'utf8')).toBe(beforeLateResult);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('blocks on the whole-goal deadline even when an injected builder ignores AbortSignal, and a late result cannot rewrite the log', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'goal-timeout-'));
+    const path = join(dir, 'goal.jsonl');
+    let providerSignal: AbortSignal | undefined;
+    let resolveLate!: (outcome: RunOutcome) => void;
+    let calls = 0;
+    const run: NonNullable<GoalRunDeps['run']> = async (ctx) => {
+      calls++;
+      providerSignal = ctx.signal;
+      return new Promise<RunOutcome>((resolve) => {
+        resolveLate = resolve;
+      }); // deliberately ignores ctx.signal
+    };
+    const bus = new InMemoryEventBus();
+    const events = record(bus);
+
+    try {
+      const result = await runGoal(
+        spec({ budget: { maxRounds: 5, maxWallClockMs: 50 } }),
+        baseDeps({ bus, run, check: passingCheck, goalStore: new FileGoalStore(path) }),
+      );
+
+      expect(calls).toBe(1);
+      expect(providerSignal?.aborted).toBe(true);
+      expect(result).toMatchObject({
+        state: 'blocked',
+        haltReason: 'goalTimeout',
+        timeoutMs: 50,
+        finalVerdict: { outcome: 'couldNotVerify' },
+      });
+      expect(events).toContainEqual({ type: 'halt', reason: 'goalTimeout', timeoutMs: 50 });
+
+      const beforeLateResult = await readFile(path, 'utf8');
+      const rounds = parseGoalLog(beforeLateResult).filter((entry) => entry.t === 'goal-round');
+      expect(rounds).toHaveLength(1);
+      expect(rounds[0]).toMatchObject({
+        haltReason: 'goalTimeout',
+        timeoutMs: 50,
+        verdict: { outcome: 'couldNotVerify' },
+      });
+
+      resolveLate({ finalText: 'late completion must be ignored', turns: 1 });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(await readFile(path, 'utf8')).toBe(beforeLateResult);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('blocks immediately when runAgent reports a turn timeout instead of launching another round', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'goal-turn-timeout-'));
+    const path = join(dir, 'goal.jsonl');
+    let calls = 0;
+    const run: NonNullable<GoalRunDeps['run']> = async () => {
+      calls++;
+      return { halted: 'turnTimeout', turns: 1, timeoutMs: 17 };
+    };
+
+    try {
+      const result = await runGoal(
+        spec({ budget: { maxRounds: 5 } }),
+        baseDeps({ run, check: passingCheck, goalStore: new FileGoalStore(path) }),
+      );
+
+      expect(calls).toBe(1);
+      expect(result).toMatchObject({
+        state: 'blocked',
+        haltReason: 'turnTimeout',
+        timeoutMs: 17,
+        finalVerdict: { outcome: 'couldNotVerify' },
+      });
+      const rounds = parseGoalLog(await readFile(path, 'utf8')).filter((entry) => entry.t === 'goal-round');
+      expect(rounds[0]).toMatchObject({ haltReason: 'turnTimeout', timeoutMs: 17 });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.each(['paused', 'refused', 'unknown'] as const)(
+    'parks a %s builder finish after one round and persists the provider reason',
+    async (halted) => {
+      const dir = await mkdtemp(join(tmpdir(), `goal-${halted}-`));
+      const path = join(dir, 'goal.jsonl');
+      let calls = 0;
+      const run: NonNullable<GoalRunDeps['run']> = async () => {
+        calls++;
+        return { halted, turns: 1, rawFinishReason: 'provider-raw' };
+      };
+
+      try {
+        const result = await runGoal(
+          spec({ budget: { maxRounds: 5 } }),
+          baseDeps({ run, check: passingCheck, goalStore: new FileGoalStore(path) }),
+        );
+
+        expect(calls).toBe(1);
+        expect(result).toMatchObject({ state: 'blocked', haltReason: halted, rawFinishReason: 'provider-raw' });
+        const rounds = parseGoalLog(await readFile(path, 'utf8')).filter((entry) => entry.t === 'goal-round');
+        expect(rounds[0]).toMatchObject({ haltReason: halted, rawFinishReason: 'provider-raw' });
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it('blocks an unknown tool execution before clean checks can authorize completion', async () => {
+    let checks = 0;
+    const run: NonNullable<GoalRunDeps['run']> = async (ctx) => {
+      await ctx.tools.run({
+        id: 'claim',
+        name: 'update_goal',
+        arguments: JSON.stringify({ status: 'complete', verification: 'self report' }),
+      }, ctx.toolCtx);
+      return { halted: 'toolExecutionUnknown', turns: 1 };
+    };
+    const check: NonNullable<GoalRunDeps['check']> = async (deps, baseline) => {
+      checks++;
+      return passingCheck(deps, baseline);
+    };
+
+    const result = await runGoal(spec({ budget: { maxRounds: 3 } }), baseDeps({ run, check }));
+
+    expect(checks).toBe(0);
+    expect(result).toMatchObject({
+      state: 'blocked',
+      haltReason: 'toolExecutionUnknown',
+      finalVerdict: { outcome: 'couldNotVerify' },
+    });
+  });
+
+  it('applies the whole-goal deadline to verification checks after a completion claim', async () => {
+    let checkSignal: AbortSignal | undefined;
+    const neverSettlingCheck: NonNullable<GoalRunDeps['check']> = async (deps) => {
+      checkSignal = deps.signal;
+      return new Promise<never>(() => undefined);
+    };
+    const { run } = claimingRun('complete');
+
+    const result = await runGoal(
+      spec({ budget: { maxRounds: 5, maxWallClockMs: 50 } }),
+      baseDeps({ run, check: neverSettlingCheck }),
+    );
+
+    expect(checkSignal?.aborted).toBe(true);
+    expect(result).toMatchObject({
+      state: 'blocked',
+      haltReason: 'goalTimeout',
+      timeoutMs: 50,
+      finalVerdict: { outcome: 'couldNotVerify' },
+    });
+  });
+
+  it('keeps maxTurns as the legacy per-round continuation case', async () => {
+    let calls = 0;
+    const run: NonNullable<GoalRunDeps['run']> = async (ctx) => {
+      calls++;
+      if (calls === 1) return { halted: 'maxTurns', turns: 1 };
+      await ctx.tools.run(
+        { id: 'u2', name: 'update_goal', arguments: JSON.stringify({ status: 'complete' }) },
+        ctx.toolCtx,
+      );
+      return { finalText: 'claimed after continuation', turns: 1 };
+    };
+
+    const trustedObjectiveCheck: NonNullable<GoalRunDeps['check']> = async () => ({
+      objectiveChecksPassed: true,
+      results: [],
+      testTamper: 'clean',
+      tamperReason: '',
+      heldOut: { passed: true, results: [] },
+    });
+    const result = await runGoal(spec({ budget: { maxRounds: 3 } }), baseDeps({ run, check: trustedObjectiveCheck }));
+
+    expect(calls).toBe(2);
+    expect(result.state).toBe('complete');
+    expect(result.finalVerdict?.outcome).toBe('verified');
   });
 });

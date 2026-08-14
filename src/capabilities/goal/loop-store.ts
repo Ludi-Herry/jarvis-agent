@@ -22,6 +22,13 @@
  */
 import { appendFile, mkdir, readFile, readdir, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import {
+  assertOperationalJsonlIntegrity,
+  hasFiniteNumberFields,
+  hasStringFields,
+  isJsonObject,
+  parseJsonlWithDiagnostics,
+} from '../../runtime/jsonl-integrity.js';
 import type { GoalState, VerdictOutcome } from './goal.js';
 import type { LoopContract, LoopHaltReason, LoopStore, VerifierOutcomeSample } from './loop.js';
 
@@ -47,6 +54,7 @@ export type LoopRecord =
       state: GoalState;
       outcome?: VerdictOutcome;
       verifierKey?: string;
+      haltReason?: string;
       rounds: number;
       tokens: number;
       at: string;
@@ -54,6 +62,77 @@ export type LoopRecord =
   | { t: 'loop-halted'; reason: LoopHaltReason; at: string };
 
 export type LoopCreatedRecord = Extract<LoopRecord, { t: 'loop-created' }>;
+
+export function isLoopRecord(value: unknown): value is LoopRecord {
+  if (!isJsonObject(value) || typeof value.t !== 'string') return false;
+  switch (value.t) {
+    case 'loop-created':
+      return hasStringFields(value, 'id', 'createdAt')
+        && isLoopContract(value.contract)
+        && Array.isArray(value.objectives)
+        && value.objectives.every((objective) => typeof objective === 'string')
+        && optionalStrings(
+          value,
+          'verifierMapPath',
+          'hookMapPath',
+          'sandboxCheckMapPath',
+          'goalSetterRequirementsMapPath',
+          'goalSetterRequirementsMapHash',
+        );
+    case 'goal-started':
+      return hasFiniteNumberFields(value, 'index') && hasStringFields(value, 'goalId', 'at');
+    case 'goal-finished':
+      return hasFiniteNumberFields(value, 'index', 'rounds', 'tokens')
+        && hasStringFields(value, 'goalId', 'at')
+        && (value.state === 'active' || value.state === 'complete' || value.state === 'blocked')
+        && (value.outcome === undefined
+          || value.outcome === 'verified'
+          || value.outcome === 'checksOnly'
+          || value.outcome === 'rejected'
+          || value.outcome === 'couldNotVerify')
+        && optionalStrings(value, 'verifierKey', 'haltReason');
+    case 'loop-halted':
+      return isLoopHaltReason(value.reason) && typeof value.at === 'string';
+    default:
+      return false;
+  }
+}
+
+function isLoopContract(value: unknown): boolean {
+  return isJsonObject(value)
+    && hasFiniteNumberFields(
+      value,
+      'maxGoals',
+      'maxTotalTokens',
+      'maxWallClockMs',
+      'maxConsecutiveBlocked',
+      'cnvWindow',
+      'cnvThreshold',
+    )
+    && isJsonObject(value.perGoalBudget)
+    && hasFiniteNumberFields(value.perGoalBudget, 'maxRounds')
+    && optionalFiniteNumbers(value.perGoalBudget, 'maxTotalTurns', 'maxTotalTokens', 'maxWallClockMs');
+}
+
+function optionalStrings(value: Record<string, unknown>, ...fields: string[]): boolean {
+  return fields.every((field) => value[field] === undefined || typeof value[field] === 'string');
+}
+
+function optionalFiniteNumbers(value: Record<string, unknown>, ...fields: string[]): boolean {
+  return fields.every((field) => value[field] === undefined
+    || (typeof value[field] === 'number' && Number.isFinite(value[field])));
+}
+
+function isLoopHaltReason(value: unknown): value is LoopHaltReason {
+  return value === 'queue-empty'
+    || value === 'blocked-goals'
+    || value === 'max-goals'
+    || value === 'token-budget'
+    || value === 'wall-clock'
+    || value === 'emergency-stop'
+    || value === 'consecutive-blocked'
+    || value === 'verifier-health';
+}
 
 /** What replayLoop reconstructs — exactly the state a `--resume` needs to seed runLoop deps. */
 export interface LoopReplay {
@@ -89,17 +168,7 @@ export function serializeLoopRecord(record: LoopRecord): string {
 
 /** Parse a JSONL loop log, skipping blank/corrupt lines (the crash-truncated tail). Pure. */
 export function parseLoopLog(text: string): LoopRecord[] {
-  const records: LoopRecord[] = [];
-  for (const line of text.split('\n')) {
-    const trimmed = line.trim();
-    if (trimmed === '') continue;
-    try {
-      records.push(JSON.parse(trimmed) as LoopRecord);
-    } catch {
-      // truncated/corrupt line — skip and recover the rest
-    }
-  }
-  return records;
+  return parseJsonlWithDiagnostics(text, isLoopRecord).records;
 }
 
 /** Fold records back into the resume state. Pure.
@@ -188,6 +257,7 @@ export class FileLoopStore implements LoopStore {
     state: GoalState;
     outcome?: VerdictOutcome;
     verifierKey?: string;
+    haltReason?: string;
     rounds: number;
     tokens: number;
     at: string;
@@ -211,7 +281,10 @@ export class FileLoopStore implements LoopStore {
 /** Load and replay a loop log from disk. */
 export async function loadLoop(path: string): Promise<LoopReplay> {
   const text = await readFile(path, 'utf8');
-  return replayLoop(parseLoopLog(text));
+  const parsed = parseJsonlWithDiagnostics(text, isLoopRecord);
+  const replayed = replayLoop(parsed.records);
+  assertOperationalJsonlIntegrity('loop', parsed.malformed, replayed.id !== undefined && replayed.contract !== undefined);
+  return replayed;
 }
 
 /** The most recently modified `*.jsonl` loop file in `dir`, or null if there are none (mirrors

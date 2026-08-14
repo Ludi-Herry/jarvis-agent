@@ -81,11 +81,21 @@ describe('foldChunk + finalizeResult', () => {
     expect(finalizeResult(state).usage).toEqual({ inputTokens: 7, outputTokens: 2 });
   });
 
-  it('defaults usage to zero and finish reason to "other" when absent', () => {
+  it('defaults usage to zero and finish reason to "unknown" when absent', () => {
     const res = finalizeResult(emptyStreamState());
     expect(res.usage).toEqual({ inputTokens: 0, outputTokens: 0 });
-    expect(res.finishReason).toBe('other');
+    expect(res.finishReason).toBe('unknown');
     expect(res.rawFinishReason).toBe('');
     expect(res.reasoning).toBeUndefined();
+  });
+
+  it('fails closed on a streamed refusal even when the terminal finish reason says stop', () => {
+    const state = emptyStreamState();
+    foldChunk(state, { choices: [{ delta: { refusal: 'I cannot help with that.' } }] });
+    foldChunk(state, { choices: [{ delta: {}, finish_reason: 'stop' }] });
+
+    const res = finalizeResult(state);
+    expect(res.finishReason).toBe('refused');
+    expect(res.rawFinishReason).toBe('stop');
   });
 });

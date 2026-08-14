@@ -6,6 +6,7 @@ describe('parseGoalArgs', () => {
     expect(parseGoalArgs(['do', 'the', 'thing'])).toEqual({
       objective: 'do the thing',
       failOnWorktreeChange: false,
+      allowNoGit: false,
     });
   });
 
@@ -13,6 +14,15 @@ describe('parseGoalArgs', () => {
     expect(parseGoalArgs(['--fail-on-worktree-change', 'do not edit files'])).toEqual({
       objective: 'do not edit files',
       failOnWorktreeChange: true,
+      allowNoGit: false,
+    });
+  });
+
+  it('accepts an explicit no-Git checks-only override', () => {
+    expect(parseGoalArgs(['--allow-no-git', 'inspect files'])).toEqual({
+      objective: 'inspect files',
+      failOnWorktreeChange: false,
+      allowNoGit: true,
     });
   });
 

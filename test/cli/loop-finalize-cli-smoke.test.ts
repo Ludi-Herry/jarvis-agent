@@ -5,7 +5,13 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { hashObjective, serializeGoalRecord, serializeLoopRecord, type LoopContract } from '../../src/capabilities/goal/index.js';
-import { serializeRecord as serializeSessionRecord } from '../../src/runtime/session/session-store.js';
+import {
+  SESSION_SCHEMA_VERSION,
+  FileSessionStore,
+  createModelRequestReceipt,
+  createSessionComposition,
+  serializeRecord as serializeSessionRecord,
+} from '../../src/runtime/session/session-store.js';
 
 const CONTRACT: LoopContract = {
   maxGoals: 2,
@@ -53,6 +59,46 @@ describe('loop finalize CLI smoke', () => {
     } finally {
       await fixture.cleanup();
       await rm(externalDiffDir, { recursive: true, force: true });
+    }
+  }, 20_000);
+
+  it('parks a verified worktree when its v2 session has an unresolved tool effect', async () => {
+    const fixture = await setupMergeFixture('L-pending-effect');
+    try {
+      await appendPendingUnknownEffect(fixture.cwd, 'g0');
+      const result = await runFinalizeCli(
+        ['--loop', fixture.loopId, '--worktree-root', fixture.worktreeRoot, '--merge'],
+        fixture.cwd,
+        `merge ${fixture.loopId}\n`,
+      );
+
+      expect(result.code).toBe(0);
+      expect(result.stdout).toContain('pending-tool-effects');
+      expect(result.stdout).toContain('Merge proposals: 0');
+      expect(result.stdout).not.toContain('merge-applied');
+      await expect(readFile(join(fixture.cwd, 'file.txt'), 'utf8')).resolves.toBe('base\n');
+    } finally {
+      await fixture.cleanup();
+    }
+  }, 20_000);
+
+  it('parks a verified worktree when compaction omits an orphan assistant tool intent', async () => {
+    const fixture = await setupMergeFixture('L-compacted-orphan-intent');
+    try {
+      await appendCompactedOrphanIntent(fixture.cwd, 'g0');
+      const result = await runFinalizeCli(
+        ['--loop', fixture.loopId, '--worktree-root', fixture.worktreeRoot, '--merge'],
+        fixture.cwd,
+        `merge ${fixture.loopId}\n`,
+      );
+
+      expect(result.code).toBe(0);
+      expect(result.stdout).toContain('pending-tool-effects');
+      expect(result.stdout).toContain('Merge proposals: 0');
+      expect(result.stdout).not.toContain('merge-applied');
+      await expect(readFile(join(fixture.cwd, 'file.txt'), 'utf8')).resolves.toBe('base\n');
+    } finally {
+      await fixture.cleanup();
     }
   }, 20_000);
 
@@ -207,6 +253,25 @@ describe('loop finalize CLI smoke', () => {
       expect(result.code).toBe(0);
       expect(result.stdout).toContain('goal-mismatch');
       expect(result.stdout).toContain('Merge proposals: 0');
+      await expect(readFile(join(fixture.cwd, 'file.txt'), 'utf8')).resolves.toBe('base\n');
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it('fails closed when a verified goal log contains a structurally invalid middle record', async () => {
+    const fixture = await setupMergeFixture('L-corrupt-goal-log');
+    try {
+      const path = join(fixture.cwd, 'data', 'goals', 'g0.jsonl');
+      const lines = (await readFile(path, 'utf8')).split('\n');
+      lines.splice(1, 0, '{}');
+      await writeFile(path, lines.join('\n'), 'utf8');
+
+      const result = await runFinalizeCli(['--loop', fixture.loopId, '--worktree-root', fixture.worktreeRoot], fixture.cwd);
+
+      expect(result.code).toBe(1);
+      expect(`${result.stdout}\n${result.stderr}`).toContain('goal state is corrupt at line 2 (invalid-record)');
+      expect(result.stdout).not.toContain('Merge proposals:');
       await expect(readFile(join(fixture.cwd, 'file.txt'), 'utf8')).resolves.toBe('base\n');
     } finally {
       await fixture.cleanup();
@@ -540,6 +605,7 @@ async function writeVerifiedGoalLog(cwd: string, goalId: string, sessionCwd?: st
           results: [],
           testTamper: 'clean',
           tamperReason: '',
+          heldOut: { passed: true, results: [] },
           ...(worktreeStatus === undefined ? {} : { worktreeStatus }),
         },
         verdict: {
@@ -720,9 +786,57 @@ async function writeSessionLog(cwd: string, sessionId: string, sessionCwd: strin
   await mkdir(join(cwd, 'data', 'sessions'), { recursive: true });
   await writeFile(
     join(cwd, 'data', 'sessions', `${sessionId}.jsonl`),
-    serializeSessionRecord({ t: 'session', id: sessionId, model: 'test-model', cwd: sessionCwd, startedAt: 't0' }),
+    serializeSessionRecord({
+      t: 'session',
+      id: sessionId,
+      model: 'test-model',
+      cwd: sessionCwd,
+      startedAt: 't0',
+      composition: createSessionComposition({
+        root: 'loop',
+        runtimeVersion: 'test',
+        permissionMode: 'worktree-unattended',
+        toolSchemas: [],
+        systemPrompt: 'test',
+      }),
+      schemaVersion: SESSION_SCHEMA_VERSION,
+      seq: 1,
+      at: 't0',
+    }),
     'utf8',
   );
+}
+
+async function appendPendingUnknownEffect(cwd: string, sessionId: string): Promise<void> {
+  const path = join(cwd, 'data', 'sessions', `${sessionId}.jsonl`);
+  const store = new FileSessionStore(path, 0, { format: 'v2', initialSequence: 1 });
+  const messages = [{ role: 'system' as const, content: 'test' }];
+  const call = { id: 'call-1', name: 'write', arguments: '{"path":"a.txt","content":"x","createOnly":true}' };
+  await store.sync(messages);
+  await store.recordRequest(createModelRequestReceipt({
+    requestId: 'req-1', runId: 'run-1', turn: 0, messages, tools: [],
+  }));
+  await store.sync([...messages, { role: 'assistant', requestId: 'req-1', toolCalls: [call] }]);
+  await store.recordToolPlanned({
+    t: 'tool', phase: 'planned', executionId: 'exec-1', requestId: 'req-1', runId: 'run-1', turn: 0, callIndex: 0, call,
+  });
+  await store.recordToolUnknown({
+    t: 'tool', phase: 'unknown', executionId: 'exec-1', requestId: 'req-1', runId: 'run-1', turn: 0, callIndex: 0,
+    reason: 'test unresolved effect',
+  });
+}
+
+async function appendCompactedOrphanIntent(cwd: string, sessionId: string): Promise<void> {
+  const path = join(cwd, 'data', 'sessions', `${sessionId}.jsonl`);
+  const store = new FileSessionStore(path, 0, { format: 'v2', initialSequence: 1 });
+  const messages = [{ role: 'system' as const, content: 'test' }];
+  const call = { id: 'call-1', name: 'write', arguments: '{"path":"a.txt","content":"x","createOnly":true}' };
+  await store.sync(messages);
+  await store.recordRequest(createModelRequestReceipt({
+    requestId: 'req-1', runId: 'run-1', turn: 0, messages, tools: [],
+  }));
+  await store.sync([...messages, { role: 'assistant', requestId: 'req-1', toolCalls: [call] }]);
+  await store.checkpoint(messages);
 }
 
 async function worktreeStatusCheck(cwd: string) {

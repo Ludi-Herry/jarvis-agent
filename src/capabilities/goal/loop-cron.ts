@@ -2,6 +2,12 @@ import { randomUUID } from 'node:crypto';
 import type { Stats } from 'node:fs';
 import { appendFile, link, mkdir, open, readFile, stat, unlink, type FileHandle } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import {
+  assertOperationalJsonlIntegrity,
+  hasStringFields,
+  isJsonObject,
+  parseJsonlWithDiagnostics,
+} from '../../runtime/jsonl-integrity.js';
 import type { LoopCronConfig, LoopCronTask } from './loop-cron-config.js';
 
 export interface LoopCronTaskResult {
@@ -33,6 +39,8 @@ export interface LoopCronState {
 export interface LoopCronRunResult {
   triggered: number;
   skipped: number;
+  /** Due child processes that did not exit successfully, including signal-terminated children. */
+  failed: number;
 }
 
 export interface LoopCronAttemptContext {
@@ -45,18 +53,16 @@ export interface LoopCronAttemptContext {
   nextRunAt: string;
 }
 
+export function isLoopCronRecord(value: unknown): value is LoopCronRecord {
+  return isJsonObject(value)
+    && value.t === 'cron-attempt'
+    && hasStringFields(value, 'taskId', 'scheduledFor', 'startedAt', 'finishedAt', 'nextRunAt')
+    && (value.exitCode === null || (typeof value.exitCode === 'number' && Number.isFinite(value.exitCode)))
+    && (value.loopId === undefined || typeof value.loopId === 'string');
+}
+
 export function parseLoopCronLog(text: string): LoopCronRecord[] {
-  const records: LoopCronRecord[] = [];
-  for (const line of text.split('\n')) {
-    const trimmed = line.trim();
-    if (trimmed === '') continue;
-    try {
-      records.push(JSON.parse(trimmed) as LoopCronRecord);
-    } catch {
-      // Skip a crash-truncated tail line.
-    }
-  }
-  return records;
+  return parseJsonlWithDiagnostics(text, isLoopCronRecord).records;
 }
 
 export function replayLoopCronState(records: LoopCronRecord[]): LoopCronState {
@@ -300,7 +306,9 @@ interface LoopCronLockSnapshot {
 
 export async function loadLoopCronState(path: string): Promise<LoopCronState> {
   try {
-    return replayLoopCronState(parseLoopCronLog(await readFile(path, 'utf8')));
+    const parsed = parseJsonlWithDiagnostics(await readFile(path, 'utf8'), isLoopCronRecord);
+    assertOperationalJsonlIntegrity('cron', parsed.malformed, true);
+    return replayLoopCronState(parsed.records);
   } catch (err) {
     if (isNotFound(err)) return { nextRunAtByTaskId: new Map() };
     throw new Error(`cron state cannot be read: ${path}: ${errorMessage(err)}`, { cause: err });
@@ -323,6 +331,7 @@ export async function runLoopCronOnce(
   const state = deps.state ?? { nextRunAtByTaskId: new Map<string, string>() };
   let triggered = 0;
   let skipped = 0;
+  let failed = 0;
 
   for (const task of config.tasks) {
     if (deps.shouldStop?.()) break;
@@ -350,9 +359,10 @@ export async function runLoopCronOnce(
     await deps.afterRecordAttempt?.(task, attempt);
     state.nextRunAtByTaskId.set(task.id, nextRunAt);
     triggered++;
+    if (result.exitCode !== 0) failed++;
   }
 
-  return { triggered, skipped };
+  return { triggered, skipped, failed };
 }
 
 function isAlreadyExists(err: unknown): boolean {

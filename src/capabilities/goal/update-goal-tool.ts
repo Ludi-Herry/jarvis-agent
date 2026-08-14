@@ -12,6 +12,8 @@
  * (every real effect happens through the builder's other tools, still gated).
  */
 import { z } from 'zod';
+import type { ToolSchema } from '../../core/types.js';
+import { toolDefinitionSchema } from '../../core/tools/registry.js';
 import type { ToolDefinition } from '../../core/tools/types.js';
 import type { GoalClaim } from './goal.js';
 
@@ -62,4 +64,10 @@ export function createUpdateGoalTool(
       };
     },
   };
+}
+
+/** Exact model-facing schema for the conditional goal tool. The CLI hashes this
+ * before runGoal creates the per-run claim slot and registers the live closure. */
+export function updateGoalToolSchema(): ToolSchema {
+  return toolDefinitionSchema(createUpdateGoalTool({}));
 }

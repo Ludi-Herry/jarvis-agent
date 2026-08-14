@@ -23,27 +23,42 @@ export const COMPACT_THRESHOLD = 0.83;
  * Decide whether the loop stops after a model turn — and, if so, whether it stopped on a
  * natural answer or an abnormal halt.
  *
- * A turn WITH tool calls always continues: there's something to execute and feed back. A turn
- * with NO tool calls is terminal, but the finishReason decides the meaning. A clean stop is the
- * `final` answer; a `truncated` turn (hit the max-output-token ceiling) or a `filtered` turn
- * (content filter) produced an incomplete or void reply that must NOT be mistaken for the answer
- * — it `halt`s so the caller surfaces "no proper answer" instead of trusting a half-formed string.
- *
- * Scope note: a truncated turn that STILL carries tool calls keeps going (the path above), because
- * a torn tool-call argument is caught downstream by schema validation — a recoverable tool error,
- * not a silent bad answer. So the finishReason check only governs the no-tool terminal path.
+ * Only an explicit `tool_calls` finish reason paired with at least one assembled call may continue.
+ * An explicit `completed` reason with no calls is a clean final answer. Every other combination is
+ * fail-closed: abnormal finishes cannot smuggle a side effect through a partially assembled call,
+ * and contradictory completed/tool-call shapes cannot be treated as trustworthy output.
  */
 export type StopDecision =
   | { done: false }
   | { done: true; reason: 'final' }
-  | { done: true; reason: 'halt'; cause: 'truncated' | 'filtered' };
+  | { done: true; reason: 'halt'; cause: 'truncated' | 'filtered' | 'paused' | 'refused' | 'unknown' };
 
 export function decideStop(res: ModelResult): StopDecision {
-  if (res.toolCalls.length > 0) return { done: false };
-  if (res.finishReason === 'truncated' || res.finishReason === 'filtered') {
-    return { done: true, reason: 'halt', cause: res.finishReason };
+  if (res.finishReason === 'tool_calls') {
+    return res.toolCalls.length > 0
+      ? { done: false }
+      : { done: true, reason: 'halt', cause: 'unknown' };
   }
-  return { done: true, reason: 'final' };
+  if (res.finishReason === 'completed') {
+    return res.toolCalls.length === 0
+      ? { done: true, reason: 'final' }
+      : { done: true, reason: 'halt', cause: 'unknown' };
+  }
+  switch (res.finishReason) {
+    case 'truncated':
+    case 'filtered':
+    case 'paused':
+    case 'refused':
+      return { done: true, reason: 'halt', cause: res.finishReason };
+    case 'unknown':
+      return { done: true, reason: 'halt', cause: 'unknown' };
+    default:
+      return assertNever(res.finishReason);
+  }
+}
+
+function assertNever(value: never): never {
+  throw new Error(`unreachable finish reason: ${String(value)}`);
 }
 
 /** True while the loop may run another turn. `turn` is 0-based, so with `maxTurns: 3` it

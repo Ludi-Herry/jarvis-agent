@@ -2,12 +2,16 @@
   "name": "jarvis-agent",
   "version": "0.1.0",
   "private": true,
-  "description": "Jarvis-Agent — a TypeScript coding-agent harness with Phases A–E, hooks, sandboxing, and the first GUI slice complete; R6 GUI polish pending.",
+  "description": "Jarvis-Agent — a CLI-first TypeScript coding-agent harness with durable sessions, verification, permissions, hooks, and sandboxed checks.",
   "type": "module",
   "engines": {
     "node": ">=20"
   },
+  "bin": {
+    "jarvis": "bin/jarvis.js"
+  },
   "scripts": {
+    "jarvis": "tsx src/surfaces/cli/jarvis.ts",
     "dev": "tsx src/surfaces/cli/index.ts",
     "resume": "tsx src/surfaces/cli/index.ts --resume",
     "goal": "tsx src/surfaces/cli/goal-cli.ts",
@@ -45,13 +49,13 @@
     "commander": "^15.0.0",
     "mvdan-sh": "^0.10.1",
     "openai": "^6.45.0",
+    "tsx": "4.22.4",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^26.0.1",
     "eslint": "^10.5.0",
-    "tsx": "^4.22.4",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.62.0",
     "vitest": "^4.1.9"

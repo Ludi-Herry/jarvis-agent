@@ -87,9 +87,19 @@ describe('decideVerdict — deterministic two legs (unbypassable, decided first)
   });
 });
 
-describe('decideVerdict — batch-1 fallback (no verifier report)', () => {
-  it('verified ONLY when both legs clean AND no report (explicit branch, not a fallback)', () => {
-    expect(decideVerdict(checks()).outcome).toBe('verified');
+describe('decideVerdict — deterministic project checks without objective evidence', () => {
+  it('returns checksOnly when routine checks pass without trusted objective evidence', () => {
+    expect(decideVerdict(checks()).outcome).toBe('checksOnly');
+  });
+
+  it('returns checksOnly when the Git tamper baseline is unavailable', () => {
+    const v = decideVerdict(checks({ testTamper: 'unavailable', tamperReason: 'no Git baseline' }));
+    expect(v.outcome).toBe('checksOnly');
+    expect(v.rationale).toContain('no Git baseline');
+  });
+
+  it('does not let a perfect verifier report bypass a missing Git baseline', () => {
+    expect(decideVerdict(checks({ testTamper: 'unavailable' }), perfectReport(), PINNED).outcome).toBe('checksOnly');
   });
 });
 
@@ -208,8 +218,8 @@ describe('decideVerdict — held-out leg (secret hidden assertions)', () => {
     expect(decideVerdict(checks({ heldOut: { passed: true, results: [] } })).outcome).toBe('verified');
   });
 
-  it('held-out absent leaves the batch-1 path unchanged (clean legs → verified)', () => {
-    expect(decideVerdict(checks()).outcome).toBe('verified'); // no heldOut field
+  it('held-out absent leaves the result at checksOnly', () => {
+    expect(decideVerdict(checks()).outcome).toBe('checksOnly');
   });
 
   it('held-out is decided before leg 3 (failing held-out + perfect report → rejected, judge not honored)', () => {
@@ -221,7 +231,7 @@ describe('decideVerdict — held-out leg (secret hidden assertions)', () => {
 
 describe('decideVerdict — fail-closed property (verified ⇒ a provable, clean state)', () => {
   it('with no report, verified ⇒ objective checks passed AND tests clean', () => {
-    const tampers: DeterministicChecks['testTamper'][] = ['clean', 'weakened-or-deleted'];
+    const tampers: DeterministicChecks['testTamper'][] = ['clean', 'weakened-or-deleted', 'unavailable'];
     for (const objectiveChecksPassed of [true, false]) {
       for (const testTamper of tampers) {
         const v = decideVerdict(checks({ objectiveChecksPassed, testTamper }));

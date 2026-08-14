@@ -258,7 +258,7 @@ describe('R6: a parent session-grant for write carries into a child (pinned as a
     const provider = scriptedModel([
       {
         text: 'writing',
-        toolCalls: [{ id: 'w1', name: 'write', arguments: JSON.stringify({ path: 'child.txt', content: 'hi' }) }],
+        toolCalls: [{ id: 'w1', name: 'write', arguments: JSON.stringify({ path: 'child.txt', content: 'hi', createOnly: true }) }],
       },
       { text: 'done' },
     ]);

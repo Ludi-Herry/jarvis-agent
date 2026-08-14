@@ -233,6 +233,20 @@ describe('parseLoopLog — crash safety', () => {
     expect([...replay.inFlight]).toEqual([[0, 'g0']]);
     expect(replay.cumulativeTokens).toBe(0);
   });
+
+  it('fails closed when operational replay encounters a structurally invalid middle record', async () => {
+    const path = join(dir, 'L-corrupt.jsonl');
+    await writeFile(
+      path,
+      '{"t":"loop-created","id":"L","contract":'
+        + JSON.stringify(CONTRACT)
+        + ',"objectives":["a"],"createdAt":"t0"}\n'
+        + '{"t":"goal-started","index":0}\n',
+      'utf8',
+    );
+
+    await expect(loadLoop(path)).rejects.toThrow('loop state is corrupt at line 2 (invalid-record)');
+  });
 });
 
 describe('latestLoopPath', () => {

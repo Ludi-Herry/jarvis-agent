@@ -24,8 +24,17 @@ import {
   scrubProviderKeyFromEnv,
   type Message,
 } from '../../core/index.js';
-import { SkillRegistry, loadRoster, loadRuleLayers, resolveHooks, type ReadText } from '../../capabilities/index.js';
 import {
+  SkillRegistry,
+  delegateToolSchema,
+  loadRoster,
+  loadRuleLayers,
+  resolveHooks,
+  type ReadText,
+} from '../../capabilities/index.js';
+import {
+  createSessionComposition,
+  diffSessionComposition,
   defaultPolicy,
   FileSessionStore,
   loadSession,
@@ -33,6 +42,8 @@ import {
 } from '../../runtime/index.js';
 import { startRepl } from './repl.js';
 import { buildSystemPrompt } from './system-prompt.js';
+import { JARVIS_VERSION } from './package-info.js';
+import { CLI_EXIT } from './exit-codes.js';
 
 // Capture BEFORE the runtime .env load: a key here came from the shell LAUNCH env (in /proc/environ on
 // Linux); one appearing only after came from .env (runtime, /proc-clean). Used by assertKeyNotInLaunchEnv.
@@ -51,13 +62,14 @@ const OUTPUT_RESERVE_TOKENS = 16_384;
 const program = new Command();
 
 program
-  .name('jarvis-agent')
-  .description('Jarvis-Agent — a minimal coding agent in the terminal (Phase A).')
-  .version('0.0.0')
+  .name('jarvis')
+  .description('Jarvis-Agent interactive coding-agent session.')
+  .version(JARVIS_VERSION)
   .option('--cwd <dir>', 'base directory tool paths resolve against', process.cwd())
   .option('--max-turns <n>', 'max model turns per message', (v) => Number.parseInt(v, 10), 24)
   .option('--resume [id]', 'resume the latest session (or a specific <id>) from data/sessions/')
-  .action(async (opts: { cwd: string; maxTurns: number; resume?: string | boolean }) => {
+  .option('-p, --prompt <text>', 'run this prompt before entering interactive input')
+  .action(async (opts: { cwd: string; maxTurns: number; resume?: string | boolean; prompt?: string }) => {
     let config;
     try {
       assertKeyNotInLaunchEnv(ARK_KEY_IN_LAUNCH_ENV); // /proc safety: refuse a launch-env key on Linux
@@ -89,6 +101,11 @@ program
     const skills = await SkillRegistry.load('skills');
     // Phase C: load agent roles from agents/ (capability-dispatch subagents). Empty → no task tool.
     const roster = await loadRoster(join(opts.cwd, 'agents'));
+    const toolSchemas = [
+      ...tools.schemasForModel(),
+      ...(roster.length > 0 ? [delegateToolSchema(roster)] : []),
+    ];
+    const systemPrompt = buildSystemPrompt(toolSchemas.map((schema) => schema.name));
 
     // B5: merge project-level rule layers into the gate policy. The global ~/AGENTS.md layer is
     // intentionally NOT auto-loaded — pulling private cross-tool config into enforcement should be
@@ -117,6 +134,13 @@ program
 
     // Persistence: resume a prior session, or start (and log) a new one.
     const sessionsDir = join(opts.cwd, 'data', 'sessions');
+    const sessionComposition = createSessionComposition({
+      root: 'repl',
+      runtimeVersion: JARVIS_VERSION,
+      permissionMode: 'interactive',
+      toolSchemas,
+      systemPrompt,
+    });
     let store: FileSessionStore;
     let initialMessages: Message[] | undefined;
     if (opts.resume) {
@@ -129,14 +153,59 @@ program
         process.exitCode = 1;
         return;
       }
-      const loaded = await loadSession(path);
+      let loaded;
+      try {
+        loaded = await loadSession(path, { requireHeader: true });
+      } catch (err) {
+        console.error(`[resume] ${err instanceof Error ? err.message : String(err)}`);
+        process.exitCode = CLI_EXIT.STATE_CORRUPT;
+        return;
+      }
+      if (loaded.pendingTools.length > 0) {
+        const pending = loaded.pendingTools[0];
+        console.error(
+          `[resume] session has ${loaded.pendingTools.length} unresolved tool execution(s); ` +
+          `first=${pending.toolName}/${pending.callId} reason=${pending.reason}. Inspect the workspace before continuing.`,
+        );
+        process.exitCode = CLI_EXIT.NEEDS_HUMAN;
+        return;
+      }
+      if (loaded.header?.model !== config.model || loaded.header.cwd !== opts.cwd) {
+        console.error('[resume] session model/cwd differs from the current invocation; fork or restore the original composition.');
+        process.exitCode = CLI_EXIT.NEEDS_HUMAN;
+        return;
+      }
+      if ('schemaVersion' in loaded.header) {
+        if (loaded.header.composition.coverage !== 'full' || sessionComposition.coverage !== 'full') {
+          console.error('[resume] session composition coverage is partial; fork into a fully recorded v2 session before continuing.');
+          process.exitCode = CLI_EXIT.NEEDS_HUMAN;
+          return;
+        }
+        const differences = diffSessionComposition(loaded.header.composition, sessionComposition);
+        if (differences.length > 0) {
+          console.error(`[resume] session composition changed: ${differences.map((item) => `${item.field}=${item.recorded ?? '-'}->${item.current ?? '-'}`).join(', ')}`);
+          process.exitCode = CLI_EXIT.NEEDS_HUMAN;
+          return;
+        }
+      } else {
+        console.error('[resume] legacy v1 session: tool-receipt and composition coverage are unavailable.');
+      }
       initialMessages = loaded.messages;
-      store = new FileSessionStore(path, loaded.messages.length);
+      store = new FileSessionStore(path, loaded.messages.length, {
+        format: loaded.format,
+        initialSequence: loaded.lastSequence,
+      });
       console.log(`已恢复会话 ${loaded.header?.id ?? path}(${loaded.messages.length} 条消息)\n`);
     } else {
       const id = new Date().toISOString().replace(/[:.]/g, '-');
       store = new FileSessionStore(join(sessionsDir, `${id}.jsonl`));
-      await store.writeHeader({ id, model: config.model, cwd: opts.cwd, startedAt: new Date().toISOString() });
+      await store.writeHeader({
+        id,
+        model: config.model,
+        cwd: opts.cwd,
+        startedAt: new Date().toISOString(),
+        composition: sessionComposition,
+      });
     }
 
     await startRepl({
@@ -147,14 +216,14 @@ program
       roster,
       cwd: opts.cwd,
       modelName: config.model,
-      // A builder, not a string: `task` is registered inside the REPL (roster-dependent), so only
-      // the REPL knows the complete tool list the prompt must advertise.
-      systemPrompt: buildSystemPrompt,
+      // Precomputed from the same final schemas hashed into the session composition.
+      systemPrompt,
       maxTurns: opts.maxTurns,
       policy,
       hooks,
       store,
       initialMessages,
+      initialPrompt: opts.prompt,
     });
   });
 

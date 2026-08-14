@@ -3,7 +3,7 @@
  *
  * Given the two deterministic legs (harness-run objective checks + test-tamper scan), an OPTIONAL
  * leg-3 verifier report, and the harness-pinned requirement list, return
- * verified | rejected | couldNotVerify. Pure: no spawn, no I/O, no events — just the mapping, so
+ * verified | checksOnly | rejected | couldNotVerify. Pure: no spawn, no I/O, no events — just the mapping, so
  * every path (including the guardrails) is unit-testable.
  *
  * Three contracts the tests pin:
@@ -20,8 +20,8 @@
  *    double source of truth that lets an injected "verdict: verified" override the evidence.
  *
  * Two leg-3 states:
- *  - `report === undefined` → the batch-1 deterministic-only fallback (no verifier configured). This
- *    whole branch is UNCHANGED from before leg 3 landed: legs clean ⇒ verified, explicitly.
+ *  - `report === undefined` → routine project checks alone produce `checksOnly`; a passed held-out
+ *    objective check is required for deterministic-only `verified`.
  *  - `report` present → score it over the evidence_strength × claim_scope table (Part7 §4), with the
  *    pinned requirement list as the coverage contract.
  */
@@ -44,7 +44,7 @@ export function decideVerdict(
     return { outcome: 'rejected', rationale: 'objective checks failed (harness-run real exit codes)' };
   }
   // Leg 2 — tests/oracle deleted/skipped/weakened to go green → rejected (deterministic). (step 2.)
-  if (checks.testTamper !== 'clean') {
+  if (checks.testTamper === 'weakened-or-deleted') {
     return {
       outcome: 'rejected',
       rationale: `tests tampered to go green: ${checks.tamperReason || 'weakened/deleted/skipped'}`,
@@ -60,14 +60,30 @@ export function decideVerdict(
     };
   }
 
-  // All deterministic legs clean (leg 1 + leg 2 + held-out). With NO leg-3 report (no verifier
-  // configured), that is the ONLY path to verified — an explicit branch, never a fallback. The no-report
-  // body is UNCHANGED from batch 1; it is simply now additionally gated by the held-out leg above.
-  if (report === undefined) {
+  // A missing Git baseline means the harness cannot prove that tests and check-oracle files stayed
+  // intact. An explicit CLI override may allow the work to run, but it cannot upgrade the result to
+  // verified, even when another evidence leg looks healthy.
+  if (checks.testTamper === 'unavailable') {
     return {
-      outcome: 'verified',
-      rationale:
-        'deterministic checks passed (objective checks green + tests untampered); no leg-3 verifier configured',
+      outcome: 'checksOnly',
+      rationale: 'project checks passed, but no Git baseline was available for tamper detection',
+      ...(report === undefined ? {} : { report }),
+    };
+  }
+
+  // Routine project checks prove that the repository is internally green; they do not prove the
+  // user's objective. A passed held-out leg is trusted objective evidence, so it can still authorize
+  // completion without leg 3. With neither held-out evidence nor a report, park as checks-only.
+  if (report === undefined) {
+    if (checks.heldOut?.passed) {
+      return {
+        outcome: 'verified',
+        rationale: 'deterministic checks and trusted held-out objective checks passed',
+      };
+    }
+    return {
+      outcome: 'checksOnly',
+      rationale: 'project checks passed and tests were untampered; no trusted objective evidence was configured',
     };
   }
 

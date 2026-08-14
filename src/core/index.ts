@@ -5,7 +5,7 @@
  * A2 adds the ToolRegistry (tools/) and the AgentLoop (loop/). A3 adds the ContextManager
  * (context/).
  */
-export type { Message, ToolCall, ToolResult, ToolSchema } from './types.js';
+export type { FileReceipt, Message, ToolCall, ToolResult, ToolSchema } from './types.js';
 export * from './model/index.js';
 export * from './tools/index.js';
 export * from './loop/index.js';

@@ -45,10 +45,14 @@ export interface StreamState {
   toolCalls: Map<number, ToolCallBuffer>;
   usage?: RawUsage;
   rawFinishReason?: string;
+  /** OpenAI-compatible streams can expose a safety refusal in a delta while still
+   * report `stop` as the finish reason. Preserve the raw reason, but do not let
+   * that combination become a trustworthy final answer. */
+  refusalDetected: boolean;
 }
 
 export function emptyStreamState(): StreamState {
-  return { text: '', reasoning: '', toolCalls: new Map() };
+  return { text: '', reasoning: '', toolCalls: new Map(), refusalDetected: false };
 }
 
 /**
@@ -73,6 +77,14 @@ export function foldChunk(
 
   const delta = choice.delta;
   if (!delta) return deltas;
+
+  // Chat Completions streams may carry `delta.refusal` separately from content
+  // (and some providers still end the stream with `finish_reason: "stop"`). It
+  // is safety metadata, never normal assistant text; record it only to make the
+  // terminal decision fail closed.
+  if (typeof delta.refusal === 'string' && delta.refusal.length > 0) {
+    state.refusalDetected = true;
+  }
 
   const reasoning = extractReasoning(delta, reasoningKey);
   if (reasoning) {
@@ -128,7 +140,7 @@ export function finalizeResult(state: StreamState): ModelResult {
         ? { cachedInputTokens: state.usage.prompt_tokens_details.cached_tokens }
         : {}),
     },
-    finishReason: normalizeFinishReason(state.rawFinishReason),
+    finishReason: state.refusalDetected ? 'refused' : normalizeFinishReason(state.rawFinishReason),
     rawFinishReason: state.rawFinishReason ?? '',
     ...(state.reasoning ? { reasoning: state.reasoning } : {}),
   };

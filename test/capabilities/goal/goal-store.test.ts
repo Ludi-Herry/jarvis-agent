@@ -74,4 +74,17 @@ describe('parseGoalLog / replayGoal crash safety', () => {
     expect(records).toHaveLength(2); // the half-written line is skipped
     expect(replayGoal(records).goal?.state).toBe('complete');
   });
+
+  it('fails closed when operational replay encounters a structurally invalid middle record', async () => {
+    const path = join(dir, 'g-corrupt.jsonl');
+    await writeFile(
+      path,
+      '{"t":"goal-created","id":"g","objective":"o","objectiveHash":"h","budget":{"maxRounds":1},"sessionId":"s","createdAt":"t0"}\n'
+        + '{}\n'
+        + '{"t":"goal-state","state":"blocked","at":"t1"}\n',
+      'utf8',
+    );
+
+    await expect(loadGoal(path)).rejects.toThrow('goal state is corrupt at line 2 (invalid-record)');
+  });
 });

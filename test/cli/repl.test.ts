@@ -8,7 +8,7 @@ import { startRepl } from '../../src/surfaces/cli/repl.js';
 import { InMemoryToolRegistry } from '../../src/core/tools/registry.js';
 import { readTool, writeTool } from '../../src/core/tools/builtins.js';
 import { readFile } from 'node:fs/promises';
-import { FileSessionStore, loadSession } from '../../src/runtime/session/session-store.js';
+import { FileSessionStore, createSessionComposition, loadSession } from '../../src/runtime/session/session-store.js';
 import type { Message, ToolCall } from '../../src/core/types.js';
 import type { ModelDelta, ModelProvider, ModelResult } from '../../src/core/model/types.js';
 import type { ToolDefinition } from '../../src/core/tools/types.js';
@@ -17,6 +17,11 @@ interface Step {
   text?: string;
   toolCalls?: ToolCall[];
 }
+const composition = createSessionComposition({
+  root: 'repl',
+  runtimeVersion: 'test',
+  permissionMode: 'interactive',
+});
 /** A scripted model that also records the message-history length it saw on each call, so a
  *  test can prove the conversation persisted across REPL turns. */
 function fakeModel(steps: Step[]): { provider: ModelProvider; seen: number[] } {
@@ -87,6 +92,27 @@ afterEach(async () => {
 });
 
 describe('startRepl', () => {
+  it('runs an initial prompt before reading interactive input', async () => {
+    const tools = new InMemoryToolRegistry();
+    const { provider, seen } = fakeModel([{ text: 'initial answer' }]);
+    const out = sink();
+
+    await startRepl({
+      model: provider,
+      tools,
+      cwd: dir,
+      modelName: 'fake-model',
+      systemPrompt: 'sys',
+      maxTurns: 5,
+      initialPrompt: 'initial question',
+      input: inputOf(['/exit']),
+      output: out.stream,
+    });
+
+    expect(seen).toEqual([2]);
+    expect(out.text()).toContain('initial answer');
+  });
+
   it('prints the banner, streams the answer, and exits when input ends', async () => {
     const tools = new InMemoryToolRegistry();
     const { provider } = fakeModel([{ text: 'hi there' }]);
@@ -194,7 +220,7 @@ describe('startRepl', () => {
     const tools = new InMemoryToolRegistry();
     tools.register(writeTool);
     const { provider } = fakeModel([
-      { toolCalls: [{ id: 'c1', name: 'write', arguments: '{"path":"note.txt","content":"approved"}' }] },
+      { toolCalls: [{ id: 'c1', name: 'write', arguments: '{"path":"note.txt","content":"approved","createOnly":true}' }] },
       { text: 'wrote it' },
     ]);
     const out = sink();
@@ -219,7 +245,7 @@ describe('startRepl', () => {
     const tools = new InMemoryToolRegistry();
     tools.register(writeTool);
     const { provider } = fakeModel([
-      { toolCalls: [{ id: 'c1', name: 'write', arguments: '{"path":"blocked.txt","content":"x"}' }] },
+      { toolCalls: [{ id: 'c1', name: 'write', arguments: '{"path":"blocked.txt","content":"x","createOnly":true}' }] },
       { text: 'ok, skipped' },
     ]);
     const out = sink();
@@ -243,7 +269,7 @@ describe('startRepl', () => {
     const tools = new InMemoryToolRegistry();
     tools.register(writeTool);
     const { provider } = fakeModel([
-      { toolCalls: [{ id: 'c1', name: 'write', arguments: '{"path":"eof.txt","content":"x"}' }] },
+      { toolCalls: [{ id: 'c1', name: 'write', arguments: '{"path":"eof.txt","content":"x","createOnly":true}' }] },
       { text: 'understood' },
     ]);
     const out = sink();
@@ -269,7 +295,7 @@ describe('startRepl', () => {
     // --- session 1: ask q1, store it, then "crash" (input ends) ---
     const m1 = fakeModel([{ text: 'a1' }]);
     const store1 = new FileSessionStore(path);
-    await store1.writeHeader({ id: 'sess', model: 'fake', cwd: dir, startedAt: 'now' });
+    await store1.writeHeader({ id: 'sess', model: 'fake', cwd: dir, startedAt: 'now', composition });
     await startRepl({
       model: m1.provider,
       tools: new InMemoryToolRegistry(),
@@ -285,7 +311,10 @@ describe('startRepl', () => {
     // --- session 2: resume from disk in a NEW store (simulating a fresh process) ---
     const loaded = await loadSession(path);
     const m2 = fakeModel([{ text: 'a2' }]);
-    const store2 = new FileSessionStore(path, loaded.messages.length);
+    const store2 = new FileSessionStore(path, loaded.messages.length, {
+      format: loaded.format,
+      initialSequence: loaded.lastSequence,
+    });
     await startRepl({
       model: m2.provider,
       tools: new InMemoryToolRegistry(),

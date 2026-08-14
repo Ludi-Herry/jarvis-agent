@@ -18,6 +18,7 @@ import type { ToolDefinition } from '../../src/core/tools/types.js';
 /** The behaviour guardrails that must survive every change to the tool list. */
 const BEHAVIOUR_SENTENCES = [
   '路径都相对当前工作目录。回答需要文件内容时先调用工具读取,再据此作答;',
+  '修改已有文件时先 read,再把返回的 version 作为 write.expectedVersion; 新建文件使用 createOnly:true。',
   '需要构建/测试/查看 git 等用 bash。危险或涉及密钥的操作会被权限闸门拦下或需用户批准——',
   '被拒绝时如实说明,不要绕过。不要编造文件内容。回答简洁。',
 ];

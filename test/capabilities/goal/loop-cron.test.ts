@@ -49,6 +49,53 @@ describe('runLoopCronOnce', () => {
     await expect(loadLoopCronState(path)).rejects.toThrow(/cron state cannot be read/);
   });
 
+  it('fails closed when a cron log contains an invalid middle record', async () => {
+    const path = join(dir, 'cron-corrupt.jsonl');
+    await writeFile(path, [
+      JSON.stringify({
+        t: 'cron-attempt',
+        taskId: 'task-a',
+        scheduledFor: '2026-07-01T00:00:00.000Z',
+        startedAt: '2026-07-01T00:01:00.000Z',
+        finishedAt: '2026-07-01T00:02:00.000Z',
+        exitCode: 0,
+        nextRunAt: '2026-07-01T00:30:00.000Z',
+      }),
+      '{}',
+      JSON.stringify({
+        t: 'cron-attempt',
+        taskId: 'task-a',
+        scheduledFor: '2026-07-01T00:30:00.000Z',
+        startedAt: '2026-07-01T00:31:00.000Z',
+        finishedAt: '2026-07-01T00:32:00.000Z',
+        exitCode: 0,
+        nextRunAt: '2026-07-01T01:00:00.000Z',
+      }),
+    ].join('\n'));
+
+    await expect(loadLoopCronState(path)).rejects.toThrow(/cron state is corrupt at line 2/);
+  });
+
+  it('recovers cron state when only the final append is truncated', async () => {
+    const path = join(dir, 'cron-truncated.jsonl');
+    await writeFile(path, [
+      JSON.stringify({
+        t: 'cron-attempt',
+        taskId: 'task-a',
+        scheduledFor: '2026-07-01T00:00:00.000Z',
+        startedAt: '2026-07-01T00:01:00.000Z',
+        finishedAt: '2026-07-01T00:02:00.000Z',
+        exitCode: 0,
+        nextRunAt: '2026-07-01T00:30:00.000Z',
+      }),
+      '{',
+    ].join('\n'));
+
+    const state = await loadLoopCronState(path);
+
+    expect(state.nextRunAtByTaskId).toEqual(new Map([['task-a', '2026-07-01T00:30:00.000Z']]));
+  });
+
   it('skips tasks that are not due and records no attempt', async () => {
     const path = join(dir, 'cron.jsonl');
     const store = new FileLoopCronStore(path);
@@ -63,7 +110,7 @@ describe('runLoopCronOnce', () => {
       },
     });
 
-    expect(result).toEqual({ triggered: 0, skipped: 1 });
+    expect(result).toEqual({ triggered: 0, skipped: 1, failed: 0 });
     expect(seen).toEqual([]);
     await expect(readFile(path, 'utf8')).rejects.toThrow();
   });
@@ -78,7 +125,7 @@ describe('runLoopCronOnce', () => {
       runTask: async () => ({ exitCode: 0, loopId: 'L1' }),
     });
 
-    expect(result).toEqual({ triggered: 1, skipped: 0 });
+    expect(result).toEqual({ triggered: 1, skipped: 0, failed: 0 });
     const records = parseLoopCronLog(await readFile(path, 'utf8'));
     expect(records).toEqual([
       {
@@ -118,7 +165,7 @@ describe('runLoopCronOnce', () => {
       },
     });
 
-    expect(result).toEqual({ triggered: 0, skipped: 1 });
+    expect(result).toEqual({ triggered: 0, skipped: 1, failed: 0 });
     expect(calls).toEqual(['task-a']);
   });
 
@@ -160,6 +207,19 @@ describe('runLoopCronOnce', () => {
     );
 
     expect(order).toEqual(['renew:task-a', 'run:task-a', 'renew:task-b', 'run:task-b']);
+  });
+
+  it('counts every due child with a nonzero exit code as failed', async () => {
+    const path = join(dir, 'cron.jsonl');
+    const store = new FileLoopCronStore(path);
+
+    const result = await runLoopCronOnce(config(), {
+      store,
+      now: () => new Date('2026-07-01T00:10:00.000Z'),
+      runTask: async () => ({ exitCode: 2 }),
+    });
+
+    expect(result).toEqual({ triggered: 1, skipped: 0, failed: 1 });
   });
 });
 

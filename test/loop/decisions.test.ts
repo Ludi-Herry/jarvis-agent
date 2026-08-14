@@ -33,8 +33,27 @@ describe('decideStop', () => {
     expect(decideStop(result([], 'filtered'))).toEqual({ done: true, reason: 'halt', cause: 'filtered' });
   });
 
-  it('still continues a truncated turn that carries tool calls (torn args fail downstream, not here)', () => {
-    expect(decideStop(result([aCall], 'truncated')).done).toBe(false);
+  it.each(['paused', 'refused', 'unknown', 'tool_calls'] as const)(
+    'halts fail-closed on a no-tool %s turn',
+    (finishReason) => {
+      const expected = finishReason === 'tool_calls' ? 'unknown' : finishReason;
+      expect(decideStop(result([], finishReason))).toEqual({ done: true, reason: 'halt', cause: expected });
+    },
+  );
+
+  it.each(['truncated', 'filtered', 'paused', 'refused', 'unknown'] as const)(
+    'halts a %s turn even when a partial tool call was assembled',
+    (finishReason) => {
+      expect(decideStop(result([aCall], finishReason))).toEqual({
+        done: true,
+        reason: 'halt',
+        cause: finishReason,
+      });
+    },
+  );
+
+  it('halts a contradictory completed turn that also carries a tool call', () => {
+    expect(decideStop(result([aCall], 'completed'))).toEqual({ done: true, reason: 'halt', cause: 'unknown' });
   });
 });
 

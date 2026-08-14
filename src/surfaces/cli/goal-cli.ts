@@ -2,8 +2,8 @@
  * surfaces/cli/goal-cli — the `goal` entry point (Phase D, D4).
  *
  * A SEPARATE entry from the REPL (not folded into startRepl): one objective in, the GoalLoop drives
- * a builder agent toward it autonomously, the harness verifies independently (deterministic two
- * legs), and the loop self-stops at complete / blocked. Tool side effects still pass the
+ * a builder agent toward it autonomously, the harness runs independent project/tamper checks plus
+ * configured objective evidence, and the loop self-stops at complete / blocked. Tool side effects still pass the
  * PermissionGate — an interactive approver, same as the REPL.
  *
  * Run:  npm run goal -- "<objective>"   (needs ARK_API_KEY)
@@ -31,6 +31,7 @@ import {
   DefaultPermissionGate,
   FileSessionStore,
   InMemoryEventBus,
+  createSessionComposition,
   createEmergencyStopSignal,
   createWsl2UnshareSandboxRunner,
   type Approver,
@@ -44,17 +45,22 @@ import {
   resolveHooks,
   runGoal,
   snapshotWorktreeStatus,
+  updateGoalToolSchema,
   type PinnedRequirement,
   type TestBaseline,
 } from '../../capabilities/index.js';
 import type { ModelProvider } from '../../core/index.js';
 import { safeInline } from './approval.js';
+import { formatGoalTerminalGuidance } from './terminal-guidance.js';
 import { createApprovalEventApprover, FileApprovalAuditStore } from './approval-events.js';
 import { registerBuilderSandboxTools } from './builder-sandbox-tools.js';
 import { parseGoalArgs } from './goal-args.js';
 import { createInteractiveApprover, readlineApproverIo } from './interactive-approver.js';
 import { loadGoalCliTrustedRequirements } from './goal-trusted-requirements.js';
 import { initialRenderState, renderEvent } from './render.js';
+import { CLI_EXIT, exitCodeForGoal } from './exit-codes.js';
+import { decideGitTrust } from './git-trust.js';
+import { JARVIS_VERSION } from './package-info.js';
 
 // Capture BEFORE the runtime .env load: a key present here came from the shell LAUNCH env (it is in
 // /proc/<pid>/environ on Linux); a key that appears only after loadEnvFile came from .env (runtime-
@@ -68,10 +74,12 @@ const JARVIS_GOAL_SETTER_REQUIREMENTS_LAUNCH = process.env.JARVIS_GOAL_SETTER_RE
 if (existsSync('.env')) process.loadEnvFile('.env');
 
 const OUTPUT_RESERVE_TOKENS = 16_384;
+const GOAL_MAX_WALL_CLOCK_MS = 15 * 60 * 1000;
 
 const BUILDER_PROMPT = [
   '你是一个在终端里自主工作的编码助手,正在达成一个目标。',
   '用 read / write / grep / bash 工具推进(路径相对项目根)。危险或涉密操作会被权限闸门拦下或需用户批准。',
+  '修改已有文件前先 read,把返回的 version 传给 write.expectedVersion; 新建文件使用 createOnly:true。',
   '可调用 sandboxed_check,用 check=typecheck|lint|test|build 在 OS sandbox 里跑项目检查; 根据 stdout/stderr 继续修失败。',
   '可调用 browser_smoke,用 profile=static-dist 在 OS sandbox 里检查 dist/index.html 是否能被预装浏览器打开; 结果只作为修复反馈。',
   '你认为目标已达成时,调用 update_goal(complete) 并结束本轮——harness 会独立重跑项目检查来验证;',
@@ -84,13 +92,13 @@ async function main(): Promise<void> {
     args = parseGoalArgs(process.argv.slice(2));
   } catch (err) {
     console.error(err instanceof Error ? err.message : String(err));
-    process.exitCode = 1;
+    process.exitCode = CLI_EXIT.USAGE;
     return;
   }
   const { objective } = args;
   if (objective === '') {
-    console.error('用法: npm run goal -- "<objective>"');
-    process.exitCode = 1;
+    console.error('用法: npm run goal -- [--allow-no-git] "<objective>"');
+    process.exitCode = CLI_EXIT.USAGE;
     return;
   }
 
@@ -100,7 +108,7 @@ async function main(): Promise<void> {
     config = loadDoubaoConfig();
   } catch (err) {
     console.error(err instanceof Error ? err.message : String(err));
-    process.exitCode = 1;
+    process.exitCode = CLI_EXIT.USAGE;
     return;
   }
 
@@ -134,7 +142,7 @@ async function main(): Promise<void> {
     });
   } catch (err) {
     console.error(`[trusted requirements] ${err instanceof Error ? err.message : String(err)}`);
-    process.exitCode = 1;
+    process.exitCode = CLI_EXIT.USAGE;
     return;
   }
   const sandboxCheckPlan = trustedRequirements.kind === 'sandbox-checks' ? trustedRequirements.plan : undefined;
@@ -182,11 +190,39 @@ async function main(): Promise<void> {
     maxOutputTokens: OUTPUT_RESERVE_TOKENS,
   });
 
-  const baseline = await snapshotBaseline(shellPath, cwd, emergencyStop.signal); // leg-2 baseline; undefined if not a git repo
+  const baseline = await snapshotBaseline(shellPath, cwd, emergencyStop.signal);
+  const gitTrust = decideGitTrust(baseline !== undefined, args.allowNoGit);
+  if (gitTrust === 'reject') {
+    console.error(
+      '[goal] No usable Git baseline was found. Autonomous goal mode requires Git for tamper detection. ' +
+        'Initialize/commit the repository, or rerun with --allow-no-git to accept a checks-only result.',
+    );
+    rl.close();
+    emergencyStop.dispose();
+    process.exitCode = CLI_EXIT.USAGE;
+    return;
+  }
+  if (gitTrust === 'checks-only') {
+    console.error('[goal] WARNING: --allow-no-git enabled; verified completion is disabled and checks-only is the highest possible outcome.');
+  }
   const worktreeBaseline = await snapshotWorktreeStatus(shellPath, cwd, emergencyStop.signal);
-  const goalStore = new FileGoalStore(join(cwd, 'data', 'goals', `${id}.jsonl`));
-  const sessionStore = new FileSessionStore(join(cwd, 'data', 'sessions', `${sessionId}.jsonl`));
-  await sessionStore.writeHeader({ id: sessionId, model: config.model, cwd, startedAt: new Date().toISOString() });
+  const goalLogPath = join(cwd, 'data', 'goals', `${id}.jsonl`);
+  const sessionLogPath = join(cwd, 'data', 'sessions', `${sessionId}.jsonl`);
+  const goalStore = new FileGoalStore(goalLogPath);
+  const sessionStore = new FileSessionStore(sessionLogPath);
+  await sessionStore.writeHeader({
+    id: sessionId,
+    model: config.model,
+    cwd,
+    startedAt: new Date().toISOString(),
+    composition: createSessionComposition({
+      root: 'goal',
+      runtimeVersion: JARVIS_VERSION,
+      permissionMode: 'interactive',
+      toolSchemas: [...tools.schemasForModel(), updateGoalToolSchema()],
+      systemPrompt: BUILDER_PROMPT,
+    }),
+  });
 
   // Leg 3 (independent LLM judge): enabled only when ARK_VERIFIER_MODEL names a DIFFERENT model. When
   // enabled, derive the pinned requirement list once (builder model) and fail closed if it comes back
@@ -208,7 +244,7 @@ async function main(): Promise<void> {
       console.error('[goal] emergency stop requested before builder started; no new agent action will run.');
       rl.close();
       emergencyStop.dispose();
-      process.exitCode = 1;
+      process.exitCode = CLI_EXIT.INTERRUPTED;
       return;
     }
     if (pinned.length === 0) {
@@ -218,7 +254,7 @@ async function main(): Promise<void> {
       );
       rl.close();
       emergencyStop.dispose();
-      process.exitCode = 1;
+      process.exitCode = CLI_EXIT.UNVERIFIED;
       return;
     }
   }
@@ -229,9 +265,6 @@ async function main(): Promise<void> {
     ...loadHeldOutCommands(),
     ...(goalSetterRequirements?.heldOutCommands ?? []),
   ];
-  const checksOnlyDefaultMode =
-    verifierProvider === undefined && sandboxCheckPlan === undefined && goalSetterRequirements === undefined && heldOutCommands.length === 0;
-
   // shadow-git (opt-in via JARVIS_SHADOW_GIT): a side history of the builder's file changes under
   // data/shadow, snapshotted per round, so you can audit / `npm run shadow -- restore <sha>` a bad run.
   // Off by default so a run never silently creates the shadow repo; best-effort when on.
@@ -244,7 +277,11 @@ async function main(): Promise<void> {
 
   console.log(`Jarvis-Agent · goal 模式 · ${safeInline(config.model)}`);
   console.log(`目标: ${objective}`);
-  console.log(baseline ? `验收: 四关卡 + 测试篡改检测(baseline ${baseline.headSha.slice(0, 8)})` : '验收: 四关卡(非 git 仓,跳过篡改检测)');
+  console.log(
+    baseline
+      ? `验收: 四关卡 + 测试篡改检测(baseline ${baseline.headSha.slice(0, 8)})`
+      : '验收: checks-only(无 Git baseline,不能授权 verified)',
+  );
   console.log(
     worktreeBaseline
       ? `worktree: ${args.failOnWorktreeChange ? 'forbid changes' : 'audit changes'} (${safeInline(worktreeBaseline.command)})`
@@ -292,7 +329,7 @@ async function main(): Promise<void> {
     : sandboxCheckPlan?.commands;
   try {
     result = await runGoal(
-      { id, objective, sessionId, budget: { maxRounds: 8 }, baseline, worktreeBaseline, pinned },
+      { id, objective, sessionId, budget: { maxRounds: 8, maxWallClockMs: GOAL_MAX_WALL_CLOCK_MS }, baseline, worktreeBaseline, pinned },
       {
         model: provider,
         tools,
@@ -321,7 +358,7 @@ async function main(): Promise<void> {
     if (emergencyStop.signal.aborted) {
       bus.emit({ type: 'halt', reason: 'emergency-stop' });
       console.error('\n[goal] emergency stop requested; run aborted and JSONL logs were left in place.');
-      process.exitCode = 1;
+      process.exitCode = CLI_EXIT.INTERRUPTED;
       return;
     }
     throw err;
@@ -332,14 +369,27 @@ async function main(): Promise<void> {
   }
 
   const verdict = result.finalVerdict?.outcome ?? '—';
-  const displayedVerdict = checksOnlyDefaultMode && verdict === 'verified' ? 'checks-passed' : verdict;
+  const displayedVerdict = verdict === 'checksOnly' ? 'checks-only' : verdict;
   console.log(`\n=== goal ${result.state} (rounds=${result.rounds}, verdict=${displayedVerdict}) ===`);
-  if (checksOnlyDefaultMode && verdict === 'verified') {
+  if (verdict === 'checksOnly') {
     console.log(
-      '[goal] 默认档没有检查“目标到底有没有做到”；它只确认项目检查通过，git 仓内还会确认测试没有被改坏。要强校验目标，启用 ARK_VERIFIER_MODEL、JARVIS_HELDOUT_CHECKS_FILE 或 trusted requirements。',
+      '[goal] 项目检查已通过，目标完成仍缺少可信证据。请人工复核，或启用 ARK_VERIFIER_MODEL、JARVIS_HELDOUT_CHECKS_FILE / trusted requirements。',
     );
   }
-  if (result.state !== 'complete') process.exitCode = 1;
+  if (result.state !== 'complete') {
+    for (const line of formatGoalTerminalGuidance({
+      state: result.state,
+      verdict: displayedVerdict,
+      ...(result.haltReason === undefined ? {} : { haltReason: safeInline(result.haltReason) }),
+      goalLogPath: safeInline(goalLogPath),
+      sessionLogPath: safeInline(sessionLogPath),
+    })) console.log(line);
+  }
+  process.exitCode = exitCodeForGoal({
+    state: result.state,
+    outcome: result.finalVerdict?.outcome,
+    haltReason: result.haltReason,
+  });
 }
 
 /**
@@ -388,7 +438,7 @@ function countRoutes(routes: ReadonlyMap<string, string>, route: string): number
   return count;
 }
 
-/** Snapshot the leg-2 baseline: the current HEAD sha. Undefined when not a git repo (leg 2 inert). */
+/** Snapshot the leg-2 baseline. Production callers reject absence unless checks-only is explicit. */
 async function snapshotBaseline(shellPath: string, cwd: string, signal?: AbortSignal): Promise<TestBaseline | undefined> {
   const res = await runCommand(shellPath, 'git rev-parse HEAD', cwd, 10_000, 1_000, signal);
   if (res.code !== 0) return undefined;
@@ -397,7 +447,7 @@ async function snapshotBaseline(shellPath: string, cwd: string, signal?: AbortSi
 
 main().catch((err: unknown) => {
   console.error('\n[goal] fatal:', err instanceof Error ? err.message : err);
-  process.exitCode = 1;
+  process.exitCode = CLI_EXIT.RUNTIME;
 });
 
 async function runAdvisoryHook(fn: (() => Promise<void>) | undefined): Promise<void> {
