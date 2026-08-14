@@ -57,11 +57,11 @@ R0.5 处理两个新的信任问题：文件在“读完到写入”之间可能
 
 安全边界：version token 是 managed file tool 的 stale-baseline 检查点，同内容重写视为同一逻辑版本。进程内锁和 exclusive create 可处理同一 Jarvis 进程的竞态；symbolic-link leaf 与已有多 hard-link 文件会拒绝替换。外部编辑器、另一个 Jarvis 进程、已批准 bash，以及最终检查到 rename 之间的 path/link/metadata 修改仍没有通用 compare-and-swap 保证。出现无法确认的 post-state 时结果为 `unknown`，不得给 verified/complete。
 
-Session v2 的 `committed` 表示 tool runner 已返回一个可确认的终态 `ToolResult`，其中可以包含 permission deny 或执行前的工具错误。工具体开始运行后抛错、子 agent 报告不确定执行结果或 file receipt 标记 `unknown` 时只写 unknown 并 halt，不能产生 final 或完成授权。请求收据保存消息、system addendum 与工具 schema 的哈希和数量，避免重复落盘动态提示内容；候选内容可以用哈希核对，完整 model-visible trajectory 与 redaction receipt 留给 headless/trajectory 切片。
+Session v2 的 `committed` 表示 tool runner 已返回一个可确认的终态 `ToolResult`，其中可以包含 permission deny 或执行前的工具错误。工具体开始运行后抛错、子 agent 报告不确定执行结果或 file receipt 标记 `unknown` 时只写 unknown 并 halt，不能产生 final 或完成授权。请求收据保存消息、system addendum 与工具 schema 的哈希和数量，避免重复落盘动态提示内容。当前 resume 会用 header 中的动态来源 ID、来源清单哈希和每个 `runId` 的首次用户消息重算 addendum，逐条核对 request receipt；完整 model-visible trajectory 与 redaction receipt 留给 headless/trajectory 切片。
 
 R0.5 验收：stale update、create race、同 token 并发写、序号断裂、v1/v2 混版、receiptless identity、重复逻辑执行、compaction 伪造投影、assistant intent orphan、planned orphan、unknown 和 committed-without-message 都有触发测试；任何未决副作用都不能自动 resume、重放、finalize merge 或授权完成。
 
-实现检查（2026-08-14）：`npm run typecheck`、`npm run lint`、`npm run build -- --noEmit`、`npm test` 全绿；测试为 112 files / 1210 passed / 2 skipped，tracked 与 untracked whitespace 检查通过。新增的第二个 skip 是 Windows 文件 symlink 需要额外权限；hard-link、junction 与路径逃逸仍在 Windows 实跑。已有 `dist/` 保持不动。独立终审第三轮结论为 GO（P0=0、P1=0、P2=0）；前两轮发现的 unknown execution、composition、finalize receipt coverage、identity/projection 与 compaction orphan 漏口均已通过触发测试关闭。
+R0.5 独立终审时的实现检查（2026-08-14）：`npm run typecheck`、`npm run lint`、`npm run build -- --noEmit`、`npm test` 全绿；当时测试为 112 files / 1210 passed / 2 skipped，tracked 与 untracked whitespace 检查通过。新增的第二个 skip 是 Windows 文件 symlink 需要额外权限；hard-link、junction 与路径逃逸仍在 Windows 实跑。已有 `dist/` 保持不动。独立终审第三轮结论为 GO（P0=0、P1=0、P2=0）；前两轮发现的 unknown execution、composition、finalize receipt coverage、identity/projection 与 compaction orphan 漏口均已通过触发测试关闭。sessions 与动态恢复合入后的当前证据见本计划第 5 节。
 
 ## 4. R1：CLI 产品外壳
 
@@ -73,10 +73,22 @@ R0.5 验收：stale update、create race、同 token 并发写、序号断裂、
 - [x] 现有 run/resume/goal/loop/status/finalize/cron/shadow 通过薄转发继续使用原验收逻辑和退出码。
 - [x] `doctor [--json]` 只读检查 Node、cwd、凭据来源、Git baseline、sandbox 命令与 data path，不显示凭据值，也不发 provider 请求。
 
-仍待 v0.1 关键切片：只读 sessions 产品面、dynamic composition 的 resume 比较、一条 versioned headless JSONL agent-event contract、A0、当前 Session 两级 Recall、typed config 与 `inspect/safe`、完整 Windows 契约和 10–20 个真实任务。当前 package bin 由锁定的 runtime `tsx@4.22.4` 启动源码；packed artifact 已在 Windows 空格路径下用 `--omit=dev` 安装，`jarvis --help`、`--version`、`status --json` 全部 exit 0。纯编译 bin、stop/review/completion、其余 sessions mutation 与更多 preset 属后续产品化；已有 `dist/` 保持不动。
+Sessions 与动态恢复切片（2026-08-15）已完成：
+
+- [x] `jarvis sessions list|show [--json]` 只读显示 Session v1/v2 身份、integrity、composition、pending effect 与恢复建议；不读取 provider、不输出消息/工具参数正文、没有完成授权。
+- [x] REPL v2 header 记录 `skill-registry-v1` 与完整解析后 Skill manifest 的哈希；goal/loop 记录显式 `none-v1`。原始 Skill 正文不复制进第二份 payload。
+- [x] 实际 exact-session resume 在 Provider/工具执行前比较 base composition、动态来源与 manifest，并按首次 request 前的 durable user message 重算每个 run 的 addendum。相同来源继续；旧 v2 缺来源或来源漂移退出 3；来源一致但 receipt 矛盾、缺激活消息或半份 provenance 退出 7。
+- [x] `sessions list|show` 显示动态来源与 manifest 哈希；旧 v2 缺动态 provenance 标记 `review-composition`，legacy v1 保持原有证据不足提示。
+- [x] `sessions show` 与实际 resume 共用窄 Session ID/路径边界：拒绝路径分隔符、遍历、绝对路径、Windows namespaced path、设备名及扩展名变体、尾随点/空格、symbolic link/junction/reparse escape；文件名 ID 与 header ID 不一致时拒绝恢复。
+- [x] `sessions show` 缺少当前 invocation composition，只给 `ready-for-resume-check`；`compatibility: exact` 只由实际 resume 完成 composition/addendum 对比后输出。
+- [x] 所有人类可读 sessions/resume 字段及 REPL/loop 错误经过单行终端净化；JSON 保持标准转义且不注入 ANSI。只有明确 `ENOENT` 返回 not found/exit 2，其余 stat/read 错误与无错误码的 operational semantic failure 保留为 unreadable/partial/exit 7。
+- [x] 根 `jarvis --cwd`、latest discovery 与 resolver 后二次读取共用同一错误分类；EACCES、EPERM、EIO 均有命令层或确定性触发测试。latest 目录枚举/条目消失、actual resume 二次读取、junction/canonical escape 与 loop 参数/map/resume/fatal 控制字符都有生产接线覆盖。
+- [x] 本切片的路径保证覆盖静态 symlink/junction/reparse 与 canonical escape。恶意同用户进程在校验和读取之间主动替换路径仍超出保证；Session 当前也没有跨进程 writer lock 或密码学真实性。hostile concurrent local writer 进入支持的威胁模型后，再评估 file-handle binding。
+
+仍待 v0.1 关键切片：一条 versioned headless JSONL agent-event contract、A0、当前 Session 两级 Recall、typed config 与 `inspect/safe`、完整 Windows 契约和 10–20 个真实任务。当前 package bin 由锁定的 runtime `tsx@4.22.4` 启动源码；packed artifact 已在 Windows 空格路径下用 `--omit=dev` 安装，`jarvis --help`、`--version`、`status --json` 全部 exit 0。纯编译 bin、stop/review/completion、其余 sessions mutation 与更多 preset 属后续产品化；已有 `dist/` 保持不动。
 
 - 单一 `jarvis` executable 与命令树：`run`、`goal`、`loop`、`resume`、`status`、`doctor`、`config` 为根帮助高频项；help/version/global flags 与旧入口退出码统一，版本读取 `package.json`。
-- 会话：v0.1 先交付只读 `sessions list|show`，并让现有 exact-session resume 显示 cwd、模型、composition diff、pending effect 和停止原因；search/rename/fork/archive 分切片后移。
+- 会话：v0.1 已交付只读 `sessions list|show`，实际 exact-session resume 会显示 cwd、模型、composition diff、pending effect 和停止原因；search/rename/fork/archive 分切片后移。
 - 配置：typed TOML，顺序为内置默认 < 用户 < 项目共享安全字段 < 项目本地 < preset < CLI flags < session 临时值；项目层只能收紧权限。
 - 首版 preset：`inspect`、`safe`。`maintain`、`worktree` 等 A0 证明用户目标差异后再加入；preset 只组合现有参数和四套可信 map。
 - Headless：保留现有人类 text 输出，先冻结一条 versioned JSONL agent-event contract；静态 JSON 由消费者聚合。事件流无 ANSI。
@@ -124,14 +136,16 @@ preset 合同：
 
 JSONL 首批事件：`session.started`、`model.started`、`model.finished`、`tool.started`、`tool.finished`、`approval.required`、`approval.resolved`、`check.finished`、`run.finished`。每条带 `schemaVersion`、`sessionId`、`cwd`、`timestamp`；JSONL 不带 ANSI。
 
-R1 后续交付顺序：
+R1 交付顺序：
 
-1. 只读 `sessions list|show`；首个有界实现包见 `docs/handoff-zcode-glm53.md`。
-2. 收口现有 exact-session resume 的 dynamic composition/addendum 比较、来源展示和 fail-closed 提示。
-3. 固定 versioned headless JSONL agent-event contract并冻结 A0 基线；现有人类 text 继续保留。
-4. 在当前 Session 增加 `history_search` / `history_turn`，以 Recall 开关的同形任务做对照。
-5. 实现 typed config、有效来源展示与 `inspect` / `safe`；`maintain` / `worktree` 等 A0 后再决定。
-6. 跑 10–20 个真实同形任务，要求零 false-verified、零无限等待、零 orphan side effect。
+1. [x] 只读 `sessions list|show`；实现边界见 `docs/handoff-zcode-glm53.md`。
+2. [x] 收口 exact-session resume 的 dynamic composition/addendum 比较、来源展示和 fail-closed 提示。
+3. [ ] 固定 versioned headless JSONL agent-event contract 并冻结 A0 基线；现有人类 text 继续保留。
+4. [ ] 在当前 Session 增加 `history_search` / `history_turn`，以 Recall 开关的同形任务做对照。
+5. [ ] 实现 typed config、有效来源展示与 `inspect` / `safe`；`maintain` / `worktree` 等 A0 后再决定。
+6. [ ] 跑 10–20 个真实同形任务，要求零 false-verified、零无限等待、零 orphan side effect。
+
+本切片检查（2026-08-15）：聚焦测试 12 files / 183 passed；`npm run typecheck`、`npm run lint`、`npm run build -- --noEmit`、`npm test` 全绿；全量测试为 119 files / 1334 passed / 2 skipped。独立提交门终审为 GO（P0=0、P1=0、P2=0、P3=1）；P3 是已记录的 hostile same-user check-to-read 并发替换窗口，不阻断当前威胁模型下的提交。代码提交为 `a814889`。已有 `dist/` 保持不动。
 
 Recall 保持 Jarvis 原生实现，读取现有 Session JSONL，不引入 DSH/Cordis runtime、第二个事件总线或会话数据库。A0 对照至少比较 verified rate、false-verified、峰值输入、总成本、p95、Recall 精度、额外工具轮次和恢复成功率；只有显式 Recall 仍解决不了长会话问题时，才评估 bounded slice 原型。
 

@@ -1,15 +1,17 @@
 # ZCode / GLM-5.3 交接：Jarvis CLI sessions 只读切片
 
+> 状态（2026-08-15）：首切片及后续安全收口已完成。`jarvis sessions list|show [--json]` 保持 observation-only；实际 resume 复用同一 ID/路径边界并承担当前 composition/addendum 的最终兼容性比较。提交级状态以 `docs/handoff-next.md` 为准。
+
 > 状态：2026-08-14。本文面向接手实现的模型，范围已刻意收窄。开始前必须核对 Git 基线与工作树；发现 HEAD 或状态不一致时停止并汇报。
 
 ## 1. 当前基线
 
 - 仓库：`H:\jarvis-agent`
 - 分支：`main`
-- 代码基线：`9df2b94`（`feat: harden CLI execution and session recovery`）；本文所在的后续文档 commit 只更新计划和交接。
-- 当前验证：`typecheck`、`lint`、`npm run build -- --noEmit`、`npm test` 全绿；112 test files / 1210 passed / 2 skipped。
+- 收口代码提交：`a814889`（`feat: harden session resume and inspection`）；本文与其余正式说明进入独立文档提交。
+- 合并 dynamic composition resume 与 sessions/resume hardening 后的当前验证：聚焦测试 12 files / 183 passed；`typecheck`、`lint`、`npm run build -- --noEmit`、`npm test` 全绿；119 test files / 1334 passed / 2 skipped。独立提交门终审为 GO（P0=0、P1=0、P2=0、P3=1）；唯一 P3 是已披露的 hostile same-user check-to-read 并发替换窗口。
 - 产品路线：v0.1 CLI beta → v0.2 全屏 TUI + checkpoint/rewind → v0.3 Desktop control surface。
-- 本轮临时 `implementation-notes.md` 与 init commit 遗留的根目录 `f` 已获用户授权并清理。接手时若这些路径再次出现，先核对来源，不要自动暂存。
+- `implementation-notes.md` 的有效决策已并入正式文档；它不进入代码或文档提交，并在两笔提交完成后按授权删除。根目录历史占位文件 `f` 的早期清理记录保持不变。
 
 先读：
 
@@ -44,7 +46,7 @@ jarvis sessions list [--json]
 jarvis sessions show <session-id> [--json]
 ```
 
-用户无需打开 `data/sessions/*.jsonl`，即可知道有哪些会话、会话是否可恢复、恢复风险来自哪里。
+用户无需打开 `data/sessions/*.jsonl`，即可知道有哪些会话、恢复前证据是否齐全、风险来自哪里。
 
 ### 用户可见字段
 
@@ -57,7 +59,7 @@ jarvis sessions show <session-id> [--json]
 - composition coverage/status
 - pending tool effect 数量
 - integrity `complete|partial`
-- 可恢复性摘要与停止原因（能从现有可信记录推导时）
+- 恢复前检查摘要与停止原因（能从现有可信记录推导时）
 
 `show` 至少提供：
 
@@ -66,15 +68,16 @@ jarvis sessions show <session-id> [--json]
 - 当前 composition identity 与 coverage
 - pending tool effects 的安全摘要
 - integrity issues 的路径、行号和类型
-- 推荐下一步，例如 exact resume、人工核对或拒绝恢复
+- 推荐下一步，例如运行实际 resume check、人工核对或拒绝恢复
 
 默认不打印完整 message、tool arguments、tool output、system addendum 或文件内容。后续若要内容浏览，先单独设计脱敏和输出上限。
 
 ### 实现边界
 
 - 复用 `loadSession`、现有 validator 与 operational integrity 断言；禁止用 permissive parser 绕过诊断。
-- session id 必须经过既有安全路径/标识校验；`..`、绝对路径、Windows namespaced path 和分隔符逃逸必须拒绝。
-- 缺少目录时 `list` 返回空集合与 exit 0；指定 id 不存在或参数错误返回 exit 2；状态损坏返回 exit 7。
+- session id 必须经过共享安全路径/标识校验；`..`、绝对路径、Windows namespaced path、分隔符、设备名变体、尾随点/空格、symbolic link/junction/reparse escape 必须拒绝。请求文件名 ID 与 header ID 不一致时 fail-closed。
+- 缺少目录时 `list` 返回空集合与 exit 0；明确 `ENOENT` 或参数错误返回 exit 2；EACCES、EPERM、I/O、非普通文件及其他不可读状态返回 partial/exit 7。
+- 静态 symlink/junction/reparse 与 canonical escape 属当前拒绝范围。同用户恶意进程在校验后、读取前主动替换路径超出本切片保证；Session 日志尚无 cross-process writer lock 或 cryptographic authenticity。只有威胁模型明确纳入 hostile concurrent local writer 时才重开 file-handle binding。
 - text 输出面向人；`--json` 是 versioned read-only report，至少带 `schemaVersion: 1`、`authority: observation-only` 与 source cwd/dataDir。
 - JSON 无 ANSI；字段只做 additive 演进。
 - 根 `jarvis --help` 和 `jarvis sessions --help` 能发现命令；help 无 key。
@@ -85,8 +88,8 @@ jarvis sessions show <session-id> [--json]
 2. 合法 v1、合法 v2。
 3. v2 pending intent/planned/unknown。
 4. malformed tail 可诊断读取；middle corruption、invalid shape、seq gap、composition/receipt 矛盾返回 exit 7。
-5. 不存在 id、路径逃逸、Windows 空格与 UTF-8 cwd/session metadata。
-6. text 与 JSON golden/contract；JSON 无 ANSI、带 schemaVersion。
+5. 不存在 id、Windows 设备名及扩展名变体、路径/junction 逃逸、filename/header mismatch、Windows 空格与 UTF-8 cwd/session metadata。
+6. text 与 JSON golden/contract；ESC、CR/LF、清屏/颜色序列不能伪造终端输出；JSON 无 ANSI、带 schemaVersion 并保持标准转义。
 7. `--help`、`--version`、list/show 全程不创建 provider，不读取 key 值。
 8. 现有全套测试保持通过。
 
@@ -126,7 +129,7 @@ rename、fork、archive 属写状态能力，必须等只读切片稳定后另�
 
 以下工作和本轮 R0.5 的故障窗口、权限与完成语义高度耦合，暂不交给冷启动模型：
 
-- exact-session resume 的 dynamic skill/system addendum provenance、composition diff 与 fail-closed UX。
+- [x] 实际 exact-session resume 的 dynamic skill/system addendum provenance、composition diff 与 fail-closed UX。
 - headless agent-event JSONL 的权威字段、终态映射、退出码和 A0 冻结。
 - `history_search/history_turn` 的历史低权威、Prompt Injection、陈旧文件重读和 verdict/permission 隔离。
 - typed config 的 precedence、项目层只收紧、凭据隔离与 `inspect/safe` 权限语义。

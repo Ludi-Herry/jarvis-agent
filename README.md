@@ -16,7 +16,7 @@
 | Phase D 自主（GoalLoop + 确定性三腿〔canonical 重跑 + 篡改检测 + held-out 隐藏断言〕+ 独立 LLM 裁判） | ✅ 完成（D1–D9 + held-out） |
 | Phase E 多能力（多 goal Loop 调度 + 外置 vision + 命令级 bash session-allow + shadow-git 旁路历史） | ✅ 完成（4 切片合入 main） |
 | Hooks（PreToolUse 阻断 + PostToolUse 咨询/反馈；tool result env；per-hook timeout；round/session lifecycle；多来源；loop per-goal hook-map） | ✅ 完成，剩余仅保留 defer |
-| **CLI beta（当前主线）** | 🚧 R0/R0.5 与统一 `jarvis` shell 已落地并通过独立终审；下一步为 sessions 只读产品面、dynamic composition 恢复检查、headless JSONL/A0、Recall、typed config 与真实任务验收 |
+| **CLI beta（当前主线）** | 🚧 R0/R0.5、统一 `jarvis` shell、只读 sessions 与 dynamic composition resume 已落地；下一步为 headless JSONL/A0、Recall、typed config 与真实任务验收 |
 | **GUI 第一版（急停 + human-review MVP）** | ✅ observe 时间线、emergency stop 与 human-review 已落地；Desktop control surface 排在 CLI beta 与 TUI 之后继续打磨 |
 | OS sandbox Phase 3 v1 + builder sandboxed checks + browser smoke feedback + 只读观测层 | ✅ 完成（trusted requirements / route map / composite verifier / `sandboxed_check` / `browser_smoke(static-dist)` / round budget events / `npm run observe`）；未覆盖范围：通用 app/browser/network verifier |
 | propose_skill | ⛔ 已拍板 defer（投机性、判定偏弱、无证实复用场景） |
@@ -81,6 +81,7 @@ Built-in file write 采用显式并发前置条件：`read` 会返回 opaque `fv
 | trigger / 计划触发 | `jarvis cron run` | 可信 cwd 外 cron map，单次 due scan |
 | routine / 前台常驻调度 | `jarvis cron daemon` | 前台 daemon，负责锁、JSONL、信号退出 |
 | review / apply / cleanup | `jarvis finalize` | 并行 worktree 完成后的只读报告、交互 merge/cleanup |
+| sessions / 恢复前检查 | `jarvis sessions list|show` | 只读显示身份、integrity、composition、pending effect 与恢复建议 |
 | status / usage / audit | `jarvis status` | 只读汇总 JSONL 和 sandbox audit evidence，不给完成授权 |
 | GUI / timeline / stop / review | `npm run gui` | 本地观测面板，复用 observe contract，提供急停控制和 human-review 裁决 |
 
@@ -89,6 +90,8 @@ npm run jarvis -- run "inspect the current changes" # 统一入口；省略 prom
 npm run jarvis -- resume                            # 恢复当前 cwd 最近会话
 npm run jarvis -- goal "<objective>"               # 单目标 GoalLoop
 npm run jarvis -- loop <objectives-file>             # 多目标队列
+npm run jarvis -- sessions list --json               # 只读会话清单；无需模型 key
+npm run jarvis -- sessions show <session-id>          # 只读查看单个会话的恢复证据
 npm run jarvis -- doctor --json                      # 本地只读就绪诊断
 
 # 下列旧 npm scripts 保留一个版本周期作为兼容入口
@@ -154,7 +157,13 @@ Browser smoke output is feedback for the builder or a human smoke pass. It canno
 
 `npm run observe -- --json` emits `ObservationReport` schema version 1. The report includes `meta.generatedAt`, `meta.source.dataDir`, the fixed log scope (`sessions/goals/loops/cron/cronDaemon/approvals`), additive `integrity` diagnostics, Session format/pending-tool status, `status.latestGoalBudget`, effective-state fields, deduplicated token usage, audit summaries, and `activity.recent`. Syntax-damaged/unreadable JSONL plus Session v2 header/version/sequence corruption returns a partial report with exit 7. Legacy `queue-empty` records linked to blocked goals are normalized to effective `blocked-goals`; a recorded cron exit 0 linked to that loop is marked inconsistent.
 
-New sessions use append-only Session JSONL v2. Each record has a contiguous `seq`; the header records the active base prompt and effective tool-schema composition, request receipts retain model-input hashes/counts, and tool receipts move through `planned / committed / unknown`. Assistant tool intent is persisted before gate/tool execution, and a known terminal tool receipt is persisted before its model-facing tool message. An uncertain tool or child-agent execution writes `unknown` and halts before a final answer. Resume blocks on unresolved effects, partial v2 composition, identity/projection contradictions, or composition drift; it never replays an unknown side effect automatically. Legacy v1 sessions remain readable with partial receipt/composition coverage and cannot authorize `loop:finalize` merge evidence.
+New sessions use append-only Session JSONL v2. Each record has a contiguous `seq`; the header records the active base prompt, effective tool schemas, and versioned dynamic-addendum provenance. REPL records `skill-registry-v1` plus a hash of the parsed Skill manifest; goal/loop record `none-v1`. Request receipts retain model-input hashes/counts, and tool receipts move through `planned / committed / unknown`. Assistant tool intent is persisted before gate/tool execution, and a known terminal tool receipt is persisted before its model-facing tool message. An uncertain tool or child-agent execution writes `unknown` and halts before a final answer. Resume blocks on unresolved effects, partial v2 composition, identity/projection contradictions, source/manifest drift, ambiguous activation, or request-addendum mismatch; it never replays an unknown side effect automatically. Legacy v1 sessions remain readable with partial receipt/composition coverage and cannot authorize `loop:finalize` merge evidence.
+
+`jarvis sessions list|show [--json]` is a read-only inspection surface for Session identity, integrity, composition, pending effects, and resume advice. It never loads a provider or gains completion authority. Session ids use one narrow cross-platform filename contract: separators, traversal, absolute/namespaced paths, Windows device aliases, unsafe trailing suffixes, symlinks/junctions, and filename/header identity mismatches fail closed. Human sessions/resume/REPL error text strips terminal controls from every untrusted field; JSON retains standard JSON escaping and never adds ANSI.
+
+A clean `sessions show` result says `ready-for-resume-check`, because inspection has no current invocation composition to compare. The actual REPL resume validates the current base composition and dynamic addendum, then displays `compatibility: exact` with the matched dynamic source and manifest hash before continuing. Only explicit `ENOENT` is treated as not found (exit 2); other filesystem failures and code-less operational semantic read failures remain visible as unreadable/partial state (exit 7).
+
+The path guarantee covers static selection: symbolic links, junctions/reparse escapes, canonical targets outside `data/sessions`, and filename/header identity mismatches are refused before resume. An adversarial same-user process can still replace a checked path before a later read; current Session logs also lack a cross-process writer lock and cryptographic authenticity. File-handle binding remains a future hardening step if hostile concurrent local mutation becomes part of the supported threat model.
 
 The report also includes `authority: { mode: "observation-only", canCompleteGoals: false, canCompleteLoops: false }`. GUI or scripts can display and filter it, but they must not treat it as completion evidence.
 

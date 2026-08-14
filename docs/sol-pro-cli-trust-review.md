@@ -1,14 +1,14 @@
 # GPT-5.6 Sol Pro CLI 可信性复核：采纳、修正与落地结果
 
-> 状态：2026-08-14 收口。外部复核基于打包材料完成，无法直接读取仓库或运行测试；本文用当前源码与本地验证结果校准其建议。原始回答保存在本机 Codex attachment，未全文复制进仓库。
+> 状态：2026-08-15 收口。外部复核基于打包材料完成，无法直接读取仓库或运行测试；本文用当前源码与本地验证结果校准其建议。原始回答保存在本机 Codex attachment，未全文复制进仓库。
 
 ## 1. 最终裁决
 
 | 问题 | 当前裁决 | 依据 |
 |---|---|---|
 | DeepSeek Harness、Cordis、Pi、dsh-slice 的采用边界 | 有条件 GO | 只吸收轨迹、Recall、Preset 心智和评测方法；不接入外部 runtime |
-| R0 / R0.5 可信性实现 | GO | 独立终审第三轮 P0=0、P1=0、P2=0；112 files / 1210 passed / 2 skipped |
-| 直接发布 v0.1 CLI beta | NO-GO | sessions 产品面、动态 composition 恢复检查、机器事件协议、A0、Recall、typed config 与真实任务证据仍未闭环 |
+| R0 / R0.5 可信性实现 | GO | R0.5 独立终审第三轮 P0=0、P1=0、P2=0；sessions 与动态恢复独立提交门终审 P0=0、P1=0、P2=0、P3=1；全量检查为 119 files / 1334 passed / 2 skipped |
+| 直接发布 v0.1 CLI beta | NO-GO | 机器事件协议、A0、Recall、typed config、完整 Windows 契约与真实任务证据仍未闭环 |
 | 全屏 TUI、checkpoint/rewind | 保留在 v0.2 | 依赖稳定的 Session、事件、权限和恢复语义 |
 
 Sol Pro 原始回答最重要的价值，是把“文件写入成功”和“崩溃后能安全恢复”提升到发布前信任门槛。这个判断已经落实到 R0.5；此前完成的 verdict、deadline、退出码和 JSONL integrity 无需重开。
@@ -35,6 +35,13 @@ Sol Pro 原始回答最重要的价值，是把“文件写入成功”和“崩
 | 恢复误重放 | pending、unknown、receipt/identity/projection 矛盾、mixed v1/v2、seq gap、composition drift 全部 fail-closed |
 | compaction 抹除孤儿 intent | append-only 历史 intent 与 request identity 独立对账，checkpoint 无法隐藏未决执行 |
 | merge 误授权 | `loop:finalize` 对 legacy v1 coverage 或 pending tool effect 直接 park |
+| 动态来源漂移 | v2 header 记录 resolver ID 与 manifest hash；REPL 使用 `skill-registry-v1`，goal/loop 使用 `none-v1` |
+| 历史 addendum 矛盾 | resume 按每个 `runId` 的首次 durable user message 重算 addendum 并核对 request receipt；歧义或不一致 fail-closed |
+| Session 选择越界 | show 与实际 resume 复用窄 ID/路径边界；设备名、separator/traversal、absolute/namespaced path、symlink/junction/reparse escape 与 filename/header mismatch 全部拒绝 |
+| 终端输出伪造 | 人类 text 对所有不可信 Session/resume 字段及 REPL/loop 错误做单行净化；JSON 只使用标准 JSON 转义 |
+| 观察面过度承诺 | `sessions show` 只报告 `ready-for-resume-check`；实际 resume 完成当前 composition/addendum 比较后才报告 exact compatibility |
+| 读取错误误分类 | 只有明确 `ENOENT` 进入 not found/exit 2；其他不可读状态进入 partial/exit 7 并保留错误类型 |
+| 路径并发替换 | 静态 symlink/junction/reparse 与 canonical escape 全部拒绝；同用户恶意进程在 check-to-read 窗口主动替换路径属于已记录 P3，待 threat model 纳入 hostile local writer 后再做 file-handle binding |
 
 边界保持明确：version token 提供 managed file tool 的检查点一致性。外部编辑器、另一个 Jarvis 进程、已批准 bash，以及最终检查到 rename 的极窄窗口仍缺少通用跨进程 CAS。无法确认 post-state 时进入 `unknown`，不能生成 final 或完成授权。
 
@@ -46,7 +53,7 @@ Sol Pro 原始回答最重要的价值，是把“文件写入成功”和“崩
 
 ### 4.2 精确 canonical request blob 暂缓
 
-R0.5 保存 base composition、消息与工具 schema 的哈希/数量、request identity 和工具执行收据。完整请求正文进入独立 blob store 会扩大秘密保留时间、脱敏、加密、导出、垃圾回收和损坏恢复范围。当前先保留 fail-closed 合同：候选输入可以用 hash 核对，无法证明动态 addendum 一致时拒绝 resume 或要求 fork。
+R0.5 保存 base composition、消息与工具 schema 的哈希/数量、request identity 和工具执行收据。后续 dynamic composition 切片又增加版本化 addendum 来源、manifest hash 与 resume-time request 核对。完整请求正文进入独立 blob store 会扩大秘密保留时间、脱敏、加密、导出、垃圾回收和损坏恢复范围。当前 fail-closed 合同已经能处理 Skill manifest 漂移、旧 v2 provenance 缺失、激活消息歧义与 receipt 不一致。
 
 重开精确 blob 的证据门槛：出现一次真实事故，证明现有 Session v2 与请求收据无法还原关键模型输入，并且该事故无法通过版本化 addendum provenance 解决。
 
@@ -58,7 +65,7 @@ tag 容易被理解为发布准备完成。v0.1 仍有明确 blocker，本轮只
 
 R0、R0.5 与统一 CLI 改动共享 SessionStore、runAgent、CLI composition root 和测试。事后强拆三段会产生难以独立编译或验收的中间提交。本轮采用：
 
-1. 一个完整代码/测试提交，覆盖可信执行、Session v2 与统一 CLI shell。
+1. 一个完整代码/测试提交，覆盖可信执行、Session v2 与统一 CLI shell；已落为 `a814889`（`feat: harden session resume and inspection`）。
 2. 一个文档/交接提交，覆盖裁决、计划、ZCode 任务包和当前状态。
 
 每次只暂存精确路径，提交前检查 staged stat；不创建 tag，不 push。
@@ -74,10 +81,10 @@ R0、R0.5 与统一 CLI 改动共享 SessionStore、runAgent、CLI composition r
 ## 5. 当前采用顺序
 
 1. 固化本轮代码与文档基线。
-2. 交付只读 `sessions list|show`；现有 exact-session resume 继续保留。
-3. 收口动态 composition/addendum 的 resume 比较与可行动提示。
-4. 冻结 versioned headless JSONL 与 A0 corpus/runner。
-5. 增加当前 Session 的 `history_search/history_turn`，跑 Recall 开关对照。
+2. [x] 交付只读 `sessions list|show`。
+3. [x] 收口动态 composition/addendum 的 resume 比较、来源展示与可行动提示。
+4. [ ] 冻结 versioned headless JSONL 与 A0 corpus/runner。
+5. [ ] 增加当前 Session 的 `history_search/history_turn`，跑 Recall 开关对照。
 6. 增加 typed config、有效来源展示与 `inspect/safe`。
 7. 运行 10–20 个真实同形任务，要求零 false-verified、零无限等待、零 orphan side effect。
 8. v0.2 开发全屏 TUI、`fork-context`、用户 checkpoint 与受控文件 restore。
