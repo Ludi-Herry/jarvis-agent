@@ -13,6 +13,7 @@
 - Halted uncertain tool and child-agent executions as durable unknown effects; tightened v2 logical-execution/projection and compaction-intent validation; parked finalize when receipt coverage is legacy or pending.
 - Extended observation with Session format, pending tool effects, and v2 header/version/sequence integrity diagnostics.
 - Recorded the GPT-5.6 Sol Pro trust review, implementation corrections, narrowed v0.1 route, and a bounded ZCode/GLM-5.3 sessions handoff.
+- Removed the temporary R0.5 implementation notes and the unreferenced root placeholder after explicit cleanup approval.
 
 ## 0.1.0 - 2026-07-03
 

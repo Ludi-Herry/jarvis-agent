@@ -9,7 +9,7 @@
 - 代码基线：`9df2b94`（`feat: harden CLI execution and session recovery`）；本文所在的后续文档 commit 只更新计划和交接。
 - 当前验证：`typecheck`、`lint`、`npm run build -- --noEmit`、`npm test` 全绿；112 test files / 1210 passed / 2 skipped。
 - 产品路线：v0.1 CLI beta → v0.2 全屏 TUI + checkpoint/rewind → v0.3 Desktop control surface。
-- 若工作树仍显示未跟踪 `implementation-notes.md`，它是本轮保留的临时收口笔记；根目录 `f` 是 init commit 留下的历史文件。两者都不属于 sessions 任务，未经用户删除授权不得处理或暂存。
+- 本轮临时 `implementation-notes.md` 与 init commit 遗留的根目录 `f` 已获用户授权并清理。接手时若这些路径再次出现，先核对来源，不要自动暂存。
 
 先读：
 

@@ -6,7 +6,7 @@
 > Phase E 四条独立第一切片（vision / bash-allow / loop / shadow-git）**已全部合进本地 main**（见下「合并收口」）。
 > 当前交接重点：v0.1 的 sessions 只读产品面、dynamic composition 恢复检查、headless JSONL/A0、Recall、typed config 与真实任务证据。全屏 TUI 和 checkpoint/rewind 排在 v0.2，GUI UI/UX 排在 v0.3。
 
-> 2026-08-14 代码/测试基线为 `9df2b94`。若本地仍有未跟踪 `implementation-notes.md`，它是待用户确认删除的临时笔记；根目录历史文件 `f` 同样等待删除授权。接手者不得把二者混入功能提交。
+> 2026-08-14 代码/测试基线为 `9df2b94`。临时 `implementation-notes.md` 与根目录历史文件 `f` 已经用户授权清理；接手时保持工作树无临时遗物。
 
 ## 方向决策与当前状态（更新至 2026-08-14）
 
