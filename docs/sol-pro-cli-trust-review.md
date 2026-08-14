@@ -1,0 +1,94 @@
+# GPT-5.6 Sol Pro CLI 可信性复核：采纳、修正与落地结果
+
+> 状态：2026-08-14 收口。外部复核基于打包材料完成，无法直接读取仓库或运行测试；本文用当前源码与本地验证结果校准其建议。原始回答保存在本机 Codex attachment，未全文复制进仓库。
+
+## 1. 最终裁决
+
+| 问题 | 当前裁决 | 依据 |
+|---|---|---|
+| DeepSeek Harness、Cordis、Pi、dsh-slice 的采用边界 | 有条件 GO | 只吸收轨迹、Recall、Preset 心智和评测方法；不接入外部 runtime |
+| R0 / R0.5 可信性实现 | GO | 独立终审第三轮 P0=0、P1=0、P2=0；112 files / 1210 passed / 2 skipped |
+| 直接发布 v0.1 CLI beta | NO-GO | sessions 产品面、动态 composition 恢复检查、机器事件协议、A0、Recall、typed config 与真实任务证据仍未闭环 |
+| 全屏 TUI、checkpoint/rewind | 保留在 v0.2 | 依赖稳定的 Session、事件、权限和恢复语义 |
+
+Sol Pro 原始回答最重要的价值，是把“文件写入成功”和“崩溃后能安全恢复”提升到发布前信任门槛。这个判断已经落实到 R0.5；此前完成的 verdict、deadline、退出码和 JSONL integrity 无需重开。
+
+## 2. 原始建议的高价值部分
+
+1. `expectedVersion/createOnly` 提升为 P0，并让执行层记录副作用收据。
+2. Session 能力拆成最小可信恢复合同与后续产品能力；rename、archive、跨会话搜索后移。
+3. Recall 进入 v0.1，范围固定为当前 Session、只读、显式调用、历史低权威；旧文件事实必须重新 `read`。
+4. A0 增加请求可重建率、孤儿副作用、无收据 attempt、陈旧 Recall 行动等指标。
+5. Headless 先冻结一条机器事件协议；静态汇总可从事件派生。
+6. DSH/Cordis/Pi 整套 runtime、dsh-slice loop、bounded slice 默认路径继续排除。
+7. DeepSeek V4 Provider 只做 opt-in spike，正式保留依赖同一 corpus 的成本、时延和可信完成对照。
+
+## 3. 已经落地的 R0.5
+
+| 信任问题 | 当前实现 |
+|---|---|
+| stale overwrite | `read` 返回 `fv1` token；更新要求 `expectedVersion`，创建要求 `createOnly:true`，成功返回 `postVersion` |
+| 同进程与创建竞态 | 目标路径串行化、exclusive create、同目录临时文件与 rename 前复核 |
+| 不安全文件形态 | symbolic-link leaf 与已有多 hard-link 文件拒绝替换 |
+| 副作用前崩溃 | assistant tool intent 与 `planned` 收据先持久化 |
+| 副作用后崩溃 | runner 终态立即写 `committed`；不确定结果写 `unknown` 并 halt |
+| 恢复误重放 | pending、unknown、receipt/identity/projection 矛盾、mixed v1/v2、seq gap、composition drift 全部 fail-closed |
+| compaction 抹除孤儿 intent | append-only 历史 intent 与 request identity 独立对账，checkpoint 无法隐藏未决执行 |
+| merge 误授权 | `loop:finalize` 对 legacy v1 coverage 或 pending tool effect 直接 park |
+
+边界保持明确：version token 提供 managed file tool 的检查点一致性。外部编辑器、另一个 Jarvis 进程、已批准 bash，以及最终检查到 rename 的极窄窗口仍缺少通用跨进程 CAS。无法确认 post-state 时进入 `unknown`，不能生成 final 或完成授权。
+
+## 4. 对 Sol Pro 方案的修正
+
+### 4.1 通用 MutationExecutor 暂缓
+
+当前可自动写文件的受管入口只有 built-in `write`。严格前置条件、收据和路径复核直接落在现有 `src/core/tools`，能关闭实际旁路，也能继续复用 PermissionGate。引入新的 mutation framework 会扩大接口、测试矩阵和维护面；真实出现第二类受管 mutation 后再评估。
+
+### 4.2 精确 canonical request blob 暂缓
+
+R0.5 保存 base composition、消息与工具 schema 的哈希/数量、request identity 和工具执行收据。完整请求正文进入独立 blob store 会扩大秘密保留时间、脱敏、加密、导出、垃圾回收和损坏恢复范围。当前先保留 fail-closed 合同：候选输入可以用 hash 核对，无法证明动态 addendum 一致时拒绝 resume 或要求 fork。
+
+重开精确 blob 的证据门槛：出现一次真实事故，证明现有 Session v2 与请求收据无法还原关键模型输入，并且该事故无法通过版本化 addendum provenance 解决。
+
+### 4.3 本轮不打内部 tag
+
+tag 容易被理解为发布准备完成。v0.1 仍有明确 blocker，本轮只建立本地 commit 基线与验证证据。达到 beta 发布门槛后再创建版本 tag。
+
+### 4.4 提交采用两段式
+
+R0、R0.5 与统一 CLI 改动共享 SessionStore、runAgent、CLI composition root 和测试。事后强拆三段会产生难以独立编译或验收的中间提交。本轮采用：
+
+1. 一个完整代码/测试提交，覆盖可信执行、Session v2 与统一 CLI shell。
+2. 一个文档/交接提交，覆盖裁决、计划、ZCode 任务包和当前状态。
+
+每次只暂存精确路径，提交前检查 staged stat；不创建 tag，不 push。
+
+### 4.5 v0.1 产品面继续收窄
+
+- 保留现有人类 text 输出，先冻结一条 versioned JSONL agent-event contract；静态 JSON 由消费者聚合。
+- preset 首批只实现 `inspect` 与 `safe`；`maintain` / `worktree` 等 A0 证明用户目标差异后再加入。
+- `stop`、`review`、completion、session rename/fork/archive 属后续产品化，不进入最小可信 beta 关键路径。
+- Recall 进入 v0.1，但要先冻结机器事件和 A0 基线，确保注入、陈旧事实和成本变化可以量化。
+- 全屏 TUI 与 checkpoint/rewind 保留在 v0.2，不因 15 日裁剪从路线中消失。
+
+## 5. 当前采用顺序
+
+1. 固化本轮代码与文档基线。
+2. 交付只读 `sessions list|show`；现有 exact-session resume 继续保留。
+3. 收口动态 composition/addendum 的 resume 比较与可行动提示。
+4. 冻结 versioned headless JSONL 与 A0 corpus/runner。
+5. 增加当前 Session 的 `history_search/history_turn`，跑 Recall 开关对照。
+6. 增加 typed config、有效来源展示与 `inspect/safe`。
+7. 运行 10–20 个真实同形任务，要求零 false-verified、零无限等待、零 orphan side effect。
+8. v0.2 开发全屏 TUI、`fork-context`、用户 checkpoint 与受控文件 restore。
+9. A0 稳定后再做 DeepSeek V4 Provider opt-in spike。
+
+权威计划见 `docs/cli-first-plan.md`；ZCode/GLM-5.3 的有界任务包见 `docs/handoff-zcode-glm53.md`。
+
+## 6. 保持不变的硬边界
+
+- `decideVerdict` 继续是 goal 完成授权入口；Session、Recall、EventBus、observe、TUI 和 GUI 都没有完成授权。
+- 现有四套可信 map 是上限，不增加 verifier、route 或 scheduler 抽象。
+- PermissionGate、OS sandbox 和人工审批继续拥有副作用边界；Recall 和历史记录不授予权限。
+- 未决副作用不自动重放；损坏或语义不完整的状态按 exit 7 / needs-human 收口。
+- DSH、Cordis、Pi 与 dsh-slice 只提供设计证据和离线实验假设，不成为 Jarvis runtime 依赖。

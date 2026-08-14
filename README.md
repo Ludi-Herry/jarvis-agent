@@ -4,7 +4,7 @@
 
 > 设计依据不在本仓库重写，以知识库蓝图为准（见 `AGENTS.md`「唯一设计依据」）。
 
-## 当前状态（2026-07-03）
+## 当前状态（2026-08-14）
 
 | 阶段 | 状态 |
 |---|---|
@@ -16,17 +16,19 @@
 | Phase D 自主（GoalLoop + 确定性三腿〔canonical 重跑 + 篡改检测 + held-out 隐藏断言〕+ 独立 LLM 裁判） | ✅ 完成（D1–D9 + held-out） |
 | Phase E 多能力（多 goal Loop 调度 + 外置 vision + 命令级 bash session-allow + shadow-git 旁路历史） | ✅ 完成（4 切片合入 main） |
 | Hooks（PreToolUse 阻断 + PostToolUse 咨询/反馈；tool result env；per-hook timeout；round/session lifecycle；多来源；loop per-goal hook-map） | ✅ 完成，剩余仅保留 defer |
-| **GUI 第一版（看得懂 + 急停 + human-review MVP）** | ⚠️ observe 时间线、emergency stop 与 human-review 已落地并复验通过；当前剩余 R6 GUI UI/UX 打磨与 Luis 验收 |
+| **CLI beta（当前主线）** | 🚧 R0/R0.5 与统一 `jarvis` shell 已落地并通过独立终审；下一步为 sessions 只读产品面、dynamic composition 恢复检查、headless JSONL/A0、Recall、typed config 与真实任务验收 |
+| **GUI 第一版（急停 + human-review MVP）** | ✅ observe 时间线、emergency stop 与 human-review 已落地；Desktop control surface 排在 CLI beta 与 TUI 之后继续打磨 |
 | OS sandbox Phase 3 v1 + builder sandboxed checks + browser smoke feedback + 只读观测层 | ✅ 完成（trusted requirements / route map / composite verifier / `sandboxed_check` / `browser_smoke(static-dist)` / round budget events / `npm run observe`）；未覆盖范围：通用 app/browser/network verifier |
 | propose_skill | ⛔ 已拍板 defer（投机性、判定偏弱、无证实复用场景） |
 | 新增 verifier / route / scheduler 抽象 | ⛔ 已拍板不做；现有四套 map 足够（`verifier` / `hook` / `sandbox-check` / `goal-setter-requirements`） |
 
-`npm run typecheck / lint / test / build` 最近一轮全绿（测试数与当轮证据以 `docs/handoff-next.md` 的「发布收口检查状态」为准；Windows 下 1 个 POSIX SIGINT smoke 跳过）。命令安全根（PermissionGate + 命令解析器 + bash 审批）经**六轮独立 codex 对抗核查**确认无破闸 HIGH；goal 验收子系统（确定性三腿 + 腿3 裁判 + bash/Linux 密钥加固）经**多轮多裁判对抗核查**（codex + 独立 Claude 子代理，含一轮 4 裁判收尾）。Phase E 各切片与 Hooks slice-1/2 均经 **codex 跨模型对抗审查逐层加固**（vision 四轮 / bash 白名单 Path A 经 7 HIGH 撤回、保留命令级 Path B / Hooks 信任边界修 HIGH / slice-2 每切片 2 轮 SHIP）。方法 / 严重度基线 / 历史见 `docs/security-review-baseline.md`。
+`npm run typecheck / lint / test` 与无输出 build compile 最近一轮全绿（测试数与当轮证据以 `docs/handoff-next.md` 为准；已有 `dist/` 未覆盖；Windows 平台专属 skip 见 `docs/cli-first-plan.md`）。命令安全根（PermissionGate + 命令解析器 + bash 审批）经**六轮独立 codex 对抗核查**确认无破闸 HIGH；goal 验收子系统（确定性三腿 + 腿3 裁判 + bash/Linux 密钥加固）经**多轮多裁判对抗核查**（codex + 独立 Claude 子代理，含一轮 4 裁判收尾）。Phase E 各切片与 Hooks slice-1/2 均经 **codex 跨模型对抗审查逐层加固**（vision 四轮 / bash 白名单 Path A 经 7 HIGH 撤回、保留命令级 Path B / Hooks 信任边界修 HIGH / slice-2 每切片 2 轮 SHIP）。方法 / 严重度基线 / 历史见 `docs/security-review-baseline.md`。
 
-**发布收口状态（2026-07-03 第二轮）**：R1-R5、R7-R9 已闭环；R5 的页面内联备注表单已通过内置 Browser 复验，R7 的 human-review provenance 与 `loop:finalize` 交叉验证已修复并复审无 HIGH。当前只剩 R6 GUI UI/UX 打磨与 Luis 逐节验收。
+**产品路线更新（2026-08-14）**：采用 CLI-first 两阶段，再继续 Desktop control surface。v0.1 CLI beta 先完成可信结果、Session/机器协议与产品外壳；v0.2 加全屏 TUI、checkpoint/rewind；v0.3 完成 Desktop UI/UX 与 Luis 逐节验收。旧 R1-R9 证据继续保留为历史记录，R6 已从 CLI beta blocker 移到 v0.3。
 
 接手入口：
-- **Loop primitive 怎么选 → `docs/loop-primitives-guide.md`**；**最新全景 + Phase E/Hooks 现状 + 下一步（GUI 就绪盘点）→ `docs/handoff-next.md`**；**Loop 重项收口记录（parallel resume / finalize / cron daemon）→ `docs/handoff-loop-remaining.md`**；**Phase D（GoalLoop + 三腿 + 腿3 裁判）→ `docs/handoff-D.md`**；**Hooks（tool-call / lifecycle / loop per-goal hook-map）→ `docs/handoff-hooks.md`**；
+- **当前路线与验收 → `docs/cli-first-plan.md`**；**最新全景与下一步 → `docs/handoff-next.md`**；**Sol Pro 裁决与落地修正 → `docs/sol-pro-cli-trust-review.md`**；**ZCode/GLM-5.3 交接 → `docs/handoff-zcode-glm53.md`**；
+- **Loop primitive 怎么选 → `docs/loop-primitives-guide.md`**；**Loop 重项收口记录（parallel resume / finalize / cron daemon）→ `docs/handoff-loop-remaining.md`**；**Phase D（GoalLoop + 三腿 + 腿3 裁判）→ `docs/handoff-D.md`**；**Hooks（tool-call / lifecycle / loop per-goal hook-map）→ `docs/handoff-hooks.md`**；
 - **B 阶段 + 当前安全态 → `docs/handoff-B.md`**（顶部「当前状态更新」段）；
 - **Phase C（多 agent）→ `docs/handoff-C.md`**；
 - 持久化段 → `docs/handoff-persistence.md`；A 阶段 → `docs/handoff-A.md`；
@@ -47,7 +49,7 @@
 npm install
 ```
 
-**配置模型 key**（demo / REPL 需要）：复制 `.env.example` 为 `.env` 并填火山方舟 `ARK_API_KEY`（或设成环境变量）。`.env` 已 gitignore，key 永不入库。
+**配置模型 key**（demo / REPL 需要）：复制 `.env.example` 为 `.env` 并填火山方舟 `ARK_API_KEY`。`.env` 已 gitignore，key 永不入库。Windows/macOS 仍接受启动环境变量；Linux 为避免 `/proc` 暴露，只接受运行时加载的 `.env`。
 
 ```bash
 cp .env.example .env   # 然后编辑 .env 填 ARK_API_KEY
@@ -55,34 +57,55 @@ cp .env.example .env   # 然后编辑 .env 填 ARK_API_KEY
 
 ## 命令
 
-不确定该用哪个入口时，先看 `docs/loop-primitives-guide.md`。快速判断：
+源码工作区的统一入口是 `npm run jarvis -- <command>`；package bin 名称是 `jarvis`，当前由 `bin/jarvis.js` 加载同一 TypeScript 入口，避免依赖已有 `dist/`。help、version、status 和 doctor 都不需要模型 key：
+
+```bash
+npm run jarvis -- --help
+npm run jarvis -- --version
+npm run jarvis -- doctor
+npm run jarvis -- status --json
+npm run jarvis -- --cwd "H:/another project" doctor
+```
+
+`--cwd` 可写在子命令前后，根入口会先切换 workspace，再让目标命令读取 `.env`、工具路径和 `data/`。`doctor` 只做本地只读检查，输出 Node、cwd、凭据来源、Git baseline、sandbox 命令可用性和数据目录状态；`--json` 输出 `schemaVersion: 1`，密钥值不会进入结果。
+
+Built-in file write 采用显式并发前置条件：`read` 会返回 opaque `fv1` version；更新已有文件必须传同一个 `expectedVersion`，创建新文件必须传 `createOnly:true`，成功结果包含 `postVersion`。冲突时工具要求重新读取，不能静默覆盖。该合同覆盖 Jarvis managed file tool 的 stale-baseline 检查与同进程竞态，并拒绝 symbolic-link leaf 和已有多 hard-link 文件；外部进程或已批准 bash 在最终检查到 rename 之间仍可能竞争，详见 `KNOWN_ISSUES.md`。
+
+不确定该用哪个 primitive 时，先看 `docs/loop-primitives-guide.md`。快速判断：
 
 | 想交出去的东西 | 入口 | 用法 |
 |---|---|---|
-| check / 临时探索 | `npm run dev` | 人持续看着，适合定位、试探、单次修复 |
-| stop condition / 单目标达标 | `npm run goal` | 目标可验证，适合跑到达标自停 |
-| queue / 多目标排空 | `npm run loop` | 多个 goal，支持 resume、可信 map、并行 worktree |
-| trigger / 计划触发 | `npm run cron` | 可信 cwd 外 cron map，单次 due scan |
-| routine / 前台常驻调度 | `npm run cron:daemon` | 前台 daemon，负责锁、JSONL、信号退出 |
-| review / apply / cleanup | `npm run loop:finalize` | 并行 worktree 完成后的只读报告、交互 merge/cleanup |
-| status / usage / audit | `npm run observe` | 只读汇总 JSONL 和 sandbox audit evidence，不给完成授权 |
+| check / 临时探索 | `jarvis run [prompt]` | 人持续看着，适合定位、试探、单次修复；prompt 先执行，随后保留交互会话 |
+| stop condition / 单目标达标 | `jarvis goal` | 目标可验证，适合跑到达标自停 |
+| queue / 多目标排空 | `jarvis loop` | 多个 goal，支持 resume、可信 map、并行 worktree |
+| trigger / 计划触发 | `jarvis cron run` | 可信 cwd 外 cron map，单次 due scan |
+| routine / 前台常驻调度 | `jarvis cron daemon` | 前台 daemon，负责锁、JSONL、信号退出 |
+| review / apply / cleanup | `jarvis finalize` | 并行 worktree 完成后的只读报告、交互 merge/cleanup |
+| status / usage / audit | `jarvis status` | 只读汇总 JSONL 和 sandbox audit evidence，不给完成授权 |
 | GUI / timeline / stop / review | `npm run gui` | 本地观测面板，复用 observe contract，提供急停控制和 human-review 裁决 |
 
 ```bash
+npm run jarvis -- run "inspect the current changes" # 统一入口；省略 prompt 时进入普通 REPL
+npm run jarvis -- resume                            # 恢复当前 cwd 最近会话
+npm run jarvis -- goal "<objective>"               # 单目标 GoalLoop
+npm run jarvis -- loop <objectives-file>             # 多目标队列
+npm run jarvis -- doctor --json                      # 本地只读就绪诊断
+
+# 下列旧 npm scripts 保留一个版本周期作为兼容入口
 npm run dev         # 终端 REPL：带权限闸门 + bash + 交互审批 + 会话落盘（需 ARK_API_KEY）。Ctrl-C 中断 / /exit 退出
 npm run resume      # 恢复 data/sessions/ 最近一个会话继续跑
-npm run goal        # goal 模式：npm run goal -- "<objective>" 自主跑到达标自停（确定性两腿；JARVIS_HELDOUT_CHECKS_FILE 或 trusted requirements 的 heldOutCommands 加隐藏断言；ARK_VERIFIER_MODEL=不同模型 启用腿3 独立裁判）
-npm run loop        # loop 模式（Phase E）：npm run loop -- <objectives-file> 多 goal 队列顺序排空、崩溃安全 resume；默认 attended / plain --unattended write+bash fail-closed / --unattended --parallel 2..4 仅自动放行对应 goal worktree 内 built-in write / --resume(+--force)；parallel resume 必须显式带 --worktree-root（与任何 hooks 配置互斥）；可 --hook-map <trusted-json> 给串行 goal 配 cwd 外 hook 覆盖；可 --sandbox-check-map <trusted-json> 给每个 goal 配 repo/worktree 外 sandbox checks；可 --goal-setter-requirements-map <trusted-json> 给每个 goal 配 repo/worktree 外 requirement route map 和 per-goal held-out checks
+npm run goal        # goal 模式：npm run goal -- "<objective>"；默认要求 Git tamper baseline；无 Git 仅可显式 --allow-no-git，结果最高为 checks-only
+npm run loop        # loop 模式（Phase E）：npm run loop -- <objectives-file>；默认要求 Git；含 blocked goal 时以 blocked-goals 非零退出；plain --unattended 继续 fail-closed；parallel 仅放行对应 worktree 内 built-in write
 npm run resume:loop -- --verifier-map <trusted-json> --hook-map <trusted-json> --sandbox-check-map <trusted-json> # 恢复最近 loop：恢复模式来自 cwd 外可信 map；无 per-goal verifier / hooks / sandbox checks 时各用 {"goals":[]}；原 loop 若带任一 map，恢复必须传同一个可信 map；若原 loop 使用 goal-setter requirements map，恢复也必须传同一路径和哈希的 --goal-setter-requirements-map
 npm run loop:finalize -- --loop <id> # 只读 finalize report：汇总 parallel worktree 的 logged verdict / status / diff，生成人工审阅 merge proposal；不 cleanup
 npm run loop:finalize -- --loop <id> --merge # 交互式 apply：必须输入 merge <loopId>；只合入 verified + tracked diff proposal，untracked/conflict/缺 verdict 停下；不 cleanup
 npm run loop:finalize -- --loop <id> --cleanup # 交互式清理：必须输入 cleanup <loopId>；只移除有 merge-applied 审计且当前 clean 的 worktree；使用 git worktree remove，不强删、不删日志
 npm run cron -- --cron-map <trusted-json> # cron 单次扫描：可信 cwd 外计划文件，到期任务触发普通 loop；task 必须 unattended:true；带同工作区扫描锁 + stale 回收 + task 前心跳；记录 data/cron/loop-cron.jsonl，不常驻
 npm run cron:daemon -- --cron-map <trusted-json> [--poll-ms <n>] # cron 前台 daemon：可信 cwd 外计划文件；默认 poll=60000；daemon lock + scan lock；写 data/cron/loop-cron-daemon.jsonl；SIGINT/SIGTERM 释放锁退出；不自动 resume/merge/cleanup，不后台 fork
-npm run observe     # 只读观测：汇总 data/sessions|goals|loops|cron|approvals 的 status / usage / audit / latestGoalBudget；--json 输出 schemaVersion=1 给 GUI/脚本
+npm run observe     # 只读观测：汇总 status / usage / audit / integrity；显示 Session 格式与 pending tool effects；坏 JSONL 返回 partial + exit 7；--json 输出 schemaVersion=1 给 GUI/脚本
 npm run gui         # 本地 GUI 第一版：http://127.0.0.1:4317 起，时间线 + 急停键 + human-review 裁决；若端口占用会自动向后找可用端口
 npm run typecheck   # tsc --noEmit
-npm test            # vitest（测试数以 docs/handoff-next.md 最近一轮证据为准；Windows 下 1 个 POSIX SIGINT smoke 跳过）
+npm test            # vitest（测试数与平台专属 skip 以 docs/handoff-next.md 最近一轮证据为准）
 npm run build       # tsc 产出到 dist/
 npm run lint        # eslint
 npm run demo:a1     # A1：调 ARK 模型一句话 → 流式增量 + 聚合 ModelResult
@@ -129,7 +152,9 @@ Browser smoke output is feedback for the builder or a human smoke pass. It canno
 
 ### Read-only observation contract
 
-`npm run observe -- --json` emits `ObservationReport` schema version 1. The report includes `meta.generatedAt`, `meta.source.dataDir`, the fixed log scope (`sessions/goals/loops/cron/cronDaemon/approvals`), `status.latestGoalBudget`, additive effective-state fields, deduplicated token usage, audit summaries for trusted contracts, worktree status, sandbox evidence, approval request/result counts, and `activity.recent` with the latest session / goal / loop / cron / approval records in display order.
+`npm run observe -- --json` emits `ObservationReport` schema version 1. The report includes `meta.generatedAt`, `meta.source.dataDir`, the fixed log scope (`sessions/goals/loops/cron/cronDaemon/approvals`), additive `integrity` diagnostics, Session format/pending-tool status, `status.latestGoalBudget`, effective-state fields, deduplicated token usage, audit summaries, and `activity.recent`. Syntax-damaged/unreadable JSONL plus Session v2 header/version/sequence corruption returns a partial report with exit 7. Legacy `queue-empty` records linked to blocked goals are normalized to effective `blocked-goals`; a recorded cron exit 0 linked to that loop is marked inconsistent.
+
+New sessions use append-only Session JSONL v2. Each record has a contiguous `seq`; the header records the active base prompt and effective tool-schema composition, request receipts retain model-input hashes/counts, and tool receipts move through `planned / committed / unknown`. Assistant tool intent is persisted before gate/tool execution, and a known terminal tool receipt is persisted before its model-facing tool message. An uncertain tool or child-agent execution writes `unknown` and halts before a final answer. Resume blocks on unresolved effects, partial v2 composition, identity/projection contradictions, or composition drift; it never replays an unknown side effect automatically. Legacy v1 sessions remain readable with partial receipt/composition coverage and cannot authorize `loop:finalize` merge evidence.
 
 The report also includes `authority: { mode: "observation-only", canCompleteGoals: false, canCompleteLoops: false }`. GUI or scripts can display and filter it, but they must not treat it as completion evidence.
 
@@ -355,7 +380,7 @@ src/
   runtime/
     event-bus.ts # EventBus
     permission/  # PermissionGate + 命令解析器（安全根）+ 敏感路径策略
-    session/     # SessionStore：JSONL 落盘 + 断点续跑
+    session/     # SessionStore：v1 兼容 + v2 seq/composition/request/tool 收据 + fail-closed 续跑
   capabilities/
     skills/      # SkillRegistry：三级渐进披露
     rules/       # RuleResolver：三层规则就近合并
@@ -375,8 +400,12 @@ data/            # 运行期会话日志（gitignore）
 ## 文档导航
 
 - `AGENTS.md` — 项目规则层（命名 / 风格 / 工程纪律 / 命令 / 设计依据）。**动手前先读。**
+- `docs/cli-first-plan.md` — **当前产品路线与验收权威**：v0.1 CLI、v0.2 TUI/checkpoint、v0.3 Desktop。
+- `docs/handoff-next.md` — **当前系统状态、硬边界和后续顺序**。
+- `docs/sol-pro-cli-trust-review.md` — GPT-5.6 Sol Pro 外部复核、已采纳项、实施后修正和当前发布裁决。
+- `docs/handoff-zcode-glm53.md` — ZCode/GLM-5.3 的只读 sessions 首切片、停止条件与可复制任务说明。
 - `docs/loop-primitives-guide.md`：**Loop primitive 选择指南**，dev / goal / loop / cron / cron:daemon / finalize 怎么选，以及 usage 观测和 skill 沉淀边界。
-- `docs/handoff-D.md` — **Phase D（GoalLoop 自主验收，全部完成）接手入口**；`docs/handoff-next.md` — 之后待办 + GUI 就绪盘点。
+- `docs/handoff-D.md` — **Phase D（GoalLoop 自主验收，全部完成）接手入口**。
 - `docs/handoff-loop-remaining.md` — **Loop 重项收口记录**：parallel resume、finalize apply/cleanup、cron daemon 的边界与测试证据。
 - `docs/handoff-codex.md` — **codex 自主接手宪法**（Claude 不可用后：硬不变量 + 同族自审盲区 + 边界钉死 + backlog）。
 - `docs/os-sandbox-research.md` — **OS sandbox 调研与无下载 smoke 结果**：`SandboxRunner` 合同、WSL2 `unshare` 探针、后续 verifier exec 路线。

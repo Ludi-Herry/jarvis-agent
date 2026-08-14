@@ -1,7 +1,7 @@
-# 交接：从 GUI 第一版到可发布 v1（路线图 + 验收契约）
+# 历史交接：GUI-first v1 路线与 R1-R9 验收证据
 
 > 读者：接手本阶段的新 agent。日期：2026-07-03。
-> 本文是拍板后的执行路线图：**无人值守 loop 受限形态先行、GUI 按真实需求迭代**，终点 = 可实际发布使用的 v1（GUI 完整、UI/UX 打磨到位、无明显 bug、技术达标）。
+> 2026-08-12 路线已改为 CLI-first，当前计划见 `docs/cli-first-plan.md`。本文保留 2026-07-03 的 GUI-first 决策、R1-R9 证据与安全边界，供审计和回溯。
 > 当前系统状态以 `docs/handoff-next.md` 为准（本文不重复它）；安全审查方法与历史见 `docs/security-review-baseline.md`。
 
 ## 0. 拍板背景（2026-07-03，为什么是这个顺序）
@@ -169,7 +169,7 @@ v1 可发布 = 以下每条都有**可验证证据**（跑过的命令 / 截图 
 
 **验收**：R1-R9 逐条打勾且每条有证据链接（命令输出 / JSONL 路径 / 审查记录 / 验收记录）。
 
-**2026-07-03 第二轮发布检查结果**：非 UX 阻塞项已收口，发布仍停在 R6。R1 四关卡全绿：`npm run typecheck`、`npm run lint`、`npm run build`、`npm test`（102 files / 1060 passed / 1 skipped）。R2 真实间隔 cron daemon 6/5 且 false verified `0`；R3 内置 Browser 急停写入 `loop-halted emergency-stop`；R4 worktree 写隔离通过；R5 内置 Browser 裁决通过；R7 human-review spoof 与 `loop:finalize` false-positive merge 系列 HIGH 已修，最终 codex 复审 `HIGH? no`；R8 本文 / `handoff-next.md` / 试点笔记已同步；R9 已补 `0.1.0` 版本、`CHANGELOG.md`、`RELEASE_NOTES.md`、`KNOWN_ISSUES.md`。R6 UI/UX 打磨与 Luis 逐节验收仍未做，因此仍不能公开发布。
+**历史状态（2026-07-03 第二轮发布检查）**：非 UX 阻塞项已收口，当时的 GUI-first 发布停在 R6。R1 四关卡全绿：`npm run typecheck`、`npm run lint`、`npm run build`、`npm test`（102 files / 1060 passed / 1 skipped）。R2 真实间隔 cron daemon 6/5 且 false verified `0`；R3 内置 Browser 急停写入 `loop-halted emergency-stop`；R4 worktree 写隔离通过；R5 内置 Browser 裁决通过；R7 human-review spoof 与 `loop:finalize` false-positive merge 系列 HIGH 已修，最终 codex 复审 `HIGH? no`；R8 本文 / `handoff-next.md` / 试点笔记已同步；R9 已补 `0.1.0` 版本、`CHANGELOG.md`、`RELEASE_NOTES.md`、`KNOWN_ISSUES.md`。R6 UI/UX 打磨与 Luis 逐节验收当时仍未做。
 
 ## 4. 对抗式审查制度（本路线图执行标准）
 

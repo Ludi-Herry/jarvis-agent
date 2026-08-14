@@ -1,10 +1,15 @@
 # Known Issues
 
-Date: 2026-07-22
+Date: 2026-08-14
 
-- GUI UI/UX polish and Luis section-by-section sign-off are still pending. This blocks public release readiness even though the non-UX blockers are closed.
+- The first unified `jarvis` shell, local doctor, strict managed writes, and Session v2 receipts are available in the current source. The v0.1 release gate still needs read-only sessions commands, dynamic-composition resume checks, one headless JSONL agent-event contract, A0, current-session Recall, typed configuration with `inspect/safe`, Windows contract coverage, and 10–20 real tasks. Session mutations, stop/review, completion, extra presets, and a pure compiled bin are later productization slices; full-screen TUI and checkpoint/rewind remain for v0.2. See `docs/cli-first-plan.md`.
+- GUI UI/UX polish and Luis section-by-section sign-off remain pending for the v0.3 Desktop control surface.
 - Cron daemon uses a single workspace lock. If a daemon is force-killed, the lock may need stale recovery before another daemon can start.
 - Human-review audit writes are local JSONL only; there is no multi-user identity, connector, team workflow, or remote notification layer.
 - `loop:finalize --cleanup` still has a LOW follow-up: add a fixture covering verified patch cleanup when a goal worktree contains the `node_modules` dependency bridge.
 - Attended bash command-level session allow still has the known scheduler-command TOCTOU limitation described in `docs/security-review-baseline.md`.
 - Token accounting remains partial because off-bus verifier and pinned-requirement derivation calls are unmeasured. `observe` labels this coverage as partial and the missing amount as unknown; loop rollups are displayed separately and no longer added to detailed goal tokens.
+- Managed file versions prevent stale updates at explicit read/write checkpoints and serialize same-process writes. Symbolic-link leaves and already multiply-linked files are rejected, but this still cannot provide a universal cross-process compare-and-swap: an external editor, another Jarvis process, an approved bash command, or a path/link/metadata mutation in the final check-to-rename window can race. Post-write disagreement is reported as unknown, while a very narrow overwritten external write can remain undetectable.
+- Session v2 rejects mixed versions, sequence gaps, invalid records, missing/multiple headers, duplicate logical executions, contradictory projections, partial base composition, and unresolved tool effects during operational resume. Legacy v1 sessions retain partial receipt/composition coverage and cannot support finalize merge evidence. Session append uses awaited append-only writes without a cross-process writer lock or per-record durable fsync, so power loss and concurrent writers remain outside the guarantee.
+- A v2 header covers the active base system prompt and effective tool schemas. Per-request dynamic skill/system addenda are represented by hashes and counts; exact model-visible reconstruction, explicit redaction receipts, and resume-time dynamic-addendum comparison remain a headless/trajectory follow-up.
+- Goal/loop/cron JSONL integrity still uses shallow per-store record validation. Deep semantic relationships inside otherwise well-shaped non-session records remain an audit concern; operational loaders reject middle corruption, invalid record shapes, and missing headers.
