@@ -35,10 +35,13 @@ import {
 } from '../../capabilities/index.js';
 import {
   createSessionComposition,
+  createHistorySearchTool,
+  createHistoryTurnTool,
   defaultPolicy,
   FileSessionStore,
   latestSessionPath,
   resolveSessionFilePath,
+  SessionCompositionMismatchError,
   type SessionFileResolution,
 } from '../../runtime/index.js';
 import { safeInline } from './approval.js';
@@ -76,8 +79,9 @@ program
   .option('--cwd <dir>', 'base directory tool paths resolve against', process.cwd())
   .option('--max-turns <n>', 'max model turns per message', (v) => Number.parseInt(v, 10), 24)
   .option('--resume [id]', 'resume the latest session (or a specific <id>) from data/sessions/')
+  .option('--no-recall', 'disable current-session history_search/history_turn tools')
   .option('-p, --prompt <text>', 'run this prompt before entering interactive input')
-  .action(async (opts: { cwd: string; maxTurns: number; resume?: string | boolean; prompt?: string }) => {
+  .action(async (opts: { cwd: string; maxTurns: number; resume?: string | boolean; recall: boolean; prompt?: string }) => {
     const headless = isHeadlessAgentEventMode();
     if (headless && !opts.prompt?.trim()) {
       console.error('[run] --headless requires a non-empty prompt');
@@ -132,6 +136,7 @@ program
       }
       resumeFile = resolution;
     }
+    const sessionId = resumeFile?.sessionId ?? new Date().toISOString().replace(/[:.]/g, '-');
 
     let config;
     try {
@@ -151,6 +156,11 @@ program
     // bash is safe to register here because the REPL always runs it behind the PermissionGate (B4).
     const tools = buildDefaultRegistry();
     tools.register(createBashTool());
+    if (opts.recall) {
+      const historySource = { cwd: opts.cwd, sessionId };
+      tools.register(createHistorySearchTool(historySource));
+      tools.register(createHistoryTurnTool(historySource));
+    }
     // Vision (Phase E multimodal): register the `vision` tool ONLY when ARK_VISION_MODEL names a vision
     // model — heterogeneous delegation, a single stateless VLM call returning structured text (the main
     // model stays text-only). Unset → no vision tool (text-only harness), like leg 3 is opt-in.
@@ -209,12 +219,10 @@ program
       dynamicAddendum,
     });
     let store: FileSessionStore;
-    let sessionId: string;
     let resumed = false;
     let initialMessages: Message[] | undefined;
     if (resumeFile !== undefined) {
       const { path, sessionId: resolvedSessionId } = resumeFile;
-      sessionId = resolvedSessionId;
       resumed = true;
       const loadResult = await loadResumeSessionForCli(resumeFile, {
         requireHeader: true,
@@ -230,7 +238,14 @@ program
         return;
       }
       if (loadResult.status === 'failed') {
-        console.error(`[resume] ${safeInline(loadResult.error instanceof Error ? loadResult.error.message : String(loadResult.error))}`);
+        const error = loadResult.error;
+        const recallHint = opts.recall
+          && error instanceof SessionCompositionMismatchError
+          && error.differences.length > 0
+          && error.differences.every(({ field }) => field === 'toolsetHash' || field === 'systemPromptHash')
+          ? ' If this session predates Recall, retry with --no-recall; otherwise restore the recorded sources.'
+          : '';
+        console.error(`[resume] ${safeInline(error instanceof Error ? error.message : String(error))}${recallHint}`);
         process.exitCode = loadResult.exitCode;
         return;
       }
@@ -265,11 +280,9 @@ program
       });
       console.log(`已恢复会话 ${safeInline(loaded.header?.id ?? path)}(${loaded.messages.length} 条消息)\n`);
     } else {
-      const id = new Date().toISOString().replace(/[:.]/g, '-');
-      sessionId = id;
-      store = new FileSessionStore(join(sessionsDir, `${id}.jsonl`));
+      store = new FileSessionStore(join(sessionsDir, `${sessionId}.jsonl`));
       await store.writeHeader({
-        id,
+        id: sessionId,
         model: config.model,
         cwd: opts.cwd,
         startedAt: new Date().toISOString(),

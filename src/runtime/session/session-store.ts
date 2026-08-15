@@ -373,6 +373,12 @@ export interface LoadedSession {
   pendingTools: PendingToolExecution[];
 }
 
+/** One validated read of the append-only source plus its active replay projection. */
+export interface LoadedSessionLog {
+  records: SessionRecord[];
+  loaded: LoadedSession;
+}
+
 /** The contract the loop depends on. Receipt methods are optional for legacy/test stores. */
 export interface SessionStore {
   readonly receiptFormat?: 'v2';
@@ -816,6 +822,18 @@ export async function loadSession(
   path: string,
   options: LoadSessionOptions = {},
 ): Promise<LoadedSession> {
+  return (await loadSessionLog(path, options)).loaded;
+}
+
+/**
+ * Load and validate the same bytes once while retaining their append-only records.
+ * Resume consumes the replay projection; current-Session Recall consumes only the
+ * message records and deliberately ignores compaction snapshots.
+ */
+export async function loadSessionLog(
+  path: string,
+  options: LoadSessionOptions = {},
+): Promise<LoadedSessionLog> {
   const text = await readFile(path, 'utf8');
   const parsed = parseJsonlWithDiagnostics(text, isSessionRecord);
   const replayed = replaySession(parsed.records);
@@ -837,7 +855,7 @@ export async function loadSession(
     assertResumeComposition(replayed.header.composition, options.resume.expectedComposition);
     assertDynamicAddendumReceipts(parsed.records, options.resume.resolveDynamicAddendum);
   }
-  return replayed;
+  return { records: parsed.records, loaded: replayed };
 }
 
 export type ResolvedSessionLoadResult =

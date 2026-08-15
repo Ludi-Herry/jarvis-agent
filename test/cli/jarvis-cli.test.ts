@@ -2,9 +2,9 @@ import { execFile, type ChildProcess } from 'node:child_process';
 import { createHmac } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
-import { createServer, type ServerResponse } from 'node:http';
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -14,6 +14,7 @@ import {
   forwardAuthenticatedHeadlessFrames,
   forwardChildProcess,
 } from '../../src/surfaces/cli/jarvis.js';
+import { parseSessionLog } from '../../src/runtime/session/session-store.js';
 
 const repo = process.cwd();
 const entry = join(repo, 'src', 'surfaces', 'cli', 'jarvis.ts');
@@ -43,6 +44,16 @@ describe('jarvis root CLI', () => {
     expect(result.stdout).toContain('Usage: jarvis goal');
     expect(result.stdout).toContain('jarvis goal --allow-no-git');
     expect(result.stderr).not.toContain('ARK_API_KEY');
+  });
+
+  it('documents the explicit Recall off switch on run and resume', async () => {
+    const runHelp = await runJarvis(['run', '--help']);
+    const resumeHelp = await runJarvis(['resume', '--help']);
+
+    expect(runHelp).toMatchObject({ code: 0 });
+    expect(resumeHelp).toMatchObject({ code: 0 });
+    expect(runHelp.stdout).toContain('--no-recall');
+    expect(resumeHelp.stdout).toContain('--no-recall');
   });
 
   it('applies --cwd before forwarding status, including when the flag follows the command', async () => {
@@ -114,6 +125,93 @@ describe('jarvis root CLI', () => {
     expect(result.stdout).toBe('');
     expect(result.stderr).toContain('ARK_API_KEY');
   });
+
+  it('offers current-Session Recall by default and removes it completely with --no-recall', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'jarvis-headless-recall-switch-'));
+    tempDirs.push(workspace);
+    await writeFile(join(workspace, '.env'), 'ARK_API_KEY=fixture-key\nARK_MODEL=fixture-model\n', 'utf8');
+    const requests: Array<Record<string, unknown>> = [];
+    const endpoint = createServer((request, response) => {
+      collectJsonRequest(request, response, requests);
+    });
+    await new Promise<void>((resolveListen, rejectListen) => {
+      endpoint.once('error', rejectListen);
+      endpoint.listen(0, '127.0.0.1', resolveListen);
+    });
+    const address = endpoint.address() as AddressInfo;
+    const env = { ARK_API_KEY: undefined, ARK_BASE_URL: `http://127.0.0.1:${address.port}/v1` };
+    let enabled;
+    let disabled;
+    try {
+      enabled = await runJarvis(['--headless', '--cwd', workspace, 'run', 'recall enabled'], env);
+      disabled = await runJarvis(['--headless', '--cwd', workspace, 'run', '--no-recall', 'recall disabled'], env);
+    } finally {
+      await new Promise<void>((resolveClose, rejectClose) => endpoint.close((err) => err ? rejectClose(err) : resolveClose()));
+    }
+
+    expect(enabled.code).toBe(0);
+    expect(disabled.code).toBe(0);
+    expect(requests).toHaveLength(2);
+    const enabledNames = requestToolNames(requests[0]);
+    const disabledNames = requestToolNames(requests[1]);
+    expect(enabledNames).toEqual(expect.arrayContaining(['history_search', 'history_turn']));
+    expect(disabledNames).not.toContain('history_search');
+    expect(disabledNames).not.toContain('history_turn');
+    expect(requestSystemText(requests[0])).toContain('低权威历史数据');
+    expect(requestSystemText(requests[1])).not.toContain('低权威历史数据');
+  }, 20_000);
+
+  it('executes Recall as read-only history without approval or completion authority and persists the bounded result', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'jarvis-headless-recall-execution-'));
+    tempDirs.push(workspace);
+    await writeFile(join(workspace, '.env'), 'ARK_API_KEY=fixture-key\nARK_MODEL=fixture-model\n', 'utf8');
+    let requestCount = 0;
+    const endpoint = createServer((_request, response) => {
+      requestCount++;
+      if (requestCount === 1) {
+        writeToolCallSse(response, { id: 'call-history', name: 'history_search', arguments: '{"query":"earlier"}' });
+      } else {
+        writeTextSse(response, 'done');
+      }
+    });
+    await new Promise<void>((resolveListen, rejectListen) => {
+      endpoint.once('error', rejectListen);
+      endpoint.listen(0, '127.0.0.1', resolveListen);
+    });
+    const address = endpoint.address() as AddressInfo;
+    let result;
+    try {
+      result = await runJarvis(
+        ['--headless', '--cwd', workspace, 'run', 'exercise Recall execution'],
+        { ARK_API_KEY: undefined, ARK_BASE_URL: `http://127.0.0.1:${address.port}/v1` },
+      );
+    } finally {
+      await new Promise<void>((resolveClose, rejectClose) => endpoint.close((err) => err ? rejectClose(err) : resolveClose()));
+    }
+
+    const events = result.stdout.trim().split('\n').map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(result.code).toBe(0);
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'tool.started', toolName: 'history_search' }),
+      expect.objectContaining({ type: 'tool.finished', toolName: 'history_search', outcome: 'committed' }),
+    ]));
+    expect(events.some((event) => event.type === 'approval.required')).toBe(false);
+    expect(events.at(-1)).toMatchObject({
+      type: 'run.finished',
+      completion: { granted: false, authority: 'none' },
+    });
+
+    const sessionFiles = await readdir(join(workspace, 'data', 'sessions'));
+    expect(sessionFiles).toHaveLength(1);
+    const records = parseSessionLog(await readFile(join(workspace, 'data', 'sessions', sessionFiles[0] ?? ''), 'utf8'));
+    const recalled = records.find(
+      (record) => record.t === 'message' && record.message.role === 'tool' && record.message.toolCallId === 'call-history',
+    );
+    const content = recalled?.t === 'message' && recalled.message.role === 'tool' ? recalled.message.content : '';
+    expect(content).toContain('"level":"historical-low"');
+    expect(content).toContain('"currentStateProof":false');
+    expect(content).not.toContain('[jarvis-file-receipt]');
+  }, 20_000);
 
   it('routes only fd 3 agent events to stdout and moves child human output to stderr', async () => {
     const stdout = new PassThrough();
@@ -587,4 +685,51 @@ function writeToolCallSse(
     usage: { prompt_tokens: 1, completion_tokens: 1 },
   })}\n\n`);
   response.end('data: [DONE]\n\n');
+}
+
+function collectJsonRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  requests: Array<Record<string, unknown>>,
+): void {
+  let raw = '';
+  request.setEncoding('utf8');
+  request.on('data', (chunk: string) => { raw += chunk; });
+  request.on('end', () => {
+    requests.push(JSON.parse(raw) as Record<string, unknown>);
+    writeTextSse(response, 'done');
+  });
+}
+
+function writeTextSse(response: ServerResponse, text: string): void {
+  response.writeHead(200, { 'content-type': 'text/event-stream' });
+  response.write(`data: ${JSON.stringify({
+    id: 'fixture-response',
+    object: 'chat.completion.chunk',
+    choices: [{ index: 0, delta: { role: 'assistant', content: text }, finish_reason: null }],
+  })}\n\n`);
+  response.write(`data: ${JSON.stringify({
+    id: 'fixture-response',
+    object: 'chat.completion.chunk',
+    choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+    usage: { prompt_tokens: 1, completion_tokens: 1 },
+  })}\n\n`);
+  response.end('data: [DONE]\n\n');
+}
+
+function requestToolNames(request: Record<string, unknown> | undefined): string[] {
+  const tools = Array.isArray(request?.tools) ? request.tools : [];
+  return tools.flatMap((tool) => {
+    if (typeof tool !== 'object' || tool === null || !('function' in tool)) return [];
+    const fn = tool.function;
+    return typeof fn === 'object' && fn !== null && 'name' in fn && typeof fn.name === 'string' ? [fn.name] : [];
+  });
+}
+
+function requestSystemText(request: Record<string, unknown> | undefined): string {
+  const messages = Array.isArray(request?.messages) ? request.messages : [];
+  const system = messages.find((message) => typeof message === 'object' && message !== null && message.role === 'system');
+  return typeof system === 'object' && system !== null && 'content' in system && typeof system.content === 'string'
+    ? system.content
+    : '';
 }

@@ -8,6 +8,7 @@
 export {
   FileSessionStore,
   loadSession,
+  loadSessionLog,
   loadResolvedSession,
   latestSessionPath,
   resolveSessionFilePath,
@@ -43,9 +44,20 @@ export {
   type SessionIdCheck,
   type PendingToolExecution,
   type LoadedSession,
+  type LoadedSessionLog,
   type ModelRequestReceipt,
   type ModelRequestReceiptInput,
   type ToolExecutionPlan,
   type ToolExecutionCommit,
   type ToolExecutionUnknown,
 } from './session-store.js';
+export {
+  createHistorySearchTool,
+  createHistoryTurnTool,
+  projectSessionHistory,
+  HISTORY_SEARCH_TOOL_NAME,
+  HISTORY_TURN_TOOL_NAME,
+  type SessionHistoryMessage,
+  type SessionHistorySource,
+  type SessionHistoryTurn,
+} from './recall.js';

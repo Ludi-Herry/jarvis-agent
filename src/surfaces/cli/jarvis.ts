@@ -108,15 +108,17 @@ Compatibility: existing npm run dev|goal|loop|cron|observe commands remain avail
     .description('start or continue the interactive coding-agent session')
     .option('--max-turns <n>', 'maximum model turns for each prompt')
     .option('--resume [id]', 'resume the latest session, or a specific session id')
+    .option('--no-recall', 'disable current-session history_search/history_turn tools')
     .addHelpText('after', `
 Examples:
   jarvis run
   jarvis run "summarize the current changes"
   jarvis run --resume
   jarvis run --resume <session-id>`)
-    .action(async (prompt: string[], options: { maxTurns?: string; resume?: string | boolean }) => {
+    .action(async (prompt: string[], options: { maxTurns?: string; resume?: string | boolean; recall: boolean }) => {
       const args: string[] = [];
       if (options.maxTurns !== undefined) args.push('--max-turns', options.maxTurns);
+      if (!options.recall) args.push('--no-recall');
       if (options.resume !== undefined) {
         args.push('--resume');
         if (typeof options.resume === 'string') args.push(options.resume);
@@ -129,10 +131,12 @@ Examples:
     .command('resume [id]')
     .description('resume the latest session, or a specific session id')
     .option('--max-turns <n>', 'maximum model turns for each prompt')
-    .action(async (id: string | undefined, options: { maxTurns?: string }) => {
+    .option('--no-recall', 'disable current-session history_search/history_turn tools')
+    .action(async (id: string | undefined, options: { maxTurns?: string; recall: boolean }) => {
       const args = ['--resume'];
       if (id !== undefined) args.push(id);
       if (options.maxTurns !== undefined) args.push('--max-turns', options.maxTurns);
+      if (!options.recall) args.push('--no-recall');
       await forward('index', args);
     });
 

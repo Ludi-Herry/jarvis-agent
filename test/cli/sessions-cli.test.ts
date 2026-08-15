@@ -256,6 +256,30 @@ describe('jarvis sessions (read-only product surface)', () => {
     expect(resume.stderr).not.toContain('session composition changed');
   }, 30_000);
 
+  it('keeps pre-Recall composition resumable with --no-recall and gives a conservative drift hint', async () => {
+    const workspace = await tempWorkspace('pre recall resume ');
+    const sessionId = await createSessionThroughCli(workspace, ['--no-recall']);
+
+    const defaultResume = await runJarvis(
+      ['--cwd', workspace, 'resume', sessionId],
+      null,
+      isolatedHome(workspace),
+    );
+    const compatibleResume = await runJarvis(
+      ['--cwd', workspace, 'resume', sessionId, '--no-recall'],
+      null,
+      isolatedHome(workspace),
+    );
+
+    expect(defaultResume.code).toBe(CLI_EXIT.NEEDS_HUMAN);
+    expect(defaultResume.stderr).toContain('session composition changed');
+    expect(defaultResume.stderr).toContain('predates Recall');
+    expect(defaultResume.stderr).toContain('--no-recall');
+    expect(defaultResume.stdout).not.toContain('compatibility: exact');
+    expect(compatibleResume.code).toBe(CLI_EXIT.SUCCESS);
+    expect(compatibleResume.stdout).toContain('[resume] compatibility: exact');
+  }, 30_000);
+
   it('maps actual resume composition drift to exit 3 without claiming exact compatibility', async () => {
     const workspace = await tempWorkspace('drift resume ');
     const sessionId = await createSessionThroughCli(workspace);
@@ -474,9 +498,9 @@ function runJarvis(
   });
 }
 
-async function createSessionThroughCli(workspace: string): Promise<string> {
+async function createSessionThroughCli(workspace: string, runArgs: string[] = []): Promise<string> {
   await writeFile(join(workspace, '.env'), 'ARK_API_KEY=fixture-key\n', 'utf8');
-  const created = await runJarvis(['--cwd', workspace, 'run'], null, isolatedHome(workspace));
+  const created = await runJarvis(['--cwd', workspace, 'run', ...runArgs], null, isolatedHome(workspace));
   expect(created.code).toBe(CLI_EXIT.SUCCESS);
   const files = (await readdir(join(workspace, 'data', 'sessions'))).filter((file) => file.endsWith('.jsonl'));
   expect(files).toHaveLength(1);
