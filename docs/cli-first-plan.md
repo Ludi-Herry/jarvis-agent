@@ -85,7 +85,7 @@ Sessions 与动态恢复切片（2026-08-15）已完成：
 - [x] 根 `jarvis --cwd`、latest discovery 与 resolver 后二次读取共用同一错误分类；EACCES、EPERM、EIO 均有命令层或确定性触发测试。latest 目录枚举/条目消失、actual resume 二次读取、junction/canonical escape 与 loop 参数/map/resume/fatal 控制字符都有生产接线覆盖。
 - [x] 本切片的路径保证覆盖静态 symlink/junction/reparse 与 canonical escape。恶意同用户进程在校验和读取之间主动替换路径仍超出保证；Session 当前也没有跨进程 writer lock 或密码学真实性。hostile concurrent local writer 进入支持的威胁模型后，再评估 file-handle binding。
 
-仍待 v0.1 关键切片：A0 只读 runner 与真实运行、Recall 开关同形任务对照、typed config 与 `inspect/safe`、完整 Windows 契约和 10–20 个真实任务。当前 Session 两级 Recall、versioned headless JSONL agent-event v1、严格 A0 类型、六案冻结 corpus 与纯 report 已完成。当前 package bin 由锁定的 runtime `tsx@4.22.4` 启动源码；packed artifact 已在 Windows 空格路径下用 `--omit=dev` 安装，`jarvis --help`、`--version`、`status --json` 全部 exit 0。纯编译 bin、stop/review/completion、其余 sessions mutation 与更多 preset 属后续产品化；被忽略的 `dist/` 已在本轮误覆盖，现保持原样，未经授权不再清理或重建。
+仍待 v0.1 关键切片：A0 只读 runner 与真实运行、Recall 开关同形任务对照、完整 Windows 契约和 10–20 个真实任务。当前 Session 两级 Recall、typed config 与 `inspect/safe`、versioned headless JSONL agent-event v1、严格 A0 类型、六案冻结 corpus 与纯 report 已完成。当前 package bin 由锁定的 runtime `tsx@4.22.4` 启动源码；packed artifact 已在 Windows 空格路径下用 `--omit=dev` 安装，`jarvis --help`、`--version`、`status --json` 全部 exit 0。纯编译 bin、stop/review/completion、其余 sessions mutation 与更多 preset 属后续产品化；被忽略的 `dist/` 已在本轮误覆盖，现保持原样，未经授权不再清理或重建。
 
 - 单一 `jarvis` executable 与命令树：`run`、`goal`、`loop`、`resume`、`status`、`doctor`、`config` 为根帮助高频项；help/version/global flags 与旧入口退出码统一，版本读取 `package.json`。
 - 会话：v0.1 已交付只读 `sessions list|show`，实际 exact-session resume 会显示 cwd、模型、composition diff、pending effect 和停止原因；search/rename/fork/archive 分切片后移。
@@ -143,7 +143,7 @@ R1 交付顺序：
 3. [x] 固定 versioned headless JSONL agent-event contract、六案 label-blind A0 corpus 与纯 report；现有人类 text 继续保留，A0 真实运行仍单列验收。
 4. [x] 在 REPL 当前 Session 增加 `history_search` / `history_turn`，默认开启并提供 `--no-recall`；goal/loop 暂不接入。
 5. [ ] 用 Recall 开关跑同形 A0/真实任务对照。
-6. [ ] 实现 typed config、有效来源展示与 `inspect` / `safe`；`maintain` / `worktree` 等 A0 后再决定。
+6. [x] 实现 typed config、有效来源展示与 `inspect` / `safe`；`maintain` / `worktree` 等 A0 后再决定。
 7. [ ] 跑 10–20 个真实同形任务，要求零 false-verified、零无限等待、零 orphan side effect。
 
 本切片检查（2026-08-15）：聚焦测试 12 files / 183 passed；`npm run typecheck`、`npm run lint`、`npm run build -- --noEmit`、`npm test` 全绿；全量测试为 119 files / 1334 passed / 2 skipped。独立提交门终审为 GO（P0=0、P1=0、P2=0、P3=1）；P3 是已记录的 hostile same-user check-to-read 并发替换窗口，不阻断当前威胁模型下的提交。代码提交为 `a814889`。已有 `dist/` 保持不动。
@@ -153,6 +153,8 @@ Headless/A0 实现检查（2026-08-15）：authenticated child-to-root framing �
 Recall 实现检查（2026-08-15）：首版限定 `jarvis run/resume` 的当前 Session，host closure 固定 cwd/id，模型输入不能选 Session 或路径；每次调用重新走既有路径、header identity 与 integrity 校验。投影只读取 append-only message records，忽略 compaction/system/reasoning/tool arguments，排除当前 turn，普通 tool output 默认省略。返回值带 historical-low/no-authority 标记，并限制 matches、turn messages、tool names 与总文本；已知 secret 模式、历史 file receipt/`fv1`、C0/C1/ANSI/bidi 控制符会被清理，日志读取或语义校验失败也只返回固定、有界的 historical-low 不可用信封。`--no-recall` 同时移除两项工具与 prompt boundary，保留 pre-Recall composition 的 exact resume。真实 root E2E 已验证 Recall 无 approval、无 completion authority；聚焦测试 6 files / 133 passed，全量为 123 files / 1404 passed / 2 skipped，`typecheck`、`lint`、`npm run build -- --noEmit`、diff check 全绿。独立提交门为 GO（P0=0、P1=0、P2=0、P3=1），代码提交为 `81f96e0`。Recall A/B 真实任务尚未运行。
 
 Recall 保持 Jarvis 原生实现，读取现有 Session JSONL，不引入 DSH/Cordis runtime、第二个事件总线或会话数据库。首版只进入 REPL `run/resume`；goal/loop 需要单独合同与旧 composition 迁移判断。A0 对照至少比较 verified rate、false-verified、峰值输入、总成本、p95、Recall 精度、额外工具轮次和恢复成功率；只有显式 Recall 仍解决不了长会话问题时，才评估 bounded slice 原型。
+
+Typed config 实现检查（2026-08-15）：schema v1 使用 `smol-toml` 解析用户、项目与 project-local 三层 TOML；project-local 文件默认由 Git 忽略，precedence 固定为 built-in → user → nonblank compatibility env → CLI。项目层只能增加 capability deny，不能选择 model/preset；credential-like key、原型继承键、非 `ENOENT` 读取错误、畸形/超限文件、控制字符或超长 endpoint、非法 schema/value 均 fail-closed 且错误不带原值。unknown key 默认有界 warning，`--strict-config` 改为拒绝，`--ignore-user-config` 不读取用户文件并保留 ignored receipt。`jarvis config path|show|validate|preset` 保持 observation-only；`run`、`goal`、`loop` 共用同一 `inspect/safe` policy，项目 deny 不能被 preset、CLI 或 allow rule 放宽。`safe` 会关闭 unattended parallel-worktree write shortcut，headless write 仍产生 approval pair 后拒绝。默认 prompt 字节不变；显式 user/CLI model、user/environment/CLI baseURL 和 policy 通过有界 digest/配置行进入现有 systemPromptHash，actual resume 另核对 header model/cwd，不改 Session v1/v2 schema。聚焦测试 12 files / 190 passed；全量 126 files / 1456 passed / 2 skipped，`typecheck`、`lint`、`npm run build -- --noEmit` 与 diff check 全绿。修复首轮 P1/P2 后，独立提交门为 GO（P0=0、P1=0、P2=0、P3=1），代码提交为 `9d53d1a`；P3 是已披露的 ignored `dist/` 历史误覆盖。
 
 ## 5. R2：增强行模式与全屏 TUI
 

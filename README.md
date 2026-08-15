@@ -4,7 +4,7 @@
 
 > 设计依据不在本仓库重写，以知识库蓝图为准（见 `AGENTS.md`「唯一设计依据」）。
 
-## 当前状态（2026-08-14）
+## 当前状态（2026-08-15）
 
 | 阶段 | 状态 |
 |---|---|
@@ -16,7 +16,7 @@
 | Phase D 自主（GoalLoop + 确定性三腿〔canonical 重跑 + 篡改检测 + held-out 隐藏断言〕+ 独立 LLM 裁判） | ✅ 完成（D1–D9 + held-out） |
 | Phase E 多能力（多 goal Loop 调度 + 外置 vision + 命令级 bash session-allow + shadow-git 旁路历史） | ✅ 完成（4 切片合入 main） |
 | Hooks（PreToolUse 阻断 + PostToolUse 咨询/反馈；tool result env；per-hook timeout；round/session lifecycle；多来源；loop per-goal hook-map） | ✅ 完成，剩余仅保留 defer |
-| **CLI beta（当前主线）** | 🚧 R0/R0.5、统一 `jarvis` shell、只读 sessions、dynamic composition resume、headless/A0 合同与当前 Session Recall 已落地；下一步为 A0 runner、typed config 与真实任务验收 |
+| **CLI beta（当前主线）** | 🚧 R0/R0.5、统一 `jarvis` shell、只读 sessions、dynamic composition resume、headless/A0 合同、当前 Session Recall 与 typed config 已落地；下一步为 A0 runner、Recall A/B 与真实任务验收 |
 | **GUI 第一版（急停 + human-review MVP）** | ✅ observe 时间线、emergency stop 与 human-review 已落地；Desktop control surface 排在 CLI beta 与 TUI 之后继续打磨 |
 | OS sandbox Phase 3 v1 + builder sandboxed checks + browser smoke feedback + 只读观测层 | ✅ 完成（trusted requirements / route map / composite verifier / `sandboxed_check` / `browser_smoke(static-dist)` / round budget events / `npm run observe`）；未覆盖范围：通用 app/browser/network verifier |
 | propose_skill | ⛔ 已拍板 defer（投机性、判定偏弱、无证实复用场景） |
@@ -166,6 +166,10 @@ A clean `sessions show` result says `ready-for-resume-check`, because inspection
 The path guarantee covers static selection: symbolic links, junctions/reparse escapes, canonical targets outside `data/sessions`, and filename/header identity mismatches are refused before resume. An adversarial same-user process can still replace a checked path before a later read; current Session logs also lack a cross-process writer lock and cryptographic authenticity. File-handle binding remains a future hardening step if hostile concurrent local mutation becomes part of the supported threat model.
 
 `jarvis run` and `jarvis resume` enable `history_search` / `history_turn` for the current Session by default. The host fixes the Session identity; model input cannot select another id or path. Every call reuses the existing Session id/path, integrity, and header checks, then projects only append-only message records: compaction snapshots and system messages are ignored, the current in-progress turn is excluded, and tool output requires explicit opt-in. Results are size-bounded historical quotations with common secret patterns redacted; stale file receipts and `fv1` versions are removed, and terminal/bidi controls are inert. Recall cannot prove current files, grant permission, or grant completion. `--no-recall` removes both tools and the prompt boundary byte-for-byte so pre-Recall v2 composition can still resume exactly and so later A/B runs can use the same entry point. Goal/loop Recall remains outside this first slice.
+
+Typed config schema v1 reads `%USERPROFILE%/.jarvis/config.toml`, project `.jarvis/config.toml`, and project-local `.jarvis/config.local.toml`; the project-local file is ignored by Git by default. Precedence is built-in → user → nonblank `ARK_MODEL`/`ARK_BASE_URL` compatibility env → CLI. Project layers may only add capability denies; model and preset selection there fail closed. Credential-like TOML keys, malformed or oversized files, unsafe/unbounded endpoints, unreadable files, and invalid schema values are rejected without echoing values. Unknown keys warn by default and fail under `--strict-config`; `--ignore-user-config` records the skipped user layer.
+
+`jarvis config path|show|validate|preset` is read-only and reports observation-only authority. `config show --effective --sources [--json]` exposes credential-free effective values and exact provenance. `inspect` allows read-only tools while denying write, code execution, and network; `safe` allows reads and asks for the other three capability classes. `safe` also disables the unattended parallel-worktree write shortcut, so headless writes emit an approval pair and fail closed. `run`, `goal`, and every per-goal `loop` gate consume the same resolved policy. Explicit user/CLI model, user/environment/CLI endpoint, preset, and permission changes are bound into the existing system-prompt composition hash; unchanged defaults retain the legacy prompt byte-for-byte, and actual resume also checks the recorded model/cwd before claiming exact compatibility.
 
 The report also includes `authority: { mode: "observation-only", canCompleteGoals: false, canCompleteLoops: false }`. GUI or scripts can display and filter it, but they must not treat it as completion evidence.
 
