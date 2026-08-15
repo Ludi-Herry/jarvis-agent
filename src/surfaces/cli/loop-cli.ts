@@ -56,6 +56,7 @@ import {
   scrubProviderKeyFromEnv,
 } from '../../core/index.js';
 import {
+  buildConfigPermissionPolicy,
   DefaultPermissionGate,
   FileSessionStore,
   InMemoryEventBus,
@@ -114,6 +115,12 @@ import { safeInline } from './approval.js';
 import { formatLoopTerminalGuidance } from './terminal-guidance.js';
 import { createApprovalEventApprover, FileApprovalAuditStore } from './approval-events.js';
 import { registerBuilderSandboxTools } from './builder-sandbox-tools.js';
+import { extractConfigCliOptions } from './config-options.js';
+import {
+  appendConfigPermissionBoundary,
+  loadCliConfig,
+  reportConfigWarnings,
+} from './config.js';
 import { createInteractiveApprover, readlineApproverIo } from './interactive-approver.js';
 import { parseLoopArgs } from './loop-args.js';
 import { assertParallelHooksCompatible } from './loop-guards.js';
@@ -170,9 +177,11 @@ const NEEDS_HUMAN: ReadonlySet<string> = new Set(['verifier-health', 'consecutiv
 
 async function main(): Promise<void> {
   const headless = isHeadlessAgentEventMode();
+  let configCli;
   let args;
   try {
-    args = parseLoopArgs(process.argv.slice(2));
+    configCli = extractConfigCliOptions(process.argv.slice(2));
+    args = parseLoopArgs(configCli.argv);
   } catch (err) {
     console.error(formatLoopCliError('', err));
     process.exitCode = CLI_EXIT.USAGE;
@@ -201,20 +210,36 @@ async function main(): Promise<void> {
     return;
   }
 
+  const cwd = process.cwd();
+  let effectiveConfig;
+  try {
+    effectiveConfig = await loadCliConfig({ cwd, options: configCli.options });
+    reportConfigWarnings(effectiveConfig);
+  } catch (err) {
+    console.error(`[config] ${safeInline(err instanceof Error ? err.message : String(err))}`);
+    process.exitCode = CLI_EXIT.STATE_CORRUPT;
+    return;
+  }
+
   let config;
   try {
     assertKeyNotInLaunchEnv(ARK_KEY_IN_LAUNCH_ENV); // /proc safety: refuse a launch-env key on Linux
-    config = loadDoubaoConfig();
+    config = loadDoubaoConfig(process.env, {
+      model: effectiveConfig.model,
+      baseURL: effectiveConfig.baseURL,
+    });
   } catch (err) {
     console.error(formatLoopCliError('', err));
     process.exitCode = CLI_EXIT.USAGE;
     return;
   }
 
+  const builderPrompt = appendConfigPermissionBoundary(BUILDER_PROMPT, effectiveConfig);
+  const permissionPolicy = buildConfigPermissionPolicy(effectiveConfig);
+  const allowUnattendedGoalWorktreeWrites = effectiveConfig.preset === null;
   const provider = createProvider(config).withThinking('off');
   // The provider captured the key; scrub it from the env so a goal builder's bash can't read it back.
   scrubProviderKeyFromEnv();
-  const cwd = process.cwd();
   const shellPath = defaultShellPath();
   const loopsDir = join(cwd, 'data', 'loops');
   const worktreeBaseRoot = worktreeRootPath ?? join(homedir(), '.jarvis', 'worktrees', basename(cwd));
@@ -562,7 +587,7 @@ async function main(): Promise<void> {
     });
   }
   // Plain --unattended still has no approver, so the shared gate fail-closes every `ask` to deny.
-  const gate = new DefaultPermissionGate({ approver });
+  const gate = new DefaultPermissionGate({ approver, policy: permissionPolicy });
   const parallelApprover = parallelMode ? serializeApprover(approver) : approver;
   const context = new DefaultContextManager({
     summarizer: provider,
@@ -600,7 +625,7 @@ async function main(): Promise<void> {
     runtimeVersion: JARVIS_VERSION,
     permissionMode: effectiveUnattended ? (parallelMode ? 'worktree-unattended' : 'unattended') : 'interactive',
     toolSchemas: [...goalTools.schemasForModel(), updateGoalToolSchema()],
-    systemPrompt: BUILDER_PROMPT,
+    systemPrompt: builderPrompt,
     dynamicAddendum: NO_DYNAMIC_ADDENDUM,
   });
 
@@ -782,12 +807,15 @@ async function main(): Promise<void> {
             bus,
             sessionId: goalId,
           }),
-          ...(parallelMode ? { goalWorktreeWriteRoot: goalCwd } : {}),
+          policy: permissionPolicy,
+          ...(parallelMode && allowUnattendedGoalWorktreeWrites ? { goalWorktreeWriteRoot: goalCwd } : {}),
         })
       : parallelMode
       ? new DefaultPermissionGate({
           approver: parallelApprover,
-          goalWorktreeWriteRoot: effectiveUnattended ? goalCwd : undefined,
+          policy: permissionPolicy,
+          goalWorktreeWriteRoot:
+            effectiveUnattended && allowUnattendedGoalWorktreeWrites ? goalCwd : undefined,
         })
       : gate;
     const goalContext = parallelMode
@@ -824,7 +852,7 @@ async function main(): Promise<void> {
           goalStore,
           cwd: goalCwd,
           shellPath,
-          builderSystemPrompt: BUILDER_PROMPT,
+          builderSystemPrompt: builderPrompt,
           perRoundMaxTurns: PER_ROUND_MAX_TURNS,
           checkCommands: DEFAULT_CHECK_COMMANDS,
           heldOutCommands: goalSetterHeldOutCommands,

@@ -28,6 +28,7 @@ import {
   scrubProviderKeyFromEnv,
 } from '../../core/index.js';
 import {
+  buildConfigPermissionPolicy,
   DefaultPermissionGate,
   FileSessionStore,
   InMemoryEventBus,
@@ -55,6 +56,12 @@ import { safeInline } from './approval.js';
 import { formatGoalTerminalGuidance } from './terminal-guidance.js';
 import { createApprovalEventApprover, FileApprovalAuditStore } from './approval-events.js';
 import { registerBuilderSandboxTools } from './builder-sandbox-tools.js';
+import { extractConfigCliOptions } from './config-options.js';
+import {
+  appendConfigPermissionBoundary,
+  loadCliConfig,
+  reportConfigWarnings,
+} from './config.js';
 import { parseGoalArgs } from './goal-args.js';
 import { createInteractiveApprover, readlineApproverIo } from './interactive-approver.js';
 import { loadGoalCliTrustedRequirements } from './goal-trusted-requirements.js';
@@ -95,11 +102,13 @@ const BUILDER_PROMPT = [
 
 async function main(): Promise<void> {
   const headless = isHeadlessAgentEventMode();
+  let configCli;
   let args;
   try {
-    args = parseGoalArgs(process.argv.slice(2));
+    configCli = extractConfigCliOptions(process.argv.slice(2));
+    args = parseGoalArgs(configCli.argv);
   } catch (err) {
-    console.error(err instanceof Error ? err.message : String(err));
+    console.error(safeInline(err instanceof Error ? err.message : String(err)));
     process.exitCode = CLI_EXIT.USAGE;
     return;
   }
@@ -110,21 +119,35 @@ async function main(): Promise<void> {
     return;
   }
 
+  const cwd = process.cwd();
+  let effectiveConfig;
+  try {
+    effectiveConfig = await loadCliConfig({ cwd, options: configCli.options });
+    reportConfigWarnings(effectiveConfig);
+  } catch (err) {
+    console.error(`[config] ${safeInline(err instanceof Error ? err.message : String(err))}`);
+    process.exitCode = CLI_EXIT.STATE_CORRUPT;
+    return;
+  }
+
   let config;
   try {
     assertKeyNotInLaunchEnv(ARK_KEY_IN_LAUNCH_ENV); // /proc safety: refuse a launch-env key on Linux
-    config = loadDoubaoConfig();
+    config = loadDoubaoConfig(process.env, {
+      model: effectiveConfig.model,
+      baseURL: effectiveConfig.baseURL,
+    });
   } catch (err) {
-    console.error(err instanceof Error ? err.message : String(err));
+    console.error(safeInline(err instanceof Error ? err.message : String(err)));
     process.exitCode = CLI_EXIT.USAGE;
     return;
   }
 
+  const builderPrompt = appendConfigPermissionBoundary(BUILDER_PROMPT, effectiveConfig);
   const provider = createProvider(config).withThinking('off');
   // The provider captured the key; remove it from the env so the goal builder's bash can't read it back
   // via /proc/<pid>/environ (Linux). Keeps ARK_VERIFIER_MODEL (read by resolveVerifierConfig below).
   scrubProviderKeyFromEnv();
-  const cwd = process.cwd();
   const shellPath = defaultShellPath();
   const emergencyStop = createEmergencyStopSignal({
     cwd,
@@ -201,7 +224,10 @@ async function main(): Promise<void> {
     store: new FileApprovalAuditStore(join(cwd, 'data', 'approvals', `${sessionId}.jsonl`)),
     sessionId,
   });
-  const gate = new DefaultPermissionGate({ approver });
+  const gate = new DefaultPermissionGate({
+    approver,
+    policy: buildConfigPermissionPolicy(effectiveConfig),
+  });
   const context = new DefaultContextManager({
     summarizer: provider,
     maxContextTokens: provider.capability.maxContextTokens,
@@ -238,7 +264,7 @@ async function main(): Promise<void> {
       runtimeVersion: JARVIS_VERSION,
       permissionMode: headless ? 'unattended' : 'interactive',
       toolSchemas: [...tools.schemasForModel(), updateGoalToolSchema()],
-      systemPrompt: BUILDER_PROMPT,
+      systemPrompt: builderPrompt,
       dynamicAddendum: NO_DYNAMIC_ADDENDUM,
     }),
   });
@@ -371,7 +397,7 @@ async function main(): Promise<void> {
         goalStore,
         cwd,
         shellPath,
-        builderSystemPrompt: BUILDER_PROMPT,
+        builderSystemPrompt: builderPrompt,
         perRoundMaxTurns: 16,
         checkCommands: DEFAULT_CHECK_COMMANDS,
         heldOutCommands: heldOutCommands.length > 0 ? heldOutCommands : undefined,

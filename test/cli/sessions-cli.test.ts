@@ -4,12 +4,17 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { CLI_EXIT } from '../../src/surfaces/cli/exit-codes.js';
 
 const repo = process.cwd();
 const entry = join(repo, 'src', 'surfaces', 'cli', 'jarvis.ts');
 const tempDirs: string[] = [];
+
+// This file intentionally launches several real CLI subprocesses per test. Full-suite worker
+// contention can exceed Vitest's 5 s unit-test default even though each child has its own 20 s cap.
+vi.setConfig({ testTimeout: 15_000 });
+afterAll(() => vi.resetConfig());
 const ESC = String.fromCharCode(27);
 const KEY_SENTINEL = 'ark-sentinel-key-value-never-print';
 const RESUME_MODEL = 'session-cli-test-model';
@@ -20,10 +25,12 @@ afterEach(async () => {
 
 describe('jarvis sessions (read-only product surface)', () => {
   it('discovers sessions list/show from root and group help without a provider key', async () => {
-    const rootHelp = await runJarvis(['--help']);
-    const groupHelp = await runJarvis(['sessions', '--help']);
-    const listHelp = await runJarvis(['sessions', 'list', '--help']);
-    const showHelp = await runJarvis(['sessions', 'show', '--help']);
+    const [rootHelp, groupHelp, listHelp, showHelp] = await Promise.all([
+      runJarvis(['--help']),
+      runJarvis(['sessions', '--help']),
+      runJarvis(['sessions', 'list', '--help']),
+      runJarvis(['sessions', 'show', '--help']),
+    ]);
 
     expect(rootHelp.code).toBe(0);
     expect(rootHelp.stdout).toContain('sessions');
@@ -39,7 +46,7 @@ describe('jarvis sessions (read-only product surface)', () => {
       expect(result.stderr).not.toContain(KEY_SENTINEL);
       expect(result.stderr).not.toContain('ARK_API_KEY');
     }
-  });
+  }, 10_000);
 
   it('maps a headless run without provider configuration to usage exit 2 before any session starts', async () => {
     const workspace = await tempWorkspace('headless missing provider ');
@@ -278,6 +285,111 @@ describe('jarvis sessions (read-only product surface)', () => {
     expect(defaultResume.stdout).not.toContain('compatibility: exact');
     expect(compatibleResume.code).toBe(CLI_EXIT.SUCCESS);
     expect(compatibleResume.stdout).toContain('[resume] compatibility: exact');
+  }, 30_000);
+
+  it('binds explicit typed model and endpoint identity into exact resume composition', async () => {
+    const workspace = await tempWorkspace('typed config resume ');
+    const explicitArgs = ['--model', 'typed-model-a', '--base-url', 'https://provider.example/v1'];
+    const sessionId = await createSessionThroughCli(workspace, explicitArgs);
+
+    const exact = await runJarvis(
+      ['--cwd', workspace, 'resume', sessionId, ...explicitArgs],
+      null,
+      isolatedHome(workspace),
+    );
+    const drift = await runJarvis(
+      ['--cwd', workspace, 'resume', sessionId, '--model', 'typed-model-b', '--base-url', 'https://provider.example/v1'],
+      null,
+      isolatedHome(workspace),
+    );
+
+    expect(exact.code).toBe(CLI_EXIT.SUCCESS);
+    expect(exact.stdout).toContain('[resume] compatibility: exact');
+    expect(drift.code).toBe(CLI_EXIT.NEEDS_HUMAN);
+    expect(drift.stderr).toContain('session composition changed (systemPromptHash)');
+    expect(drift.stdout).not.toContain('compatibility: exact');
+  }, 30_000);
+
+  it('refuses an environment model change even when legacy prompt composition is unchanged', async () => {
+    const workspace = await tempWorkspace('environment model resume ');
+    await writeFile(join(workspace, '.env'), 'ARK_API_KEY=fixture-key\n', 'utf8');
+    const created = await runJarvis(
+      ['--cwd', workspace, 'run'],
+      null,
+      { ...isolatedHome(workspace), ARK_MODEL: 'environment-model-a' },
+    );
+    expect(created.code).toBe(CLI_EXIT.SUCCESS);
+    const files = (await readdir(join(workspace, 'data', 'sessions'))).filter((file) => file.endsWith('.jsonl'));
+    expect(files).toHaveLength(1);
+    const sessionId = files[0].slice(0, -'.jsonl'.length);
+
+    const resume = await runJarvis(
+      ['--cwd', workspace, 'resume', sessionId],
+      null,
+      { ...isolatedHome(workspace), ARK_MODEL: 'environment-model-b' },
+    );
+
+    expect(resume.code).toBe(CLI_EXIT.NEEDS_HUMAN);
+    expect(resume.stderr).toContain('session model/cwd differs from the current invocation');
+    expect(resume.stdout).not.toContain('compatibility: exact');
+  }, 30_000);
+
+  it('refuses environment endpoint drift before contacting the new provider', async () => {
+    const workspace = await tempWorkspace('environment endpoint resume ');
+    await writeFile(join(workspace, '.env'), 'ARK_API_KEY=fixture-key\n', 'utf8');
+    const endpointA = 'https://provider-a.example/v1';
+    const envA = {
+      ...isolatedHome(workspace),
+      ARK_MODEL: 'same-environment-model',
+      ARK_BASE_URL: endpointA,
+    };
+    const created = await runJarvis(['--cwd', workspace, 'run'], null, envA);
+    expect(created.code).toBe(CLI_EXIT.SUCCESS);
+    const files = (await readdir(join(workspace, 'data', 'sessions'))).filter((file) => file.endsWith('.jsonl'));
+    expect(files).toHaveLength(1);
+    const sessionId = files[0].slice(0, -'.jsonl'.length);
+
+    const exact = await runJarvis(['--cwd', workspace, 'resume', sessionId], null, envA);
+    expect(exact.code).toBe(CLI_EXIT.SUCCESS);
+    expect(exact.stdout).toContain('compatibility: exact');
+
+    let providerRequests = 0;
+    const endpoint = createServer((_request, response) => {
+      providerRequests += 1;
+      response.writeHead(200, { 'content-type': 'text/event-stream' });
+      response.end(
+        `data: ${JSON.stringify({
+          id: 'fixture-response',
+          object: 'chat.completion.chunk',
+          choices: [{ index: 0, delta: { role: 'assistant', content: 'unexpected' }, finish_reason: 'stop' }],
+          usage: { prompt_tokens: 1, completion_tokens: 1 },
+        })}\n\ndata: [DONE]\n\n`,
+      );
+    });
+    await new Promise<void>((resolveListen, rejectListen) => {
+      endpoint.once('error', rejectListen);
+      endpoint.listen(0, '127.0.0.1', resolveListen);
+    });
+    const address = endpoint.address() as AddressInfo;
+    let drift;
+    try {
+      drift = await runJarvis(
+        ['--cwd', workspace, 'resume', sessionId],
+        null,
+        {
+          ...isolatedHome(workspace),
+          ARK_MODEL: 'same-environment-model',
+          ARK_BASE_URL: `http://127.0.0.1:${address.port}/v1`,
+        },
+      );
+    } finally {
+      await new Promise<void>((resolveClose, rejectClose) => endpoint.close((err) => err ? rejectClose(err) : resolveClose()));
+    }
+
+    expect(drift.code).toBe(CLI_EXIT.NEEDS_HUMAN);
+    expect(drift.stderr).toContain('session composition changed (systemPromptHash)');
+    expect(drift.stdout).not.toContain('compatibility: exact');
+    expect(providerRequests).toBe(0);
   }, 30_000);
 
   it('maps actual resume composition drift to exit 3 without claiming exact compatibility', async () => {

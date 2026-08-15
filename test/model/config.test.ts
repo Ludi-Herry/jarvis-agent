@@ -41,6 +41,29 @@ describe('loadDoubaoConfig', () => {
     expect(cfg.model).toBe('doubao-other');
     expect(cfg.reasoningKey).toBe('my_think');
   });
+
+  it('accepts resolved non-secret overrides while keeping credentials environment-only', () => {
+    const cfg = loadDoubaoConfig(
+      {
+        ARK_API_KEY: 'environment-secret',
+        ARK_BASE_URL: 'https://environment.test/v1',
+        ARK_MODEL: 'environment-model',
+        ARK_REASONING_KEY: 'reasoning_field',
+      },
+      {
+        baseURL: 'https://effective.test/v1',
+        model: 'effective-model',
+      },
+    );
+
+    expect(cfg).toEqual({
+      provider: 'doubao',
+      apiKey: 'environment-secret',
+      baseURL: 'https://effective.test/v1',
+      model: 'effective-model',
+      reasoningKey: 'reasoning_field',
+    });
+  });
 });
 
 describe('resolveVerifierConfig — leg 3 enablement + config-layer independence', () => {

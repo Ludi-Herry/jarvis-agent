@@ -1,0 +1,22 @@
+/** Public typed-config boundary. CLI wiring intentionally lives outside this module. */
+export {
+  CONFIG_PRESETS,
+  JarvisConfigError,
+  MAX_MODEL_ID_LENGTH,
+  buildConfigPermissionPolicy,
+  resolveJarvisConfig,
+  type ConfigCliOverrides,
+  type ConfigEnvironment,
+  type ConfigFileLayer,
+  type ConfigFileStatus,
+  type ConfigPresetName,
+  type ConfigTextReader,
+  type ConfigValueSource,
+  type ConfigValueSources,
+  type ConfigWarning,
+  type JarvisConfigErrorCode,
+  type ResolveJarvisConfigInput,
+  type ResolvedConfigFile,
+  type ResolvedConfigPermissions,
+  type ResolvedJarvisConfig,
+} from './config.js';

@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
-import { extname, resolve } from 'node:path';
+import { homedir } from 'node:os';
+import { extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Command, CommanderError } from 'commander';
-import { classifySessionFileError } from '../../runtime/index.js';
+import { CONFIG_PRESETS, classifySessionFileError } from '../../runtime/index.js';
 import { CLI_EXIT, type CliExitCode } from './exit-codes.js';
 import { collectDoctorReport, doctorExitCode, formatDoctorReport } from './doctor.js';
 import {
@@ -16,6 +18,18 @@ import {
 } from './sessions.js';
 import { JARVIS_VERSION } from './package-info.js';
 import { safeInline } from './approval.js';
+import {
+  configCliOptionsToArgs,
+  extractConfigCliOptions,
+  type ConfigCliOptions,
+} from './config-options.js';
+import {
+  CONFIG_AUTHORITY,
+  buildConfigInspectionReport,
+  formatConfigInspectionReport,
+  loadCliConfig,
+  reportConfigWarnings,
+} from './config.js';
 import {
   JARVIS_AGENT_EVENT_AUTH_FD_ENV,
   JARVIS_AGENT_EVENT_FD_ENV,
@@ -34,7 +48,7 @@ type ForwardTarget =
   | 'shadow-cli';
 
 export async function runJarvisCli(): Promise<void> {
-  let extracted: { argv: string[]; cwd: string; headless: boolean };
+  let extracted: { argv: string[]; cwd: string; headless: boolean; config: ConfigCliOptions };
   try {
     extracted = extractGlobalCwd(process.argv.slice(2), process.cwd());
   } catch (err) {
@@ -76,7 +90,10 @@ export async function runJarvisCli(): Promise<void> {
       setExit(CLI_EXIT.USAGE);
       return;
     }
-    setExit(await forwardToExistingCli(target, args, extracted.cwd, extracted.headless));
+    const forwardedArgs = CONFIG_TARGETS.has(target)
+      ? [...configCliOptionsToArgs(extracted.config), ...args]
+      : args;
+    setExit(await forwardToExistingCli(target, forwardedArgs, extracted.cwd, extracted.headless));
   };
 
   const program = new Command();
@@ -86,6 +103,12 @@ export async function runJarvisCli(): Promise<void> {
     .version(JARVIS_VERSION)
     .option('--cwd <dir>', 'resolve project config, .env, tools, and data from this directory')
     .option('--headless', 'emit agent-event JSONL on stdout; send human diagnostics to stderr')
+    .option('--strict-config', 'reject unknown typed-config keys instead of reporting warnings')
+    .option('--ignore-user-config', 'skip the user config file for this invocation')
+    .option('--preset <inspect|safe>', 'apply a built-in permission preset')
+    .option('--safe', 'shorthand for --preset safe')
+    .option('--model <id>', 'override the non-secret builder model id')
+    .option('--base-url <url>', 'override the non-secret provider endpoint')
     .showSuggestionAfterError()
     .showHelpAfterError('(run jarvis --help for the command tree)')
     .exitOverride()
@@ -237,6 +260,117 @@ Exit codes: 0 ok, 2 unknown or unsafe session id, 7 damaged session state.`)
       }
     });
 
+  const config = program.command('config').description('inspect typed configuration and built-in presets (read-only)');
+  const loadRootConfig = async () => {
+    try {
+      if (existsSync('.env')) process.loadEnvFile('.env');
+      return await loadCliConfig({ cwd: extracted.cwd, options: extracted.config });
+    } finally {
+      // Config inspection never needs credentials. Drop any values loaded from .env before exit.
+      delete process.env.ARK_API_KEY;
+      delete process.env.ARK_REASONING_KEY;
+    }
+  };
+  const failConfigCommand = (err: unknown): void => {
+    console.error(`[config] ${safeInline(err instanceof Error ? err.message : String(err))}`);
+    setExit(CLI_EXIT.STATE_CORRUPT);
+  };
+  config.action(() => config.help());
+  config
+    .command('path')
+    .description('show the user, project, and project-local config paths without reading them')
+    .option('--json', 'print a versioned JSON report')
+    .allowExcessArguments(false)
+    .action((options: { json?: boolean }) => {
+      const paths = [
+        { layer: 'user', path: join(homedir(), '.jarvis', 'config.toml') },
+        { layer: 'project', path: join(extracted.cwd, '.jarvis', 'config.toml') },
+        { layer: 'project-local', path: join(extracted.cwd, '.jarvis', 'config.local.toml') },
+      ];
+      if (options.json) {
+        console.log(JSON.stringify({ schemaVersion: 1, authority: CONFIG_AUTHORITY, paths }, null, 2));
+      } else {
+        process.stdout.write(paths.map((entry) => `${entry.layer}: ${safeInline(entry.path)}`).join('\n') + '\n');
+      }
+      setExit(CLI_EXIT.SUCCESS);
+    });
+  config
+    .command('show')
+    .description('show the effective credential-free configuration')
+    .option('--effective', 'show fully resolved values (the v0.1 default)')
+    .option('--sources', 'include exact value and permission-deny provenance')
+    .option('--json', 'print a versioned JSON report')
+    .allowExcessArguments(false)
+    .action(async (options: { effective?: boolean; sources?: boolean; json?: boolean }) => {
+      try {
+        const resolvedConfig = await loadRootConfig();
+        const report = buildConfigInspectionReport(resolvedConfig, options.sources === true);
+        if (options.json) console.log(JSON.stringify(report, null, 2));
+        else process.stdout.write(formatConfigInspectionReport(report));
+        if (!options.json) reportConfigWarnings(resolvedConfig);
+        setExit(CLI_EXIT.SUCCESS);
+      } catch (err) {
+        failConfigCommand(err);
+      }
+    });
+  config
+    .command('validate')
+    .description('parse every selected config layer and fail closed on invalid state')
+    .option('--json', 'print a versioned validation report')
+    .allowExcessArguments(false)
+    .action(async (options: { json?: boolean }) => {
+      try {
+        const resolvedConfig = await loadRootConfig();
+        if (options.json) {
+          console.log(JSON.stringify({
+            schemaVersion: 1,
+            authority: CONFIG_AUTHORITY,
+            valid: true,
+            files: resolvedConfig.files,
+            warnings: resolvedConfig.warnings,
+          }, null, 2));
+        } else {
+          process.stdout.write(`config valid (${resolvedConfig.files.filter((file) => file.status === 'loaded').length} file(s) loaded)\n`);
+          reportConfigWarnings(resolvedConfig);
+        }
+        setExit(CLI_EXIT.SUCCESS);
+      } catch (err) {
+        failConfigCommand(err);
+      }
+    });
+  const preset = config.command('preset').description('inspect the built-in inspect/safe presets');
+  preset.action(() => preset.help());
+  preset
+    .command('list')
+    .description('list built-in presets')
+    .option('--json', 'print a versioned JSON report')
+    .allowExcessArguments(false)
+    .action((options: { json?: boolean }) => {
+      const names = Object.keys(CONFIG_PRESETS);
+      if (options.json) console.log(JSON.stringify({ schemaVersion: 1, authority: CONFIG_AUTHORITY, presets: names }, null, 2));
+      else process.stdout.write(`${names.join('\n')}\n`);
+      setExit(CLI_EXIT.SUCCESS);
+    });
+  preset
+    .command('show <name>')
+    .description('show one built-in preset capability matrix')
+    .option('--json', 'print a versioned JSON report')
+    .allowExcessArguments(false)
+    .action((name: string, options: { json?: boolean }) => {
+      if (name !== 'inspect' && name !== 'safe') {
+        console.error(`[config] unknown preset: ${safeInline(name)} (expected inspect or safe)`);
+        setExit(CLI_EXIT.USAGE);
+        return;
+      }
+      const permissions = CONFIG_PRESETS[name];
+      if (options.json) {
+        console.log(JSON.stringify({ schemaVersion: 1, authority: CONFIG_AUTHORITY, name, permissions }, null, 2));
+      } else {
+        process.stdout.write(`${name}\n${Object.entries(permissions).map(([key, value]) => `  ${key}: ${value}`).join('\n')}\n`);
+      }
+      setExit(CLI_EXIT.SUCCESS);
+    });
+
   program.hook('preAction', (_command, actionCommand) => {
     if (!extracted.headless) return;
     if (['jarvis', 'run', 'goal', 'loop'].includes(actionCommand.name())) return;
@@ -290,7 +424,10 @@ function addPassthrough(
     .action(async (args: string[]) => forward(target, args));
 }
 
-export function extractGlobalCwd(argv: string[], baseCwd: string): { argv: string[]; cwd: string; headless: boolean } {
+export function extractGlobalCwd(
+  argv: string[],
+  baseCwd: string,
+): { argv: string[]; cwd: string; headless: boolean; config: ConfigCliOptions } {
   const rest: string[] = [];
   let selected: string | undefined;
   let headless = false;
@@ -327,7 +464,8 @@ export function extractGlobalCwd(argv: string[], baseCwd: string): { argv: strin
     }
     rest.push(arg);
   }
-  return { argv: rest, cwd: resolve(baseCwd, selected ?? '.'), headless };
+  const config = extractConfigCliOptions(rest);
+  return { argv: config.argv, cwd: resolve(baseCwd, selected ?? '.'), headless, config: config.options };
 }
 
 function isCliMetadataRequest(argv: string[]): boolean {
@@ -340,6 +478,7 @@ function isCliMetadataRequest(argv: string[]): boolean {
 }
 
 const HEADLESS_TARGETS = new Set<ForwardTarget>(['index', 'goal-cli', 'loop-cli']);
+const CONFIG_TARGETS = new Set<ForwardTarget>(['index', 'goal-cli', 'loop-cli']);
 
 async function forwardToExistingCli(
   target: ForwardTarget,

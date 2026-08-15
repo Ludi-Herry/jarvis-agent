@@ -96,6 +96,36 @@ describe('decide — configured rules (B5)', () => {
     const p = withRules([{ action: 'allow', tool: 'bash', pattern: '*' }]);
     expect(decide({ toolName: 'bash', capability: 'executes-code', args: { command: 'cat .env' } }, p).action).toBe('deny');
   });
+
+  it.each([
+    ['read-only', 'read', { path: 'README.md' }],
+    ['writes-files', 'write', { path: 'src/a.ts' }],
+    ['network', 'vision', { path: 'image.png' }],
+  ] as const)('a configured %s default deny cannot be widened by an allow rule', (capability, toolName, args) => {
+    const p = {
+      ...defaultPolicy(),
+      capabilityDefault: { ...defaultPolicy().capabilityDefault, [capability]: 'deny' as const },
+      rules: [{ action: 'allow' as const, tool: toolName, pattern: '*' }],
+    };
+
+    expect(decide({ toolName, capability, args }, p)).toMatchObject({
+      action: 'deny',
+      source: 'capability',
+    });
+  });
+
+  it('an executes-code default deny blocks an analyzer-clean command before configured rules', () => {
+    const p = {
+      ...defaultPolicy(),
+      capabilityDefault: { ...defaultPolicy().capabilityDefault, 'executes-code': 'deny' as const },
+      rules: [{ action: 'allow' as const, tool: 'bash', pattern: '*' }],
+    };
+
+    expect(decide({ toolName: 'bash', capability: 'executes-code', args: { command: 'npm test' } }, p)).toMatchObject({
+      action: 'deny',
+      source: 'capability',
+    });
+  });
 });
 
 describe('decide — sensitive paths deny READ as well as write (deepcode hole)', () => {

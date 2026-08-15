@@ -4,7 +4,7 @@ import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -55,6 +55,126 @@ describe('jarvis root CLI', () => {
     expect(runHelp.stdout).toContain('--no-recall');
     expect(resumeHelp.stdout).toContain('--no-recall');
   });
+
+  it('exposes typed config inspection and the two bounded preset selectors in help', async () => {
+    const rootHelp = await runJarvis(['--help']);
+    const configHelp = await runJarvis(['config', '--help']);
+
+    expect(rootHelp).toMatchObject({ code: 0 });
+    expect(rootHelp.stdout).toContain('--strict-config');
+    expect(rootHelp.stdout).toContain('--ignore-user-config');
+    expect(rootHelp.stdout).toContain('--preset <inspect|safe>');
+    expect(rootHelp.stdout).toContain('--safe');
+    expect(rootHelp.stdout).toContain('config');
+    expect(configHelp.stdout).toContain('show');
+    expect(configHelp.stdout).toContain('validate');
+    expect(configHelp.stdout).toContain('preset');
+  });
+
+  it('shows effective typed config and exact sources without reading a provider key', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'jarvis-config-show-'));
+    tempDirs.push(root);
+    const workspace = join(root, 'project');
+    const userHome = join(root, 'home');
+    await mkdir(join(workspace, '.jarvis'), { recursive: true });
+    await mkdir(join(userHome, '.jarvis'), { recursive: true });
+    await writeFile(
+      join(userHome, '.jarvis', 'config.toml'),
+      'schemaVersion = 1\npreset = "safe"\n[model]\nid = "user-model"\nbaseURL = "https://user.example/v1"\n',
+      'utf8',
+    );
+    await writeFile(
+      join(workspace, '.jarvis', 'config.toml'),
+      'schemaVersion = 1\n[permissions]\nwritesFiles = "deny"\n',
+      'utf8',
+    );
+
+    const result = await runJarvis(
+      ['--cwd', workspace, '--model', 'cli-model', 'config', 'show', '--effective', '--sources', '--json'],
+      {
+        ARK_API_KEY: undefined,
+        ARK_MODEL: 'environment-model',
+        HOME: userHome,
+        USERPROFILE: userHome,
+      },
+    );
+    const report = JSON.parse(result.stdout) as Record<string, unknown>;
+
+    expect(result.code).toBe(0);
+    expect(report).toMatchObject({
+      authority: { mode: 'observation-only', canCompleteGoals: false, canCompleteLoops: false },
+      effective: {
+        provider: 'doubao',
+        model: 'cli-model',
+        preset: 'safe',
+        permissions: { writesFiles: 'deny', executesCode: 'ask', network: 'ask' },
+      },
+      sources: { values: { model: 'cli', preset: 'user' } },
+    });
+    expect(result.stdout).not.toContain('ARK_API_KEY');
+  });
+
+  it('fails closed on project attempts to select model/provider behavior', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'jarvis-config-project-scope-'));
+    tempDirs.push(workspace);
+    await mkdir(join(workspace, '.jarvis'), { recursive: true });
+    await writeFile(
+      join(workspace, '.jarvis', 'config.toml'),
+      'schemaVersion = 1\npreset = "safe"\n[model]\nid = "attacker-model"\n',
+      'utf8',
+    );
+
+    const result = await runJarvis(
+      ['--cwd', workspace, '--ignore-user-config', 'config', 'validate'],
+      { ARK_API_KEY: undefined },
+    );
+
+    expect(result.code).toBe(7);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain('may not set model or preset');
+    expect(result.stderr).not.toContain('attacker-model');
+  });
+
+  it('enforces inspect as a hard no-side-effect preset without opening approval', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'jarvis-headless-inspect-preset-'));
+    tempDirs.push(workspace);
+    await writeFile(join(workspace, '.env'), 'ARK_API_KEY=fixture-key\nARK_MODEL=fixture-model\n', 'utf8');
+    let requestCount = 0;
+    const endpoint = createServer((_request, response) => {
+      requestCount++;
+      if (requestCount === 1) {
+        writeToolCallSse(response, {
+          id: 'call-write',
+          name: 'write',
+          arguments: '{"path":"blocked.txt","content":"x","createOnly":true}',
+        });
+      } else {
+        writeTextSse(response, 'done');
+      }
+    });
+    await new Promise<void>((resolveListen, rejectListen) => {
+      endpoint.once('error', rejectListen);
+      endpoint.listen(0, '127.0.0.1', resolveListen);
+    });
+    const address = endpoint.address() as AddressInfo;
+    let result;
+    try {
+      result = await runJarvis(
+        ['--headless', '--cwd', workspace, '--preset', 'inspect', 'run', 'try a write'],
+        { ARK_API_KEY: undefined, ARK_BASE_URL: `http://127.0.0.1:${address.port}/v1` },
+      );
+    } finally {
+      await new Promise<void>((resolveClose, rejectClose) => endpoint.close((err) => err ? rejectClose(err) : resolveClose()));
+    }
+
+    const events = result.stdout.trim().split('\n').map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(result.code).toBe(0);
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'tool.finished', toolName: 'write', outcome: 'denied' }),
+    ]));
+    expect(events.some((event) => event.type === 'approval.required')).toBe(false);
+    await expect(readFile(join(workspace, 'blocked.txt'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+  }, 20_000);
 
   it('applies --cwd before forwarding status, including when the flag follows the command', async () => {
     const workspace = await mkdtemp(join(tmpdir(), 'jarvis cwd with spaces '));
@@ -473,6 +593,44 @@ describe('jarvis root CLI', () => {
     });
   });
 
+  it('enforces inspect inside the actual headless goal permission gate', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'jarvis-headless-goal-inspect-'));
+    tempDirs.push(workspace);
+    await writeFile(join(workspace, '.env'), 'ARK_API_KEY=fixture-key\nARK_MODEL=fixture-model\n', 'utf8');
+    let requestCount = 0;
+    const endpoint = createServer((_request, response) => {
+      requestCount++;
+      writeToolCallSse(
+        response,
+        requestCount === 1
+          ? { id: 'call-write', name: 'write', arguments: '{"path":"blocked.txt","content":"x","createOnly":true}' }
+          : { id: 'call-blocked', name: 'update_goal', arguments: '{"status":"blocked"}' },
+      );
+    });
+    await new Promise<void>((resolveListen, rejectListen) => {
+      endpoint.once('error', rejectListen);
+      endpoint.listen(0, '127.0.0.1', resolveListen);
+    });
+    const address = endpoint.address() as AddressInfo;
+    let result;
+    try {
+      result = await runJarvis(
+        ['--headless', '--cwd', workspace, '--preset', 'inspect', 'goal', '--allow-no-git', 'try a write'],
+        { ARK_API_KEY: undefined, ARK_BASE_URL: `http://127.0.0.1:${address.port}/v1` },
+      );
+    } finally {
+      await new Promise<void>((resolveClose, rejectClose) => endpoint.close((err) => err ? rejectClose(err) : resolveClose()));
+    }
+
+    const events = result.stdout.trim().split('\n').map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(result.code).toBe(3);
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'tool.finished', toolName: 'write', outcome: 'denied' }),
+    ]));
+    expect(events.some((event) => event.type === 'approval.required')).toBe(false);
+    await expect(readFile(join(workspace, 'blocked.txt'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+  }, 20_000);
+
   it('keeps root headless loop JSONL-only while an ask-gated bash call is observably denied', async () => {
     const workspace = await mkdtemp(join(tmpdir(), 'jarvis-headless-loop-deny-'));
     tempDirs.push(workspace);
@@ -524,6 +682,101 @@ describe('jarvis root CLI', () => {
     expect(events.every((event) => event.schemaVersion === 1)).toBe(true);
     expect(result.stdout).not.toContain('Jarvis-Agent loop mode');
   });
+
+  it('enforces inspect inside the actual per-goal loop permission gate', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'jarvis-headless-loop-inspect-'));
+    tempDirs.push(workspace);
+    const objectivesPath = join(workspace, 'objectives.txt');
+    await writeFile(join(workspace, '.env'), 'ARK_API_KEY=fixture-key\nARK_MODEL=fixture-model\n', 'utf8');
+    await writeFile(objectivesPath, 'Try a write under inspect\n', 'utf8');
+    let requestCount = 0;
+    const endpoint = createServer((_request, response) => {
+      requestCount++;
+      writeToolCallSse(
+        response,
+        requestCount === 1
+          ? { id: 'call-write', name: 'write', arguments: '{"path":"blocked.txt","content":"x","createOnly":true}' }
+          : { id: 'call-blocked', name: 'update_goal', arguments: '{"status":"blocked"}' },
+      );
+    });
+    await new Promise<void>((resolveListen, rejectListen) => {
+      endpoint.once('error', rejectListen);
+      endpoint.listen(0, '127.0.0.1', resolveListen);
+    });
+    const address = endpoint.address() as AddressInfo;
+    let result;
+    try {
+      result = await runJarvis(
+        ['--headless', '--cwd', workspace, '--preset', 'inspect', 'loop', '--allow-no-git', objectivesPath],
+        { ARK_API_KEY: undefined, ARK_BASE_URL: `http://127.0.0.1:${address.port}/v1` },
+      );
+    } finally {
+      await new Promise<void>((resolveClose, rejectClose) => endpoint.close((err) => err ? rejectClose(err) : resolveClose()));
+    }
+
+    const events = result.stdout.trim().split('\n').map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(result.code).toBe(3);
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'tool.finished', toolName: 'write', outcome: 'denied' }),
+    ]));
+    expect(events.some((event) => event.type === 'approval.required')).toBe(false);
+    await expect(readFile(join(workspace, 'blocked.txt'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+  }, 20_000);
+
+  it('keeps safe write approval-required in an unattended parallel worktree', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'jarvis-headless-loop-safe-parallel-'));
+    tempDirs.push(root);
+    const workspace = join(root, 'project');
+    const worktreeRoot = join(root, 'worktrees');
+    const objectivesPath = join(workspace, 'objectives.txt');
+    await mkdir(workspace, { recursive: true });
+    await writeFile(join(workspace, '.env'), 'ARK_API_KEY=fixture-key\nARK_MODEL=fixture-model\n', 'utf8');
+    await writeFile(objectivesPath, 'Try a worktree write under safe\n', 'utf8');
+    await writeFile(join(workspace, 'seed.txt'), 'seed\n', 'utf8');
+    await runGit(workspace, ['init']);
+    await runGit(workspace, ['config', 'user.email', 'fixture@example.test']);
+    await runGit(workspace, ['config', 'user.name', 'Fixture']);
+    await runGit(workspace, ['add', '.']);
+    await runGit(workspace, ['commit', '-m', 'fixture']);
+
+    let requestCount = 0;
+    const endpoint = createServer((_request, response) => {
+      requestCount++;
+      writeToolCallSse(
+        response,
+        requestCount === 1
+          ? { id: 'call-write', name: 'write', arguments: '{"path":"blocked.txt","content":"x","createOnly":true}' }
+          : { id: 'call-blocked', name: 'update_goal', arguments: '{"status":"blocked"}' },
+      );
+    });
+    await new Promise<void>((resolveListen, rejectListen) => {
+      endpoint.once('error', rejectListen);
+      endpoint.listen(0, '127.0.0.1', resolveListen);
+    });
+    const address = endpoint.address() as AddressInfo;
+    let result;
+    try {
+      result = await runJarvis(
+        [
+          '--headless', '--cwd', workspace, '--safe', 'loop', '--parallel', '2',
+          '--worktree-root', worktreeRoot, objectivesPath,
+        ],
+        { ARK_API_KEY: undefined, ARK_BASE_URL: `http://127.0.0.1:${address.port}/v1` },
+      );
+    } finally {
+      await new Promise<void>((resolveClose, rejectClose) => endpoint.close((err) => err ? rejectClose(err) : resolveClose()));
+    }
+
+    const events = result.stdout.trim().split('\n').map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(result.code).toBe(3);
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'approval.required', capability: 'writes-files' }),
+      expect.objectContaining({ type: 'approval.resolved', decision: 'deny' }),
+      expect.objectContaining({ type: 'tool.finished', toolName: 'write', outcome: 'denied' }),
+    ]));
+    const worktreeFiles = await readdir(worktreeRoot, { recursive: true });
+    expect(worktreeFiles.some((path) => /(^|[\\/])blocked\.txt$/u.test(path))).toBe(false);
+  }, 30_000);
 
   it.each([2, 3, 4, 5, 6, 7])('forwards child exit code %i unchanged', async (exitCode) => {
     const result = await forwardChildProcess(fixtureArgs('exit', String(exitCode)), repo, new EventEmitter());
@@ -584,6 +837,15 @@ function runJarvis(
         done({ code, stdout, stderr });
       },
     );
+  });
+}
+
+function runGit(cwd: string, args: string[]): Promise<void> {
+  return new Promise((resolveRun, rejectRun) => {
+    execFile('git', args, { cwd, windowsHide: true }, (error) => {
+      if (error) rejectRun(error);
+      else resolveRun();
+    });
   });
 }
 

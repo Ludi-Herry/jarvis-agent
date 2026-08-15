@@ -37,7 +37,7 @@ import {
   createSessionComposition,
   createHistorySearchTool,
   createHistoryTurnTool,
-  defaultPolicy,
+  buildConfigPermissionPolicy,
   FileSessionStore,
   latestSessionPath,
   resolveSessionFilePath,
@@ -45,6 +45,12 @@ import {
   type SessionFileResolution,
 } from '../../runtime/index.js';
 import { safeInline } from './approval.js';
+import { extractConfigCliOptions, type ConfigCliOptions } from './config-options.js';
+import {
+  appendConfigPermissionBoundary,
+  loadCliConfig,
+  reportConfigWarnings,
+} from './config.js';
 import { loadResumeSessionForCli } from './repl-resume.js';
 import { startRepl } from './repl.js';
 import { buildSystemPrompt } from './system-prompt.js';
@@ -69,6 +75,7 @@ if (existsSync('.env')) process.loadEnvFile('.env');
  *  absolute max output is huge (384K on the DeepSeek-V4 default, 128K on Doubao); reserving a
  *  realistic reply size lets a session actually USE the window before compaction kicks in. */
 const OUTPUT_RESERVE_TOKENS = 16_384;
+let entryConfigOptions: ConfigCliOptions = { strict: false, ignoreUser: false };
 
 const program = new Command();
 
@@ -80,6 +87,12 @@ program
   .option('--max-turns <n>', 'max model turns per message', (v) => Number.parseInt(v, 10), 24)
   .option('--resume [id]', 'resume the latest session (or a specific <id>) from data/sessions/')
   .option('--no-recall', 'disable current-session history_search/history_turn tools')
+  .option('--strict-config', 'reject unknown typed-config keys')
+  .option('--ignore-user-config', 'skip the user config file')
+  .option('--preset <inspect|safe>', 'apply a built-in permission preset')
+  .option('--safe', 'shorthand for --preset safe')
+  .option('--model <id>', 'override the non-secret builder model id')
+  .option('--base-url <url>', 'override the non-secret provider endpoint')
   .option('-p, --prompt <text>', 'run this prompt before entering interactive input')
   .action(async (opts: { cwd: string; maxTurns: number; resume?: string | boolean; recall: boolean; prompt?: string }) => {
     const headless = isHeadlessAgentEventMode();
@@ -138,10 +151,23 @@ program
     }
     const sessionId = resumeFile?.sessionId ?? new Date().toISOString().replace(/[:.]/g, '-');
 
+    let effectiveConfig;
+    try {
+      effectiveConfig = await loadCliConfig({ cwd: opts.cwd, options: entryConfigOptions });
+      reportConfigWarnings(effectiveConfig);
+    } catch (err) {
+      console.error(`[config] ${safeInline(err instanceof Error ? err.message : String(err))}`);
+      process.exitCode = CLI_EXIT.STATE_CORRUPT;
+      return;
+    }
+
     let config;
     try {
       assertKeyNotInLaunchEnv(ARK_KEY_IN_LAUNCH_ENV); // /proc safety: refuse a launch-env key on Linux
-      config = loadDoubaoConfig();
+      config = loadDoubaoConfig(process.env, {
+        model: effectiveConfig.model,
+        baseURL: effectiveConfig.baseURL,
+      });
     } catch (err) {
       console.error(safeInline(err instanceof Error ? err.message : String(err)));
       process.exitCode = CLI_EXIT.USAGE;
@@ -182,7 +208,10 @@ program
       ...tools.schemasForModel(),
       ...(roster.length > 0 ? [delegateToolSchema(roster)] : []),
     ];
-    const systemPrompt = buildSystemPrompt(toolSchemas.map((schema) => schema.name));
+    const systemPrompt = appendConfigPermissionBoundary(
+      buildSystemPrompt(toolSchemas.map((schema) => schema.name)),
+      effectiveConfig,
+    );
 
     // B5: merge project-level rule layers into the gate policy. The global ~/AGENTS.md layer is
     // intentionally NOT auto-loaded — pulling private cross-tool config into enforcement should be
@@ -198,7 +227,7 @@ program
       [join(opts.cwd, 'AGENTS.md'), join(opts.cwd, '.rules', 'AGENTS.md')],
       readText,
     );
-    const policy = { ...defaultPolicy(), rules: resolved.rules };
+    const policy = buildConfigPermissionPolicy(effectiveConfig, resolved.rules);
 
     // Hooks: trusted sources only — user-home default first, then launch-captured JARVIS_HOOKS.
     // Every source is realpath-canonicalized and refused if it lands inside cwd.
@@ -322,7 +351,14 @@ program
     if (exitCode !== undefined) process.exitCode = exitCode;
   });
 
-program.parseAsync().catch((err: unknown) => {
-  console.error('[cli] fatal:', safeInline(err instanceof Error ? err.message : String(err)));
-  process.exitCode = CLI_EXIT.RUNTIME;
-});
+try {
+  const extractedConfig = extractConfigCliOptions(process.argv.slice(2));
+  entryConfigOptions = extractedConfig.options;
+  program.parseAsync(['node', 'jarvis', ...extractedConfig.argv]).catch((err: unknown) => {
+    console.error('[cli] fatal:', safeInline(err instanceof Error ? err.message : String(err)));
+    process.exitCode = CLI_EXIT.RUNTIME;
+  });
+} catch (err) {
+  console.error(`[config] ${safeInline(err instanceof Error ? err.message : String(err))}`);
+  process.exitCode = CLI_EXIT.USAGE;
+}

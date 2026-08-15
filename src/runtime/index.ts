@@ -9,6 +9,7 @@
 export { InMemoryEventBus, type EventBus, type Event, type Subscriber } from './event-bus.js';
 export * from './agent-events.js';
 export * from './control/index.js';
+export * from './config/index.js';
 export * from './permission/index.js';
 export * from './sandbox/index.js';
 export * from './session/index.js';

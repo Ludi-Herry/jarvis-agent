@@ -13,6 +13,7 @@ data/*
 .env
 .env.*
 !.env.example
+.jarvis/config.local.toml
 *.key
 *.pem
 

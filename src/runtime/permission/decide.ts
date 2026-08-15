@@ -104,6 +104,17 @@ export function decide(req: PermissionRequest, policy: PermissionPolicy): Decisi
     };
   }
 
+  // A configured capability deny is a hard ceiling. Presets and project config use this
+  // one-way lane to remove effects; a later allow rule or command analysis must never widen it.
+  // Keep the secret-path check first so its more actionable explanation still wins.
+  if (policy.capabilityDefault[req.capability] === 'deny') {
+    return {
+      action: 'deny',
+      reason: capabilityReason(req.capability, 'deny'),
+      source: 'capability',
+    };
+  }
+
   // executes-code is the one capability whose verdict is NOT a static default: parse the command
   // tree deterministically (B2) and deny anything dangerous or secret-touching. A clean command
   // still needs approval — parsing decides "not dangerous", not "trusted".
@@ -196,6 +207,7 @@ function normalize(path: string): string {
 }
 
 function capabilityReason(capability: ToolCapability, action: PermissionAction): string {
+  if (action === 'deny') return `${capability} capability is disabled by the effective configuration`;
   switch (capability) {
     case 'read-only':
       return 'read-only operation';
