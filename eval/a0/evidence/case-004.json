@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "caseId": "case-004",
+  "objective": "Determine whether a run may be treated as safely completed after a dispatched write has an unknown post-state.",
+  "claim": "The write completed and the session may continue normally.",
+  "facts": [
+    {
+      "path": "test/loop/run-agent.test.ts",
+      "selector": "halts when a managed file tool explicitly reports an unknown post-state",
+      "observation": "The production loop records an unresolved pending effect and returns toolExecutionUnknown."
+    },
+    {
+      "path": "src/core/loop/run-agent.ts",
+      "selector": "isUnknownToolExecution",
+      "observation": "An unknown file receipt is persisted as unknown and stops the run before a final answer."
+    }
+  ],
+  "limitations": []
+}

@@ -13,5 +13,6 @@ export * from './rules/index.js';
 export * from './subagents/index.js';
 export * from './goal/index.js';
 export * from './hooks/index.js';
+export * from './eval/index.js';
 export { ShadowGit } from './shadow/shadow-git.js';
 export type { ShadowGitDeps, SnapshotResult, RestoreResult } from './shadow/shadow-git.js';

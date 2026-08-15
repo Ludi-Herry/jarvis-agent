@@ -120,9 +120,15 @@ import { assertParallelHooksCompatible } from './loop-guards.js';
 import { createGoalHookResolver, preloadGoalHookOverrides } from './loop-hooks.js';
 import { formatLoopCliError, loadLoopGoalResume, type LoadedLoopGoalResume } from './loop-resume.js';
 import { initialRenderState, renderEvent } from './render.js';
-import { CLI_EXIT, exitCodeForLoop } from './exit-codes.js';
+import { CLI_EXIT } from './exit-codes.js';
 import { decideGitTrust } from './git-trust.js';
 import { JARVIS_VERSION } from './package-info.js';
+import {
+  createProcessAgentEventWriter,
+  isHeadlessAgentEventMode,
+  loopRunFinished,
+  scrubHeadlessAgentEventEnv,
+} from './headless-events.js';
 
 // Capture BEFORE the runtime .env load (see goal-cli): a key here came from the shell LAUNCH env
 // (in /proc on Linux); the guard refuses it so the provider key only ever arrives via .env.
@@ -163,6 +169,7 @@ const BUILDER_PROMPT = [
 const NEEDS_HUMAN: ReadonlySet<string> = new Set(['verifier-health', 'consecutive-blocked', 'blocked-goals']);
 
 async function main(): Promise<void> {
+  const headless = isHeadlessAgentEventMode();
   let args;
   try {
     args = parseLoopArgs(process.argv.slice(2));
@@ -186,6 +193,7 @@ async function main(): Promise<void> {
     worktreeRootPath,
     failOnWorktreeChange,
   } = args;
+  const effectiveUnattended = unattended || headless;
   const parallelMode = parallel > 1;
   if (noVerifierMap) {
     console.error('--no-verifier-map is unsafe for resume; use --verifier-map <trusted empty map>');
@@ -519,7 +527,15 @@ async function main(): Promise<void> {
   });
 
   // Shared once: bus + render, context, gate (+ optional interactive approver), verifier provider.
-  const bus = new InMemoryEventBus();
+  const agentEvents = createProcessAgentEventWriter({
+    invocationId: loopId,
+    defaultSessionId: null,
+    root: 'loop',
+    cwd,
+  });
+  if (headless) scrubHeadlessAgentEventEnv();
+  const bus = new InMemoryEventBus(agentEvents === undefined ? undefined : (err) => { throw err; });
+  if (agentEvents !== undefined) bus.subscribe((event) => agentEvents.accept(event));
   let rstate = initialRenderState();
   bus.subscribe((e: Event) => {
     const { output, state } = renderEvent(rstate, e);
@@ -529,7 +545,7 @@ async function main(): Promise<void> {
 
   let rl: Interface | undefined;
   let approver: Approver | undefined;
-  if (!unattended) {
+  if (!effectiveUnattended) {
     const ask = createInterface({ input: process.stdin, output: process.stdout });
     rl = ask;
     // The same interactive approver goal uses (interactive-approver.ts): renders detailOf +
@@ -582,7 +598,7 @@ async function main(): Promise<void> {
   const loopSessionComposition = (goalTools: ReturnType<typeof buildGoalTools>['tools']) => createSessionComposition({
     root: 'loop',
     runtimeVersion: JARVIS_VERSION,
-    permissionMode: unattended ? (parallelMode ? 'worktree-unattended' : 'unattended') : 'interactive',
+    permissionMode: effectiveUnattended ? (parallelMode ? 'worktree-unattended' : 'unattended') : 'interactive',
     toolSchemas: [...goalTools.schemasForModel(), updateGoalToolSchema()],
     systemPrompt: BUILDER_PROMPT,
     dynamicAddendum: NO_DYNAMIC_ADDENDUM,
@@ -591,7 +607,7 @@ async function main(): Promise<void> {
   console.log(`Jarvis-Agent loop mode - ${safeInline(config.model)}`);
   console.log(`Queue: ${objectives.length} goals${resume ? ` (resume, recheck ${seedInFlight?.size ?? 0} logged attempts)` : ''}`);
   console.log(parallelMode ? `Parallel: ${parallel} worktree goals, root ${safeInline(worktreeRoot)}` : 'Parallel: disabled');
-  console.log(`Approval: ${unattended ? 'unattended (fail-closed)' : 'attended (interactive)'}`);
+  console.log(`Approval: ${effectiveUnattended ? 'unattended (fail-closed)' : 'attended (interactive)'}`);
   console.log(`Worktree baseline: ${failOnWorktreeChange ? 'forbid changes' : 'audit changes'}`);
   console.log(
     repositoryBaseline
@@ -755,10 +771,23 @@ async function main(): Promise<void> {
         composition: sessionComposition,
       });
     }
-    const goalGate = parallelMode
+    agentEvents?.sessionStarted({ sessionId: goalId, resumed: attempt.resumed, model: config.model });
+    // A headless ask still has to leave an observable approval pair before it fails closed. Keep the
+    // wrapper per model session so the public event can identify the actual goal rather than the
+    // loop; no audit file is created because headless has no human approval decision to retain.
+    const goalGate = headless
+      ? new DefaultPermissionGate({
+          approver: createApprovalEventApprover({
+            approver: async () => 'deny',
+            bus,
+            sessionId: goalId,
+          }),
+          ...(parallelMode ? { goalWorktreeWriteRoot: goalCwd } : {}),
+        })
+      : parallelMode
       ? new DefaultPermissionGate({
           approver: parallelApprover,
-          goalWorktreeWriteRoot: unattended ? goalCwd : undefined,
+          goalWorktreeWriteRoot: effectiveUnattended ? goalCwd : undefined,
         })
       : gate;
     const goalContext = parallelMode
@@ -879,7 +908,9 @@ async function main(): Promise<void> {
       })) console.log(line);
     }
     if (parallelMode) console.log(`Worktrees kept for inspection: ${safeInline(worktreeRoot)}`);
-    process.exitCode = exitCodeForLoop(result);
+    const terminal = loopRunFinished(result);
+    process.exitCode = terminal.exitCode;
+    agentEvents?.runFinished(terminal);
   } catch (err) {
     if (emergencyStop.signal.aborted) {
       await loopStore.recordHalted('emergency-stop', new Date().toISOString()).catch(() => undefined);
@@ -887,8 +918,18 @@ async function main(): Promise<void> {
       bus.emit({ type: 'halt', reason: 'emergency-stop' });
       console.error('\n[loop] emergency stop requested; no new goals will launch and JSONL logs were left in place.');
       process.exitCode = CLI_EXIT.INTERRUPTED;
+      agentEvents?.runFinished({
+        status: 'interrupted',
+        exitCode: CLI_EXIT.INTERRUPTED,
+        completion: { granted: false, authority: 'none' },
+      });
       return;
     }
+    agentEvents?.runFinished({
+      status: 'failed',
+      exitCode: CLI_EXIT.RUNTIME,
+      completion: { granted: false, authority: 'none' },
+    });
     throw err;
   } finally {
     emergencyStop.dispose();

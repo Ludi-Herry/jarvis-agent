@@ -1,10 +1,19 @@
-import { execFile } from 'node:child_process';
+import { execFile, type ChildProcess } from 'node:child_process';
+import { createHmac } from 'node:crypto';
 import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
+import { createServer, type ServerResponse } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
-import { forwardChildProcess } from '../../src/surfaces/cli/jarvis.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  HEADLESS_MAX_FRAME_BYTES,
+  formatHeadlessDiagnostic,
+  forwardAuthenticatedHeadlessFrames,
+  forwardChildProcess,
+} from '../../src/surfaces/cli/jarvis.js';
 
 const repo = process.cwd();
 const entry = join(repo, 'src', 'surfaces', 'cli', 'jarvis.ts');
@@ -54,6 +63,370 @@ describe('jarvis root CLI', () => {
     expect(result.stderr).toContain('--cwd');
   });
 
+  it('rejects --headless for read-only/non-agent commands', async () => {
+    const result = await runJarvis(['--headless', 'status']);
+
+    expect(result.code).toBe(2);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain('--headless');
+  });
+
+  it.each([
+    ['--help'],
+    ['--version'],
+    ['run', '--help'],
+    ['help', 'goal'],
+  ])('rejects headless CLI metadata request %j without human stdout', async (...args) => {
+    const result = await runJarvis(['--headless', ...args]);
+
+    expect(result.code).toBe(2);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain('remove --headless');
+  });
+
+  it('requires headless resume to use run --resume with an explicit prompt', async () => {
+    const result = await runJarvis(['--headless', 'resume', 'session-id']);
+
+    expect(result.code).toBe(2);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain('run, goal, and loop');
+  });
+
+  it('requires an explicit prompt for a headless conversational run before provider setup', async () => {
+    const result = await runJarvis(['--headless', 'run']);
+
+    expect(result.code).toBe(2);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain('requires a non-empty prompt');
+    expect(result.stderr).not.toContain('ARK_API_KEY');
+  });
+
+  it('keeps root headless stdout empty when provider configuration is missing', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'jarvis-headless-missing-provider-'));
+    tempDirs.push(workspace);
+
+    const result = await runJarvis(
+      ['--headless', '--cwd', workspace, 'run', 'configuration must fail before a session starts'],
+      { ARK_API_KEY: undefined },
+    );
+
+    expect(result.code).toBe(2);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain('ARK_API_KEY');
+  });
+
+  it('routes only fd 3 agent events to stdout and moves child human output to stderr', async () => {
+    const stdout = new PassThrough();
+    const stderr = new PassThrough();
+    let stdoutText = '';
+    let stderrText = '';
+    stdout.setEncoding('utf8');
+    stderr.setEncoding('utf8');
+    stdout.on('data', (chunk: string) => { stdoutText += chunk; });
+    stderr.on('data', (chunk: string) => { stderrText += chunk; });
+
+    const result = await forwardChildProcess(
+      fixtureArgs('headless'),
+      repo,
+      new EventEmitter(),
+      { headless: true, stdout, stderr },
+    );
+
+    expect(result).toBe(0);
+    expect(stdoutText.trim()).toBe('{"schemaVersion":1,"type":"run.finished"}');
+    expect(stderrText).toContain('human stdout');
+    expect(stderrText).toContain('human stderr');
+    expect(stdoutText).not.toContain('human');
+  });
+
+  it('rejects an unsigned child frame instead of forwarding it as public JSONL', async () => {
+    const stdout = new PassThrough();
+    const stderr = new PassThrough();
+    let stdoutText = '';
+    let stderrText = '';
+    stdout.setEncoding('utf8');
+    stderr.setEncoding('utf8');
+    stdout.on('data', (chunk: string) => { stdoutText += chunk; });
+    stderr.on('data', (chunk: string) => { stderrText += chunk; });
+
+    const result = await forwardChildProcess(
+      fixtureArgs('headless-forged'),
+      repo,
+      new EventEmitter(),
+      { headless: true, stdout, stderr },
+    );
+
+    expect(result).toBe(5);
+    expect(stdoutText).toBe('');
+    expect(stderrText).toContain('transport failed');
+  });
+
+  it('rejects an over-limit, otherwise authenticated frame before its newline arrives', () => {
+    const source = new PassThrough();
+    const target = new ControlledWritable();
+    const failed = vi.fn();
+    const secret = 'cd'.repeat(32);
+    const line = 'x'.repeat(HEADLESS_MAX_FRAME_BYTES);
+    const mac = createHmac('sha256', Buffer.from(secret, 'hex')).update(line, 'utf8').digest('hex');
+    const dispose = forwardAuthenticatedHeadlessFrames(source, asWritable(target), secret, failed);
+
+    source.write(`${mac}\t${line}`);
+
+    expect(failed).toHaveBeenCalledWith('frame-too-large');
+    expect(target.writes).toEqual([]);
+    dispose();
+  });
+
+  it('fails closed when fd 3 closes with a partial authenticated frame', async () => {
+    const source = new PassThrough();
+    const target = new ControlledWritable();
+    const failed = vi.fn();
+    const secret = 'ef'.repeat(32);
+    const line = '{"schemaVersion":1';
+    const mac = createHmac('sha256', Buffer.from(secret, 'hex')).update(line, 'utf8').digest('hex');
+    const dispose = forwardAuthenticatedHeadlessFrames(source, asWritable(target), secret, failed);
+
+    source.end(`${mac}\t${line}`);
+    await new Promise<void>((resolveEnd) => setImmediate(resolveEnd));
+
+    expect(failed).toHaveBeenCalledWith('partial-frame');
+    dispose();
+  });
+
+  it('enforces the incomplete-frame limit even while fd 3 is paused for stdout backpressure', () => {
+    const source = new PassThrough();
+    const target = new ControlledWritable([false]);
+    const failed = vi.fn();
+    const secret = '12'.repeat(32);
+    const first = signedFrame(secret, '{"sequence":1}');
+    const oversizedLine = 'x'.repeat(HEADLESS_MAX_FRAME_BYTES);
+    const oversizedMac = createHmac('sha256', Buffer.from(secret, 'hex')).update(oversizedLine, 'utf8').digest('hex');
+    const dispose = forwardAuthenticatedHeadlessFrames(source, asWritable(target), secret, failed);
+
+    source.write(`${first}\n`);
+    source.emit('data', `${oversizedMac}\t${oversizedLine}`);
+
+    expect(target.writes).toEqual(['{"sequence":1}\n']);
+    expect(failed).toHaveBeenCalledWith('frame-too-large');
+    dispose();
+  });
+
+  it('pauses fd 3 for public stdout backpressure, resumes on drain, and fails closed on output error', () => {
+    const source = new PassThrough();
+    const target = new ControlledWritable([false, true]);
+    const failed = vi.fn();
+    const secret = '01'.repeat(32);
+    const pause = vi.spyOn(source, 'pause');
+    const resume = vi.spyOn(source, 'resume');
+    const first = signedFrame(secret, '{"sequence":1}');
+    const second = signedFrame(secret, '{"sequence":2}');
+    const dispose = forwardAuthenticatedHeadlessFrames(source, asWritable(target), secret, failed);
+
+    source.write(`${first}\n${second}\n`);
+
+    expect(target.writes).toEqual(['{"sequence":1}\n']);
+    expect(pause).toHaveBeenCalledOnce();
+    const resumesBeforeDrain = resume.mock.calls.length;
+    target.emit('drain');
+    expect(target.writes).toEqual(['{"sequence":1}\n', '{"sequence":2}\n']);
+    expect(resume).toHaveBeenCalledTimes(resumesBeforeDrain + 1);
+
+    target.emit('error', new Error('broken consumer'));
+    expect(failed).toHaveBeenCalledWith('public-output');
+
+    dispose();
+    expect(source.listenerCount('data')).toBe(0);
+    expect(source.listenerCount('end')).toBe(0);
+    expect(target.listenerCount('error')).toBe(0);
+  });
+
+  it('does not report child success until an accepted backpressured frame has drained', async () => {
+    const child = new IgnoringHeadlessChild();
+    const stdout = new ControlledWritable([false]);
+    const stderr = new ControlledWritable();
+    const signals = new EventEmitter();
+    let secret = '';
+    let settled = false;
+    child.auth.setEncoding('utf8');
+    child.auth.on('data', (chunk: string) => { secret += chunk; });
+
+    const result = forwardChildProcess(['unused'], repo, signals, {
+      headless: true,
+      stdout: asWritable(stdout),
+      stderr: asWritable(stderr),
+      spawnChild: () => child as unknown as ChildProcess,
+    });
+    void result.then(() => { settled = true; });
+    await waitFor(() => secret.length === 64);
+
+    child.agentEvents.end(`${signedFrame(secret, '{"sequence":1}')}\n`);
+    await new Promise<void>((resolveTurn) => setImmediate(resolveTurn));
+    child.emit('close', 0, null);
+    await new Promise<void>((resolveTurn) => setImmediate(resolveTurn));
+
+    expect(stdout.writes).toEqual(['{"sequence":1}\n']);
+    expect(settled).toBe(false);
+
+    stdout.emit('drain');
+    expect(await result).toBe(0);
+    expect(settled).toBe(true);
+    expect(signals.listenerCount('SIGINT')).toBe(0);
+    expect(signals.listenerCount('SIGTERM')).toBe(0);
+  });
+
+  it('turns terminal controls in a child diagnostic into visible inert text', () => {
+    const ESC = String.fromCharCode(27);
+    const BEL = String.fromCharCode(7);
+    const diagnostic = formatHeadlessDiagnostic('stdout', `before${ESC}]8;;https://example.invalid${BEL}\r\nafter\u202e`);
+
+    expect(diagnostic).toContain('<0x1b>]8;;https://example.invalid<0x07><CR><LF>after<U+202E>');
+    expect(diagnostic).not.toContain(ESC);
+    expect(diagnostic).not.toContain('\r');
+    expect(diagnostic).not.toContain('\u202e');
+  });
+
+  it('renders child stdout and stderr as inert single-line diagnostics', async () => {
+    const stdout = new PassThrough();
+    const stderr = new PassThrough();
+    let stderrText = '';
+    stderr.setEncoding('utf8');
+    stderr.on('data', (chunk: string) => { stderrText += chunk; });
+
+    const result = await forwardChildProcess(
+      fixtureArgs('headless-controls'),
+      repo,
+      new EventEmitter(),
+      { headless: true, stdout, stderr },
+    );
+
+    expect(result).toBe(0);
+    expect(stdout.read()?.toString()).toContain('run.finished');
+    expect(stderrText).toContain('[jarvis child stdout]');
+    expect(stderrText).toContain('[jarvis child stderr]');
+    expect(stderrText).toContain('<0x1b>');
+    expect(stderrText).toContain('<CR>');
+    expect(stderrText).toContain('<LF>');
+    expect(stderrText).toContain('<U+202E>');
+    expect(stderrText).not.toContain('\u001b');
+    expect(stderrText).not.toContain('\r');
+    expect(stderrText).not.toContain('\u202e');
+  });
+
+  it('force-terminates a child that ignores SIGTERM after transport failure and cleans listeners', async () => {
+    const child = new IgnoringHeadlessChild();
+    const stdout = new ControlledWritable();
+    const stderr = new ControlledWritable();
+    const signals = new EventEmitter();
+    const result = forwardChildProcess(['unused'], repo, signals, {
+      headless: true,
+      stdout: asWritable(stdout),
+      stderr: asWritable(stderr),
+      spawnChild: () => child as unknown as ChildProcess,
+      transportFailureGraceMs: 10,
+    });
+
+    child.agentEvents.write('{"unsigned":true}\n');
+    await waitFor(() => child.killSignals.includes('SIGKILL'));
+
+    expect(await result).toBe(5);
+    expect(child.killSignals).toEqual(['SIGTERM', 'SIGKILL']);
+    expect(child.agentEvents.listenerCount('data')).toBe(0);
+    expect(child.agentEvents.listenerCount('error')).toBe(0);
+    expect(child.auth.listenerCount('error')).toBe(0);
+    expect(stdout.listenerCount('error')).toBe(0);
+    expect(signals.listenerCount('SIGINT')).toBe(0);
+    expect(signals.listenerCount('SIGTERM')).toBe(0);
+  });
+
+  it('closes a started headless goal with a failed terminal when the provider rejects the request', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'jarvis-headless-goal-'));
+    tempDirs.push(workspace);
+    await writeFile(join(workspace, '.env'), 'ARK_API_KEY=fixture-key\n', 'utf8');
+    const endpoint = createServer((_request, response) => {
+      response.writeHead(400, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ error: { message: 'fixture rejection' } }));
+    });
+    await new Promise<void>((resolveListen, rejectListen) => {
+      endpoint.once('error', rejectListen);
+      endpoint.listen(0, '127.0.0.1', resolveListen);
+    });
+    const address = endpoint.address() as AddressInfo;
+    let result;
+    try {
+      result = await runJarvis(
+        ['--headless', '--cwd', workspace, 'goal', '--allow-no-git', 'exercise provider failure'],
+        { ARK_API_KEY: undefined, ARK_BASE_URL: `http://127.0.0.1:${address.port}/v1` },
+      );
+    } finally {
+      await new Promise<void>((resolveClose, rejectClose) => endpoint.close((err) => err ? rejectClose(err) : resolveClose()));
+    }
+
+    const events = result.stdout.trim().split('\n').map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(result.code).toBe(5);
+    expect(events[0]).toMatchObject({ type: 'session.started', root: 'goal' });
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'model.finished', status: 'failed' }),
+    ]));
+    expect(events.at(-1)).toMatchObject({
+      type: 'run.finished',
+      status: 'failed',
+      exitCode: 5,
+      completion: { granted: false, authority: 'none' },
+    });
+  });
+
+  it('keeps root headless loop JSONL-only while an ask-gated bash call is observably denied', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'jarvis-headless-loop-deny-'));
+    tempDirs.push(workspace);
+    const objectivesPath = join(workspace, 'objectives.txt');
+    await writeFile(join(workspace, '.env'), 'ARK_API_KEY=fixture-key\nARK_MODEL=fixture-model\n', 'utf8');
+    await writeFile(objectivesPath, 'Exercise a denied bash request\n', 'utf8');
+    let requestCount = 0;
+    const endpoint = createServer((_request, response) => {
+      requestCount++;
+      writeToolCallSse(
+        response,
+        requestCount === 1
+          ? { id: 'call-bash', name: 'bash', arguments: '{"command":"echo denied"}' }
+          : { id: 'call-blocked', name: 'update_goal', arguments: '{"status":"blocked"}' },
+      );
+    });
+    await new Promise<void>((resolveListen, rejectListen) => {
+      endpoint.once('error', rejectListen);
+      endpoint.listen(0, '127.0.0.1', resolveListen);
+    });
+    const address = endpoint.address() as AddressInfo;
+    let result;
+    try {
+      result = await runJarvis(
+        ['--headless', '--cwd', workspace, 'loop', '--allow-no-git', objectivesPath],
+        { ARK_API_KEY: undefined, ARK_BASE_URL: `http://127.0.0.1:${address.port}/v1` },
+      );
+    } finally {
+      await new Promise<void>((resolveClose, rejectClose) => endpoint.close((err) => err ? rejectClose(err) : resolveClose()));
+    }
+
+    const events = result.stdout.trim().split('\n').map((line) => JSON.parse(line) as Record<string, unknown>);
+    const started = events.findIndex((event) => event.type === 'tool.started' && event.toolName === 'bash');
+    const approvalRequired = events.findIndex((event) => event.type === 'approval.required');
+    const approvalResolved = events.findIndex((event) => event.type === 'approval.resolved' && event.decision === 'deny');
+    const finished = events.findIndex((event) => event.type === 'tool.finished' && event.toolName === 'bash' && event.outcome === 'denied');
+
+    expect(result.code).toBe(3);
+    expect(events.length).toBeGreaterThan(0);
+    expect(started).toBeGreaterThanOrEqual(0);
+    expect(approvalRequired).toBeGreaterThanOrEqual(0);
+    expect(approvalResolved).toBeGreaterThanOrEqual(0);
+    expect(finished).toBeGreaterThanOrEqual(0);
+    expect(started).toBeLessThan(approvalRequired);
+    expect(approvalRequired).toBeLessThan(approvalResolved);
+    expect(approvalResolved).toBeLessThan(finished);
+    expect(events[approvalRequired]?.sessionId).toBe(events[started]?.sessionId);
+    expect(events[approvalResolved]?.sessionId).toBe(events[started]?.sessionId);
+    expect(events.every((event) => event.schemaVersion === 1)).toBe(true);
+    expect(result.stdout).not.toContain('Jarvis-Agent loop mode');
+  });
+
   it.each([2, 3, 4, 5, 6, 7])('forwards child exit code %i unchanged', async (exitCode) => {
     const result = await forwardChildProcess(fixtureArgs('exit', String(exitCode)), repo, new EventEmitter());
 
@@ -94,9 +467,15 @@ describe('jarvis root CLI', () => {
   });
 });
 
-function runJarvis(args: string[]): Promise<{ code: number | null; stdout: string; stderr: string }> {
+function runJarvis(
+  args: string[],
+  envOverrides: NodeJS.ProcessEnv = {},
+): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((done) => {
-    const env = { ...process.env, ARK_API_KEY: '' };
+    const env: NodeJS.ProcessEnv = { ...process.env, ARK_API_KEY: '', ...envOverrides };
+    for (const [key, value] of Object.entries(envOverrides)) {
+      if (value === undefined) delete env[key];
+    }
     execFile(
       process.execPath,
       ['--import', 'tsx', entry, ...args],
@@ -131,4 +510,81 @@ function isProcessAlive(pid: number): boolean {
   } catch {
     return false;
   }
+}
+
+function signedFrame(secret: string, line: string): string {
+  const mac = createHmac('sha256', Buffer.from(secret, 'hex')).update(line, 'utf8').digest('hex');
+  return `${mac}\t${line}`;
+}
+
+function asWritable(stream: ControlledWritable): NodeJS.WritableStream {
+  return stream as unknown as NodeJS.WritableStream;
+}
+
+class ControlledWritable extends EventEmitter {
+  readonly writes: string[] = [];
+
+  constructor(private readonly writeResults: boolean[] = []) {
+    super();
+  }
+
+  write(text: string): boolean {
+    this.writes.push(text);
+    return this.writeResults.shift() ?? true;
+  }
+}
+
+class IgnoringHeadlessChild extends EventEmitter {
+  readonly stdout = new PassThrough();
+  readonly stderr = new PassThrough();
+  readonly agentEvents = new PassThrough();
+  readonly auth = new PassThrough();
+  readonly stdio = [null, this.stdout, this.stderr, this.agentEvents, this.auth] as unknown as ChildProcess['stdio'];
+  readonly killSignals: NodeJS.Signals[] = [];
+  killed = false;
+
+  kill(signal?: NodeJS.Signals): boolean {
+    if (signal !== undefined) this.killSignals.push(signal);
+    if (signal === 'SIGKILL') queueMicrotask(() => this.emit('close', null, 'SIGKILL'));
+    return true;
+  }
+}
+
+async function waitFor(predicate: () => boolean): Promise<void> {
+  const deadline = Date.now() + 1_000;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error('timed out waiting for condition');
+    await new Promise((resolveWait) => setTimeout(resolveWait, 5));
+  }
+}
+
+function writeToolCallSse(
+  response: ServerResponse,
+  call: { id: string; name: string; arguments: string },
+): void {
+  response.writeHead(200, { 'content-type': 'text/event-stream' });
+  response.write(`data: ${JSON.stringify({
+    id: 'fixture-response',
+    object: 'chat.completion.chunk',
+    choices: [{
+      index: 0,
+      delta: {
+        role: 'assistant',
+        tool_calls: [{
+          index: 0,
+          id: call.id,
+          type: 'function',
+          function: { name: call.name, arguments: call.arguments },
+        }],
+      },
+      finish_reason: null,
+    }],
+  })}\n\n`);
+  response.write(`data: ${JSON.stringify({
+    id: 'fixture-response',
+    object: 'chat.completion.chunk',
+    choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }],
+    usage: { prompt_tokens: 1, completion_tokens: 1 },
+  })}\n\n`);
+  response.end('data: [DONE]\n\n');
 }

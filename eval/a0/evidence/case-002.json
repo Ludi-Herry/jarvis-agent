@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "caseId": "case-002",
+  "objective": "Establish that exact-session resume rejects a requested filename whose Session header has a different id.",
+  "claim": "Filename/header identity mismatch is refused before provider or tool execution.",
+  "facts": [
+    {
+      "path": "test/runtime/session-store.test.ts",
+      "selector": "fails closed when the requested file id differs from the durable session header id",
+      "observation": "The Session loader rejects a durable header whose id differs from expectedSessionId."
+    },
+    {
+      "path": "src/surfaces/cli/index.ts",
+      "selector": "expectedSessionId: resolvedSessionId",
+      "observation": "The exact-session CLI binds the validated filename id into the Session load boundary. A failed load returns before startRepl, so model requests and tool execution do not begin."
+    },
+    {
+      "path": "test/cli/sessions-cli.test.ts",
+      "selector": "fails actual resume closed on filename/header identity mismatch before any provider request",
+      "observation": "The production headless resume path points at a counting local endpoint, rejects the mismatch, emits no public event, and makes zero provider requests."
+    }
+  ],
+  "limitations": []
+}

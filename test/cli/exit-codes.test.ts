@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { CLI_EXIT, exitCodeForCron, exitCodeForGoal, exitCodeForLoop } from '../../src/surfaces/cli/exit-codes.js';
+import { CLI_EXIT, exitCodeForCron, exitCodeForGoal, exitCodeForLoop, exitCodeForRun } from '../../src/surfaces/cli/exit-codes.js';
 
 describe('stable CLI exit contract', () => {
+  it('maps conversational run outcomes without completion authority', () => {
+    expect(exitCodeForRun({ finalText: 'done' })).toBe(CLI_EXIT.SUCCESS);
+    expect(exitCodeForRun({ halted: 'turnTimeout' })).toBe(CLI_EXIT.RUNTIME);
+    expect(exitCodeForRun({ halted: 'toolExecutionUnknown' })).toBe(CLI_EXIT.NEEDS_HUMAN);
+    expect(exitCodeForRun({ halted: 'maxTurns' })).toBe(CLI_EXIT.NEEDS_HUMAN);
+  });
+
   it('returns success only for a fully drained verified loop', () => {
     expect(exitCodeForLoop({ reason: 'queue-empty', blocked: 0, needsVerification: 0, runtimeFailures: 0 })).toBe(CLI_EXIT.SUCCESS);
     expect(exitCodeForLoop({ reason: 'blocked-goals', blocked: 1, needsVerification: 0, runtimeFailures: 0 })).toBe(CLI_EXIT.NEEDS_HUMAN);

@@ -47,6 +47,11 @@ import { startRepl } from './repl.js';
 import { buildSystemPrompt } from './system-prompt.js';
 import { JARVIS_VERSION } from './package-info.js';
 import { CLI_EXIT } from './exit-codes.js';
+import {
+  createProcessAgentEventWriter,
+  isHeadlessAgentEventMode,
+  scrubHeadlessAgentEventEnv,
+} from './headless-events.js';
 
 // Capture BEFORE the runtime .env load: a key here came from the shell LAUNCH env (in /proc/environ on
 // Linux); one appearing only after came from .env (runtime, /proc-clean). Used by assertKeyNotInLaunchEnv.
@@ -73,6 +78,12 @@ program
   .option('--resume [id]', 'resume the latest session (or a specific <id>) from data/sessions/')
   .option('-p, --prompt <text>', 'run this prompt before entering interactive input')
   .action(async (opts: { cwd: string; maxTurns: number; resume?: string | boolean; prompt?: string }) => {
+    const headless = isHeadlessAgentEventMode();
+    if (headless && !opts.prompt?.trim()) {
+      console.error('[run] --headless requires a non-empty prompt');
+      process.exitCode = CLI_EXIT.USAGE;
+      return;
+    }
     const sessionsDir = join(opts.cwd, 'data', 'sessions');
     let resumeFile: Extract<SessionFileResolution, { status: 'ok' }> | undefined;
     if (opts.resume) {
@@ -128,7 +139,7 @@ program
       config = loadDoubaoConfig();
     } catch (err) {
       console.error(safeInline(err instanceof Error ? err.message : String(err)));
-      process.exitCode = 1;
+      process.exitCode = CLI_EXIT.USAGE;
       return;
     }
 
@@ -192,18 +203,22 @@ program
     const sessionComposition = createSessionComposition({
       root: 'repl',
       runtimeVersion: JARVIS_VERSION,
-      permissionMode: 'interactive',
+      permissionMode: headless ? 'unattended' : 'interactive',
       toolSchemas,
       systemPrompt,
       dynamicAddendum,
     });
     let store: FileSessionStore;
+    let sessionId: string;
+    let resumed = false;
     let initialMessages: Message[] | undefined;
     if (resumeFile !== undefined) {
-      const { path, sessionId } = resumeFile;
+      const { path, sessionId: resolvedSessionId } = resumeFile;
+      sessionId = resolvedSessionId;
+      resumed = true;
       const loadResult = await loadResumeSessionForCli(resumeFile, {
         requireHeader: true,
-        expectedSessionId: sessionId,
+        expectedSessionId: resolvedSessionId,
         resume: {
           expectedComposition: sessionComposition,
           resolveDynamicAddendum: (activationText) => skills.systemAddendum(activationText),
@@ -251,6 +266,7 @@ program
       console.log(`已恢复会话 ${safeInline(loaded.header?.id ?? path)}(${loaded.messages.length} 条消息)\n`);
     } else {
       const id = new Date().toISOString().replace(/[:.]/g, '-');
+      sessionId = id;
       store = new FileSessionStore(join(sessionsDir, `${id}.jsonl`));
       await store.writeHeader({
         id,
@@ -261,7 +277,15 @@ program
       });
     }
 
-    await startRepl({
+    const agentEvents = createProcessAgentEventWriter({
+      invocationId: sessionId,
+      defaultSessionId: sessionId,
+      root: 'run',
+      cwd: opts.cwd,
+    });
+    if (headless) scrubHeadlessAgentEventEnv();
+    agentEvents?.sessionStarted({ sessionId, resumed, model: config.model });
+    const exitCode = await startRepl({
       model: provider,
       tools,
       context,
@@ -275,12 +299,17 @@ program
       policy,
       hooks,
       store,
+      sessionId,
       initialMessages,
       initialPrompt: opts.prompt,
+      singlePrompt: headless,
+      agentEvents,
+      ...(headless ? { approver: async () => 'deny' as const } : {}),
     });
+    if (exitCode !== undefined) process.exitCode = exitCode;
   });
 
 program.parseAsync().catch((err: unknown) => {
   console.error('[cli] fatal:', safeInline(err instanceof Error ? err.message : String(err)));
-  process.exitCode = 1;
+  process.exitCode = CLI_EXIT.RUNTIME;
 });

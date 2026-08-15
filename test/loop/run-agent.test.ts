@@ -9,7 +9,7 @@ import { readTool, writeTool } from '../../src/core/tools/builtins.js';
 import { createBashTool, defaultShellPath } from '../../src/core/tools/bash.js';
 import { DefaultContextManager } from '../../src/core/context/context-manager.js';
 import { InMemoryEventBus, type Event } from '../../src/runtime/event-bus.js';
-import { DefaultPermissionGate, type Approver } from '../../src/runtime/permission/permission-gate.js';
+import { DefaultPermissionGate, type Approver, type PermissionGate } from '../../src/runtime/permission/permission-gate.js';
 import {
   FileSessionStore,
   createSessionComposition,
@@ -91,6 +91,105 @@ afterEach(async () => {
 });
 
 describe('runAgent — tool loop', () => {
+  it('emits bounded model/tool lifecycle events with the session identity', async () => {
+    const tools = new InMemoryToolRegistry();
+    tools.register(okTool);
+    const { provider } = scriptedModel([
+      { toolCalls: [{ id: 'c1', name: 'ok', arguments: '{}' }] },
+      { text: 'done' },
+    ]);
+    const bus = new InMemoryEventBus();
+    const events = record(bus);
+
+    await runAgent({
+      model: provider,
+      tools,
+      bus,
+      messages: [{ role: 'user', content: 'go' }],
+      toolCtx: { cwd: dir },
+      budget: { maxTurns: 5 },
+      sessionId: 'session-lifecycle',
+    });
+
+    const lifecycle = events.filter((event) => [
+      'model_started', 'model_finished', 'tool_execution_started', 'tool_execution_finished',
+    ].includes(event.type));
+    expect(lifecycle.map((event) => event.type)).toEqual([
+      'model_started', 'model_finished', 'tool_execution_started', 'tool_execution_finished',
+      'model_started', 'model_finished',
+    ]);
+    expect(lifecycle.every((event) => 'sessionId' in event && event.sessionId === 'session-lifecycle')).toBe(true);
+    expect(lifecycle[0]).toMatchObject({ turn: 0, messageCount: 1, toolSchemaCount: 1 });
+    expect(lifecycle[1]).toMatchObject({ turn: 0, status: 'completed', finishReason: 'tool_calls' });
+    expect(lifecycle[2]).toMatchObject({ toolCallId: 'c1', toolName: 'ok' });
+    expect(lifecycle[3]).toMatchObject({ toolCallId: 'c1', toolName: 'ok', outcome: 'committed' });
+    expect(lifecycle[4]).toMatchObject({ turn: 1 });
+    expect(lifecycle[5]).toMatchObject({ turn: 1, status: 'completed', finishReason: 'completed' });
+    expect(lifecycle[0]).not.toHaveProperty('messages');
+    expect(lifecycle[2]).not.toHaveProperty('arguments');
+    expect(lifecycle[3]).not.toHaveProperty('result');
+  });
+
+  it('pairs denied, failed, and unknown tool lifecycles without inferring a denial from error text', async () => {
+    const tools = new InMemoryToolRegistry();
+    tools.register({
+      name: 'denied-tool',
+      description: 'blocked by the gate',
+      capability: 'read-only',
+      inputSchema: z.object({}),
+      run: async () => ({ content: 'must not run' }),
+    });
+    tools.register({
+      name: 'failed-tool',
+      description: 'returns an error whose text resembles a denial',
+      capability: 'read-only',
+      inputSchema: z.object({}),
+      run: async () => ({ content: '', error: 'Permission denied: a remote service rejected the request' }),
+    });
+    tools.register({
+      name: 'unknown-tool',
+      description: 'reports an uncertain side-effect state',
+      capability: 'read-only',
+      inputSchema: z.object({}),
+      run: async () => ({ content: '', error: 'post-state unavailable', executionUnknown: true }),
+    });
+    const gate: PermissionGate = {
+      check: async (call) => call.name === 'denied-tool'
+        ? { allowed: false, reason: 'test policy', source: 'fail-closed' }
+        : { allowed: true, reason: 'test policy', source: 'user' },
+    };
+    const { provider } = scriptedModel([{
+      toolCalls: [
+        { id: 'denied', name: 'denied-tool', arguments: '{}' },
+        { id: 'failed', name: 'failed-tool', arguments: '{}' },
+        { id: 'unknown', name: 'unknown-tool', arguments: '{}' },
+      ],
+    }]);
+    const bus = new InMemoryEventBus();
+    const events = record(bus);
+
+    const outcome = await runAgent({
+      model: provider,
+      tools,
+      bus,
+      messages: [{ role: 'user', content: 'exercise every terminal tool state' }],
+      toolCtx: { cwd: dir },
+      budget: { maxTurns: 5 },
+      gate,
+      sessionId: 'session-tool-outcomes',
+    });
+
+    expect(outcome).toEqual({ halted: 'toolExecutionUnknown', turns: 1 });
+    expect(events.filter((event) => event.type === 'tool_execution_started' || event.type === 'tool_execution_finished')).toEqual([
+      expect.objectContaining({ type: 'tool_execution_started', toolCallId: 'denied' }),
+      expect.objectContaining({ type: 'tool_execution_finished', toolCallId: 'denied', outcome: 'denied' }),
+      expect.objectContaining({ type: 'tool_execution_started', toolCallId: 'failed' }),
+      expect.objectContaining({ type: 'tool_execution_finished', toolCallId: 'failed', outcome: 'failed' }),
+      expect.objectContaining({ type: 'tool_execution_started', toolCallId: 'unknown' }),
+      expect.objectContaining({ type: 'tool_execution_finished', toolCallId: 'unknown', outcome: 'unknown' }),
+    ]);
+  });
+
   it('runs a model-requested tool, feeds the result back, and stops on the no-tool turn', async () => {
     await writeFile(join(dir, 'fact.txt'), 'the sky is teal', 'utf8');
     const tools = new InMemoryToolRegistry();
@@ -942,6 +1041,11 @@ describe('runAgent — hooks (slice 1)', () => {
     expect(ran()).toBe(false); // the side effect never happened
     const toolResult = events.find((e) => e.type === 'tool_result');
     expect(toolResult?.type === 'tool_result' && toolResult.out.error).toMatch(/Permission denied: PreToolUse hook blocked/);
+    expect(events.find((event) => event.type === 'tool_execution_finished')).toMatchObject({
+      type: 'tool_execution_finished',
+      toolCallId: 'c1',
+      outcome: 'denied',
+    });
   });
 
   it('a hook can NEVER unlock a gate deny: the gate denies first, hooks are not even consulted', async () => {

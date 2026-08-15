@@ -472,6 +472,7 @@ export async function runGoal(spec: GoalSpec, deps: GoalRunDeps): Promise<GoalRu
             model: deps.model,
             tools: deps.tools,
             bus: deps.bus,
+            sessionId: goal.sessionId,
             messages,
             toolCtx: { cwd: deps.cwd, signal: deadline.signal },
             budget: { maxTurns: deps.perRoundMaxTurns },
@@ -757,6 +758,7 @@ async function verifyGoalCompletion(
     },
     goal.testBaseline,
   );
+  emitDeterministicCheckEvents(deps.bus, goal.id, goal.sessionId, checks);
 
   // All deterministic legs clean (leg 1 + leg 2 + held-out) before spawning the judge. A held-out
   // failure short-circuits leg 3 too (`heldOut?.passed ?? true` — absent held-out is not a failure).
@@ -813,6 +815,75 @@ async function verifyGoalCompletion(
   const verdict = decideVerdict(checks, report, goal.pinned);
   const persistedChecks = persistableChecks(checks);
   return { checks, persistedChecks, verdict };
+}
+
+function emitDeterministicCheckEvents(
+  bus: EventBus,
+  goalId: string,
+  sessionId: string,
+  checks: DeterministicChecks,
+): void {
+  // `forbid` stops the deterministic runner before canonical/tamper/held-out work begins. Its
+  // placeholder `testTamper: clean` is not evidence, so emitting it as passed would falsely claim a
+  // leg ran. The failed worktree result is the sole bounded fact for this short-circuit.
+  if (checks.worktreeStatus?.policy === 'forbid' && checks.worktreeStatus.changed) {
+    bus.emit({
+      type: 'check_finished',
+      goalId,
+      sessionId,
+      checkId: 'worktree',
+      kind: 'worktree',
+      status: 'failed',
+    });
+    return;
+  }
+  for (const [index, result] of checks.results.entries()) {
+    bus.emit({
+      type: 'check_finished',
+      goalId,
+      sessionId,
+      checkId: `canonical:${index}`,
+      kind: 'canonical',
+      status: result.code === 0 ? 'passed' : result.code === null ? 'unavailable' : 'failed',
+      ...(result.code === null ? {} : { exitCode: result.code }),
+    });
+  }
+  bus.emit({
+    type: 'check_finished',
+    goalId,
+    sessionId,
+    checkId: 'tamper',
+    kind: 'tamper',
+    status: checks.testTamper === 'clean' ? 'passed' : checks.testTamper === 'unavailable' ? 'unavailable' : 'failed',
+  });
+  if (checks.worktreeStatus !== undefined) {
+    bus.emit({
+      type: 'check_finished',
+      goalId,
+      sessionId,
+      checkId: 'worktree',
+      kind: 'worktree',
+      status: checks.worktreeStatus.error !== undefined
+        ? 'unavailable'
+        : checks.worktreeStatus.policy === 'forbid' && checks.worktreeStatus.changed
+          ? 'failed'
+          : 'passed',
+    });
+  }
+  if (checks.heldOut !== undefined) {
+    bus.emit({
+      type: 'check_finished',
+      goalId,
+      sessionId,
+      checkId: 'held-out',
+      kind: 'held-out',
+      status: checks.heldOut.passed
+        ? 'passed'
+        : checks.heldOut.results.some((result) => result.code !== null && result.code !== 0)
+          ? 'failed'
+          : 'unavailable',
+    });
+  }
 }
 
 async function runConfiguredSandboxChecks(deps: GoalRunDeps): Promise<SandboxedRequirementCheck[]> {

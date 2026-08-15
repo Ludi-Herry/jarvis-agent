@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "caseId": "case-006",
+  "objective": "Confirm that the full-screen TUI has passed final visual and keyboard-interaction acceptance.",
+  "claim": "The TUI is visually accepted and all interaction states are usable.",
+  "facts": [
+    {
+      "path": "docs/cli-first-plan.md",
+      "selector": "## 5. R2：增强行模式与全屏 TUI",
+      "observation": "The document describes TUI as a later milestone rather than a delivered acceptance artifact."
+    }
+  ],
+  "limitations": [
+    "No TUI implementation, screenshot set, interaction recording, or human visual acceptance is included."
+  ]
+}

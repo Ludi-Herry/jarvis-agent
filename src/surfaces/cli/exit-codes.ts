@@ -12,6 +12,12 @@ export const CLI_EXIT = {
 
 export type CliExitCode = (typeof CLI_EXIT)[keyof typeof CLI_EXIT];
 
+export function exitCodeForRun(result: { finalText?: string; halted?: string }): CliExitCode {
+  if (result.finalText !== undefined && result.halted === undefined) return CLI_EXIT.SUCCESS;
+  if (result.halted === 'turnTimeout') return CLI_EXIT.RUNTIME;
+  return CLI_EXIT.NEEDS_HUMAN;
+}
+
 export interface LoopExitSummary {
   reason: string;
   blocked: number;

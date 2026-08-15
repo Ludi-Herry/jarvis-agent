@@ -13,6 +13,7 @@
  * subscriber handles it (or ignores it) in its `default` branch.
  */
 import type { ToolCall, ToolResult } from '../core/types.js';
+import type { FinishReason } from '../core/model/types.js';
 import type { ToolCapability } from '../core/tools/types.js';
 import type { Approval } from './permission/permission-gate.js';
 
@@ -24,6 +25,57 @@ export type Event =
   | { type: 'state'; phase: string }
   | { type: 'usage'; inputTokens: number; outputTokens: number }
   | { type: 'final'; text: string }
+  // Public headless lifecycle projection. These events contain identities and bounded status only;
+  // prompts, reasoning, tool arguments/results, and held-out commands stay off the machine stream.
+  | {
+      type: 'model_started';
+      sessionId?: string;
+      modelRunId: string;
+      requestId?: string;
+      turn: number;
+      messageCount: number;
+      toolSchemaCount: number;
+    }
+  | {
+      type: 'model_finished';
+      sessionId?: string;
+      modelRunId: string;
+      requestId?: string;
+      turn: number;
+      status: 'completed' | 'halted' | 'failed' | 'timed-out' | 'interrupted';
+      finishReason?: FinishReason;
+      rawFinishReason?: string;
+      inputTokens?: number;
+      outputTokens?: number;
+    }
+  | {
+      type: 'tool_execution_started';
+      sessionId?: string;
+      modelRunId: string;
+      requestId?: string;
+      executionId?: string;
+      toolCallId: string;
+      toolName: string;
+    }
+  | {
+      type: 'tool_execution_finished';
+      sessionId?: string;
+      modelRunId: string;
+      requestId?: string;
+      executionId?: string;
+      toolCallId: string;
+      toolName: string;
+      outcome: 'committed' | 'denied' | 'failed' | 'unknown';
+    }
+  | {
+      type: 'check_finished';
+      goalId: string;
+      sessionId?: string;
+      checkId: string;
+      kind: 'canonical' | 'tamper' | 'worktree' | 'held-out';
+      status: 'passed' | 'failed' | 'unavailable';
+      exitCode?: number;
+    }
   | {
       type: 'halt';
       reason:

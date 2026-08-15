@@ -1,5 +1,7 @@
 import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -37,6 +39,20 @@ describe('jarvis sessions (read-only product surface)', () => {
       expect(result.stderr).not.toContain(KEY_SENTINEL);
       expect(result.stderr).not.toContain('ARK_API_KEY');
     }
+  });
+
+  it('maps a headless run without provider configuration to usage exit 2 before any session starts', async () => {
+    const workspace = await tempWorkspace('headless missing provider ');
+
+    const result = await runJarvis(
+      ['--headless', '--cwd', workspace, 'run', 'do not start a session'],
+      null,
+      isolatedHome(workspace),
+    );
+
+    expect(result.code).toBe(CLI_EXIT.USAGE);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain('ARK_API_KEY is not set');
   });
 
   it('lists an empty workspace with exit 0', async () => {
@@ -177,7 +193,7 @@ describe('jarvis sessions (read-only product surface)', () => {
     expect(resumeLatest.stderr).toContain('unsafe session path');
   });
 
-  it('fails actual resume closed on filename/header identity mismatch and single-lines the hostile header id', async () => {
+  it('fails actual resume closed on filename/header identity mismatch before any provider request', async () => {
     const workspace = await tempWorkspace('identity ');
     const attack = `different${ESC}[2J${ESC}[31m\r\nFORGED-RESUME-LINE`;
     await writeFile(join(workspace, '.env'), 'ARK_API_KEY=fixture-key\n', 'utf8');
@@ -187,6 +203,26 @@ describe('jarvis sessions (read-only product surface)', () => {
       'utf8',
     );
 
+    let providerRequests = 0;
+    const endpoint = createServer((_request, response) => {
+      providerRequests += 1;
+      response.writeHead(500).end();
+    });
+    await new Promise<void>((resolveListen, rejectListen) => {
+      endpoint.once('error', rejectListen);
+      endpoint.listen(0, '127.0.0.1', resolveListen);
+    });
+    const address = endpoint.address() as AddressInfo;
+    let headlessResume;
+    try {
+      headlessResume = await runJarvis(
+        ['--headless', '--cwd', workspace, 'run', '--resume', 'requested-id', 'must not execute'],
+        null,
+        { ...isolatedHome(workspace), ARK_BASE_URL: `http://127.0.0.1:${address.port}/v1` },
+      );
+    } finally {
+      await new Promise<void>((resolveClose, rejectClose) => endpoint.close((err) => err ? rejectClose(err) : resolveClose()));
+    }
     const show = await runJarvis(['--cwd', workspace, 'sessions', 'show', 'requested-id']);
     const resume = await runJarvis(['--cwd', workspace, 'resume', 'requested-id'], null);
 
@@ -194,7 +230,10 @@ describe('jarvis sessions (read-only product surface)', () => {
     expect(show.stdout).toContain('refuse-resume');
     expect(resume.code).toBe(CLI_EXIT.STATE_CORRUPT);
     expect(resume.stderr).toContain('does not match requested session id');
-    for (const output of [show.stdout, show.stderr, resume.stdout, resume.stderr]) {
+    expect(headlessResume.code).toBe(CLI_EXIT.STATE_CORRUPT);
+    expect(headlessResume.stdout).toBe('');
+    expect(providerRequests).toBe(0);
+    for (const output of [show.stdout, show.stderr, resume.stdout, resume.stderr, headlessResume.stderr]) {
       expect(output).not.toContain(ESC);
       expect(output).not.toContain('\r');
       expect(output).not.toContain('\nFORGED-RESUME-LINE');

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Readable, Writable } from 'node:stream';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -10,6 +10,7 @@ import { InMemoryToolRegistry } from '../../src/core/tools/registry.js';
 import { readTool, writeTool } from '../../src/core/tools/builtins.js';
 import { readFile } from 'node:fs/promises';
 import { FileSessionStore, createSessionComposition, loadSession } from '../../src/runtime/session/session-store.js';
+import { AgentEventWriter } from '../../src/runtime/agent-events.js';
 import type { Message, ToolCall } from '../../src/core/types.js';
 import type { ModelDelta, ModelProvider, ModelResult } from '../../src/core/model/types.js';
 import type { ToolDefinition } from '../../src/core/tools/types.js';
@@ -95,6 +96,112 @@ afterEach(async () => {
 });
 
 describe('startRepl', () => {
+  it('runs one headless prompt, emits a terminal event, and never grants conversational completion', async () => {
+    const lines: string[] = [];
+    const writer = new AgentEventWriter({
+      invocationId: 'session-headless',
+      defaultSessionId: 'session-headless',
+      root: 'run',
+      cwd: dir,
+      writeLine: (line) => lines.push(line),
+      now: () => '2026-08-15T00:00:00.000Z',
+    });
+    writer.sessionStarted({ sessionId: 'session-headless', resumed: false, model: 'fake-model' });
+
+    const exitCode = await startRepl({
+      model: fakeModel([{ text: 'done' }]).provider,
+      tools: new InMemoryToolRegistry(),
+      cwd: dir,
+      modelName: 'fake-model',
+      systemPrompt: 'sys',
+      maxTurns: 1,
+      sessionId: 'session-headless',
+      initialPrompt: 'run once',
+      singlePrompt: true,
+      agentEvents: writer,
+      approver: async () => 'deny',
+      input: inputOf([]),
+      output: sink().stream,
+    });
+
+    const records = lines.map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(exitCode).toBe(0);
+    expect(records.map((record) => record.type)).toEqual([
+      'session.started', 'model.started', 'model.finished', 'run.finished',
+    ]);
+    expect(records.at(-1)).toMatchObject({
+      status: 'completed',
+      exitCode: 0,
+      completion: { granted: false, authority: 'none' },
+    });
+  });
+
+  it('closes a single-prompt model timeout as failed with runtime exit 5', async () => {
+    const lines: string[] = [];
+    const writer = new AgentEventWriter({
+      invocationId: 'session-timeout',
+      defaultSessionId: 'session-timeout',
+      root: 'run',
+      cwd: dir,
+      writeLine: (line) => lines.push(line),
+      now: () => '2026-08-15T00:00:00.000Z',
+    });
+    writer.sessionStarted({ sessionId: 'session-timeout', resumed: false, model: 'hanging-model' });
+    const provider: ModelProvider = {
+      capability: {
+        maxContextTokens: 1000,
+        maxOutputTokens: 100,
+        thinking: false,
+        toolUse: true,
+        imageIn: false,
+        videoIn: false,
+      },
+      async *call(): AsyncGenerator<ModelDelta, ModelResult> {
+        await new Promise<never>(() => undefined);
+        yield* [];
+        return { text: '', toolCalls: [], usage: { inputTokens: 0, outputTokens: 0 }, finishReason: 'completed', rawFinishReason: 'stop' };
+      },
+      withThinking: () => provider,
+      withMaxCompletionTokens: () => provider,
+    };
+
+    vi.useFakeTimers();
+    try {
+      const pending = startRepl({
+        model: provider,
+        tools: new InMemoryToolRegistry(),
+        cwd: dir,
+        modelName: 'hanging-model',
+        systemPrompt: 'sys',
+        maxTurns: 1,
+        sessionId: 'session-timeout',
+        initialPrompt: 'run once',
+        singlePrompt: true,
+        agentEvents: writer,
+        approver: async () => 'deny',
+        input: inputOf([]),
+        output: sink().stream,
+      });
+      await vi.advanceTimersByTimeAsync(120_000);
+
+      expect(await pending).toBe(5);
+    } finally {
+      vi.useRealTimers();
+    }
+
+    const records = lines.map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(records.map((record) => record.type)).toEqual([
+      'session.started', 'model.started', 'model.finished', 'run.finished',
+    ]);
+    expect(records[2]).toMatchObject({ type: 'model.finished', status: 'timed-out' });
+    expect(records.at(-1)).toMatchObject({
+      type: 'run.finished',
+      status: 'failed',
+      exitCode: 5,
+      completion: { granted: false, authority: 'none' },
+    });
+  });
+
   it('single-lines control sequences in the model banner', async () => {
     const attack = `model${String.fromCharCode(27)}[2J${String.fromCharCode(27)}[31m\r\nFORGED-BANNER`;
     const out = sink();

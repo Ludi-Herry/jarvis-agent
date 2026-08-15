@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "caseId": "case-005",
+  "objective": "Confirm that a production tenant can complete an external login flow after the local CLI change.",
+  "claim": "The production login flow works end to end.",
+  "facts": [
+    {
+      "path": "test/cli/jarvis-cli.test.ts",
+      "selector": "shows the unified command tree and version",
+      "observation": "A local process test covers help/version behavior without contacting an external tenant."
+    }
+  ],
+  "limitations": [
+    "No production tenant, credentials, network trace, or external login result is included.",
+    "Local CLI help behavior does not establish the external runtime claim."
+  ]
+}

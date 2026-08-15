@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "caseId": "case-001",
+  "objective": "Establish that sessions show remains read-only and reports conservative resume readiness without granting completion.",
+  "claim": "The inspected session can be shown safely and the command remains observation-only.",
+  "facts": [
+    {
+      "path": "test/cli/sessions.test.ts",
+      "selector": "reports header identity, counts, composition hashes, and a pending invocation-time resume check",
+      "observation": "The focused contract asserts observation-only authority and a conservative readiness state."
+    },
+    {
+      "path": "src/surfaces/cli/sessions.ts",
+      "selector": "buildSessionsShowReport",
+      "observation": "The surface builds a report and never imports or calls completion authorization."
+    }
+  ],
+  "limitations": []
+}

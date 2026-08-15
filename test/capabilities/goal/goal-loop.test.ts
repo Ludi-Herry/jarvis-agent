@@ -127,6 +127,106 @@ function baseDeps(over: Partial<GoalRunDeps> = {}): GoalRunDeps {
 }
 
 describe('runGoal — verification gates completion', () => {
+  it('emits one bounded check_finished event for every deterministic leg that ran', async () => {
+    const { run } = claimingRun('complete');
+    const bus = new InMemoryEventBus();
+    const events = record(bus);
+    const check: NonNullable<GoalRunDeps['check']> = async () => ({
+      objectiveChecksPassed: false,
+      results: [
+        { command: 'npm test', code: 0, output: 'secret output must stay off-bus' },
+        { command: 'npm run lint', code: 1, output: 'more secret output' },
+      ],
+      testTamper: 'clean',
+      tamperReason: '',
+      worktreeStatus: {
+        command: 'git status --porcelain --untracked-files=all',
+        policy: 'audit',
+        baseline: '',
+        current: '?? file.txt',
+        changed: true,
+        changedEntries: ['?? file.txt'],
+      },
+      heldOut: {
+        passed: false,
+        results: [{ command: 'hidden command', code: 1, output: 'HIDDEN-SECRET-OUTPUT' }],
+      },
+    });
+
+    await runGoal(spec({ budget: { maxRounds: 1 } }), baseDeps({ bus, run, check }));
+
+    const checks = events.filter((event) => event.type === 'check_finished');
+    expect(checks).toEqual([
+      { type: 'check_finished', goalId: 'g1', sessionId: 's1', checkId: 'canonical:0', kind: 'canonical', status: 'passed', exitCode: 0 },
+      { type: 'check_finished', goalId: 'g1', sessionId: 's1', checkId: 'canonical:1', kind: 'canonical', status: 'failed', exitCode: 1 },
+      { type: 'check_finished', goalId: 'g1', sessionId: 's1', checkId: 'tamper', kind: 'tamper', status: 'passed' },
+      { type: 'check_finished', goalId: 'g1', sessionId: 's1', checkId: 'worktree', kind: 'worktree', status: 'passed' },
+      { type: 'check_finished', goalId: 'g1', sessionId: 's1', checkId: 'held-out', kind: 'held-out', status: 'failed' },
+    ]);
+    expect(JSON.stringify(checks)).not.toContain('secret output');
+    expect(JSON.stringify(checks)).not.toContain('hidden command');
+    expect(JSON.stringify(checks)).not.toContain('HIDDEN-SECRET-OUTPUT');
+  });
+
+  it('emits only the failed worktree check when a forbidden worktree change short-circuits verification', async () => {
+    const { run } = claimingRun('complete');
+    const bus = new InMemoryEventBus();
+    const events = record(bus);
+
+    await runGoal(spec({ budget: { maxRounds: 1 } }), baseDeps({ bus, run, check: dirtyWorktreeCheck }));
+
+    expect(events.filter((event) => event.type === 'check_finished')).toEqual([
+      { type: 'check_finished', goalId: 'g1', sessionId: 's1', checkId: 'worktree', kind: 'worktree', status: 'failed' },
+    ]);
+  });
+
+  it('marks a held-out command with no terminal exit code unavailable', async () => {
+    const { run } = claimingRun('complete');
+    const bus = new InMemoryEventBus();
+    const events = record(bus);
+    const check: NonNullable<GoalRunDeps['check']> = async () => ({
+      objectiveChecksPassed: true,
+      results: [],
+      testTamper: 'clean',
+      tamperReason: '',
+      heldOut: {
+        passed: false,
+        results: [{ command: 'hidden command', code: null, output: 'killed before terminal status' }],
+      },
+    });
+
+    await runGoal(spec({ budget: { maxRounds: 1 } }), baseDeps({ bus, run, check }));
+
+    expect(events.find((event) => event.type === 'check_finished' && event.checkId === 'held-out')).toEqual(
+      { type: 'check_finished', goalId: 'g1', sessionId: 's1', checkId: 'held-out', kind: 'held-out', status: 'unavailable' },
+    );
+  });
+
+  it('keeps a concrete held-out failure authoritative when another command is unavailable', async () => {
+    const { run } = claimingRun('complete');
+    const bus = new InMemoryEventBus();
+    const events = record(bus);
+    const check: NonNullable<GoalRunDeps['check']> = async () => ({
+      objectiveChecksPassed: false,
+      results: [],
+      testTamper: 'clean',
+      tamperReason: '',
+      heldOut: {
+        passed: false,
+        results: [
+          { command: 'known failure', code: 1, output: 'failed' },
+          { command: 'unavailable command', code: null, output: 'no terminal status' },
+        ],
+      },
+    });
+
+    await runGoal(spec({ budget: { maxRounds: 1 } }), baseDeps({ bus, run, check }));
+
+    expect(events.find((event) => event.type === 'check_finished' && event.checkId === 'held-out')).toEqual(
+      { type: 'check_finished', goalId: 'g1', sessionId: 's1', checkId: 'held-out', kind: 'held-out', status: 'failed' },
+    );
+  });
+
   it('completes only when a completion claim is backed by trusted held-out evidence', async () => {
     const { run, calls } = claimingRun('complete');
     const result = await runGoal(spec(), baseDeps({ run, check: passingCheck }));

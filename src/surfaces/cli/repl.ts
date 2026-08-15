@@ -24,6 +24,7 @@ import { runAgent } from '../../core/loop/run-agent.js';
 import { InMemoryEventBus } from '../../runtime/event-bus.js';
 import { DefaultPermissionGate, type Approver, type PermissionPolicy } from '../../runtime/permission/index.js';
 import type { SessionStore } from '../../runtime/session/index.js';
+import type { AgentEventWriter } from '../../runtime/agent-events.js';
 import {
   SubagentManager,
   createDelegateTool,
@@ -33,6 +34,8 @@ import {
 import type { HookRunner } from '../../capabilities/hooks/index.js';
 import { initialRenderState, renderEvent } from './render.js';
 import { renderApprovalRequest, parseApprovalChoice, safeInline } from './approval.js';
+import { CLI_EXIT, exitCodeForRun, type CliExitCode } from './exit-codes.js';
+import { createApprovalEventApprover } from './approval-events.js';
 
 export interface ReplDeps {
   model: ModelProvider;
@@ -65,6 +68,11 @@ export interface ReplDeps {
   initialMessages?: Message[];
   /** Optional first prompt supplied by `jarvis run <prompt>` before interactive input begins. */
   initialPrompt?: string;
+  /** Stable lifecycle identity for machine mode. */
+  sessionId?: string;
+  agentEvents?: AgentEventWriter;
+  /** Run exactly the supplied initial prompt and never wait for another line. */
+  singlePrompt?: boolean;
   input?: NodeJS.ReadableStream;
   output?: NodeJS.WritableStream;
 }
@@ -75,7 +83,7 @@ const MAX_APPROVAL_RETRIES = 3;
 /** Max subagent nesting depth (main → child → grandchild). Bounds runaway recursion / cost (R4). */
 const MAX_SUBAGENT_DEPTH = 2;
 
-export async function startRepl(deps: ReplDeps): Promise<void> {
+export async function startRepl(deps: ReplDeps): Promise<CliExitCode | undefined> {
   const out = deps.output ?? process.stdout;
   const rl = createInterface({ input: deps.input ?? process.stdin, output: out });
 
@@ -139,7 +147,17 @@ export async function startRepl(deps: ReplDeps): Promise<void> {
     return 'deny';
   };
 
-  const gate = new DefaultPermissionGate({ approver: deps.approver ?? interactiveApprover, policy: deps.policy });
+  let currentBus: InMemoryEventBus | undefined;
+  const selectedApprover = deps.approver ?? interactiveApprover;
+  const observedApprover: Approver = async (request) => {
+    if (currentBus === undefined) return 'deny';
+    return createApprovalEventApprover({
+      approver: selectedApprover,
+      bus: currentBus,
+      sessionId: deps.sessionId,
+    })(request);
+  };
+  const gate = new DefaultPermissionGate({ approver: observedApprover, policy: deps.policy });
 
   // Phase C: with a roster configured, wire the SubagentManager and register the `task` delegate
   // tool. Children REUSE this gate (write/bash inside a child still gets approved), run on a strictly
@@ -184,20 +202,25 @@ export async function startRepl(deps: ReplDeps): Promise<void> {
       // Persist the user turn immediately so it survives even if the run errors before its own sync.
       await deps.store?.sync(messages);
 
-      const bus = new InMemoryEventBus();
+      const bus = new InMemoryEventBus(deps.agentEvents === undefined ? undefined : (err) => { throw err; });
+      currentBus = bus;
       let rstate = initialRenderState();
       const unsubscribe = bus.subscribe((event) => {
         const { output, state } = renderEvent(rstate, event);
         rstate = state;
         if (output) out.write(output);
       });
+      const unsubscribeAgentEvents = deps.agentEvents === undefined
+        ? undefined
+        : bus.subscribe((event) => deps.agentEvents?.accept(event));
 
       activeRun = new AbortController();
       try {
-        await runAgent({
+        const outcome = await runAgent({
           model: deps.model,
           tools: deps.tools,
           bus,
+          sessionId: deps.sessionId,
           messages,
           toolCtx: { cwd: deps.cwd },
           budget: { maxTurns: deps.maxTurns },
@@ -208,14 +231,41 @@ export async function startRepl(deps: ReplDeps): Promise<void> {
           systemAddendum: deps.skills?.systemAddendum(text),
           signal: activeRun.signal,
         });
+        if (deps.singlePrompt) {
+          const exitCode = exitCodeForRun(outcome);
+          deps.agentEvents?.runFinished({
+            status: outcome.finalText !== undefined
+              ? 'completed'
+              : outcome.halted === 'turnTimeout'
+                ? 'failed'
+              : outcome.halted === 'toolExecutionUnknown'
+                ? 'needs-human'
+                : 'blocked',
+            exitCode,
+            completion: { granted: false, authority: 'none' },
+          });
+          return exitCode;
+        }
       } catch (err) {
+        const interrupted = activeRun.signal.aborted;
         out.write(
-          activeRun.signal.aborted
+          interrupted
             ? '\n  · (已中断)\n'
             : `\n  · 出错: ${safeInline(err instanceof Error ? err.message : String(err))}\n`,
         );
+        if (deps.singlePrompt) {
+          const exitCode = interrupted ? CLI_EXIT.INTERRUPTED : CLI_EXIT.RUNTIME;
+          deps.agentEvents?.runFinished({
+            status: interrupted ? 'interrupted' : 'failed',
+            exitCode,
+            completion: { granted: false, authority: 'none' },
+          });
+          return exitCode;
+        }
       } finally {
+        unsubscribeAgentEvents?.();
         unsubscribe();
+        currentBus = undefined;
         activeRun = null;
       }
 

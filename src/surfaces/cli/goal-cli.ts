@@ -59,9 +59,15 @@ import { parseGoalArgs } from './goal-args.js';
 import { createInteractiveApprover, readlineApproverIo } from './interactive-approver.js';
 import { loadGoalCliTrustedRequirements } from './goal-trusted-requirements.js';
 import { initialRenderState, renderEvent } from './render.js';
-import { CLI_EXIT, exitCodeForGoal } from './exit-codes.js';
+import { CLI_EXIT } from './exit-codes.js';
 import { decideGitTrust } from './git-trust.js';
 import { JARVIS_VERSION } from './package-info.js';
+import {
+  createProcessAgentEventWriter,
+  goalRunFinished,
+  isHeadlessAgentEventMode,
+  scrubHeadlessAgentEventEnv,
+} from './headless-events.js';
 
 // Capture BEFORE the runtime .env load: a key present here came from the shell LAUNCH env (it is in
 // /proc/<pid>/environ on Linux); a key that appears only after loadEnvFile came from .env (runtime-
@@ -88,6 +94,7 @@ const BUILDER_PROMPT = [
 ].join('\n');
 
 async function main(): Promise<void> {
+  const headless = isHeadlessAgentEventMode();
   let args;
   try {
     args = parseGoalArgs(process.argv.slice(2));
@@ -163,7 +170,15 @@ async function main(): Promise<void> {
 
   const id = new Date().toISOString().replace(/[:.]/g, '-');
   const sessionId = `goal-${id}`;
-  const bus = new InMemoryEventBus();
+  const agentEvents = createProcessAgentEventWriter({
+    invocationId: id,
+    defaultSessionId: sessionId,
+    root: 'goal',
+    cwd,
+  });
+  if (headless) scrubHeadlessAgentEventEnv();
+  const bus = new InMemoryEventBus(agentEvents === undefined ? undefined : (err) => { throw err; });
+  if (agentEvents !== undefined) bus.subscribe((event) => agentEvents.accept(event));
   let rstate = initialRenderState();
   bus.subscribe((e: Event) => {
     const { output, state } = renderEvent(rstate, e);
@@ -171,13 +186,15 @@ async function main(): Promise<void> {
     if (output) process.stdout.write(output);
   });
 
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const rl = headless ? undefined : createInterface({ input: process.stdin, output: process.stdout });
   // The same interactive approver the loop uses (interactive-approver.ts): renders detailOf +
   // [a]/[s]/[d] (so a network `vision` call is approved KNOWING which image leaves the machine) and
   // now exposes `s` (allow-session) — command-scoped for bash, so approving a shell command once
   // stops re-asking that exact command for the rest of this goal run. Blank/unrecognized re-asks;
   // EOF or exhausted retries → deny (fail-closed).
-  const interactiveApprover: Approver = createInteractiveApprover(readlineApproverIo(rl));
+  const interactiveApprover: Approver = headless
+    ? async () => 'deny'
+    : createInteractiveApprover(readlineApproverIo(rl!));
   const approver: Approver = createApprovalEventApprover({
     approver: interactiveApprover,
     bus,
@@ -198,7 +215,7 @@ async function main(): Promise<void> {
       '[goal] No usable Git baseline was found. Autonomous goal mode requires Git for tamper detection. ' +
         'Initialize/commit the repository, or rerun with --allow-no-git to accept a checks-only result.',
     );
-    rl.close();
+    rl?.close();
     emergencyStop.dispose();
     process.exitCode = CLI_EXIT.USAGE;
     return;
@@ -219,12 +236,13 @@ async function main(): Promise<void> {
     composition: createSessionComposition({
       root: 'goal',
       runtimeVersion: JARVIS_VERSION,
-      permissionMode: 'interactive',
+      permissionMode: headless ? 'unattended' : 'interactive',
       toolSchemas: [...tools.schemasForModel(), updateGoalToolSchema()],
       systemPrompt: BUILDER_PROMPT,
       dynamicAddendum: NO_DYNAMIC_ADDENDUM,
     }),
   });
+  agentEvents?.sessionStarted({ sessionId, resumed: false, model: config.model });
 
   // Leg 3 (independent LLM judge): enabled only when ARK_VERIFIER_MODEL names a DIFFERENT model. When
   // enabled, derive the pinned requirement list once (builder model) and fail closed if it comes back
@@ -244,9 +262,14 @@ async function main(): Promise<void> {
     pinned = await derivePinnedRequirements(objective, provider, emergencyStop.signal);
     if (emergencyStop.signal.aborted) {
       console.error('[goal] emergency stop requested before builder started; no new agent action will run.');
-      rl.close();
+      rl?.close();
       emergencyStop.dispose();
       process.exitCode = CLI_EXIT.INTERRUPTED;
+      agentEvents?.runFinished({
+        status: 'interrupted',
+        exitCode: CLI_EXIT.INTERRUPTED,
+        completion: { granted: false, authority: 'none' },
+      });
       return;
     }
     if (pinned.length === 0) {
@@ -254,9 +277,14 @@ async function main(): Promise<void> {
         '[goal] 腿3 已启用但未能从目标推导出验收清单(pinned requirements 为空)。\n' +
           '没有可逐条打分的清单,verified 不可达——拒绝启动,避免空烧预算。请把目标写得更具体后重试。',
       );
-      rl.close();
+      rl?.close();
       emergencyStop.dispose();
       process.exitCode = CLI_EXIT.UNVERIFIED;
+      agentEvents?.runFinished({
+        status: 'unverified',
+        exitCode: CLI_EXIT.UNVERIFIED,
+        completion: { granted: false, authority: 'none' },
+      });
       return;
     }
   }
@@ -361,13 +389,23 @@ async function main(): Promise<void> {
       bus.emit({ type: 'halt', reason: 'emergency-stop' });
       console.error('\n[goal] emergency stop requested; run aborted and JSONL logs were left in place.');
       process.exitCode = CLI_EXIT.INTERRUPTED;
+      agentEvents?.runFinished({
+        status: 'interrupted',
+        exitCode: CLI_EXIT.INTERRUPTED,
+        completion: { granted: false, authority: 'none' },
+      });
       return;
     }
+    agentEvents?.runFinished({
+      status: 'failed',
+      exitCode: CLI_EXIT.RUNTIME,
+      completion: { granted: false, authority: 'none' },
+    });
     throw err;
   } finally {
     emergencyStop.dispose();
     await runAdvisoryHook(hooks?.sessionEnd);
-    rl.close();
+    rl?.close();
   }
 
   const verdict = result.finalVerdict?.outcome ?? '—';
@@ -387,11 +425,13 @@ async function main(): Promise<void> {
       sessionLogPath: safeInline(sessionLogPath),
     })) console.log(line);
   }
-  process.exitCode = exitCodeForGoal({
+  const terminal = goalRunFinished({
     state: result.state,
     outcome: result.finalVerdict?.outcome,
     haltReason: result.haltReason,
   });
+  process.exitCode = terminal.exitCode;
+  agentEvents?.runFinished(terminal);
 }
 
 /**

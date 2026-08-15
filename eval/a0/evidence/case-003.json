@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "caseId": "case-003",
+  "objective": "Determine whether a completion claim is supported when canonical checks pass after a test file was weakened or deleted.",
+  "claim": "The goal is complete because the visible project checks are green.",
+  "facts": [
+    {
+      "path": "test/capabilities/goal/goal-loop.test.ts",
+      "selector": "does NOT complete when tests were tampered",
+      "observation": "The fixture combines a completion claim with testTamper=weakened-or-deleted and asserts a non-complete result."
+    },
+    {
+      "path": "src/capabilities/goal/verdict.ts",
+      "selector": "testTamper",
+      "observation": "The pure verdict path treats weakened-or-deleted evidence as a rejection condition."
+    }
+  ],
+  "limitations": []
+}

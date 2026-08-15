@@ -5,12 +5,26 @@ describe('loop CLI unattended worktree write wiring', () => {
   it('injects the write root only into per-goal parallel gates', async () => {
     const source = await readFile('src/surfaces/cli/loop-cli.ts', 'utf8');
 
-    expect(source).toContain('const gate = new DefaultPermissionGate({ approver })');
-    expect(source).toContain('const goalGate = parallelMode');
-    expect(source).toContain('goalWorktreeWriteRoot: unattended ? goalCwd : undefined');
-    expect(source).toContain('gate: goalGate');
-    expect(source).toContain('cwd: goalCwd');
-    expect(source.indexOf('const goalGate = parallelMode')).toBeGreaterThan(source.indexOf('const goalCwd = await goalCwdFor'));
-    expect(source.indexOf('goalWorktreeWriteRoot: unattended ? goalCwd : undefined')).toBeLessThan(source.indexOf('gate: goalGate'));
+    const sharedGate = source.indexOf('const gate = new DefaultPermissionGate({ approver })');
+    const goalCwd = source.indexOf('const goalCwd = await goalCwdFor');
+    const goalGate = source.indexOf('const goalGate = headless');
+    const headlessApprover = source.indexOf('approver: createApprovalEventApprover({', goalGate);
+    const headlessSession = source.indexOf('sessionId: goalId', headlessApprover);
+    const parallelGate = source.indexOf(': parallelMode', goalGate);
+    const worktreeWriteRoot = source.indexOf('goalWorktreeWriteRoot: effectiveUnattended ? goalCwd : undefined', parallelGate);
+    const runGoalGate = source.indexOf('gate: goalGate');
+    const goalRunCwd = source.indexOf('cwd: goalCwd');
+
+    for (const index of [
+      sharedGate, goalCwd, goalGate, headlessApprover, headlessSession,
+      parallelGate, worktreeWriteRoot, runGoalGate, goalRunCwd,
+    ]) {
+      expect(index).toBeGreaterThanOrEqual(0);
+    }
+    expect(goalGate).toBeGreaterThan(goalCwd);
+    expect(headlessApprover).toBeGreaterThan(goalGate);
+    expect(headlessSession).toBeGreaterThan(headlessApprover);
+    expect(worktreeWriteRoot).toBeGreaterThan(parallelGate);
+    expect(goalGate).toBeLessThan(runGoalGate);
   });
 });

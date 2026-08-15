@@ -48,6 +48,9 @@ export interface AgentContext {
   model: ModelProvider;
   tools: ToolRegistry;
   bus: EventBus;
+  /** Stable session identity for lifecycle-only EventBus records. Omitted by callers that do not
+   *  persist or expose a session. Never derived from model output. */
+  sessionId?: string;
   /** Seeded with system + user messages by the caller; mutated in place across turns so the
    *  growing conversation (assistant turns + tool results) round-trips to the model. */
   messages: Message[];
@@ -120,6 +123,7 @@ export async function runAgent(ctx: AgentContext): Promise<RunOutcome> {
       let res: ModelResult;
       const request = modelRequestSnapshot(ctx);
       const requestId = runId ? randomUUID() : undefined;
+      const modelRunId = randomUUID();
       try {
         if (requestId && runId) {
           await ctx.store?.recordRequest?.(createModelRequestReceipt({
@@ -132,17 +136,48 @@ export async function runAgent(ctx: AgentContext): Promise<RunOutcome> {
           }));
           throwIfAborted(ctx.signal);
         }
+        ctx.bus.emit({
+          type: 'model_started',
+          sessionId: ctx.sessionId,
+          modelRunId,
+          requestId,
+          turn,
+          messageCount: request.messages.length,
+          toolSchemaCount: request.tools.length,
+        });
         res = await streamTurn(ctx, request);
       } catch (err) {
         if (err instanceof ModelTurnTimeoutError) {
+          ctx.bus.emit({
+            type: 'model_finished', sessionId: ctx.sessionId, modelRunId, requestId, turn,
+            status: 'timed-out',
+          });
           roundEndStarted = true;
           await runAdvisoryHook(ctx.hooks?.roundEnd, ctx.signal);
           throwIfAborted(ctx.signal);
           ctx.bus.emit({ type: 'halt', reason: 'turnTimeout', timeoutMs: err.timeoutMs });
           return { halted: 'turnTimeout', turns: turn + 1, timeoutMs: err.timeoutMs };
         }
+        ctx.bus.emit({
+          type: 'model_finished', sessionId: ctx.sessionId, modelRunId, requestId, turn,
+          status: ctx.signal?.aborted ? 'interrupted' : 'failed',
+        });
         throw err;
       }
+
+      const stop = decideStop(res);
+      ctx.bus.emit({
+        type: 'model_finished',
+        sessionId: ctx.sessionId,
+        modelRunId,
+        requestId,
+        turn,
+        status: stop.done && stop.reason === 'halt' ? 'halted' : 'completed',
+        finishReason: res.finishReason,
+        rawFinishReason: res.rawFinishReason,
+        inputTokens: res.usage.inputTokens,
+        outputTokens: res.usage.outputTokens,
+      });
       throwIfAborted(ctx.signal);
 
       // The model's own token report for this turn (never estimated).
@@ -152,7 +187,6 @@ export async function runAgent(ctx: AgentContext): Promise<RunOutcome> {
         outputTokens: res.usage.outputTokens,
       });
 
-      const stop = decideStop(res);
       // Record the assistant turn before any matching tool messages. When a
       // contradictory/abnormal finish carried partial calls, strip those calls
       // from the replayable conversation: they were deliberately not dispatched,
@@ -200,21 +234,41 @@ export async function runAgent(ctx: AgentContext): Promise<RunOutcome> {
           await ctx.store?.recordToolPlanned?.(plan);
           throwIfAborted(ctx.signal);
         }
+        ctx.bus.emit({
+          type: 'tool_execution_started',
+          sessionId: ctx.sessionId,
+          modelRunId,
+          requestId,
+          executionId,
+          toolCallId: call.id,
+          toolName: call.name,
+        });
         ctx.bus.emit({ type: 'tool_call', call });
         // Gate the call BEFORE the side effect (B1) — the seam A2 deliberately left here. A denied
         // call never reaches the tool; its reason becomes the result so the model can change course.
         // gatedRun also collects any PostToolUse hook output into `postFeedbacks` (advisory, additive).
         let ran: ToolResult;
+        let denied = false;
         try {
-          ran = await gatedRun(ctx, call);
+          const gated = await gatedRun(ctx, call);
+          ran = gated.result;
+          denied = gated.denied;
+          throwIfAborted(ctx.signal);
         } catch (err) {
           if (plan) await recordUnknownBestEffort(ctx.store, plan, err);
+          ctx.bus.emit({
+            type: 'tool_execution_finished', sessionId: ctx.sessionId, modelRunId, requestId,
+            executionId, toolCallId: call.id, toolName: call.name, outcome: 'unknown',
+          });
           throw err;
         }
-        throwIfAborted(ctx.signal);
         if (isUnknownToolExecution(ran)) {
           const reason = ran.error ?? `Tool ${call.name} returned an unknown execution state`;
           if (plan) await recordUnknownBestEffort(ctx.store, plan, reason);
+          ctx.bus.emit({
+            type: 'tool_execution_finished', sessionId: ctx.sessionId, modelRunId, requestId,
+            executionId, toolCallId: call.id, toolName: call.name, outcome: 'unknown',
+          });
           roundEndStarted = true;
           await runAdvisoryHook(ctx.hooks?.roundEnd, ctx.signal);
           throwIfAborted(ctx.signal);
@@ -235,9 +289,23 @@ export async function runAgent(ctx: AgentContext): Promise<RunOutcome> {
             });
           } catch (err) {
             await recordUnknownBestEffort(ctx.store, plan, err);
+            ctx.bus.emit({
+              type: 'tool_execution_finished', sessionId: ctx.sessionId, modelRunId, requestId,
+              executionId, toolCallId: call.id, toolName: call.name, outcome: 'unknown',
+            });
             throw err;
           }
         }
+        ctx.bus.emit({
+          type: 'tool_execution_finished',
+          sessionId: ctx.sessionId,
+          modelRunId,
+          requestId,
+          executionId,
+          toolCallId: call.id,
+          toolName: call.name,
+          outcome: denied ? 'denied' : ran.error === undefined ? 'committed' : 'failed',
+        });
         await runPostToolHook(ctx, call, ran, postFeedbacks);
         throwIfAborted(ctx.signal);
         // Budget oversized output to disk BEFORE it enters the context (A3); a no-op without
@@ -487,7 +555,7 @@ function postFeedbackMessage(feedbacks: PostFeedback[]): string {
  *  Order is the safety contract: the gate's hard checks decide FIRST — a gate deny returns before
  *  hooks are consulted, so a PreToolUse hook can never unlock it (it can only block a call the gate
  *  already allowed; fail-closed). PostToolUse runs after the side effect, advisory only. */
-async function gatedRun(ctx: AgentContext, call: ToolCall): Promise<ToolResult> {
+async function gatedRun(ctx: AgentContext, call: ToolCall): Promise<{ result: ToolResult; denied: boolean }> {
   throwIfAborted(ctx.signal);
   // Pass the turn's abort signal so a long-running tool (bash) can be cancelled on Ctrl-C.
   const runCtx = ctx.signal ? { ...ctx.toolCtx, signal: ctx.signal } : ctx.toolCtx;
@@ -500,20 +568,24 @@ async function gatedRun(ctx: AgentContext, call: ToolCall): Promise<ToolResult> 
   if (ctx.gate) {
     const verdict = await ctx.gate.check(call, capability);
     throwIfAborted(ctx.signal);
-    if (!verdict.allowed) return { callId: call.id, content: '', error: `Permission denied: ${verdict.reason}` };
+    if (!verdict.allowed) {
+      return { result: { callId: call.id, content: '', error: `Permission denied: ${verdict.reason}` }, denied: true };
+    }
   }
   // PreToolUse hooks run only on a gate-allowed call and can ONLY block (fail-closed), never allow.
   if (ctx.hooks) {
     const pre = await ctx.hooks.preToolUse(call, capability);
     throwIfAborted(ctx.signal);
-    if (pre.blocked) return { callId: call.id, content: '', error: `Permission denied: ${pre.reason}` };
+    if (pre.blocked) {
+      return { result: { callId: call.id, content: '', error: `Permission denied: ${pre.reason}` }, denied: true };
+    }
   }
 
   throwIfAborted(ctx.signal);
   const result = await ctx.tools.run(call, runCtx);
   throwIfAborted(ctx.signal);
 
-  return result;
+  return { result, denied: false };
 }
 
 function isUnknownToolExecution(result: ToolResult): boolean {
