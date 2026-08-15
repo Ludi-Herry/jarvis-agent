@@ -8,7 +8,7 @@
 |---|---|---|
 | DeepSeek Harness、Cordis、Pi、dsh-slice 的采用边界 | 有条件 GO | 只吸收轨迹、Recall、Preset 心智和评测方法；不接入外部 runtime |
 | R0 / R0.5 可信性实现 | GO | R0.5 独立终审第三轮 P0=0、P1=0、P2=0；sessions 与动态恢复独立提交门终审 P0=0、P1=0、P2=0、P3=1；全量检查为 119 files / 1334 passed / 2 skipped |
-| 直接发布 v0.1 CLI beta | NO-GO | 机器事件协议与 A0 冻结 corpus 已闭环；A0 runner/真实运行、Recall、typed config、完整 Windows 契约与真实任务证据仍未闭环 |
+| 直接发布 v0.1 CLI beta | NO-GO | 机器事件协议、A0 冻结 corpus 与当前 Session Recall 实现已闭环；A0 runner/真实运行、Recall A/B、typed config、完整 Windows 契约与真实任务证据仍未闭环 |
 | 全屏 TUI、checkpoint/rewind | 保留在 v0.2 | 依赖稳定的 Session、事件、权限和恢复语义 |
 
 Sol Pro 原始回答最重要的价值，是把“文件写入成功”和“崩溃后能安全恢复”提升到发布前信任门槛。这个判断已经落实到 R0.5；此前完成的 verdict、deadline、退出码和 JSONL integrity 无需重开。
@@ -85,11 +85,12 @@ R0、R0.5 与统一 CLI 改动共享 SessionStore、runAgent、CLI composition r
 3. [x] 收口动态 composition/addendum 的 resume 比较、来源展示与可行动提示。
 4. [x] 冻结 versioned headless JSONL、A0 strict types、六案 corpus 与纯 report；代码提交 `b5588ff`，提交门及 P2 窄复核 GO（P0=0、P1=0、P2=0、P3=1）。
 5. [ ] 实现 A0 只读 runner，并生成不可变 model/prompt policy manifest 与 observations artifact。
-6. [ ] 增加当前 Session 的 `history_search/history_turn`，跑 Recall 开关对照。
-7. 增加 typed config、有效来源展示与 `inspect/safe`。
-8. 运行 10–20 个真实同形任务，要求零 false-verified、零无限等待、零 orphan side effect。
-9. v0.2 开发全屏 TUI、`fork-context`、用户 checkpoint 与受控文件 restore。
-10. A0 稳定后再做 DeepSeek V4 Provider opt-in spike。
+6. [x] 增加 REPL 当前 Session 的 `history_search/history_turn`；host-bound、append-only、bounded、historical-low，`--no-recall` 保留旧 composition exact resume。代码提交 `81f96e0`，独立提交门 GO（P0=0、P1=0、P2=0、P3=1）。
+7. [ ] 用 Recall 开关跑同形对照；当前 fixture/E2E 只证明合同与隔离，尚未证明任务收益。
+8. 增加 typed config、有效来源展示与 `inspect/safe`。
+9. 运行 10–20 个真实同形任务，要求零 false-verified、零无限等待、零 orphan side effect。
+10. v0.2 开发全屏 TUI、`fork-context`、用户 checkpoint 与受控文件 restore。
+11. A0 稳定后再做 DeepSeek V4 Provider opt-in spike。
 
 权威计划见 `docs/cli-first-plan.md`；ZCode/GLM-5.3 的有界任务包见 `docs/handoff-zcode-glm53.md`。
 

@@ -133,7 +133,7 @@ rename、fork、archive 属写状态能力，必须等只读切片稳定后另�
 
 - [x] 实际 exact-session resume 的 dynamic skill/system addendum provenance、composition diff 与 fail-closed UX。
 - [x] headless agent-event JSONL 的权威字段、终态映射、退出码和 A0 冻结。
-- `history_search/history_turn` 的历史低权威、Prompt Injection、陈旧文件重读和 verdict/permission 隔离。
+- [x] `history_search/history_turn` 的历史低权威、Prompt Injection、陈旧文件重读和 verdict/permission 隔离；首版限定 REPL `run/resume`，goal/loop 保持原 composition。代码提交 `81f96e0`，独立提交门 GO（P0=0、P1=0、P2=0、P3=1）。
 - typed config 的 precedence、项目层只收紧、凭据隔离与 `inspect/safe` 权限语义。
 - checkpoint、`fork-context`、受控文件 restore 与不可逆副作用说明。
 - 全屏 TUI 的 interrupt/redirect/approval 状态机和 line/headless 回退。
