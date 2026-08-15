@@ -85,7 +85,7 @@ Sessions 与动态恢复切片（2026-08-15）已完成：
 - [x] 根 `jarvis --cwd`、latest discovery 与 resolver 后二次读取共用同一错误分类；EACCES、EPERM、EIO 均有命令层或确定性触发测试。latest 目录枚举/条目消失、actual resume 二次读取、junction/canonical escape 与 loop 参数/map/resume/fatal 控制字符都有生产接线覆盖。
 - [x] 本切片的路径保证覆盖静态 symlink/junction/reparse 与 canonical escape。恶意同用户进程在校验和读取之间主动替换路径仍超出保证；Session 当前也没有跨进程 writer lock 或密码学真实性。hostile concurrent local writer 进入支持的威胁模型后，再评估 file-handle binding。
 
-仍待 v0.1 关键切片：一条 versioned headless JSONL agent-event contract、A0、当前 Session 两级 Recall、typed config 与 `inspect/safe`、完整 Windows 契约和 10–20 个真实任务。当前 package bin 由锁定的 runtime `tsx@4.22.4` 启动源码；packed artifact 已在 Windows 空格路径下用 `--omit=dev` 安装，`jarvis --help`、`--version`、`status --json` 全部 exit 0。纯编译 bin、stop/review/completion、其余 sessions mutation 与更多 preset 属后续产品化；已有 `dist/` 保持不动。
+仍待 v0.1 关键切片：A0 只读 runner 与真实运行、当前 Session 两级 Recall、typed config 与 `inspect/safe`、完整 Windows 契约和 10–20 个真实任务。versioned headless JSONL agent-event v1、严格 A0 类型、六案冻结 corpus 与纯 report 已完成。当前 package bin 由锁定的 runtime `tsx@4.22.4` 启动源码；packed artifact 已在 Windows 空格路径下用 `--omit=dev` 安装，`jarvis --help`、`--version`、`status --json` 全部 exit 0。纯编译 bin、stop/review/completion、其余 sessions mutation 与更多 preset 属后续产品化；被忽略的 `dist/` 已在本轮误覆盖，现保持原样，未经授权不再清理或重建。
 
 - 单一 `jarvis` executable 与命令树：`run`、`goal`、`loop`、`resume`、`status`、`doctor`、`config` 为根帮助高频项；help/version/global flags 与旧入口退出码统一，版本读取 `package.json`。
 - 会话：v0.1 已交付只读 `sessions list|show`，实际 exact-session resume 会显示 cwd、模型、composition diff、pending effect 和停止原因；search/rename/fork/archive 分切片后移。
@@ -140,12 +140,14 @@ R1 交付顺序：
 
 1. [x] 只读 `sessions list|show`；实现边界见 `docs/handoff-zcode-glm53.md`。
 2. [x] 收口 exact-session resume 的 dynamic composition/addendum 比较、来源展示和 fail-closed 提示。
-3. [ ] 固定 versioned headless JSONL agent-event contract 并冻结 A0 基线；现有人类 text 继续保留。
+3. [x] 固定 versioned headless JSONL agent-event contract、六案 label-blind A0 corpus 与纯 report；现有人类 text 继续保留，A0 真实运行仍单列验收。
 4. [ ] 在当前 Session 增加 `history_search` / `history_turn`，以 Recall 开关的同形任务做对照。
 5. [ ] 实现 typed config、有效来源展示与 `inspect` / `safe`；`maintain` / `worktree` 等 A0 后再决定。
 6. [ ] 跑 10–20 个真实同形任务，要求零 false-verified、零无限等待、零 orphan side effect。
 
 本切片检查（2026-08-15）：聚焦测试 12 files / 183 passed；`npm run typecheck`、`npm run lint`、`npm run build -- --noEmit`、`npm test` 全绿；全量测试为 119 files / 1334 passed / 2 skipped。独立提交门终审为 GO（P0=0、P1=0、P2=0、P3=1）；P3 是已记录的 hostile same-user check-to-read 并发替换窗口，不阻断当前威胁模型下的提交。代码提交为 `a814889`。已有 `dist/` 保持不动。
+
+Headless/A0 实现检查（2026-08-15）：authenticated child-to-root framing 只把 v1 agent-event JSONL 写到 stdout，人类文本以 inert diagnostics 进入 stderr；64 KiB frame 上限、stdout backpressure、partial/forged frame、bounded child termination 和 loop ask-deny 顺序均有真实触发测试。run/goal/loop 在 headless 下 fail-closed，只有实际 `decideVerdict` 的 goal `complete/verified` 可声明完成。A0 corpus 经 fresh Reviewer 独立定标 GO（P0/P1/P2=0），严格 parser、evidence SHA-256、11 个 selector、label-blind、tampered park miss 与 Windows evidence path 边界均有测试。聚焦测试为 10 files / 195 passed；`typecheck`、`lint`、`npm run build -- --noEmit` 与全量 `npm test` 已通过，当前全量为 122 files / 1385 passed / 2 skipped；提交门红队终审及 P2 窄复核均为 GO（P0=0、P1=0、P2=0、P3=1），代码提交为 `b5588ff`。真实 A0 attempts 和 10–20 个同形任务未由 fixtures 替代。本轮 transport 子任务误跑 emit build，已在 2026-08-15 17:46 覆盖被忽略的 `dist/`；旧字节无法从 Git 恢复，后续保持现状，未经授权不再清理或重建。
 
 Recall 保持 Jarvis 原生实现，读取现有 Session JSONL，不引入 DSH/Cordis runtime、第二个事件总线或会话数据库。A0 对照至少比较 verified rate、false-verified、峰值输入、总成本、p95、Recall 精度、额外工具轮次和恢复成功率；只有显式 Recall 仍解决不了长会话问题时，才评估 bounded slice 原型。
 
