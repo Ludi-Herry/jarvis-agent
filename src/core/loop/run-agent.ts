@@ -82,6 +82,10 @@ export interface AgentContext {
    *  appended to an append-only log (and a compaction is checkpointed) so the session can be
    *  resumed after a crash/exit. Absent → nothing is persisted (the pre-persistence behavior). */
   store?: SessionStore;
+  /** Optional durable checkpoint boundary. It runs after the canonical message
+   * prefix is synced and before hooks, request receipts, lifecycle events, or
+   * provider I/O. A rejection stops the model wave fail-closed. */
+  beforeModelWave?: (messages: readonly Message[]) => Promise<void>;
   /** Optional per-run system addendum (A5): skill catalog + any activated skill bodies,
    *  folded into the system message at send time only — never stored in `messages`, so it
    *  refreshes each run and is never compacted. */
@@ -116,6 +120,8 @@ export async function runAgent(ctx: AgentContext): Promise<RunOutcome> {
     // Persist the exact canonical input prefix before hooks or provider I/O. Goal
     // roots rely on this to make their initial system/objective crash-recoverable.
     await ctx.store?.sync(ctx.messages);
+    throwIfAborted(ctx.signal);
+    await ctx.beforeModelWave?.(ctx.messages);
     throwIfAborted(ctx.signal);
     await runAdvisoryHook(ctx.hooks?.roundStart, ctx.signal);
     let roundEndStarted = false;

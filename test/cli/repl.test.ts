@@ -96,6 +96,63 @@ afterEach(async () => {
 });
 
 describe('startRepl', () => {
+  it('captures the durable prefix before a user prompt and again before provider I/O', async () => {
+    const captures: Array<{ phase: string; contents: string[] }> = [];
+    const { provider } = fakeModel([{ text: 'done' }]);
+
+    await startRepl({
+      model: provider,
+      tools: new InMemoryToolRegistry(),
+      cwd: dir,
+      modelName: 'fake-model',
+      systemPrompt: 'SYS',
+      maxTurns: 1,
+      input: inputOf(['question']),
+      output: sink().stream,
+      checkpoints: {
+        capture: async (phase, messages) => {
+          captures.push({
+            phase,
+            contents: messages.map((message) => 'content' in message ? message.content ?? '' : ''),
+          });
+          return { checkpointId: `cp-${phase}` };
+        },
+      },
+    });
+
+    expect(captures).toEqual([
+      { phase: 'before-user-prompt', contents: ['SYS'] },
+      { phase: 'before-model-wave', contents: ['SYS', 'question'] },
+    ]);
+  });
+
+  it('creates a manual checkpoint without sending a model request', async () => {
+    const manual: string[] = [];
+    const model = fakeModel([{ text: 'must not run' }]);
+    const out = sink();
+
+    await startRepl({
+      model: model.provider,
+      tools: new InMemoryToolRegistry(),
+      cwd: dir,
+      modelName: 'fake-model',
+      systemPrompt: 'SYS',
+      maxTurns: 1,
+      input: inputOf(['/checkpoint', '/exit']),
+      output: out.stream,
+      checkpoints: {
+        capture: async (phase) => {
+          manual.push(phase);
+          return { checkpointId: 'cp-manual' };
+        },
+      },
+    });
+
+    expect(manual).toEqual(['manual']);
+    expect(model.seen).toEqual([]);
+    expect(out.text()).toContain('cp-manual');
+  });
+
   it('runs one headless prompt, emits a terminal event, and never grants conversational completion', async () => {
     const lines: string[] = [];
     const writer = new AgentEventWriter({

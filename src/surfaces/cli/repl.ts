@@ -24,6 +24,7 @@ import { runAgent } from '../../core/loop/run-agent.js';
 import { InMemoryEventBus } from '../../runtime/event-bus.js';
 import { DefaultPermissionGate, type Approver, type PermissionPolicy } from '../../runtime/permission/index.js';
 import type { SessionStore } from '../../runtime/session/index.js';
+import type { CheckpointPhase } from '../../runtime/checkpoint/index.js';
 import type { AgentEventWriter } from '../../runtime/agent-events.js';
 import {
   SubagentManager,
@@ -64,6 +65,8 @@ export interface ReplDeps {
   hooks?: HookRunner;
   /** Session store (persistence): when present, turns are logged so the session can be resumed. */
   store?: SessionStore;
+  /** Checkpoint controller bound to the current v2 Session. */
+  checkpoints?: ReplCheckpointController;
   /** Seed the conversation from a resumed session. When absent/empty, a fresh system prompt is used. */
   initialMessages?: Message[];
   /** Optional first prompt supplied by `jarvis run <prompt>` before interactive input begins. */
@@ -75,6 +78,13 @@ export interface ReplDeps {
   singlePrompt?: boolean;
   input?: NodeJS.ReadableStream;
   output?: NodeJS.WritableStream;
+}
+
+export interface ReplCheckpointController {
+  capture(
+    phase: CheckpointPhase,
+    messages: readonly Message[],
+  ): Promise<{ checkpointId: string }>;
 }
 
 /** How many unrecognized approval answers to tolerate before failing closed (deny). */
@@ -188,7 +198,7 @@ export async function startRepl(deps: ReplDeps): Promise<CliExitCode | undefined
 
   await runAdvisoryHook(deps.hooks?.sessionStart);
   try {
-    out.write(`Jarvis-Agent · ${safeInline(deps.modelName)}\n输入消息,Ctrl-C 退出(/exit 也可)\n\n`);
+    out.write(`Jarvis-Agent · ${safeInline(deps.modelName)}\n输入消息,Ctrl-C 退出(/exit 也可；/checkpoint 手动打点)\n\n`);
 
     for (;;) {
       out.write('› ');
@@ -197,6 +207,38 @@ export async function startRepl(deps: ReplDeps): Promise<CliExitCode | undefined
       const text = line.trim();
       if (text === '') continue;
       if (text === '/exit' || text === '/quit') break;
+
+      if (text === '/checkpoint') {
+        if (deps.checkpoints === undefined) {
+          out.write('  · checkpoint unavailable for this session\n');
+          continue;
+        }
+        try {
+          await deps.store?.sync(messages);
+          const checkpoint = await deps.checkpoints.capture('manual', messages);
+          out.write(`  · checkpoint ${safeInline(checkpoint.checkpointId)}\n`);
+        } catch (err) {
+          out.write(`  · checkpoint failed: ${safeInline(err instanceof Error ? err.message : String(err))}\n`);
+        }
+        continue;
+      }
+
+      try {
+        // Capture the already-durable prefix before this prompt mutates it.
+        await deps.store?.sync(messages);
+        await deps.checkpoints?.capture('before-user-prompt', messages);
+      } catch (err) {
+        out.write(`  · checkpoint failed: ${safeInline(err instanceof Error ? err.message : String(err))}\n`);
+        if (deps.singlePrompt) {
+          deps.agentEvents?.runFinished({
+            status: 'failed',
+            exitCode: CLI_EXIT.RUNTIME,
+            completion: { granted: false, authority: 'none' },
+          });
+          return CLI_EXIT.RUNTIME;
+        }
+        continue;
+      }
 
       messages.push({ role: 'user', content: text });
       // Persist the user turn immediately so it survives even if the run errors before its own sync.
@@ -216,6 +258,7 @@ export async function startRepl(deps: ReplDeps): Promise<CliExitCode | undefined
 
       activeRun = new AbortController();
       try {
+        const checkpointController = deps.checkpoints;
         const outcome = await runAgent({
           model: deps.model,
           tools: deps.tools,
@@ -228,6 +271,13 @@ export async function startRepl(deps: ReplDeps): Promise<CliExitCode | undefined
           gate,
           hooks: deps.hooks,
           store: deps.store,
+          ...(checkpointController === undefined
+            ? {}
+            : {
+                beforeModelWave: async (current) => {
+                  await checkpointController.capture('before-model-wave', current);
+                },
+              }),
           systemAddendum: deps.skills?.systemAddendum(text),
           signal: activeRun.signal,
         });

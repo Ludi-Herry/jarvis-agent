@@ -1,8 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { link, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ShadowGit } from '../../../src/capabilities/shadow/shadow-git.js';
+import {
+  ShadowGit,
+  validateShadowRestorePath,
+} from '../../../src/capabilities/shadow/shadow-git.js';
 import { defaultShellPath, runCommand, type ExecResult } from '../../../src/core/tools/run-command.js';
 
 const shell = defaultShellPath();
@@ -18,6 +21,81 @@ afterEach(async () => {
 });
 
 describe('ShadowGit — real git round-trip', () => {
+  it('previews and applies a checked restore while retaining a preflight snapshot', async () => {
+    await mkdir(join(dir, 'folder with spaces'), { recursive: true });
+    await writeFile(join(dir, 'folder with spaces', 'a b.txt'), 'v1');
+    const target = await shadow.snapshot('target');
+    expect(target.ok).toBe(true);
+    if (!target.ok) return;
+    await writeFile(join(dir, 'folder with spaces', 'a b.txt'), 'v2');
+    await writeFile(join(dir, 'later-untracked.txt'), 'later');
+
+    const prepared = await shadow.prepareCheckedRestore(target.sha, 'rewind preflight');
+    expect(prepared.ok).toBe(true);
+    if (!prepared.ok) return;
+    expect(prepared.preview.preflightRef).toMatch(/^[0-9a-f]{40}$/u);
+    expect(prepared.preview.changedPaths).toEqual([
+      'folder with spaces/a b.txt',
+      'later-untracked.txt',
+    ]);
+
+    const applied = await shadow.applyCheckedRestore(prepared.preview);
+    expect(applied).toEqual({ ok: true, preflightRef: prepared.preview.preflightRef });
+    expect(await readFile(join(dir, 'folder with spaces', 'a b.txt'), 'utf8')).toBe('v1');
+    await expect(readFile(join(dir, 'later-untracked.txt'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+  }, 20_000);
+
+  it('rejects worktree drift after preview before changing any file', async () => {
+    await writeFile(join(dir, 'a.txt'), 'target');
+    const target = await shadow.snapshot('target');
+    expect(target.ok).toBe(true);
+    if (!target.ok) return;
+    await writeFile(join(dir, 'a.txt'), 'preview');
+    const prepared = await shadow.prepareCheckedRestore(target.sha, 'preflight');
+    expect(prepared.ok).toBe(true);
+    if (!prepared.ok) return;
+    await writeFile(join(dir, 'a.txt'), 'concurrent');
+
+    const applied = await shadow.applyCheckedRestore(prepared.preview);
+    expect(applied).toMatchObject({ ok: false, kind: 'drift' });
+    expect(await readFile(join(dir, 'a.txt'), 'utf8')).toBe('concurrent');
+  }, 20_000);
+
+  it('leaves the preflight worktree intact when checked apply fails and never uses reset --hard', async () => {
+    const commands: string[] = [];
+    const intercept = (async (...args: Parameters<typeof runCommand>) => {
+      const command = args[1];
+      commands.push(command);
+      if (command.includes(' apply --index ')) {
+        return { output: 'injected apply failure', code: 1, timedOut: false, aborted: false, truncated: false };
+      }
+      return runCommand(...args);
+    }) as typeof runCommand;
+    const checked = new ShadowGit({
+      shellPath: shell,
+      cwd: dir,
+      gitDir: join(dir, 'data', 'checked-shadow'),
+      run: intercept,
+    });
+    await writeFile(join(dir, 'a.txt'), 'target');
+    const target = await checked.snapshot('target');
+    expect(target.ok).toBe(true);
+    if (!target.ok) return;
+    await writeFile(join(dir, 'a.txt'), 'preflight');
+    const prepared = await checked.prepareCheckedRestore(target.sha, 'preflight');
+    expect(prepared.ok).toBe(true);
+    if (!prepared.ok) return;
+
+    const applied = await checked.applyCheckedRestore(prepared.preview);
+    expect(applied).toMatchObject({ ok: false, kind: 'apply-failed' });
+    expect(await readFile(join(dir, 'a.txt'), 'utf8')).toBe('preflight');
+    expect(commands.join('\n')).not.toContain('reset --hard');
+    expect(commands.every((command) => command.includes('-c core.hooksPath=/dev/null -c core.fsmonitor=false'))).toBe(true);
+    expect(commands.filter((command) => command.includes(' diff ')).every((command) => (
+      command.includes('--no-ext-diff') && command.includes('--no-textconv')
+    ))).toBe(true);
+  }, 20_000);
+
   it('snapshots changes, logs them, and restores a prior snapshot', async () => {
     await writeFile(join(dir, 'a.txt'), 'v1');
     const first = await shadow.snapshot('first change');
@@ -61,6 +139,53 @@ describe('ShadowGit — real git round-trip', () => {
     expect(files).toContain('tracked.txt');
     expect(files.some((f) => f.startsWith('node_modules/'))).toBe(false);
     expect(files.some((f) => f.startsWith('data/'))).toBe(false);
+  });
+
+  it('refuses a data-directory junction before git can write through it', async () => {
+    const outside = join(dir, 'outside-target');
+    await mkdir(outside);
+    await symlink(outside, join(dir, 'data'), process.platform === 'win32' ? 'junction' : 'dir');
+
+    const result = await shadow.snapshot('must not escape');
+
+    expect(result).toMatchObject({ ok: false });
+    if (!result.ok) expect(result.reason).toMatch(/symbolic link|reparse/u);
+    await expect(readFile(join(outside, 'shadow', 'HEAD'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('refuses a hard-linked shadow config before git can mutate its peer', async () => {
+    const gitDir = join(dir, 'data', 'shadow');
+    const outside = join(dir, 'outside-config');
+    await mkdir(gitDir, { recursive: true });
+    await writeFile(outside, '[core]\n\tbare = false\n', 'utf8');
+    await link(outside, join(gitDir, 'config'));
+
+    const result = await shadow.snapshot('must not cross hardlink');
+
+    expect(result).toMatchObject({ ok: false });
+    if (!result.ok) expect(result.reason).toMatch(/hard link/u);
+    expect(await readFile(outside, 'utf8')).toBe('[core]\n\tbare = false\n');
+  });
+
+  it('replaces untrusted local filter configuration before a later snapshot', async () => {
+    await writeFile(join(dir, 'a.txt'), 'v1');
+    expect((await shadow.snapshot('initial')).ok).toBe(true);
+    const configPath = join(dir, 'data', 'shadow', 'config');
+    await writeFile(configPath, '[core]\n\tbare = false\n[filter "evil"]\n\tclean = echo unsafe\n', 'utf8');
+
+    expect((await shadow.snapshot('sanitized')).ok).toBe(true);
+    expect(await readFile(configPath, 'utf8')).not.toContain('[filter "evil"]');
+  });
+
+  it('refuses to snapshot a regular file with an external hard-link peer', async () => {
+    const outside = join(dir, 'outside-secret');
+    await writeFile(outside, 'secret bytes', 'utf8');
+    await link(outside, join(dir, 'innocent.txt'));
+
+    const result = await shadow.snapshot('hardlink must not be copied');
+
+    expect(result).toMatchObject({ ok: false });
+    if (!result.ok) expect(result.reason).toMatch(/hard link/u);
   });
 
   it('NEVER snapshots secret files (mirrors the harness secret policy, not the project .gitignore)', async () => {
@@ -124,6 +249,129 @@ describe('ShadowGit — real git round-trip', () => {
 
     releaseCommit();
     expect(await handle.done).toEqual({ ok: true, sha: '0123456789abcdef0123456789abcdef01234567' });
+  });
+});
+
+describe('ShadowGit — project-ignored capture (shadow boundary is the harness policy, not the project .gitignore)', () => {
+  it('captures, drift-checks, and restores a project-ignored file', async () => {
+    await writeFile(join(dir, '.gitignore'), '*.log\n', 'utf8');
+    await writeFile(join(dir, 'app.log'), 'v1', 'utf8');
+    const target = await shadow.snapshot('target');
+    expect(target.ok).toBe(true);
+    if (!target.ok) return;
+    await writeFile(join(dir, 'app.log'), 'v2', 'utf8');
+
+    const prepared = await shadow.prepareCheckedRestore(target.sha, 'preflight');
+    expect(prepared.ok).toBe(true);
+    if (!prepared.ok) return;
+    expect(prepared.preview.changedPaths).toContain('app.log');
+
+    const applied = await shadow.applyCheckedRestore(prepared.preview);
+    expect(applied).toMatchObject({ ok: true });
+    expect(await readFile(join(dir, 'app.log'), 'utf8')).toBe('v1');
+  }, 20_000);
+
+  it('captures nested ordinary files inside a project-ignored directory', async () => {
+    await writeFile(join(dir, '.gitignore'), 'logs/\n', 'utf8');
+    await mkdir(join(dir, 'logs', 'nested'), { recursive: true });
+    await writeFile(join(dir, 'logs', 'a.txt'), 'v1', 'utf8');
+    await writeFile(join(dir, 'logs', 'nested', 'b.txt'), 'v1', 'utf8');
+    const target = await shadow.snapshot('target');
+    expect(target.ok).toBe(true);
+    if (!target.ok) return;
+    await writeFile(join(dir, 'logs', 'a.txt'), 'v2', 'utf8');
+    await writeFile(join(dir, 'logs', 'nested', 'b.txt'), 'v2', 'utf8');
+    await writeFile(join(dir, 'logs', 'new.txt'), 'later', 'utf8');
+
+    const prepared = await shadow.prepareCheckedRestore(target.sha, 'preflight');
+    expect(prepared.ok).toBe(true);
+    if (!prepared.ok) return;
+    expect(prepared.preview.changedPaths).toEqual(expect.arrayContaining([
+      'logs/a.txt',
+      'logs/nested/b.txt',
+      'logs/new.txt',
+    ]));
+
+    const applied = await shadow.applyCheckedRestore(prepared.preview);
+    expect(applied).toMatchObject({ ok: true });
+    expect(await readFile(join(dir, 'logs', 'a.txt'), 'utf8')).toBe('v1');
+    expect(await readFile(join(dir, 'logs', 'nested', 'b.txt'), 'utf8')).toBe('v1');
+    await expect(readFile(join(dir, 'logs', 'new.txt'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+  }, 20_000);
+
+  it('rejects drift on a captured project-ignored path between preview and apply', async () => {
+    await writeFile(join(dir, '.gitignore'), '*.log\n', 'utf8');
+    await writeFile(join(dir, 'app.log'), 'v1', 'utf8');
+    const target = await shadow.snapshot('target');
+    expect(target.ok).toBe(true);
+    if (!target.ok) return;
+    await writeFile(join(dir, 'app.log'), 'v2', 'utf8');
+    const prepared = await shadow.prepareCheckedRestore(target.sha, 'preflight');
+    expect(prepared.ok).toBe(true);
+    if (!prepared.ok) return;
+    await writeFile(join(dir, 'app.log'), 'concurrent', 'utf8');
+
+    const applied = await shadow.applyCheckedRestore(prepared.preview);
+    expect(applied).toMatchObject({ ok: false, kind: 'drift' });
+    expect(await readFile(join(dir, 'app.log'), 'utf8')).toBe('concurrent');
+  }, 20_000);
+
+  it('refuses to delete a project-ignored file for a target that predates forced capture, and allows rewind after manual removal', async () => {
+    await writeFile(join(dir, '.gitignore'), '*.log\n', 'utf8');
+    await writeFile(join(dir, 'tracked.txt'), 'base', 'utf8');
+    // A legacy target commit without the capture marker: its tree cannot prove
+    // whether an ignored file existed on disk when it was recorded.
+    await shadow.init();
+    const legacyShadowDir = join(dir, 'data', 'shadow');
+    await runCommand(shell, `git -c core.hooksPath=/dev/null --git-dir='${legacyShadowDir.replace(/\\/g, '/')}' --work-tree='${dir.replace(/\\/g, '/')}' add -A`, dir, 30_000, 100_000);
+    const legacyCommit = await runCommand(shell, `git -c core.hooksPath=/dev/null -c user.email=legacy@jarvis.local -c user.name=Legacy --git-dir='${legacyShadowDir.replace(/\\/g, '/')}' --work-tree='${dir.replace(/\\/g, '/')}' commit -q --allow-empty -m legacy-target`, dir, 30_000, 100_000);
+    expect(legacyCommit.code).toBe(0);
+    const legacyRef = (await runCommand(shell, `git --git-dir='${legacyShadowDir.replace(/\\/g, '/')}' rev-parse HEAD`, dir, 30_000, 100_000)).output.trim();
+    expect(legacyRef).toMatch(/^[0-9a-f]{40}$/u);
+    await writeFile(join(dir, 'app.log'), 'predates forced capture semantics', 'utf8');
+
+    const prepared = await shadow.prepareCheckedRestore(legacyRef, 'preflight');
+    expect(prepared).toMatchObject({ ok: false, kind: 'unsafe-path' });
+    expect(await readFile(join(dir, 'app.log'), 'utf8')).toBe('predates forced capture semantics');
+
+    await rm(join(dir, 'app.log'));
+    const retry = await shadow.prepareCheckedRestore(legacyRef, 'preflight after manual removal');
+    expect(retry.ok).toBe(true);
+  }, 20_000);
+
+  it('fail-closes when project ignore negation exposes a secret-bearing path to the snapshot', async () => {
+    await writeFile(join(dir, '.gitignore'), '*.key\n!server.key\n', 'utf8');
+    await writeFile(join(dir, 'app.ts'), 'export const x = 1;', 'utf8');
+    await writeFile(join(dir, 'server.key'), 'SECRET', 'utf8');
+
+    const result = await shadow.snapshot('negation must not capture');
+    expect(result).toMatchObject({ ok: false });
+    if (!result.ok) expect(result.reason).toMatch(/credential|protected|secret/u);
+
+    const gitDir = join(dir, 'data', 'shadow').replace(/\\/g, '/');
+    const ls: ExecResult = await runCommand(shell, `git --git-dir='${gitDir}' ls-files`, dir, 30_000, 100_000);
+    const files = ls.output.split('\n').map((l) => l.trim()).filter(Boolean);
+    expect(files).not.toContain('server.key');
+  }, 20_000);
+});
+
+describe('ShadowGit — checked restore path boundary', () => {
+  it.each([
+    '.env',
+    'sub/.env.local',
+    '.git/config',
+    'data/sessions/x.jsonl',
+    'node_modules/pkg/index.js',
+    'dist/index.js',
+    '../escape.txt',
+    '/absolute.txt',
+    'C:/absolute.txt',
+  ])('rejects protected or escaping path %j', (path) => {
+    expect(validateShadowRestorePath(path)).toMatchObject({ ok: false });
+  });
+
+  it('accepts a normal path with spaces', () => {
+    expect(validateShadowRestorePath('folder with spaces/a b.txt')).toEqual({ ok: true });
   });
 });
 

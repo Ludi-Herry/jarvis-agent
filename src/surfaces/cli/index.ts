@@ -27,6 +27,7 @@ import {
 import {
   SkillRegistry,
   SKILL_REGISTRY_ADDENDUM_SOURCE,
+  ShadowGit,
   delegateToolSchema,
   loadRoster,
   loadRuleLayers,
@@ -38,10 +39,12 @@ import {
   createHistorySearchTool,
   createHistoryTurnTool,
   buildConfigPermissionPolicy,
+  FileCheckpointAuditStore,
   FileSessionStore,
   latestSessionPath,
   resolveSessionFilePath,
   SessionCompositionMismatchError,
+  SessionCheckpointRecorder,
   type SessionFileResolution,
 } from '../../runtime/index.js';
 import { safeInline } from './approval.js';
@@ -61,6 +64,7 @@ import {
   isHeadlessAgentEventMode,
   scrubHeadlessAgentEventEnv,
 } from './headless-events.js';
+import { selectCliSurface } from './tui-surface.js';
 
 // Capture BEFORE the runtime .env load: a key here came from the shell LAUNCH env (in /proc/environ on
 // Linux); one appearing only after came from .env (runtime, /proc-clean). Used by assertKeyNotInLaunchEnv.
@@ -87,6 +91,7 @@ program
   .option('--max-turns <n>', 'max model turns per message', (v) => Number.parseInt(v, 10), 24)
   .option('--resume [id]', 'resume the latest session (or a specific <id>) from data/sessions/')
   .option('--no-recall', 'disable current-session history_search/history_turn tools')
+  .option('--no-tui', 'force the line REPL even when stdin/stdout are TTYs')
   .option('--strict-config', 'reject unknown typed-config keys')
   .option('--ignore-user-config', 'skip the user config file')
   .option('--preset <inspect|safe>', 'apply a built-in permission preset')
@@ -94,8 +99,25 @@ program
   .option('--model <id>', 'override the non-secret builder model id')
   .option('--base-url <url>', 'override the non-secret provider endpoint')
   .option('-p, --prompt <text>', 'run this prompt before entering interactive input')
-  .action(async (opts: { cwd: string; maxTurns: number; resume?: string | boolean; recall: boolean; prompt?: string }) => {
+  .action(async (opts: {
+    cwd: string;
+    maxTurns: number;
+    resume?: string | boolean;
+    recall: boolean;
+    tui: boolean;
+    prompt?: string;
+  }) => {
     const headless = isHeadlessAgentEventMode();
+    const surface = selectCliSurface({
+      headless,
+      noTui: !opts.tui,
+      inputIsTTY: process.stdin.isTTY === true,
+      outputIsTTY: process.stdout.isTTY === true,
+      rendererAvailable: false,
+    });
+    if (surface.reason === 'renderer-unavailable') {
+      console.error('[tui] renderer unavailable; using the line REPL');
+    }
     if (headless && !opts.prompt?.trim()) {
       console.error('[run] --headless requires a non-empty prompt');
       process.exitCode = CLI_EXIT.USAGE;
@@ -248,6 +270,8 @@ program
       dynamicAddendum,
     });
     let store: FileSessionStore;
+    let sessionPath: string;
+    let checkpointEligible = true;
     let resumed = false;
     let initialMessages: Message[] | undefined;
     if (resumeFile !== undefined) {
@@ -303,13 +327,16 @@ program
         console.error('[resume] legacy v1 session: tool-receipt and composition coverage are unavailable.');
       }
       initialMessages = loaded.messages;
+      sessionPath = path;
+      checkpointEligible = loaded.format === 'v2';
       store = new FileSessionStore(path, loaded.messages.length, {
         format: loaded.format,
         initialSequence: loaded.lastSequence,
       });
       console.log(`已恢复会话 ${safeInline(loaded.header?.id ?? path)}(${loaded.messages.length} 条消息)\n`);
     } else {
-      store = new FileSessionStore(join(sessionsDir, `${sessionId}.jsonl`));
+      sessionPath = join(sessionsDir, `${sessionId}.jsonl`);
+      store = new FileSessionStore(sessionPath);
       await store.writeHeader({
         id: sessionId,
         model: config.model,
@@ -318,6 +345,20 @@ program
         composition: sessionComposition,
       });
     }
+
+    const checkpoints = checkpointEligible
+      ? new SessionCheckpointRecorder({
+          cwd: opts.cwd,
+          sessionId,
+          sessionPath,
+          auditStore: new FileCheckpointAuditStore({ cwd: opts.cwd, sessionId }),
+          shadow: new ShadowGit({
+            shellPath: defaultShellPath(),
+            cwd: opts.cwd,
+            gitDir: join(opts.cwd, 'data', 'checkpoint-shadow', sessionId),
+          }),
+        })
+      : undefined;
 
     const agentEvents = createProcessAgentEventWriter({
       invocationId: sessionId,
@@ -341,6 +382,7 @@ program
       policy,
       hooks,
       store,
+      checkpoints,
       sessionId,
       initialMessages,
       initialPrompt: opts.prompt,

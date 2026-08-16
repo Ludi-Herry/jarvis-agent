@@ -5,9 +5,13 @@ import { existsSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { extname, join, resolve } from 'node:path';
+import { createInterface } from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
 import { Command, CommanderError } from 'commander';
+import { ShadowGit } from '../../capabilities/index.js';
+import { defaultShellPath } from '../../core/index.js';
 import { CONFIG_PRESETS, classifySessionFileError } from '../../runtime/index.js';
+import { applyConversationRewind, prepareConversationRewind } from '../../runtime/checkpoint/index.js';
 import { CLI_EXIT, type CliExitCode } from './exit-codes.js';
 import { collectDoctorReport, doctorExitCode, formatDoctorReport } from './doctor.js';
 import {
@@ -18,6 +22,14 @@ import {
 } from './sessions.js';
 import { JARVIS_VERSION } from './package-info.js';
 import { safeInline } from './approval.js';
+import {
+  buildCheckpointsListReport,
+  buildCheckpointsShowReport,
+  assertCheckpointCommandIds,
+  checkpointCommandErrorExitCode,
+  formatCheckpointsListReport,
+  formatCheckpointsShowReport,
+} from './checkpoints.js';
 import {
   configCliOptionsToArgs,
   extractConfigCliOptions,
@@ -36,6 +48,11 @@ import {
   JARVIS_HEADLESS_ENV,
   verifyAgentEventFrame,
 } from './headless-events.js';
+import {
+  executeFileRewind,
+  prepareFileRewind,
+  type PreparedFileRewind,
+} from './file-rewind.js';
 
 type ForwardTarget =
   | 'index'
@@ -48,7 +65,7 @@ type ForwardTarget =
   | 'shadow-cli';
 
 export async function runJarvisCli(): Promise<void> {
-  let extracted: { argv: string[]; cwd: string; headless: boolean; config: ConfigCliOptions };
+  let extracted: { argv: string[]; cwd: string; headless: boolean; noTui: boolean; config: ConfigCliOptions };
   try {
     extracted = extractGlobalCwd(process.argv.slice(2), process.cwd());
   } catch (err) {
@@ -90,9 +107,10 @@ export async function runJarvisCli(): Promise<void> {
       setExit(CLI_EXIT.USAGE);
       return;
     }
+    const surfaceArgs = target === 'index' && extracted.noTui ? ['--no-tui'] : [];
     const forwardedArgs = CONFIG_TARGETS.has(target)
-      ? [...configCliOptionsToArgs(extracted.config), ...args]
-      : args;
+      ? [...configCliOptionsToArgs(extracted.config), ...surfaceArgs, ...args]
+      : [...surfaceArgs, ...args];
     setExit(await forwardToExistingCli(target, forwardedArgs, extracted.cwd, extracted.headless));
   };
 
@@ -103,6 +121,7 @@ export async function runJarvisCli(): Promise<void> {
     .version(JARVIS_VERSION)
     .option('--cwd <dir>', 'resolve project config, .env, tools, and data from this directory')
     .option('--headless', 'emit agent-event JSONL on stdout; send human diagnostics to stderr')
+    .option('--no-tui', 'force the line REPL even when stdin/stdout are TTYs')
     .option('--strict-config', 'reject unknown typed-config keys instead of reporting warnings')
     .option('--ignore-user-config', 'skip the user config file for this invocation')
     .option('--preset <inspect|safe>', 'apply a built-in permission preset')
@@ -260,6 +279,102 @@ Exit codes: 0 ok, 2 unknown or unsafe session id, 7 damaged session state.`)
       }
     });
 
+  const checkpoints = program.command('checkpoints')
+    .description('inspect checkpoint audit records (read-only; no completion authority)');
+  checkpoints.action(() => checkpoints.help());
+  checkpoints
+    .command('list <session-id>')
+    .description('list checkpoints for one recorded session')
+    .option('--json', 'print the versioned checkpoint report')
+    .allowExcessArguments(false)
+    .action(async (sessionId: string, options: { json?: boolean }) => {
+      try {
+        const { report, exitCode } = await buildCheckpointsListReport({ cwd: extracted.cwd, sessionId });
+        if (options.json) console.log(JSON.stringify(report, null, 2));
+        else process.stdout.write(formatCheckpointsListReport(report));
+        setExit(exitCode);
+      } catch (err) {
+        console.error(`[checkpoints] ${safeCheckpointInline(err)}`);
+        setExit(checkpointCommandErrorExitCode(err));
+      }
+    });
+  checkpoints
+    .command('show <session-id> <checkpoint-id>')
+    .description('show one checkpoint without changing Session or files')
+    .option('--json', 'print the versioned checkpoint report')
+    .allowExcessArguments(false)
+    .action(async (sessionId: string, checkpointId: string, options: { json?: boolean }) => {
+      try {
+        const result = await buildCheckpointsShowReport({ cwd: extracted.cwd, sessionId, checkpointId });
+        if (result.status === 'not-found') {
+          console.error(`[checkpoints] checkpoint not found: ${safeCheckpointInline(checkpointId)}`);
+          setExit(CLI_EXIT.USAGE);
+          return;
+        }
+        if (options.json) console.log(JSON.stringify(result.report, null, 2));
+        else process.stdout.write(formatCheckpointsShowReport(result.report));
+        setExit(result.exitCode);
+      } catch (err) {
+        console.error(`[checkpoints] ${safeCheckpointInline(err)}`);
+        setExit(checkpointCommandErrorExitCode(err));
+      }
+    });
+
+  program
+    .command('rewind <session-id> <checkpoint-id>')
+    .description('create a new conversation Session from a checkpoint; source logs remain unchanged')
+    .option('--files', 'also restore files after bounded preview and one-time confirmation')
+    .allowExcessArguments(false)
+    .action(async (sessionId: string, checkpointId: string, options: { files?: boolean }) => {
+      try {
+        assertCheckpointCommandIds(sessionId, checkpointId);
+        const plan = await prepareConversationRewind({
+          cwd: extracted.cwd,
+          sourceSessionId: sessionId,
+          checkpointId,
+        });
+        if (options.files) {
+          const prepared = await prepareFileRewind({
+            conversation: plan,
+            shadow: new ShadowGit({
+              shellPath: defaultShellPath(),
+              cwd: extracted.cwd,
+              gitDir: join(extracted.cwd, 'data', 'checkpoint-shadow', sessionId),
+            }),
+          });
+          process.stdout.write(formatFileRewindPreview(prepared));
+          const approved = await askFileRewindApproval();
+          const result = await executeFileRewind(prepared, approved);
+          if (result.status === 'declined') {
+            console.error(`[rewind] file rewind declined; preflight retained: ${safeCheckpointInline(result.preflightRef)}`);
+            setExit(CLI_EXIT.NEEDS_HUMAN);
+            return;
+          }
+          if (result.status === 'blocked') {
+            console.error(`[rewind] file rewind blocked: ${safeCheckpointInline(result.reason)}`);
+            setExit(result.reason.startsWith('recovery-required:') ? CLI_EXIT.STATE_CORRUPT : CLI_EXIT.NEEDS_HUMAN);
+            return;
+          }
+          process.stdout.write(
+            `rewind created: ${safeCheckpointInline(result.forkSessionId)} (${result.messageCount} message(s), files restored)\n`
+              + `preflight retained: ${safeCheckpointInline(result.preflightRef)}\n`
+              + `continue with: jarvis resume ${safeCheckpointInline(result.forkSessionId)}\n`,
+          );
+          setExit(CLI_EXIT.SUCCESS);
+          return;
+        }
+        const result = await applyConversationRewind(plan);
+        process.stdout.write(
+          `rewind created: ${safeCheckpointInline(result.forkSessionId)} (${result.messageCount} message(s))\n`
+            + `continue with: jarvis resume ${safeCheckpointInline(result.forkSessionId)}\n`,
+        );
+        setExit(CLI_EXIT.SUCCESS);
+      } catch (err) {
+        console.error(`[rewind] ${safeCheckpointInline(err)}`);
+        setExit(checkpointCommandErrorExitCode(err));
+      }
+    });
+
   const config = program.command('config').description('inspect typed configuration and built-in presets (read-only)');
   const loadRootConfig = async () => {
     try {
@@ -372,6 +487,10 @@ Exit codes: 0 ok, 2 unknown or unsafe session id, 7 damaged session state.`)
     });
 
   program.hook('preAction', (_command, actionCommand) => {
+    if (extracted.noTui && !['jarvis', 'run', 'resume'].includes(actionCommand.name())) {
+      console.error('[jarvis] --no-tui is supported only for run and resume');
+      throw new CommanderError(CLI_EXIT.USAGE, 'jarvis.noTuiUnsupported', '--no-tui unsupported for this command');
+    }
     if (!extracted.headless) return;
     if (['jarvis', 'run', 'goal', 'loop'].includes(actionCommand.name())) return;
     console.error('[jarvis] --headless is supported only for run, goal, and loop');
@@ -391,6 +510,45 @@ Exit codes: 0 ok, 2 unknown or unsafe session id, 7 damaged session state.`)
     }
     throw err;
   }
+}
+
+function formatFileRewindPreview(prepared: PreparedFileRewind): string {
+  const visible = prepared.restore.changedPaths.slice(0, 50);
+  const lines = [
+    'File rewind preview (completion authority: none)',
+    `checkpoint: ${safeCheckpointInline(prepared.conversation.checkpointId)}`,
+    `target shadow ref: ${safeCheckpointInline(prepared.restore.targetRef)}`,
+    `preflight ref: ${safeCheckpointInline(prepared.restore.preflightRef)}`,
+    `changed paths: ${prepared.restore.changedPaths.length}`,
+    ...visible.map((path) => `  ${safeCheckpointInline(path)}`),
+  ];
+  if (prepared.restore.changedPaths.length > visible.length) {
+    lines.push(`  ... ${prepared.restore.changedPaths.length - visible.length} more path(s)`);
+  }
+  lines.push(
+    `after-checkpoint effects: managed-writes=${prepared.conversation.afterCheckpoint.managedFileWrites}`
+      + ` external=${prepared.conversation.afterCheckpoint.external}`,
+    'External effects cannot be rewound. Type allow-once to apply this exact file restore.',
+    '',
+  );
+  return lines.join('\n');
+}
+
+async function askFileRewindApproval(): Promise<boolean> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const answer = await rl.question('allow-once> ');
+    return answer.trim() === 'allow-once';
+  } catch {
+    return false;
+  } finally {
+    rl.close();
+  }
+}
+
+function safeCheckpointInline(value: unknown): string {
+  const text = value instanceof Error ? value.message : String(value);
+  return safeInline(text).slice(0, 1_024);
 }
 
 function reportCwdAccessFailure(cwd: string, operation: 'inspect' | 'enter', err: unknown): void {
@@ -427,10 +585,11 @@ function addPassthrough(
 export function extractGlobalCwd(
   argv: string[],
   baseCwd: string,
-): { argv: string[]; cwd: string; headless: boolean; config: ConfigCliOptions } {
+): { argv: string[]; cwd: string; headless: boolean; noTui: boolean; config: ConfigCliOptions } {
   const rest: string[] = [];
   let selected: string | undefined;
   let headless = false;
+  let noTui = false;
   let passthrough = false;
   for (let index = 0; index < argv.length; index++) {
     const arg = argv[index];
@@ -462,10 +621,15 @@ export function extractGlobalCwd(
       headless = true;
       continue;
     }
+    if (arg === '--no-tui') {
+      if (noTui) throw new Error('--no-tui may only be supplied once');
+      noTui = true;
+      continue;
+    }
     rest.push(arg);
   }
   const config = extractConfigCliOptions(rest);
-  return { argv: config.argv, cwd: resolve(baseCwd, selected ?? '.'), headless, config: config.options };
+  return { argv: config.argv, cwd: resolve(baseCwd, selected ?? '.'), headless, noTui, config: config.options };
 }
 
 function isCliMetadataRequest(argv: string[]): boolean {
