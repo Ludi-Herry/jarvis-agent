@@ -35,7 +35,9 @@ describe('jarvis root CLI', () => {
     expect(help.stdout).toContain('doctor [options]');
     expect(help.stderr).not.toContain('ARK_API_KEY');
     expect(version).toMatchObject({ code: 0, stdout: '0.1.0\n' });
-  });
+    // Full-suite worker contention can push these cold CLI spawns past Vitest's
+    // 5 s default while every child keeps its own hard timeout.
+  }, 15_000);
 
   it('shows subcommand help without launching the model-facing entry point', async () => {
     const result = await runJarvis(['goal', '--help']);

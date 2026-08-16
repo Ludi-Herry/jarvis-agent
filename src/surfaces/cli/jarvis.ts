@@ -53,6 +53,17 @@ import {
   prepareFileRewind,
   type PreparedFileRewind,
 } from './file-rewind.js';
+import {
+  A0_AUTHORITY,
+  DEFAULT_A0_CORPUS,
+  DEFAULT_A0_PROMPT,
+  a0CommandErrorExitCode,
+  formatA0ReportResult,
+  formatA0RunResult,
+  reportA0Command,
+  runA0Command,
+  sanitizeA0Manifest,
+} from './a0-cli.js';
 
 type ForwardTarget =
   | 'index'
@@ -484,6 +495,83 @@ Exit codes: 0 ok, 2 unknown or unsafe session id, 7 damaged session state.`)
         process.stdout.write(`${name}\n${Object.entries(permissions).map(([key, value]) => `  ${key}: ${value}`).join('\n')}\n`);
       }
       setExit(CLI_EXIT.SUCCESS);
+    });
+
+  const a0 = program.command('a0')
+    .description('run the frozen A0 evaluation corpus, or replay its observations (observation-only)');
+  a0.action(() => a0.help());
+  a0
+    .command('run')
+    .description('execute every case three times against a verifier model; writes immutable observations + manifest')
+    .option('--corpus <path>', `corpus JSONL path (default: ${DEFAULT_A0_CORPUS})`)
+    .option('--prompt <path>', `verifier prompt file bound into the run manifest (default: ${DEFAULT_A0_PROMPT})`)
+    .option('--model <id>', 'verifier model id recorded in the manifest (default: ARK_MODEL / ARK_VERIFIER_MODEL)')
+    .option('--out <dir>', 'output directory for observations.jsonl and its manifest', 'data/a0/run')
+    .option('--json', 'print the versioned JSON result')
+    .allowExcessArguments(false)
+    .action(async (options: { corpus?: string; prompt?: string; model?: string; out: string; json?: boolean }) => {
+      try {
+        const envFile = join(extracted.cwd, '.env');
+        if (existsSync(envFile)) process.loadEnvFile(envFile);
+        const promptPath = options.prompt ?? DEFAULT_A0_PROMPT;
+        const { result, exitCode } = await runA0Command({
+          cwd: extracted.cwd,
+          corpusPath: options.corpus ?? DEFAULT_A0_CORPUS,
+          promptPath,
+          outputDir: resolve(extracted.cwd, options.out),
+          model: options.model ?? process.env.ARK_VERIFIER_MODEL,
+        });
+        if (options.json) {
+          console.log(JSON.stringify({
+            schemaVersion: 1,
+            authority: A0_AUTHORITY,
+            mode: 'run',
+            observationsPath: safeInline(result.observationsPath),
+            manifestPath: safeInline(result.manifestPath),
+            manifest: sanitizeA0Manifest(result.manifest),
+            report: result.report,
+            parseFailures: result.parseFailures.map(safeInline),
+          }, null, 2));
+        } else {
+          process.stdout.write(formatA0RunResult(result));
+        }
+        setExit(exitCode);
+      } catch (err) {
+        console.error(`[a0] ${safeInline(err instanceof Error ? err.message : String(err))}`);
+        setExit(a0CommandErrorExitCode(err));
+      }
+    });
+  a0
+    .command('report')
+    .description('replay recorded observations through the pure report; verifies the run manifest when present')
+    .requiredOption('--observations <path>', 'observations JSONL written by a0 run')
+    .option('--corpus <path>', `corpus JSONL path (default: ${DEFAULT_A0_CORPUS})`)
+    .option('--json', 'print the versioned JSON result')
+    .allowExcessArguments(false)
+    .action(async (options: { observations: string; corpus?: string; json?: boolean }) => {
+      try {
+        const { result, exitCode } = await reportA0Command({
+          cwd: extracted.cwd,
+          corpusPath: options.corpus ?? DEFAULT_A0_CORPUS,
+          observationsPath: options.observations,
+        });
+        if (options.json) {
+          console.log(JSON.stringify({
+            schemaVersion: 1,
+            authority: A0_AUTHORITY,
+            mode: 'report',
+            report: result.report,
+            manifest: result.manifest === null ? null : sanitizeA0Manifest(result.manifest),
+            provenanceIssues: result.provenanceIssues.map(safeInline),
+          }, null, 2));
+        } else {
+          process.stdout.write(formatA0ReportResult(result));
+        }
+        setExit(exitCode);
+      } catch (err) {
+        console.error(`[a0] ${safeInline(err instanceof Error ? err.message : String(err))}`);
+        setExit(a0CommandErrorExitCode(err));
+      }
     });
 
   program.hook('preAction', (_command, actionCommand) => {
