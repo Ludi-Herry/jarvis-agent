@@ -11,6 +11,7 @@
  * result rather than throwing — a snapshot is observability, and must never break the run it observes.
  * Commits carry an inline identity (`-c user.*`) so a fresh shadow repo needs no global git config.
  */
+import { randomBytes } from 'node:crypto';
 import { lstat, mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { runCommand, type ExecResult } from '../../core/tools/run-command.js';
@@ -29,6 +30,10 @@ export interface CheckedRestorePreview {
   targetRef: string;
   preflightRef: string;
   changedPaths: string[];
+  /** Project-ignored paths present at preflight time. Untracked ignored files
+   *  are invisible to `git status`, so the apply-side drift check compares
+   *  against this recorded set instead. */
+  projectIgnoredPaths: string[];
 }
 export type CheckedRestorePrepareResult =
   | { ok: true; preview: CheckedRestorePreview }
@@ -51,9 +56,10 @@ const TIMEOUT_MS = 30_000;
 const MAX_OUTPUT = 200_000;
 const MAX_RESTORE_PATHS = 2_000;
 const MAX_SNAPSHOT_PATHS = 20_000;
-/** `git add -f` batches stay small so an explicit forced-capture list never hits the Windows
- *  command-line length limit; the shadow's own exclusions are never force-added. */
-const MAX_FORCED_ADD_BATCH = 150;
+/** `git add -f` batches are sliced by quoted bytes so an explicit forced-capture
+ *  list can never exceed the Windows command-line limit, no matter how long the
+ *  individual paths are; the shadow's own exclusions are never force-added. */
+const MAX_FORCED_ADD_BYTES = 16_000;
 const GIT_REF_PATTERN = /^[a-f0-9]{40}$/u;
 const TRUSTED_GIT_CONFIG = [
   '[core]',
@@ -408,12 +414,15 @@ export class ShadowGit {
     if (!deletions.ok) return { ok: false, kind: 'unsafe-path', reason: deletions.reason };
     const tree = await this.validateTargetTree(targetRef, new Set(paths.paths));
     if (!tree.ok) return tree;
+    const ignoredNow = await this.collectProjectIgnoredPaths({ remaining: MAX_SNAPSHOT_PATHS });
+    if (!ignoredNow.ok) return { ok: false, kind: 'unavailable', reason: ignoredNow.reason };
     return {
       ok: true,
       preview: {
         targetRef,
         preflightRef: preflight.sha,
         changedPaths: paths.paths,
+        projectIgnoredPaths: ignoredNow.paths,
       },
     };
   }
@@ -435,6 +444,24 @@ export class ShadowGit {
     if (!paths.ok) return { ok: false, kind: 'drift', reason: paths.reason, preflightRef: fallback };
     if (!samePaths(paths.paths, preview.changedPaths)) {
       return { ok: false, kind: 'drift', reason: 'restore path set changed after preview', preflightRef: fallback };
+    }
+    // Untracked project-ignored files are invisible to `git status`; a NEW one
+    // appearing between preview and apply means the worktree carries state the
+    // preview never described, so the restore fails closed before any file is
+    // touched — the ignored-path counterpart of the status drift check above.
+    const ignoredNow = await this.collectProjectIgnoredPaths({ remaining: MAX_SNAPSHOT_PATHS });
+    if (!ignoredNow.ok) {
+      return { ok: false, kind: 'drift', reason: ignoredNow.reason, preflightRef: fallback };
+    }
+    const recorded = new Set(preview.projectIgnoredPaths);
+    const newcomer = ignoredNow.paths.find((path) => !recorded.has(path));
+    if (newcomer !== undefined) {
+      return {
+        ok: false,
+        kind: 'drift',
+        reason: `a project-ignored path appeared after restore preview: ${newcomer}`,
+        preflightRef: fallback,
+      };
     }
     const deletions = await this.assertRestorableDeletions(preview.preflightRef, preview.targetRef);
     if (!deletions.ok) {
@@ -537,12 +564,17 @@ export class ShadowGit {
   }
 
   /** Whether a snapshot commit was created with forced capture of
-   *  project-ignored paths in effect. */
+   *  project-ignored paths in effect. Only an exact line of the commit BODY
+   *  counts: the trailer is written as the second `-m` paragraph, while the
+   *  subject is the caller-controlled label, so a label that merely contains
+   *  the marker string cannot forge capture provenance. */
   private async hasCaptureMarker(ref: string): Promise<{ ok: true; value: boolean } | { ok: false; reason: string }> {
     const commit = await this.exec(this.cmd(`cat-file commit ${ref}`, false));
     if (commit.code !== 0) return { ok: false, reason: gitFail('capture-marker inspection', commit) };
     if (commit.truncated) return { ok: false, reason: 'capture-marker inspection exceeded its output bound' };
-    return { ok: true, value: commit.output.includes(CAPTURE_MARKER) };
+    const message = commit.output.slice(commit.output.indexOf('\n\n') + 2);
+    const lines = message.split('\n');
+    return { ok: true, value: lines.slice(1).some((line) => line.trim() === CAPTURE_MARKER) };
   }
 
   /** Classify which of the given work-tree paths the project's ignore rules
@@ -554,7 +586,9 @@ export class ShadowGit {
   private async checkIgnoredAgainstProjectRules(
     paths: string[],
   ): Promise<{ ok: true; paths: Set<string> } | { ok: false; reason: string }> {
-    const probe = join(this.gitDir, 'ignore-probe.tmp');
+    // A unique probe name per call plus a best-effort cleanup: a stale probe
+    // (EBUSY on Windows, a crashed peer) must never break the classification.
+    const probe = join(this.gitDir, `ignore-probe-${process.pid.toString(16)}-${randomBytes(6).toString('hex')}.tmp`);
     try {
       await writeFile(probe, paths.map((path) => `${path}\0`).join(''), 'utf8');
       const res = await this.exec(this.cmd(`check-ignore --no-index --stdin -z -- < ${quote(probe)}`));
@@ -562,7 +596,7 @@ export class ShadowGit {
       if (res.code !== 0) return { ok: false, reason: gitFail('ignore classification', res) };
       return { ok: true, paths: new Set(splitNul(res.output)) };
     } finally {
-      await rm(probe, { force: true });
+      await rm(probe, { force: true }).catch(() => {});
     }
   }
 
@@ -677,9 +711,19 @@ function splitNul(output: string): string[] {
 
 function chunkPaths(paths: string[]): string[][] {
   const batches: string[][] = [];
-  for (let index = 0; index < paths.length; index += MAX_FORCED_ADD_BATCH) {
-    batches.push(paths.slice(index, index + MAX_FORCED_ADD_BATCH));
+  let current: string[] = [];
+  let size = 0;
+  for (const path of paths) {
+    const quoted = `${quote(path)} `.length;
+    if (current.length > 0 && size + quoted > MAX_FORCED_ADD_BYTES) {
+      batches.push(current);
+      current = [];
+      size = 0;
+    }
+    current.push(path);
+    size += quoted;
   }
+  if (current.length > 0) batches.push(current);
   return batches;
 }
 

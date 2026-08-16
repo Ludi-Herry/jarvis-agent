@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { link, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { link, mkdtemp, mkdir, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -352,6 +352,76 @@ describe('ShadowGit — project-ignored capture (shadow boundary is the harness 
     const ls: ExecResult = await runCommand(shell, `git --git-dir='${gitDir}' ls-files`, dir, 30_000, 100_000);
     const files = ls.output.split('\n').map((l) => l.trim()).filter(Boolean);
     expect(files).not.toContain('server.key');
+  }, 20_000);
+
+  it('rejects a project-ignored file created between preview and apply without touching files', async () => {
+    await writeFile(join(dir, '.gitignore'), 'logs/\n', 'utf8');
+    await mkdir(join(dir, 'logs'), { recursive: true });
+    await writeFile(join(dir, 'logs', 'a.txt'), 'v1', 'utf8');
+    const target = await shadow.snapshot('target');
+    expect(target.ok).toBe(true);
+    if (!target.ok) return;
+    await writeFile(join(dir, 'logs', 'a.txt'), 'v2', 'utf8');
+    const prepared = await shadow.prepareCheckedRestore(target.sha, 'preflight');
+    expect(prepared.ok).toBe(true);
+    if (!prepared.ok) return;
+    await writeFile(join(dir, 'logs', 'sneaked.txt'), 'appeared after preview', 'utf8');
+
+    const applied = await shadow.applyCheckedRestore(prepared.preview);
+    expect(applied).toMatchObject({ ok: false, kind: 'drift' });
+    if (!applied.ok) expect(applied.reason).toMatch(/appeared after restore preview/u);
+    expect(await readFile(join(dir, 'logs', 'a.txt'), 'utf8')).toBe('v2');
+    expect(await readFile(join(dir, 'logs', 'sneaked.txt'), 'utf8')).toBe('appeared after preview');
+  }, 20_000);
+
+  it('does not let a subject line that merely contains the marker forge capture provenance', async () => {
+    await writeFile(join(dir, '.gitignore'), '*.log\n', 'utf8');
+    await writeFile(join(dir, 'tracked.txt'), 'base', 'utf8');
+    // A hostile/legacy commit whose SUBJECT is the marker string but whose body
+    // carries no real trailer: it must not count as force-capture-capable.
+    await shadow.init();
+    const gitDirPath = join(dir, 'data', 'shadow').replace(/\\/g, '/');
+    await runCommand(shell, `git -c core.hooksPath=/dev/null --git-dir='${gitDirPath}' --work-tree='${dir.replace(/\\/g, '/')}' add -A`, dir, 30_000, 100_000);
+    const forged = await runCommand(shell, `git -c core.hooksPath=/dev/null -c user.email=forge@jarvis.local -c user.name=Forge --git-dir='${gitDirPath}' --work-tree='${dir.replace(/\\/g, '/')}' commit -q --allow-empty -m 'shadow-capture: project-ignored-v1'`, dir, 30_000, 100_000);
+    expect(forged.code).toBe(0);
+    const forgedRef = (await runCommand(shell, `git --git-dir='${gitDirPath}' rev-parse HEAD`, dir, 30_000, 100_000)).output.trim();
+    await writeFile(join(dir, 'app.log'), 'predates forced capture', 'utf8');
+
+    const prepared = await shadow.prepareCheckedRestore(forgedRef, 'preflight');
+    expect(prepared).toMatchObject({ ok: false, kind: 'unsafe-path' });
+    expect(await readFile(join(dir, 'app.log'), 'utf8')).toBe('predates forced capture');
+  }, 20_000);
+
+  it('force-captures large ignored sets in byte-bounded batches', async () => {
+    await writeFile(join(dir, '.gitignore'), 'logs/\n', 'utf8');
+    await mkdir(join(dir, 'logs'), { recursive: true });
+    for (let index = 0; index < 400; index += 1) {
+      await writeFile(join(dir, 'logs', `f${index.toString().padStart(3, '0')}.txt`), `v${index}`, 'utf8');
+    }
+    const result = await shadow.snapshot('batched');
+    expect(result.ok).toBe(true);
+    const gitDirPath = join(dir, 'data', 'shadow').replace(/\\/g, '/');
+    const ls: ExecResult = await runCommand(shell, `git --git-dir='${gitDirPath}' ls-files`, dir, 30_000, 100_000);
+    const files = ls.output.split('\n').map((l) => l.trim()).filter(Boolean);
+    expect(files.filter((f) => f.startsWith('logs/'))).toHaveLength(400);
+    expect(files).toContain('.gitignore');
+  }, 20_000);
+
+  it('leaves no ignore-classification probe file in the shadow gitdir after restores', async () => {
+    await writeFile(join(dir, '.gitignore'), '*.log\n', 'utf8');
+    await writeFile(join(dir, 'app.log'), 'v1', 'utf8');
+    await writeFile(join(dir, 'tracked.txt'), 'x', 'utf8');
+    const target = await shadow.snapshot('target');
+    expect(target.ok).toBe(true);
+    if (!target.ok) return;
+    await writeFile(join(dir, 'app.log'), 'v2', 'utf8');
+    const prepared = await shadow.prepareCheckedRestore(target.sha, 'preflight');
+    expect(prepared.ok).toBe(true);
+    if (!prepared.ok) return;
+    expect((await shadow.applyCheckedRestore(prepared.preview)).ok).toBe(true);
+
+    const leftovers = (await readdir(join(dir, 'data', 'shadow'))).filter((name) => name.startsWith('ignore-probe-'));
+    expect(leftovers).toEqual([]);
   }, 20_000);
 });
 
