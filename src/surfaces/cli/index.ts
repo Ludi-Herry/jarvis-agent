@@ -65,6 +65,8 @@ import {
   scrubHeadlessAgentEventEnv,
 } from './headless-events.js';
 import { selectCliSurface } from './tui-surface.js';
+import { canConstructTuiHost } from './tui-host.js';
+import { startTuiRepl } from './tui-repl.js';
 
 // Capture BEFORE the runtime .env load: a key here came from the shell LAUNCH env (in /proc/environ on
 // Linux); one appearing only after came from .env (runtime, /proc-clean). Used by assertKeyNotInLaunchEnv.
@@ -108,12 +110,14 @@ program
     prompt?: string;
   }) => {
     const headless = isHeadlessAgentEventMode();
+    // The renderer adapter is now constructible whenever the TTY pair holds (contract §5: TTY +
+    // registered adapter selects TUI; --no-tui / non-TTY / headless still fall back to line/machine).
     const surface = selectCliSurface({
       headless,
       noTui: !opts.tui,
       inputIsTTY: process.stdin.isTTY === true,
       outputIsTTY: process.stdout.isTTY === true,
-      rendererAvailable: false,
+      rendererAvailable: opts.tui && canConstructTuiHost(process.stdin, process.stdout),
     });
     if (surface.reason === 'renderer-unavailable') {
       console.error('[tui] renderer unavailable; using the line REPL');
@@ -368,7 +372,11 @@ program
     });
     if (headless) scrubHeadlessAgentEventEnv();
     agentEvents?.sessionStarted({ sessionId, resumed, model: config.model });
-    const exitCode = await startRepl({
+    // Surface split: both kinds share the SAME host responsibilities below (approval gate,
+    // checkpoints, recall tools, Session persistence, agent-event projection); only the input/
+    // rendering layer differs — the TUI drives prompts through the frozen reducer + terminal
+    // adapter (tui-repl.ts), the line REPL through readline (repl.ts).
+    const replCommon = {
       model: provider,
       tools,
       context,
@@ -386,10 +394,21 @@ program
       sessionId,
       initialMessages,
       initialPrompt: opts.prompt,
-      singlePrompt: headless,
       agentEvents,
-      ...(headless ? { approver: async () => 'deny' as const } : {}),
-    });
+    };
+    const exitCode = surface.kind === 'tui'
+      ? await startTuiRepl({
+          ...replCommon,
+          input: process.stdin,
+          output: process.stdout,
+          columns: process.stdout.columns ?? 80,
+          rows: process.stdout.rows ?? 24,
+        })
+      : await startRepl({
+          ...replCommon,
+          singlePrompt: headless,
+          ...(headless ? { approver: async () => 'deny' as const } : {}),
+        });
     if (exitCode !== undefined) process.exitCode = exitCode;
   });
 

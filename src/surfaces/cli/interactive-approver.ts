@@ -20,6 +20,7 @@
  */
 import type { Interface } from 'node:readline';
 import type { Approver } from '../../runtime/permission/index.js';
+import type { ToolCapability } from '../../core/tools/types.js';
 import { renderApprovalRequest, parseApprovalChoice } from './approval.js';
 
 /** Times a blank/unrecognized line is re-asked before failing closed (matches the REPL). */
@@ -57,8 +58,7 @@ export interface ApproverIo {
  */
 export function createInteractiveApprover(io: ApproverIo): Approver {
   return async (req) => {
-    // Session grants are exposed only for bash (the gate scopes them per command string); see above.
-    const sessionAllowed = req.capability === 'executes-code';
+    const sessionAllowed = isSessionGrantAllowed(req.capability);
     io.write(renderApprovalRequest(req, { sessionAllowed }));
     const hint = sessionAllowed
       ? '    请输入 a(本次) / s(本会话) / d(拒绝)\n'
@@ -77,6 +77,15 @@ export function createInteractiveApprover(io: ApproverIo): Approver {
     }
     return 'deny'; // exhausted retries → fail closed
   };
+}
+
+/**
+ * Session grants are exposed only for bash (executes-code), where the gate scopes them to the
+ * EXACT command string; for any other capability a session grant would be TOOL-scoped and is not
+ * offered. Shared with the TUI approver so both surfaces enforce the same rule.
+ */
+export function isSessionGrantAllowed(capability: ToolCapability): boolean {
+  return capability === 'executes-code';
 }
 
 /**
