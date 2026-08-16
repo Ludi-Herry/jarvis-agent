@@ -1,6 +1,6 @@
 # Jarvis-Agent CLI-first 路线与验收计划
 
-> 状态：2026-08-14 已更新。本文覆盖产品版本线、可信结果修复和 CLI/TUI 后续范围。GPT-5.6 Sol Pro 复核、落地结果与修正见 `docs/sol-pro-cli-trust-review.md`；历史 GUI-first 证据继续保留在 `docs/handoff-release.md`。
+> 状态：2026-08-15 已更新。本文覆盖产品版本线、可信结果修复和 CLI/TUI 后续范围。GPT-5.6 Sol Pro 复核、落地结果与修正见 `docs/sol-pro-cli-trust-review.md`；历史 GUI-first 证据继续保留在 `docs/handoff-release.md`。
 
 ## 1. 成功标准
 
@@ -160,6 +160,8 @@ Typed config 实现检查（2026-08-15）：schema v1 使用 `smol-toml` 解析�
 
 行模式和 TUI 共用 AgentLoop、EventBus、PermissionGate、SessionStore 与状态定义。TTY 默认可选择 TUI；`--no-tui` 和非 TTY 永远走行模式/headless，确保故障时有可靠回退。
 
+当前基础切片已完成纯 reducer、EventBus action adapter、独立 bounded TUI action audit 与 surface selector。状态覆盖 `idle/model-running/tool-running/approval-pending/stopping/needs-human/closed`；queue、redirect、approval deny、Esc、双 Ctrl-C、EOF 与 pending-effect 停止均有触发测试。`--headless` 固定 machine surface，非 TTY、`--no-tui` 或 renderer 缺失固定回退 line REPL。全屏布局、折叠、键位展示与视觉验收仍属于纯 renderer 后续切片，renderer 无权改变 reducer、Session、PermissionGate、checkpoint、AgentEvent 或完成授权。
+
 全屏 TUI 首版区域：顶部运行身份与验证等级；中央对话/事件流；右侧 context、diff、预算和待审批；底部输入与快捷键。长工具输出折叠并保留耗时、退出码和日志路径。Esc 停止当前模型/工具，Ctrl-C 第一次停止、第二次退出；mid-turn 输入可排队或 redirect，动作须进入审计。
 
 首批 slash commands：`/help`、`/status`、`/context`、`/diff`、`/permissions`、`/model`、`/compact`、`/clear`、`/fork`、`/checkpoint`、`/rewind`、`/exit`。`@` 文件补全与受 PermissionGate 保护的 `!shell` 同期实现。
@@ -175,6 +177,12 @@ Typed config 实现检查（2026-08-15）：schema v1 使用 `smol-toml` 解析�
 - rewind 只改变会话/工作树状态，不产生 verified/complete；每次操作追加 audit record，可继续从回退点 fork 新会话。
 
 验收：checkpoint 可在崩溃后枚举；conversation-only rewind 不碰文件；files rewind 在 dirty/concurrent drift 时 fail-closed；PowerShell 与空格路径通过；TUI、行模式、未来 GUI 展示同一条审计事实。
+
+当前基础切片已按 `docs/checkpoint-tui-contract.md` 落地。`jarvis run/resume` 在用户消息追加前与 provider wave 前写独立 append-only checkpoint，`/checkpoint` 提供手动点；audit 写失败会在 provider/tool I/O 前终止。`jarvis checkpoints list|show` 保持 observation-only；`jarvis rewind` 双重校验来源字节并创建新 v2 Session，来源日志保持原样。纯文本 assistant 的历史 `requestId` 不进入 fork；含 tool message 或 tool-bearing assistant 的 receipt-bound checkpoint 直接标记不可 rewind，避免复制或伪造 request/tool receipt。
+
+`--files` 使用 harness-owned ShadowGit preflight、完整 40 字符 ref、bounded exact path set 与确认后 drift 复核。受保护/凭据路径、link-like tree entry、hard-link、junction/reparse、仓库本地 hook、external diff helper 和不一致 post-state 全部 fail-closed；命令从不调用 `git reset --hard`，恢复失败保留 preflight。普通的 project-ignored 文件通过两次 `--ignored` 清单差集 + 显式分批 `add -f` 强制捕获并参与 drift/restore，shadow 自身的 structural/secret 排除保持唯一边界，inventory 中被 project `.gitignore` negation 暴露的受保护路径直接 fail-closed；rewind 对「磁盘仍存在的 project-ignored 删除项」要求 target 带捕获标记，无标记的旧式 ref 无法证明缺失语义时拒绝删除，手动移除后放行。网络、数据库、push、消息与其他外部副作用只做保守摘要，不能被宣称已回退。
+
+实现门禁（2026-08-16 修复 Reviewer P1 后）：project-ignored 捕获/drift/防误删/negation/真实 CLI 路径共 6 个新触发测试，修复前 RED 为 5 failed / 35 passed；聚焦 ShadowGit + checkpoint CLI 40 passed，组合 10 files / 105 passed；全量 134 files / 1538 passed / 2 skipped。`npm run typecheck`、`npm run lint`、`npm run build -- --noEmit`、全量 `npm test` 与 tracked/untracked whitespace 检查已通过；修复后独立 Reviewer 复核 GO（P0=0、P1=0、P2=0、P3=4，P3 清单见 `docs/handoff-next.md`），提交 SHA 见 `docs/handoff-next.md` 的最新收口记录。
 
 ## 7. 继续保持的边界
 

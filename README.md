@@ -16,7 +16,7 @@
 | Phase D 自主（GoalLoop + 确定性三腿〔canonical 重跑 + 篡改检测 + held-out 隐藏断言〕+ 独立 LLM 裁判） | ✅ 完成（D1–D9 + held-out） |
 | Phase E 多能力（多 goal Loop 调度 + 外置 vision + 命令级 bash session-allow + shadow-git 旁路历史） | ✅ 完成（4 切片合入 main） |
 | Hooks（PreToolUse 阻断 + PostToolUse 咨询/反馈；tool result env；per-hook timeout；round/session lifecycle；多来源；loop per-goal hook-map） | ✅ 完成，剩余仅保留 defer |
-| **CLI beta（当前主线）** | 🚧 R0/R0.5、统一 `jarvis` shell、只读 sessions、dynamic composition resume、headless/A0 合同、当前 Session Recall 与 typed config 已落地；下一步为 A0 runner、Recall A/B 与真实任务验收 |
+| **CLI beta（当前主线）** | 🚧 R0/R0.5、统一 `jarvis` shell、只读 sessions、dynamic composition resume、headless/A0 合同、当前 Session Recall、typed config、checkpoint/rewind 基础与 TUI reducer/fallback 已落地；下一步为 A0 runner、Recall A/B、纯 TUI renderer 与真实任务验收 |
 | **GUI 第一版（急停 + human-review MVP）** | ✅ observe 时间线、emergency stop 与 human-review 已落地；Desktop control surface 排在 CLI beta 与 TUI 之后继续打磨 |
 | OS sandbox Phase 3 v1 + builder sandboxed checks + browser smoke feedback + 只读观测层 | ✅ 完成（trusted requirements / route map / composite verifier / `sandboxed_check` / `browser_smoke(static-dist)` / round budget events / `npm run observe`）；未覆盖范围：通用 app/browser/network verifier |
 | propose_skill | ⛔ 已拍板 defer（投机性、判定偏弱、无证实复用场景） |
@@ -24,7 +24,7 @@
 
 `npm run typecheck / lint / test` 与无输出 build compile 最近一轮全绿（测试数与当轮证据以 `docs/handoff-next.md` 为准；已有 `dist/` 未覆盖；Windows 平台专属 skip 见 `docs/cli-first-plan.md`）。命令安全根（PermissionGate + 命令解析器 + bash 审批）经**六轮独立 codex 对抗核查**确认无破闸 HIGH；goal 验收子系统（确定性三腿 + 腿3 裁判 + bash/Linux 密钥加固）经**多轮多裁判对抗核查**（codex + 独立 Claude 子代理，含一轮 4 裁判收尾）。Phase E 各切片与 Hooks slice-1/2 均经 **codex 跨模型对抗审查逐层加固**（vision 四轮 / bash 白名单 Path A 经 7 HIGH 撤回、保留命令级 Path B / Hooks 信任边界修 HIGH / slice-2 每切片 2 轮 SHIP）。方法 / 严重度基线 / 历史见 `docs/security-review-baseline.md`。
 
-**产品路线更新（2026-08-14）**：采用 CLI-first 两阶段，再继续 Desktop control surface。v0.1 CLI beta 先完成可信结果、Session/机器协议与产品外壳；v0.2 加全屏 TUI、checkpoint/rewind；v0.3 完成 Desktop UI/UX 与 Luis 逐节验收。旧 R1-R9 证据继续保留为历史记录，R6 已从 CLI beta blocker 移到 v0.3。
+**产品路线更新（2026-08-15）**：采用 CLI-first 两阶段，再继续 Desktop control surface。v0.1 CLI beta 先完成可信结果、Session/机器协议与产品外壳；v0.2 的 checkpoint/rewind 基础、TUI reducer 与可靠回退已完成，全屏 renderer 待独立切片；v0.3 完成 Desktop UI/UX 与 Luis 逐节验收。旧 R1-R9 证据继续保留为历史记录，R6 已从 CLI beta blocker 移到 v0.3。
 
 接手入口：
 - **当前路线与验收 → `docs/cli-first-plan.md`**；**最新全景与下一步 → `docs/handoff-next.md`**；**Sol Pro 裁决与落地修正 → `docs/sol-pro-cli-trust-review.md`**；**ZCode/GLM-5.3 交接 → `docs/handoff-zcode-glm53.md`**；
@@ -82,6 +82,7 @@ Built-in file write 采用显式并发前置条件：`read` 会返回 opaque `fv
 | routine / 前台常驻调度 | `jarvis cron daemon` | 前台 daemon，负责锁、JSONL、信号退出 |
 | review / apply / cleanup | `jarvis finalize` | 并行 worktree 完成后的只读报告、交互 merge/cleanup |
 | sessions / 恢复前检查 | `jarvis sessions list|show` | 只读显示身份、integrity、composition、pending effect 与恢复建议 |
+| checkpoints / 回退 | `jarvis checkpoints list|show`、`jarvis rewind` | 只读检查独立 audit；conversation rewind 创建新 Session，`--files` 经预览与一次性确认恢复文件 |
 | status / usage / audit | `jarvis status` | 只读汇总 JSONL 和 sandbox audit evidence，不给完成授权 |
 | GUI / timeline / stop / review | `npm run gui` | 本地观测面板，复用 observe contract，提供急停控制和 human-review 裁决 |
 
@@ -92,6 +93,11 @@ npm run jarvis -- goal "<objective>"               # 单目标 GoalLoop
 npm run jarvis -- loop <objectives-file>             # 多目标队列
 npm run jarvis -- sessions list --json               # 只读会话清单；无需模型 key
 npm run jarvis -- sessions show <session-id>          # 只读查看单个会话的恢复证据
+npm run jarvis -- checkpoints list <session-id>       # 只读列出独立 checkpoint audit
+npm run jarvis -- checkpoints show <session-id> <checkpoint-id> --json
+npm run jarvis -- rewind <session-id> <checkpoint-id> # 创建新的 conversation Session；来源日志保持原样
+npm run jarvis -- rewind <session-id> <checkpoint-id> --files # bounded preview + allow-once 后恢复文件
+npm run jarvis -- --no-tui run                        # TTY 下也固定使用 line REPL
 npm run jarvis -- doctor --json                      # 本地只读就绪诊断
 
 # 下列旧 npm scripts 保留一个版本周期作为兼容入口
@@ -170,6 +176,10 @@ The path guarantee covers static selection: symbolic links, junctions/reparse es
 Typed config schema v1 reads `%USERPROFILE%/.jarvis/config.toml`, project `.jarvis/config.toml`, and project-local `.jarvis/config.local.toml`; the project-local file is ignored by Git by default. Precedence is built-in → user → nonblank `ARK_MODEL`/`ARK_BASE_URL` compatibility env → CLI. Project layers may only add capability denies; model and preset selection there fail closed. Credential-like TOML keys, malformed or oversized files, unsafe/unbounded endpoints, unreadable files, and invalid schema values are rejected without echoing values. Unknown keys warn by default and fail under `--strict-config`; `--ignore-user-config` records the skipped user layer.
 
 `jarvis config path|show|validate|preset` is read-only and reports observation-only authority. `config show --effective --sources [--json]` exposes credential-free effective values and exact provenance. `inspect` allows read-only tools while denying write, code execution, and network; `safe` allows reads and asks for the other three capability classes. `safe` also disables the unattended parallel-worktree write shortcut, so headless writes emit an approval pair and fail closed. `run`, `goal`, and every per-goal `loop` gate consume the same resolved policy. Explicit user/CLI model, user/environment/CLI endpoint, preset, and permission changes are bound into the existing system-prompt composition hash; unchanged defaults retain the legacy prompt byte-for-byte, and actual resume also checks the recorded model/cwd before claiming exact compatibility.
+
+`jarvis run/resume` writes user-facing checkpoints to independent `data/checkpoints/<sessionId>.jsonl` before a user prompt is appended and before each provider wave; `/checkpoint` adds a manual point. Audit failure stops before provider/tool I/O, while ShadowGit capture failure only disables file rewind. `jarvis rewind` revalidates the source bytes and creates a new v2 Session without rewriting the source. Plain assistant request ids are removed from the fork projection; any checkpoint containing receipt-bound tool history is marked ineligible and refused, so request/tool receipts are never copied or fabricated. `--files` retains a preflight commit, rejects protected/secret/link-like paths and drift, disables local hooks/external diff helpers, shows a bounded path/effect preview, and requires the exact `allow-once` response. Ordinary project-ignored files are force-captured through an explicit per-path allowlist (the harness's own structural/secret exclusions stay authoritative) so they participate in drift checks and restores, and a rewind never deletes a project-ignored file still on disk unless the target snapshot proves its absence. External effects remain outside rewind authority.
+
+The TUI foundation is a pure reducer plus an independent bounded action audit and deterministic surface selection. `--headless` always selects machine JSONL; non-TTY, `--no-tui`, or a missing renderer selects the line REPL. A full-screen renderer is still a separate adapter and cannot change reducer transitions, Session, PermissionGate, checkpoint, AgentEvent, or completion authority. The frozen contract is `docs/checkpoint-tui-contract.md`.
 
 The report also includes `authority: { mode: "observation-only", canCompleteGoals: false, canCompleteLoops: false }`. GUI or scripts can display and filter it, but they must not treat it as completion evidence.
 
@@ -416,6 +426,7 @@ data/            # 运行期会话日志（gitignore）
 
 - `AGENTS.md` — 项目规则层（命名 / 风格 / 工程纪律 / 命令 / 设计依据）。**动手前先读。**
 - `docs/cli-first-plan.md` — **当前产品路线与验收权威**：v0.1 CLI、v0.2 TUI/checkpoint、v0.3 Desktop。
+- `docs/checkpoint-tui-contract.md` — checkpoint/rewind audit、checked file restore、TUI reducer/fallback 与 renderer 交接边界。
 - `docs/handoff-next.md` — **当前系统状态、硬边界和后续顺序**。
 - `docs/sol-pro-cli-trust-review.md` — GPT-5.6 Sol Pro 外部复核、已采纳项、实施后修正和当前发布裁决。
 - `docs/handoff-zcode-glm53.md` — ZCode/GLM-5.3 的只读 sessions 首切片、停止条件与可复制任务说明。

@@ -1,6 +1,6 @@
 # ZCode / GLM-5.3 交接：Jarvis 低权威 CLI 与 A0 机械切片
 
-> 状态（2026-08-15）：sessions 首切片及安全收口、headless event v1、A0 冻结 corpus、当前 Session Recall 与 typed config 均已提交并通过独立门禁。GLM-5.3 可从固定源码 SHA `9d53d1a` 建独立 worktree，实现 A0 只读 runner，或另开 sessions search/filter/sort/pagination 机械切片。提交级状态以 `docs/handoff-next.md` 为准。
+> 状态（2026-08-15）：sessions 首切片及安全收口、headless event v1、A0 冻结 corpus、当前 Session Recall 与 typed config 均已提交并通过独立门禁。GLM-5.3 可从固定源码 SHA `9d53d1a` 建独立 worktree，实现 A0 只读 runner，或另开 sessions search/filter/sort/pagination 机械切片。checkpoint/rewind 与 TUI reducer/fallback 已通过本地代码门禁；纯 renderer 必须等该切片独立 Reviewer GO 和固定代码 SHA。提交级状态以 `docs/handoff-next.md` 为准。
 
 > 状态：2026-08-14。本文面向接手实现的模型，范围已刻意收窄。开始前必须核对 Git 基线与工作树；发现 HEAD 或状态不一致时停止并汇报。
 
@@ -13,8 +13,9 @@
 - 合并 dynamic composition resume 与 sessions/resume hardening 后的当前验证：聚焦测试 12 files / 183 passed；`typecheck`、`lint`、`npm run build -- --noEmit`、`npm test` 全绿；119 test files / 1334 passed / 2 skipped。独立提交门终审为 GO（P0=0、P1=0、P2=0、P3=1）；唯一 P3 是已披露的 hostile same-user check-to-read 并发替换窗口。
 - headless/A0 当前验证：聚焦测试 10 files / 195 passed；`typecheck`、`lint`、`npm run build -- --noEmit`、`npm test` 全绿；122 test files / 1385 passed / 2 skipped。提交门及 P2 窄复核均为 GO（P0=0、P1=0、P2=0、P3=1）；P3 是已披露的 ignored `dist/` 误覆盖流程偏离，不影响当前源码入口。
 - typed config 当前验证：聚焦测试 12 files / 190 passed；`typecheck`、`lint`、`npm run build -- --noEmit`、`npm test` 与 diff check 全绿；126 test files / 1456 passed / 2 skipped。环境 endpoint 已绑定 composition identity，原型继承键 fail-closed，`safe` 不再继承 unattended worktree 自动写入；修复首轮 P1/P2 后，独立提交门为 GO（P0=0、P1=0、P2=0、P3=1），代码提交为 `9d53d1a`。
-- 产品路线：v0.1 CLI beta → v0.2 全屏 TUI + checkpoint/rewind → v0.3 Desktop control surface。
-- `implementation-notes.md` 是 CLI beta 后续长任务的临时偏差记录，不进入阶段提交；等 Recall/config/checkpoint/TUI 依赖链收口、有效内容并入正式文档且独立复核 GO 后，再按授权精确删除。根目录历史占位文件 `f` 的早期清理记录保持不变。
+- checkpoint/TUI 本地门禁：首轮独立 Reviewer 唯一 P1（project-ignored 文件从 inventory、`add -A` 与 drift/restore 中静默消失，rewind 可误报成功）已于 2026-08-16 修复：普通 project-ignored 文件经两次 `--ignored` 清单差集 + 显式分批 `add -f` 强制捕获，shadow 自身 structural/secret 排除保持唯一边界，negation 暴露 fail-closed，rewind 对磁盘仍存在的 project-ignored 删除项要求 target 带捕获标记。修复后聚焦 ShadowGit + checkpoint CLI 40 passed、组合 10 files / 105 passed；全量 134 files / 1538 passed / 2 skipped，静态门禁与 whitespace 检查全绿；修复后独立 Reviewer 复核 GO（P0=0、P1=0、P2=0、P3=4，P3 清单见 `docs/handoff-next.md`），原 P1 确认关闭。conversation fork 使用 receipt-free projection，tool-bound checkpoint 拒绝 rewind；文件恢复保留 preflight 并拒绝 hook/external diff、protected/link/hard-link path 与 drift。代码 SHA 记录见 `docs/handoff-next.md`。
+- 产品路线：v0.1 CLI beta → v0.2 checkpoint/rewind 基础 + TUI reducer + 纯 renderer → v0.3 Desktop control surface。
+- `implementation-notes.md` 是本轮临时偏差记录，不进入阶段提交；有效内容以正式文档为准，提交门后按授权精确删除。根目录历史占位文件 `f` 的早期清理记录保持不变。
 
 先读：
 
@@ -125,6 +126,7 @@ jarvis sessions show <session-id> [--json]
 3. shell completion、帮助示例和 Windows UTF-8/空格路径契约测试。
 4. `status --watch` 与只读过滤器，继续消费 ObservationReport。
 5. A0 observations 文件加载、只读 runner、report 输出与 immutable run manifest；冻结 corpus、expected label、阈值和完成裁决不改。
+6. checkpoint/TUI 固定代码 SHA 通过独立 Reviewer 后，只实现纯 renderer、布局、折叠和键位展示；不得修改 reducer transition、action audit、AgentEvent、PermissionGate、Session、checkpoint 或完成授权。
 
 rename、fork、archive 属写状态能力，必须等只读切片稳定后另做设计和审批。
 
@@ -136,8 +138,8 @@ rename、fork、archive 属写状态能力，必须等只读切片稳定后另�
 - [x] headless agent-event JSONL 的权威字段、终态映射、退出码和 A0 冻结。
 - [x] `history_search/history_turn` 的历史低权威、Prompt Injection、陈旧文件重读和 verdict/permission 隔离；首版限定 REPL `run/resume`，goal/loop 保持原 composition。代码提交 `81f96e0`，独立提交门 GO（P0=0、P1=0、P2=0、P3=1）。
 - [x] typed config 的 precedence、项目层只收紧、凭据隔离与 `inspect/safe` 权限语义；`run/goal/loop` 真实 gate、环境 endpoint identity 与 exact-resume composition 已覆盖，代码提交 `9d53d1a`，独立提交门 GO（P0=0、P1=0、P2=0、P3=1）。
-- checkpoint、`fork-context`、受控文件 restore 与不可逆副作用说明。
-- 全屏 TUI 的 interrupt/redirect/approval 状态机和 line/headless 回退。
+- [x] checkpoint audit、conversation fork、受控文件 restore 与不可逆副作用说明；Session schema/receipts 不变，tool-bound checkpoint fail-closed。
+- [x] TUI interrupt/redirect/approval 纯状态机、action audit 与 line/headless 回退；全屏 renderer 保留给独立机械切片。
 - DeepSeek V4 Provider 的 finish reason、abort、tool schema、secret redaction 与 A/B 评测。
 
 ## 6. 可直接复制给 ZCode 的任务说明

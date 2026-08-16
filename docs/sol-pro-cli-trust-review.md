@@ -9,7 +9,7 @@
 | DeepSeek Harness、Cordis、Pi、dsh-slice 的采用边界 | 有条件 GO | 只吸收轨迹、Recall、Preset 心智和评测方法；不接入外部 runtime |
 | R0 / R0.5 可信性实现 | GO | R0.5 独立终审第三轮 P0=0、P1=0、P2=0；sessions 与动态恢复独立提交门终审 P0=0、P1=0、P2=0、P3=1；全量检查为 119 files / 1334 passed / 2 skipped |
 | 直接发布 v0.1 CLI beta | NO-GO | 机器事件协议、A0 冻结 corpus、当前 Session Recall 与 typed config 已闭环；A0 runner/真实运行、Recall A/B、完整 Windows 契约与真实任务证据仍未闭环 |
-| 全屏 TUI、checkpoint/rewind | 保留在 v0.2 | 依赖稳定的 Session、事件、权限和恢复语义 |
+| 全屏 TUI、checkpoint/rewind | v0.2 基础切片已落地 | checkpoint/rewind、纯 reducer、action audit 与可靠 fallback 已通过本地门禁；全屏 renderer 仍待独立切片 |
 
 Sol Pro 原始回答最重要的价值，是把“文件写入成功”和“崩溃后能安全恢复”提升到发布前信任门槛。这个判断已经落实到 R0.5；此前完成的 verdict、deadline、退出码和 JSONL integrity 无需重开。
 
@@ -76,7 +76,7 @@ R0、R0.5 与统一 CLI 改动共享 SessionStore、runAgent、CLI composition r
 - preset 首批只实现 `inspect` 与 `safe`；`maintain` / `worktree` 等 A0 证明用户目标差异后再加入。
 - `stop`、`review`、completion、session rename/fork/archive 属后续产品化，不进入最小可信 beta 关键路径。
 - Recall 进入 v0.1，但要先冻结机器事件和 A0 基线，确保注入、陈旧事实和成本变化可以量化。
-- 全屏 TUI 与 checkpoint/rewind 保留在 v0.2，不因 15 日裁剪从路线中消失。
+- checkpoint/rewind、TUI reducer 与 fallback 已进入 v0.2 基础切片；全屏 renderer 保留为后续独立适配器。
 
 ## 5. 当前采用顺序
 
@@ -89,7 +89,7 @@ R0、R0.5 与统一 CLI 改动共享 SessionStore、runAgent、CLI composition r
 7. [ ] 用 Recall 开关跑同形对照；当前 fixture/E2E 只证明合同与隔离，尚未证明任务收益。
 8. [x] 增加 typed config、有效来源展示与 `inspect/safe`；三层 TOML、项目只收紧、凭据拒绝、环境 endpoint identity、原型继承键拒绝、真实 gate 与 resume composition 已覆盖。代码提交 `9d53d1a`，修复首轮 P1/P2 后独立提交门 GO（P0=0、P1=0、P2=0、P3=1）。
 9. 运行 10–20 个真实同形任务，要求零 false-verified、零无限等待、零 orphan side effect。
-10. v0.2 开发全屏 TUI、`fork-context`、用户 checkpoint 与受控文件 restore。
+10. [x] 完成 v0.2 的用户 checkpoint、conversation fork、受控文件 restore、TUI reducer/action audit 与 line/headless fallback；纯全屏 renderer 仍待后续切片。
 11. A0 稳定后再做 DeepSeek V4 Provider opt-in spike。
 
 权威计划见 `docs/cli-first-plan.md`；ZCode/GLM-5.3 的有界任务包见 `docs/handoff-zcode-glm53.md`。
