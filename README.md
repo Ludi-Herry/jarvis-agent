@@ -83,6 +83,7 @@ Built-in file write 采用显式并发前置条件：`read` 会返回 opaque `fv
 | review / apply / cleanup | `jarvis finalize` | 并行 worktree 完成后的只读报告、交互 merge/cleanup |
 | sessions / 恢复前检查 | `jarvis sessions list|show` | 只读显示身份、integrity、composition、pending effect 与恢复建议 |
 | checkpoints / 回退 | `jarvis checkpoints list|show`、`jarvis rewind` | 只读检查独立 audit；conversation rewind 创建新 Session，`--files` 经预览与一次性确认恢复文件 |
+| A0 / 冻结评测 | `jarvis a0 run\|report` | 对冻结 corpus 每案跑 3 次 verifier 调用并写不可变 observations+manifest；`report` 重放并校验 provenance，全部 observation-only |
 | status / usage / audit | `jarvis status` | 只读汇总 JSONL 和 sandbox audit evidence，不给完成授权 |
 | GUI / timeline / stop / review | `npm run gui` | 本地观测面板，复用 observe contract，提供急停控制和 human-review 裁决 |
 
@@ -97,6 +98,8 @@ npm run jarvis -- checkpoints list <session-id>       # 只读列出独立 check
 npm run jarvis -- checkpoints show <session-id> <checkpoint-id> --json
 npm run jarvis -- rewind <session-id> <checkpoint-id> # 创建新的 conversation Session；来源日志保持原样
 npm run jarvis -- rewind <session-id> <checkpoint-id> --files # bounded preview + allow-once 后恢复文件
+npm run jarvis -- a0 run                               # 对冻结 A0 corpus 跑真实 verifier（需 ARK key）
+npm run jarvis -- a0 report --observations <file>      # 只读重放 observations 并校验 run manifest
 npm run jarvis -- --no-tui run                        # TTY 下也固定使用 line REPL
 npm run jarvis -- doctor --json                      # 本地只读就绪诊断
 

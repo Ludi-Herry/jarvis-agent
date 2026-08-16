@@ -85,7 +85,7 @@ Sessions 与动态恢复切片（2026-08-15）已完成：
 - [x] 根 `jarvis --cwd`、latest discovery 与 resolver 后二次读取共用同一错误分类；EACCES、EPERM、EIO 均有命令层或确定性触发测试。latest 目录枚举/条目消失、actual resume 二次读取、junction/canonical escape 与 loop 参数/map/resume/fatal 控制字符都有生产接线覆盖。
 - [x] 本切片的路径保证覆盖静态 symlink/junction/reparse 与 canonical escape。恶意同用户进程在校验和读取之间主动替换路径仍超出保证；Session 当前也没有跨进程 writer lock 或密码学真实性。hostile concurrent local writer 进入支持的威胁模型后，再评估 file-handle binding。
 
-仍待 v0.1 关键切片：A0 只读 runner 与真实运行、Recall 开关同形任务对照、完整 Windows 契约和 10–20 个真实任务。当前 Session 两级 Recall、typed config 与 `inspect/safe`、versioned headless JSONL agent-event v1、严格 A0 类型、六案冻结 corpus 与纯 report 已完成。当前 package bin 由锁定的 runtime `tsx@4.22.4` 启动源码；packed artifact 已在 Windows 空格路径下用 `--omit=dev` 安装，`jarvis --help`、`--version`、`status --json` 全部 exit 0。纯编译 bin、stop/review/completion、其余 sessions mutation 与更多 preset 属后续产品化；被忽略的 `dist/` 已在本轮误覆盖，现保持原样，未经授权不再清理或重建。
+仍待 v0.1 关键切片：A0 真实运行（runner 已于 2026-08-16 落地为 `jarvis a0 run|report`，真实 attempts 待显式 key/花费确认）、Recall 开关同形任务对照、完整 Windows 契约和 10–20 个真实任务。当前 Session 两级 Recall、typed config 与 `inspect/safe`、versioned headless JSONL agent-event v1、严格 A0 类型、六案冻结 corpus 与纯 report 已完成。当前 package bin 由锁定的 runtime `tsx@4.22.4` 启动源码；packed artifact 已在 Windows 空格路径下用 `--omit=dev` 安装，`jarvis --help`、`--version`、`status --json` 全部 exit 0。纯编译 bin、stop/review/completion、其余 sessions mutation 与更多 preset 属后续产品化；被忽略的 `dist/` 已在本轮误覆盖，现保持原样，未经授权不再清理或重建。
 
 - 单一 `jarvis` executable 与命令树：`run`、`goal`、`loop`、`resume`、`status`、`doctor`、`config` 为根帮助高频项；help/version/global flags 与旧入口退出码统一，版本读取 `package.json`。
 - 会话：v0.1 已交付只读 `sessions list|show`，实际 exact-session resume 会显示 cwd、模型、composition diff、pending effect 和停止原因；search/rename/fork/archive 分切片后移。

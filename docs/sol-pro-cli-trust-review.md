@@ -84,7 +84,7 @@ R0、R0.5 与统一 CLI 改动共享 SessionStore、runAgent、CLI composition r
 2. [x] 交付只读 `sessions list|show`。
 3. [x] 收口动态 composition/addendum 的 resume 比较、来源展示与可行动提示。
 4. [x] 冻结 versioned headless JSONL、A0 strict types、六案 corpus 与纯 report；代码提交 `b5588ff`，提交门及 P2 窄复核 GO（P0=0、P1=0、P2=0、P3=1）。
-5. [ ] 实现 A0 只读 runner，并生成不可变 model/prompt policy manifest 与 observations artifact。
+5. [x] 实现 A0 只读 runner，并生成不可变 model/prompt policy manifest 与 observations artifact（2026-08-16，`jarvis a0 run|report`，实现记录见 `docs/headless-a0-contract.md` §7；真实 attempts 待显式 key/花费确认）。
 6. [x] 增加 REPL 当前 Session 的 `history_search/history_turn`；host-bound、append-only、bounded、historical-low，`--no-recall` 保留旧 composition exact resume。代码提交 `81f96e0`，独立提交门 GO（P0=0、P1=0、P2=0、P3=1）。
 7. [ ] 用 Recall 开关跑同形对照；当前 fixture/E2E 只证明合同与隔离，尚未证明任务收益。
 8. [x] 增加 typed config、有效来源展示与 `inspect/safe`；三层 TOML、项目只收紧、凭据拒绝、环境 endpoint identity、原型继承键拒绝、真实 gate 与 resume composition 已覆盖。代码提交 `9d53d1a`，修复首轮 P1/P2 后独立提交门 GO（P0=0、P1=0、P2=0、P3=1）。
