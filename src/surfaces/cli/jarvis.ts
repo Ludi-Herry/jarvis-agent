@@ -39,6 +39,10 @@ import {
   runSessionsRename,
 } from './sessions-mutations.js';
 import {
+  generateCompletionScript,
+  isCompletionShell,
+} from './completion.js';
+import {
   buildReviewListReport,
   buildReviewShowReport,
   formatReviewDecisionReport,
@@ -869,6 +873,27 @@ ${DECISION_EXIT_HELP}`)
         console.error(`[a0] ${safeInline(err instanceof Error ? err.message : String(err))}`);
         setExit(a0CommandErrorExitCode(err));
       }
+    });
+
+  program
+    .command('completion <shell>')
+    .description('print a shell completion script (powershell, bash, or zsh); no provider or credentials needed')
+    .allowExcessArguments(false)
+    .addHelpText('after', `
+Examples:
+  jarvis completion powershell >> $PROFILE
+  jarvis completion bash > /etc/bash_completion.d/jarvis
+  jarvis completion zsh > ~/.zsh/completions/_jarvis
+v1 completes top-level commands, group subcommands, and global flags; per-command flags stay discoverable via --help.
+Exit codes: 0 ok, 2 unknown shell.`)
+    .action((shell: string) => {
+      if (!isCompletionShell(shell)) {
+        console.error(`[jarvis] unknown shell: ${safeInline(shell)} (expected powershell, bash, or zsh)`);
+        setExit(CLI_EXIT.USAGE);
+        return;
+      }
+      process.stdout.write(generateCompletionScript(shell));
+      setExit(CLI_EXIT.SUCCESS);
     });
 
   program.hook('preAction', (_command, actionCommand) => {
