@@ -114,7 +114,6 @@ export interface ReviewShowReport {
 export type ReviewShowResult =
   | { status: 'ok'; report: ReviewShowReport }
   | { status: 'not-found'; goalId: string }
-  | { status: 'invalid'; reason: string }
   | { status: 'corrupt'; reason: string };
 
 export async function buildReviewShowReport(input: {
@@ -164,9 +163,6 @@ export async function buildReviewShowReport(input: {
       },
     };
   } catch (err) {
-    if (err instanceof HumanReviewError && err.status === 400) {
-      return { status: 'invalid', reason: err.message };
-    }
     return corruptOrThrow(err);
   }
 }
@@ -185,7 +181,12 @@ export interface ReviewDecisionReport {
     verdict: string;
     state: string;
     round: number;
-    remainingParked: number;
+    /** Parked requirements left on this goal; absent when a corrupt sibling
+     * log made the post-decision rescan unavailable (see remainingUnknown). */
+    remainingParked?: number;
+    /** True when the decision was recorded but the remaining count could not
+     * be recomputed because another goal/loop log is corrupt. */
+    remainingUnknown?: boolean;
     auditPath: string;
     loop?: { loopId: string; index: number };
   };
@@ -213,8 +214,17 @@ export async function runReviewDecision(input: {
       ...(input.reviewer === undefined ? {} : { reviewer: input.reviewer }),
       decisions: [{ requirementId: input.requirementId, decision: input.decision, note: input.note }],
     });
-    const remaining = await listPendingHumanReviews(dataDir);
-    const stillParked = remaining.find((review) => review.goalId === input.goalId);
+    // The decision is already durable at this point. The post-decision rescan
+    // only computes the cosmetic remaining count, so a corrupt SIBLING log
+    // must degrade that field, never rewrite the recorded outcome or its
+    // exit code.
+    let remainingParked: number | undefined;
+    try {
+      const remaining = await listPendingHumanReviews(dataDir);
+      remainingParked = remaining.find((review) => review.goalId === input.goalId)?.requirements.length ?? 0;
+    } catch {
+      remainingParked = undefined;
+    }
     const note = result.audit.decisions[0]?.note ?? '';
     return {
       status: 'recorded',
@@ -232,7 +242,7 @@ export async function runReviewDecision(input: {
           verdict: result.verdict.outcome,
           state: result.state,
           round: result.round,
-          remainingParked: stillParked?.requirements.length ?? 0,
+          ...(remainingParked === undefined ? { remainingUnknown: true } : { remainingParked }),
           auditPath: join('data', 'human-reviews', `${input.goalId}.jsonl`),
           ...(result.loop === undefined ? {} : { loop: result.loop }),
         },
@@ -301,7 +311,9 @@ export function formatReviewDecisionReport(report: ReviewDecisionReport): string
     `goal: ${inline(decision.goalId)}  requirement: ${inline(decision.requirementId)}`,
     `reviewer: ${inline(decision.reviewer)}`,
     `resulting verdict: ${decision.verdict}  state: ${decision.state}  round: ${decision.round}`,
-    `remaining parked requirements: ${decision.remainingParked}`,
+    decision.remainingParked !== undefined
+      ? `remaining parked requirements: ${decision.remainingParked}`
+      : 'remaining parked requirements: unknown (a sibling goal/loop log is corrupt; run jarvis review list to locate it)',
   ];
   if (decision.loop !== undefined) {
     lines.push(`loop: ${inline(decision.loop.loopId)} goal index ${decision.loop.index} finished recorded`);

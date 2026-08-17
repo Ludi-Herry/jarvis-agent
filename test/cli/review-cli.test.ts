@@ -190,7 +190,7 @@ describe('jarvis review (terminal human review)', () => {
     });
   });
 
-  it('rejects usage errors with exit 2 and corrupt logs with exit 7', async () => {
+  it('rejects usage errors with exit 2 and isolates sibling-log corruption from a recorded decision', async () => {
     const workspace = await tempWorkspace('errors ');
     await writeParkedGoal(workspace, 'g-err', [{ id: 'r1', text: 'Luis confirms the behavior' }]);
 
@@ -206,6 +206,8 @@ describe('jarvis review (terminal human review)', () => {
     const unsafeId = await runJarvis(['--cwd', workspace, 'review', 'show', '../evil']);
     expect(unsafeId.code).toBe(CLI_EXIT.USAGE);
 
+    // A corrupt SIBLING log makes full-directory scans fail (list/show exit 7)
+    // but must not rewrite the outcome of a decision that was already recorded.
     await writeFile(
       join(workspace, 'data', 'goals', 'g-corrupt.jsonl'),
       '{"t":"goal-created","id":"g-corrupt","objective":"o","objectiveHash":"h","budget":{"maxRounds":1},"pinned":[],"sessionId":"g-corrupt","createdAt":"t0"}\n'
@@ -217,10 +219,38 @@ describe('jarvis review (terminal human review)', () => {
     expect(list.code).toBe(CLI_EXIT.STATE_CORRUPT);
     const show = await runJarvis(['--cwd', workspace, 'review', 'show', 'g-err']);
     expect(show.code).toBe(CLI_EXIT.STATE_CORRUPT);
+
     const approve = await runJarvis([
-      '--cwd', workspace, 'review', 'approve', 'g-err', '--requirement', 'r1', '--note', 'still blocked by corruption',
+      '--cwd', workspace, 'review', 'approve', 'g-err', '--requirement', 'r1', '--note', 'recorded despite sibling damage',
     ]);
+    expect(approve.code).toBe(0);
+    expect(approve.stdout).toContain('decision recorded');
+    expect(approve.stdout).toContain('state: complete');
+    expect(approve.stdout).toContain('remaining parked requirements: unknown');
+    const audit = await readFile(join(workspace, 'data', 'human-reviews', 'g-err.jsonl'), 'utf8');
+    expect(audit).toContain('recorded despite sibling damage');
+    const retry = await runJarvis([
+      '--cwd', workspace, 'review', 'approve', 'g-err', '--requirement', 'r1', '--note', 'second pass',
+    ]);
+    expect(retry.code).toBe(CLI_EXIT.USAGE);
+  });
+
+  it('fails closed with exit 7 and appends nothing when the target goal log itself is corrupt', async () => {
+    const workspace = await tempWorkspace('target corrupt ');
+    await writeParkedGoal(workspace, 'g-target', [{ id: 'r1', text: 'Luis confirms the behavior' }]);
+    const goalPath = join(workspace, 'data', 'goals', 'g-target.jsonl');
+    const original = await readFile(goalPath, 'utf8');
+    const lines = original.trim().split('\n');
+    const corrupted = `${lines[0]}\n{"t":"goal-round","round":\n${lines.slice(2).join('\n')}\n`;
+    await writeFile(goalPath, corrupted, 'utf8');
+
+    const approve = await runJarvis([
+      '--cwd', workspace, 'review', 'approve', 'g-target', '--requirement', 'r1', '--note', 'must not land',
+    ]);
+
     expect(approve.code).toBe(CLI_EXIT.STATE_CORRUPT);
+    expect(await readFile(goalPath, 'utf8')).toBe(corrupted);
+    await expect(readFile(join(workspace, 'data', 'human-reviews', 'g-target.jsonl'), 'utf8')).rejects.toThrow();
   });
 
   it('never loads a provider or echoes the credential value', async () => {
