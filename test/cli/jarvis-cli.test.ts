@@ -7,7 +7,12 @@ import type { AddressInfo } from 'node:net';
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
+
+// This file launches real CLI subprocesses; full-suite worker contention can
+// exceed Vitest's 5 s default even though each child has its own cap.
+vi.setConfig({ testTimeout: 20_000 });
+afterAll(() => vi.resetConfig());
 import {
   HEADLESS_MAX_FRAME_BYTES,
   formatHeadlessDiagnostic,

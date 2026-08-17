@@ -46,7 +46,7 @@ describe('jarvis sessions (read-only product surface)', () => {
       expect(result.stderr).not.toContain(KEY_SENTINEL);
       expect(result.stderr).not.toContain('ARK_API_KEY');
     }
-  }, 10_000);
+  }, 20_000);
 
   it('maps a headless run without provider configuration to usage exit 2 before any session starts', async () => {
     const workspace = await tempWorkspace('headless missing provider ');
@@ -162,7 +162,7 @@ describe('jarvis sessions (read-only product surface)', () => {
       expect(resume.code).toBe(CLI_EXIT.USAGE);
       expect(resume.stderr).toContain('session id');
     }
-  }, 10_000);
+  }, 20_000);
 
   it('reports a directory at the requested .jsonl path as unreadable partial state with exit 7', async () => {
     const workspace = await tempWorkspace('non-file ');

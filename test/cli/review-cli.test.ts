@@ -57,7 +57,7 @@ describe('jarvis review (terminal human review)', () => {
       expect(result.stderr).not.toContain(KEY_SENTINEL);
       expect(result.stderr).not.toContain('ARK_API_KEY');
     }
-  }, 10_000);
+  }, 20_000);
 
   it('lists an empty workspace with exit 0 and the versioned contract', async () => {
     const workspace = await tempWorkspace('empty ');

@@ -3,7 +3,12 @@ import { createHash } from 'node:crypto';
 import { appendFile, chmod, mkdtemp, mkdir, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
+
+// This file launches real CLI subprocesses; full-suite worker contention can
+// exceed Vitest's 5 s default even though each child has its own cap.
+vi.setConfig({ testTimeout: 20_000 });
+afterAll(() => vi.resetConfig());
 import { hashObjective, serializeGoalRecord, serializeLoopRecord, type LoopContract } from '../../src/capabilities/goal/index.js';
 import {
   SESSION_SCHEMA_VERSION,

@@ -2,7 +2,12 @@ import { spawn } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
+
+// This file launches real CLI subprocesses; full-suite worker contention can
+// exceed Vitest's 5 s default even though each child has its own cap.
+vi.setConfig({ testTimeout: 20_000 });
+afterAll(() => vi.resetConfig());
 import { CLI_EXIT } from '../../src/surfaces/cli/exit-codes.js';
 
 describe('cron daemon CLI smoke', () => {
@@ -125,7 +130,7 @@ function waitForOutput(child: ReturnType<typeof spawnCronDaemon>, pattern: RegEx
   return new Promise((resolvePromise, reject) => {
     const timer = setTimeout(() => {
       reject(new Error(`timed out waiting for ${pattern}\n${child.getOutput()}`));
-    }, 10_000);
+    }, 20_000);
     const poll = setInterval(() => {
       if (pattern.test(child.getOutput())) {
         clearTimeout(timer);

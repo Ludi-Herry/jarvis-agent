@@ -39,7 +39,7 @@ describe('jarvis sessions search (read-only product surface)', () => {
       expect(result.stderr).not.toContain(KEY_SENTINEL);
       expect(result.stderr).not.toContain('ARK_API_KEY');
     }
-  }, 10_000);
+  }, 20_000);
 
   it('returns exit 2 for missing, empty, and oversized queries', async () => {
     const workspace = await tempWorkspace('usage ');
