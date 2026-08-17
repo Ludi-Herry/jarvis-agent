@@ -1,6 +1,6 @@
 # ZCode / GLM-5.3 交接：Jarvis 低权威 CLI 与 A0 机械切片
 
-> 状态（2026-08-15）：sessions 首切片及安全收口、headless event v1、A0 冻结 corpus、当前 Session Recall 与 typed config 均已提交并通过独立门禁。GLM-5.3 可从固定源码 SHA `9d53d1a` 建独立 worktree，实现 A0 只读 runner，或另开 sessions search/filter/sort/pagination 机械切片。checkpoint/rewind 与 TUI reducer/fallback 已通过本地代码门禁；纯 renderer 必须等该切片独立 Reviewer GO 和固定代码 SHA。提交级状态以 `docs/handoff-next.md` 为准。
+> 状态（2026-08-17）：sessions 首切片及安全收口、headless event v1、A0 冻结 corpus、当前 Session Recall、typed config、checkpoint/rewind、TUI reducer/fallback、纯 TUI renderer、A0 只读 runner（v2 真实跑分 GO）与只读 `sessions search` 均已提交并通过独立门禁。GLM-5.3 剩余机械切片：sessions text/JSON 输出的筛选、排序与分页。提交级状态以 `docs/handoff-next.md` 为准。
 
 > 状态：2026-08-14。本文面向接手实现的模型，范围已刻意收窄。开始前必须核对 Git 基线与工作树；发现 HEAD 或状态不一致时停止并汇报。
 
@@ -121,7 +121,7 @@ jarvis sessions show <session-id> [--json]
 
 这些任务都应单独开切片、独立验收：
 
-1. `sessions search` 的只读 metadata/message 索引，先用线性扫描；不建数据库。
+1. [x] `sessions search` 的只读 metadata/message 索引，先用线性扫描；不建数据库。（2026-08-17 已交付并通过独立提交门，见 `docs/handoff-next.md`。）
 2. sessions text/JSON 输出的筛选、排序与分页。
 3. shell completion、帮助示例和 Windows UTF-8/空格路径契约测试。
 4. `status --watch` 与只读过滤器，继续消费 ObservationReport。
