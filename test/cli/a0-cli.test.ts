@@ -56,7 +56,7 @@ describe('jarvis a0 surfaces', () => {
     const run = await runA0Evaluation({
       cwd,
       corpusPath: 'eval/a0/eval-cases.jsonl',
-      promptPath: 'eval/a0/prompts/a0-leg3-v1.md',
+      promptPath: 'eval/a0/prompts/a0-leg3-v2.md',
       model: 'fake-verifier-model',
       call: perfectVerifier,
       outputDir: join(cwd, 'data', 'a0', 'run'),
@@ -83,7 +83,7 @@ describe('jarvis a0 surfaces', () => {
     const run = await runA0Evaluation({
       cwd,
       corpusPath: 'eval/a0/eval-cases.jsonl',
-      promptPath: 'eval/a0/prompts/a0-leg3-v1.md',
+      promptPath: 'eval/a0/prompts/a0-leg3-v2.md',
       model: 'fake-verifier-model',
       call: perfectVerifier,
       outputDir: join(cwd, 'data', 'a0', 'run'),
@@ -109,7 +109,7 @@ describe('jarvis a0 surfaces', () => {
     const run = await runA0Evaluation({
       cwd,
       corpusPath: 'eval/a0/eval-cases.jsonl',
-      promptPath: 'eval/a0/prompts/a0-leg3-v1.md',
+      promptPath: 'eval/a0/prompts/a0-leg3-v2.md',
       model: 'fake-verifier-model',
       call: perfectVerifier,
       outputDir: join(cwd, 'data', 'a0', 'run'),

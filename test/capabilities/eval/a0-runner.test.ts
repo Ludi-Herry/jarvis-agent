@@ -13,7 +13,7 @@ import type { Message } from '../../../src/core/types.js';
 
 const repo = process.cwd();
 const corpusPath = 'eval/a0/eval-cases.jsonl';
-const promptPath = 'eval/a0/prompts/a0-leg3-v1.md';
+const promptPath = 'eval/a0/prompts/a0-leg3-v2.md';
 const tempDirs: string[] = [];
 
 afterEach(async () => {
@@ -63,7 +63,7 @@ describe('A0 runner — full run against the frozen corpus', () => {
     expect(result.parseFailures).toEqual([]);
     const bytes = await readFile(result.observationsPath);
     expect(result.manifest.observations.sha256).toBe(createHash('sha256').update(bytes).digest('hex'));
-    expect(result.manifest.policy).toMatchObject({ id: 'a0-independent-leg3-policy-v1', model: 'fake-verifier-model', promptVersion: 'a0-leg3-v1' });
+    expect(result.manifest.policy).toMatchObject({ id: 'a0-independent-leg3-policy-v1', model: 'fake-verifier-model', promptVersion: 'a0-leg3-v2' });
 
     const replayed = await reportA0Evaluation({ cwd: repo, corpusPath, observationsPath: result.observationsPath });
     expect(replayed.provenanceIssues).toEqual([]);
@@ -145,7 +145,7 @@ describe('A0 runner — fail-closed input boundaries', () => {
         evidence: [{ path: 'leaky.json', selector: 'case-x' }],
         expectedLeg3: 'proves',
         labelOrigin: { kind: 'independent-review', reviewer: 'r', source: 's', labeledAt: '2026-08-16T00:00:00.000Z' },
-        promptVersion: 'a0-leg3-v1',
+        promptVersion: 'a0-leg3-v2',
         modelPolicy: { builder: 'a0-candidate-policy-v1', verifier: 'a0-independent-leg3-policy-v1' },
         repetitions: 3,
         tags: ['test'],
@@ -181,7 +181,7 @@ describe('A0 runner — fail-closed input boundaries', () => {
           evidence: [{ path: 'leaky.json', selector: 'case-n' }],
           expectedLeg3: 'proves',
           labelOrigin: { kind: 'independent-review', reviewer: 'r', source: 's', labeledAt: '2026-08-16T00:00:00.000Z' },
-          promptVersion: 'a0-leg3-v1',
+          promptVersion: 'a0-leg3-v2',
           modelPolicy: { builder: 'a0-candidate-policy-v1', verifier: 'a0-independent-leg3-policy-v1' },
           repetitions: 3,
           tags: ['test'],
@@ -214,7 +214,7 @@ describe('A0 runner — fail-closed input boundaries', () => {
       evidence: [{ path: evidencePath, selector: caseId, ...(sha256 === undefined ? {} : { sha256 }) }],
       expectedLeg3: 'proves',
       labelOrigin: { kind: 'independent-review', reviewer: 'r', source: 's', labeledAt: '2026-08-16T00:00:00.000Z' },
-      promptVersion: 'a0-leg3-v1',
+      promptVersion: 'a0-leg3-v2',
       modelPolicy: { builder: 'a0-candidate-policy-v1', verifier: 'a0-independent-leg3-policy-v1' },
       repetitions: 3,
       tags: ['test'],
@@ -240,7 +240,7 @@ describe('A0 runner — fail-closed input boundaries', () => {
     const work = await copyA0Fixture();
     const corpusFile = join(work, 'eval', 'a0', 'eval-cases.jsonl');
     const original = await readFile(corpusFile, 'utf8');
-    const mixed = `${original.trim()}\n${original.split('\n')[0]?.replace('case-001', 'case-001b').replace('a0-leg3-v1', 'a0-leg3-v2')}\n`;
+    const mixed = `${original.trim()}\n${original.split('\n')[0]?.replace('case-001', 'case-001b').replace('a0-leg3-v2', 'a0-leg3-v1')}\n`;
     await writeFile(corpusFile, mixed, 'utf8');
 
     await expect(runA0Evaluation({

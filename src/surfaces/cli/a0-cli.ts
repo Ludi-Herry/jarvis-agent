@@ -25,7 +25,7 @@ export const A0_AUTHORITY = Object.freeze({
 });
 
 export const DEFAULT_A0_CORPUS = 'eval/a0/eval-cases.jsonl';
-export const DEFAULT_A0_PROMPT = 'eval/a0/prompts/a0-leg3-v1.md';
+export const DEFAULT_A0_PROMPT = 'eval/a0/prompts/a0-leg3-v2.md';
 
 export interface A0RunOptions {
   cwd: string;
