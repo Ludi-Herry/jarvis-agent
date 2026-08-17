@@ -32,6 +32,12 @@ import {
   type SessionSelectionFlags,
   type SessionSelectionQuery,
 } from './sessions-query.js';
+import {
+  formatSessionMutationReport,
+  runSessionsFork,
+  runSessionsMove,
+  runSessionsRename,
+} from './sessions-mutations.js';
 import { JARVIS_VERSION } from './package-info.js';
 import { safeInline } from './approval.js';
 import {
@@ -260,6 +266,7 @@ Credential values are never printed. The sandbox command probe is local and does
     .option('--order <asc|desc>', 'sort order (default: desc)')
     .option('--page <n>', '1-based page number (default page size 50)')
     .option('--page-size <n>', 'sessions per page (1-200)')
+    .option('--archived', 'list archived sessions instead of active ones')
     .allowExcessArguments(false)
     .addHelpText('after', `
 Examples:
@@ -267,9 +274,10 @@ Examples:
   jarvis sessions list --json
   jarvis sessions list --integrity partial --sort id --order asc
   jarvis sessions list --page 2 --page-size 20
+  jarvis sessions list --archived
 Damage visibility is not selectable: corrupt sessions still set exit 7 even when filters exclude them from the listing.
 Exit codes: 0 ok, 2 usage error, 7 damaged session state.`)
-    .action(async (options: { json?: boolean } & SessionSelectionFlags) => {
+    .action(async (options: { json?: boolean; archived?: boolean } & SessionSelectionFlags) => {
       try {
         let selection: SessionSelectionQuery | undefined;
         const flags = pickSelectionFlags(options);
@@ -285,6 +293,7 @@ Exit codes: 0 ok, 2 usage error, 7 damaged session state.`)
         const { report, exitCode } = await buildSessionsListReport({
           cwd: extracted.cwd,
           ...(selection === undefined ? {} : { selection }),
+          ...(options.archived === true ? { archived: true } : {}),
         });
         if (options.json) console.log(JSON.stringify(report, null, 2));
         else process.stdout.write(formatSessionsListReport(report));
@@ -377,6 +386,81 @@ Exit codes: 0 ok (including no matches), 2 usage error, 7 damaged session state 
         console.error(`[sessions] ${safeInline(err instanceof Error ? err.message : String(err))}`);
         setExit(CLI_EXIT.RUNTIME);
       }
+    });
+
+  const MUTATION_EXIT_HELP = 'Exit codes: 0 success, 2 usage error, 3 refused/blocked/partial, 5 runtime failure, 7 corrupt source.';
+  const runMutation = async (
+    kind: 'fork' | 'rename' | 'archive' | 'unarchive',
+    ids: { sessionId: string; newId?: string },
+    options: { json?: boolean },
+  ): Promise<void> => {
+    try {
+      const { report, exitCode } = kind === 'fork'
+        ? await runSessionsFork({ cwd: extracted.cwd, sessionId: ids.sessionId, ...(ids.newId === undefined ? {} : { newId: ids.newId }) })
+        : kind === 'rename'
+          ? await runSessionsRename({ cwd: extracted.cwd, sessionId: ids.sessionId, newId: ids.newId ?? '' })
+          : await runSessionsMove({ cwd: extracted.cwd, sessionId: ids.sessionId, direction: kind });
+      if (options.json) console.log(JSON.stringify(report, null, 2));
+      else process.stdout.write(formatSessionMutationReport(report));
+      setExit(exitCode);
+    } catch (err) {
+      console.error(`[sessions] ${safeInline(err instanceof Error ? err.message : String(err))}`);
+      setExit(CLI_EXIT.RUNTIME);
+    }
+  };
+
+  sessions
+    .command('fork <session-id>')
+    .description('create a full-fidelity copy of a session under a new id (receipts preserved, lineage recorded)')
+    .option('--new-id <id>', 'explicit id for the fork (default: generated fork-<timestamp>-<random>)')
+    .option('--json', 'print the versioned SessionMutationReport JSON contract')
+    .allowExcessArguments(false)
+    .addHelpText('after', `
+Examples:
+  jarvis sessions fork <session-id>
+  jarvis sessions fork <session-id> --new-id <new-id>
+A source with pending tool effects, a partially recorded v2 composition, or fail-closed damage is refused (exit 3/7). The original session is never modified.
+${MUTATION_EXIT_HELP}`)
+    .action(async (sessionId: string, options: { newId?: string; json?: boolean }) => {
+      await runMutation('fork', { sessionId, newId: options.newId }, options);
+    });
+  sessions
+    .command('rename <session-id> <new-id>')
+    .description('rename a session: fork to the new id, then archive the original (nothing is deleted)')
+    .option('--json', 'print the versioned SessionMutationReport JSON contract')
+    .allowExcessArguments(false)
+    .addHelpText('after', `
+Examples:
+  jarvis sessions rename <session-id> <new-id>
+Rename is fork + archive: the original log is preserved in data/sessions/archived/. Any fork refusal (pending effects, partial composition, damage) stops the rename before anything changes.
+${MUTATION_EXIT_HELP}`)
+    .action(async (sessionId: string, newId: string, options: { json?: boolean }) => {
+      await runMutation('rename', { sessionId, newId }, options);
+    });
+  sessions
+    .command('archive <session-id>')
+    .description('move a session into data/sessions/archived/ (content untouched; checkpoint audit moves alongside)')
+    .option('--json', 'print the versioned SessionMutationReport JSON contract')
+    .allowExcessArguments(false)
+    .addHelpText('after', `
+Examples:
+  jarvis sessions archive <session-id>
+Archived sessions are invisible to list (without --archived), latest discovery, and resume; resume of an archived id reports not-found until unarchived.
+${MUTATION_EXIT_HELP}`)
+    .action(async (sessionId: string, options: { json?: boolean }) => {
+      await runMutation('archive', { sessionId }, options);
+    });
+  sessions
+    .command('unarchive <session-id>')
+    .description('move an archived session back into the active sessions directory')
+    .option('--json', 'print the versioned SessionMutationReport JSON contract')
+    .allowExcessArguments(false)
+    .addHelpText('after', `
+Examples:
+  jarvis sessions unarchive <session-id>
+${MUTATION_EXIT_HELP}`)
+    .action(async (sessionId: string, options: { json?: boolean }) => {
+      await runMutation('unarchive', { sessionId }, options);
     });
 
   const checkpoints = program.command('checkpoints')

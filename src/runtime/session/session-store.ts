@@ -132,10 +132,14 @@ export type SessionFileResolution =
  * Resolve one session id without following a symlink/junction out of the
  * workspace. Inspection and execution both call this boundary before reading
  * JSONL so they cannot disagree about which file an id denotes.
+ *
+ * `scope` defaults to the active `data/sessions` directory; `'archived'`
+ * resolves inside `data/sessions/archived` with the identical safety checks.
  */
 export async function resolveSessionFilePath(input: {
   cwd: string;
   sessionId: string;
+  scope?: 'active' | 'archived';
 }): Promise<SessionFileResolution> {
   const idCheck = validateSessionId(input.sessionId);
   if (!idCheck.ok) {
@@ -143,11 +147,14 @@ export async function resolveSessionFilePath(input: {
   }
 
   const dataDir = join(input.cwd, 'data');
-  const sessionsDir = join(dataDir, 'sessions');
+  const activeSessionsDir = join(dataDir, 'sessions');
+  const archived = input.scope === 'archived';
+  const sessionsDir = archived ? join(activeSessionsDir, 'archived') : activeSessionsDir;
   const file = `${input.sessionId}.jsonl`;
   const path = join(sessionsDir, file);
   const components = [
     { path: dataDir, kind: 'directory' as const },
+    ...(archived ? [{ path: activeSessionsDir, kind: 'directory' as const }] : []),
     { path: sessionsDir, kind: 'directory' as const },
     { path, kind: 'file' as const },
   ];
@@ -194,7 +201,9 @@ export async function resolveSessionFilePath(input: {
 
   try {
     const [canonicalCwd, canonicalFile] = await Promise.all([realpath(input.cwd), realpath(path)]);
-    const canonicalSessionsDir = resolve(canonicalCwd, 'data', 'sessions');
+    const canonicalSessionsDir = archived
+      ? resolve(canonicalCwd, 'data', 'sessions', 'archived')
+      : resolve(canonicalCwd, 'data', 'sessions');
     const local = relative(canonicalSessionsDir, canonicalFile);
     if (local === '' || local === '..' || local.startsWith(`..${sep}`) || isAbsolute(local)) {
       return {
@@ -275,6 +284,8 @@ export interface V2SessionHeader extends V2Base {
   startedAt: string;
   composition: SessionComposition;
   legacyImportedFrom?: string;
+  /** Lineage of a full-fidelity fork: the session id this log was copied from. */
+  forkedFrom?: string;
 }
 
 export interface ModelRequestReceipt {
@@ -484,7 +495,8 @@ function isV2SessionRecord(value: unknown): value is V2SessionRecord {
     case 'session':
       return hasStringFields(value, 'id', 'model', 'cwd', 'startedAt')
         && isSessionComposition(value.composition)
-        && (value.legacyImportedFrom === undefined || typeof value.legacyImportedFrom === 'string');
+        && (value.legacyImportedFrom === undefined || typeof value.legacyImportedFrom === 'string')
+        && (value.forkedFrom === undefined || typeof value.forkedFrom === 'string');
     case 'message':
       return isMessage(value.message);
     case 'compaction':

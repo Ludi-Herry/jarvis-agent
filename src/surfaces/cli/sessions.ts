@@ -140,6 +140,8 @@ export interface SessionListItem {
   pendingToolEffects: number;
   integrity: SessionIntegritySummary;
   resume: SessionResumeAdvice;
+  /** Present and true when the item was listed from the archive directory. */
+  archived?: boolean;
 }
 
 export interface SessionsListReport {
@@ -168,6 +170,10 @@ export interface SessionsShowReport {
     cwd?: string;
     model?: string;
     startedAt?: string;
+    /** True when the report was read from the archive directory. */
+    archived?: boolean;
+    /** Lineage recorded by a full-fidelity fork (v2 headers only). */
+    forkedFrom?: string;
     counts: SessionCounts;
     composition: SessionCompositionSummary;
     pendingToolEffects: SessionPendingEffectSummary[];
@@ -188,13 +194,18 @@ export interface SessionsDirectoryInspection {
   entries: string[];
 }
 
-export async function inspectSessionsDirectory(cwd: string): Promise<SessionsDirectoryInspection> {
+export async function inspectSessionsDirectory(
+  cwd: string,
+  location: 'active' | 'archived' = 'active',
+): Promise<SessionsDirectoryInspection> {
   const dataDir = join(cwd, 'data');
-  const sessionsDir = join(dataDir, 'sessions');
+  const activeDir = join(dataDir, 'sessions');
+  const sessionsDir = location === 'archived' ? join(activeDir, 'archived') : activeDir;
   const dirIssues: SessionIntegrityIssue[] = [];
   let entries: string[] = [];
   let canReadDirectory = true;
-  for (const directory of [dataDir, sessionsDir]) {
+  const components = location === 'archived' ? [dataDir, activeDir, sessionsDir] : [dataDir, sessionsDir];
+  for (const directory of components) {
     try {
       const info = await lstat(directory);
       if (info.isSymbolicLink()) {
@@ -244,14 +255,15 @@ export async function inspectSessionsDirectory(cwd: string): Promise<SessionsDir
 }
 
 export async function buildSessionsListReport(
-  input: { cwd: string; generatedAt?: string; selection?: SessionSelectionQuery },
+  input: { cwd: string; generatedAt?: string; selection?: SessionSelectionQuery; archived?: boolean },
 ): Promise<{ report: SessionsListReport; exitCode: CliExitCode }> {
-  const { dataDir, sessionsDir, dirIssues, entries } = await inspectSessionsDirectory(input.cwd);
+  const scope = input.archived === true ? 'archived' : 'active';
+  const { dataDir, sessionsDir, dirIssues, entries } = await inspectSessionsDirectory(input.cwd, scope);
   const inspections: SessionInspection[] = [];
   for (const entry of [...entries].sort()) {
     if (!entry.endsWith('.jsonl')) continue;
     const sessionId = fileStem(entry);
-    const resolution = await resolveSessionFilePath({ cwd: input.cwd, sessionId });
+    const resolution = await resolveSessionFilePath({ cwd: input.cwd, sessionId, scope });
     if (resolution.status === 'not-found') continue;
     if (resolution.status !== 'ok') {
       inspections.push(problemInspection(
@@ -267,7 +279,7 @@ export async function buildSessionsListReport(
     if (inspection !== undefined) inspections.push(inspection);
   }
   inspections.sort((left, right) => right.mtimeMs - left.mtimeMs || compareText(left.file, right.file));
-  const allSessions = inspections.map(toListItem);
+  const allSessions = inspections.map((inspection) => toListItem(inspection, input.archived === true));
   // Damage visibility is not selectable: corruption and exit 7 are computed on the full set.
   const corrupt = dirIssues.length > 0 || allSessions.some((item) => item.resume.verdict === 'refuse-resume');
   let sessions = allSessions;
@@ -313,7 +325,21 @@ export async function buildSessionsShowReport(
   dependencies: { loadResolvedSession?: typeof loadResolvedSession } = {},
 ): Promise<SessionsShowResult> {
   const dataDir = join(input.cwd, 'data');
-  const resolution = await resolveSessionFilePath({ cwd: input.cwd, sessionId: input.sessionId });
+  let resolution = await resolveSessionFilePath({ cwd: input.cwd, sessionId: input.sessionId });
+  let archived = false;
+  if (resolution.status === 'not-found') {
+    // Archived sessions stay inspectable; resume resolution deliberately never
+    // looks here.
+    const archivedResolution = await resolveSessionFilePath({
+      cwd: input.cwd,
+      sessionId: input.sessionId,
+      scope: 'archived',
+    });
+    if (archivedResolution.status !== 'not-found') {
+      resolution = archivedResolution;
+      archived = true;
+    }
+  }
   if (resolution.status === 'invalid-session-id') {
     return { status: 'invalid-session-id', reason: resolution.reason };
   }
@@ -372,6 +398,8 @@ export async function buildSessionsShowReport(
         id: inspection.header?.id ?? fileStem(inspection.file),
         file: inspection.file,
         format: inspection.format,
+        ...(archived ? { archived: true } : {}),
+        ...optional('forkedFrom', forkedFromOf(inspection.header)),
         ...optional('lastModifiedAt', inspection.mtimeMs > 0 ? new Date(inspection.mtimeMs).toISOString() : undefined),
         ...optional('cwd', inspection.header?.cwd),
         ...optional('model', inspection.header?.model),
@@ -405,7 +433,7 @@ export function formatSessionsListReport(report: SessionsListReport): string {
   for (const session of report.sessions) {
     lines.push(
       '',
-      `${inline(session.lastModifiedAt)}  ${session.format}  ${inline(session.id)}`,
+      `${inline(session.lastModifiedAt)}  ${session.format}  ${inline(session.id)}${session.archived === true ? '  [archived]' : ''}`,
       `  cwd: ${inline(session.cwd)}  model: ${inline(session.model)}`,
       `  composition: ${compositionText(session.composition)}  pending tool effects: ${session.pendingToolEffects}  integrity: ${session.integrity.status}`,
       `  resume: ${session.resume.verdict}: ${inline(session.resume.reason)}`,
@@ -432,6 +460,10 @@ export function formatSessionsShowReport(report: SessionsShowReport): string {
       + ` projectedMessages=${session.counts.projectedMessages}`,
     `composition: ${compositionText(session.composition)}`,
   ];
+  if (session.archived === true) {
+    lines.push('archived: yes — unarchive before any resume (resume resolves only the active sessions directory)');
+  }
+  if (session.forkedFrom !== undefined) lines.push(`forkedFrom: ${inline(session.forkedFrom)}`);
   if (session.composition.toolsetHash !== undefined) lines.push(`  toolsetHash: ${inline(session.composition.toolsetHash)}`);
   if (session.composition.systemPromptHash !== undefined) lines.push(`  systemPromptHash: ${inline(session.composition.systemPromptHash)}`);
   if (session.composition.dynamicAddendumSource !== undefined) {
@@ -552,7 +584,7 @@ function problemInspection(
   };
 }
 
-function toListItem(inspection: SessionInspection): SessionListItem {
+function toListItem(inspection: SessionInspection, archived = false): SessionListItem {
   const failClosed = inspection.issues.some((issue) => issue.kind !== 'malformed-tail');
   const composition = compositionSummary(inspection.header);
   return {
@@ -573,6 +605,7 @@ function toListItem(inspection: SessionInspection): SessionListItem {
       composition,
       issues: inspection.issues,
     }),
+    ...(archived ? { archived: true } : {}),
   };
 }
 
@@ -636,6 +669,11 @@ function pendingSummary(pending: PendingToolExecution): SessionPendingEffectSumm
     toolName: pending.toolName,
     reason: pending.reason,
   };
+}
+
+function forkedFromOf(header: SessionHeader | undefined): string | undefined {
+  if (header === undefined || !('forkedFrom' in header)) return undefined;
+  return header.forkedFrom;
 }
 
 function compositionSummary(header: SessionHeader | undefined): SessionCompositionSummary {
