@@ -38,6 +38,17 @@ import {
   runSessionsMove,
   runSessionsRename,
 } from './sessions-mutations.js';
+import {
+  buildReviewListReport,
+  buildReviewShowReport,
+  formatReviewDecisionReport,
+  formatReviewListReport,
+  formatReviewShowReport,
+  reviewDecisionExitCode,
+  reviewListExitCode,
+  reviewShowExitCode,
+  runReviewDecision,
+} from './review.js';
 import { JARVIS_VERSION } from './package-info.js';
 import { safeInline } from './approval.js';
 import {
@@ -668,6 +679,119 @@ ${MUTATION_EXIT_HELP}`)
         process.stdout.write(`${name}\n${Object.entries(permissions).map(([key, value]) => `  ${key}: ${value}`).join('\n')}\n`);
       }
       setExit(CLI_EXIT.SUCCESS);
+    });
+
+  const review = program.command('review')
+    .description('inspect and resolve parked human-routed requirements (terminal human review)');
+  review.action(() => review.help());
+  review
+    .command('list')
+    .description('list goals parked for human review')
+    .option('--json', 'print the versioned ReviewListReport JSON contract')
+    .allowExcessArguments(false)
+    .addHelpText('after', `
+Examples:
+  jarvis review list
+  jarvis review list --json
+Exit codes: 0 ok (including none pending), 7 corrupt goal/loop log.`)
+    .action(async (options: { json?: boolean }) => {
+      try {
+        const result = await buildReviewListReport({ cwd: extracted.cwd });
+        if (result.status === 'ok') {
+          if (options.json) console.log(JSON.stringify(result.report, null, 2));
+          else process.stdout.write(formatReviewListReport(result.report));
+        } else {
+          console.error(`[review] ${safeInline(result.reason)}`);
+        }
+        setExit(reviewListExitCode(result));
+      } catch (err) {
+        console.error(`[review] ${safeInline(err instanceof Error ? err.message : String(err))}`);
+        setExit(CLI_EXIT.RUNTIME);
+      }
+    });
+  review
+    .command('show <goal-id>')
+    .description('show one parked human review: requirements, evidence summary, and checks')
+    .option('--json', 'print the versioned ReviewShowReport JSON contract')
+    .allowExcessArguments(false)
+    .addHelpText('after', `
+Examples:
+  jarvis review show <goal-id>
+Exit codes: 0 ok, 2 unknown or unsafe goal id, 7 corrupt goal/loop log.`)
+    .action(async (goalId: string, options: { json?: boolean }) => {
+      try {
+        const result = await buildReviewShowReport({ cwd: extracted.cwd, goalId });
+        if (result.status === 'ok') {
+          if (options.json) console.log(JSON.stringify(result.report, null, 2));
+          else process.stdout.write(formatReviewShowReport(result.report));
+        } else if (result.status === 'not-found') {
+          console.error(`[review] no pending human review for goal: ${safeInline(result.goalId)}`);
+        } else {
+          console.error(`[review] ${safeInline(result.reason)}`);
+        }
+        setExit(reviewShowExitCode(result));
+      } catch (err) {
+        console.error(`[review] ${safeInline(err instanceof Error ? err.message : String(err))}`);
+        setExit(CLI_EXIT.RUNTIME);
+      }
+    });
+  const runDecision = async (
+    decision: 'approve' | 'reject',
+    goalId: string,
+    options: { requirement: string; note: string; reviewer?: string; json?: boolean },
+  ): Promise<void> => {
+    try {
+      const result = await runReviewDecision({
+        cwd: extracted.cwd,
+        goalId,
+        decision,
+        requirementId: options.requirement,
+        note: options.note,
+        ...(options.reviewer === undefined ? {} : { reviewer: options.reviewer }),
+      });
+      if (result.status === 'recorded') {
+        if (options.json) console.log(JSON.stringify(result.report, null, 2));
+        else process.stdout.write(formatReviewDecisionReport(result.report));
+      } else {
+        console.error(`[review] ${safeInline(result.reason)}`);
+      }
+      setExit(reviewDecisionExitCode(result));
+    } catch (err) {
+      console.error(`[review] ${safeInline(err instanceof Error ? err.message : String(err))}`);
+      setExit(CLI_EXIT.RUNTIME);
+    }
+  };
+  const DECISION_EXIT_HELP = 'Exit codes: 0 decision recorded, 2 usage error (no pending review, unknown requirement, empty note), 5 runtime failure, 7 corrupt log.';
+  review
+    .command('approve <goal-id>')
+    .description('record a human approval for one parked requirement')
+    .requiredOption('--requirement <id>', 'pending requirement id to decide')
+    .requiredOption('--note <text>', 'human evidence note (required, bounded)')
+    .option('--reviewer <name>', 'reviewer identity recorded in the audit (default: human)')
+    .option('--json', 'print the versioned ReviewDecisionReport JSON contract')
+    .allowExcessArguments(false)
+    .addHelpText('after', `
+Examples:
+  jarvis review approve <goal-id> --requirement r1 --note "verified manually in the terminal"
+One requirement per call; undecided requirements stay parked. Any resulting completion is produced by decideVerdict on the recorded human evidence.
+${DECISION_EXIT_HELP}`)
+    .action(async (goalId: string, options: { requirement: string; note: string; reviewer?: string; json?: boolean }) => {
+      await runDecision('approve', goalId, options);
+    });
+  review
+    .command('reject <goal-id>')
+    .description('record a human rejection for one parked requirement')
+    .requiredOption('--requirement <id>', 'pending requirement id to decide')
+    .requiredOption('--note <text>', 'human evidence note (required, bounded)')
+    .option('--reviewer <name>', 'reviewer identity recorded in the audit (default: human)')
+    .option('--json', 'print the versioned ReviewDecisionReport JSON contract')
+    .allowExcessArguments(false)
+    .addHelpText('after', `
+Examples:
+  jarvis review reject <goal-id> --requirement r1 --note "does not match the accepted behavior"
+${DECISION_EXIT_HELP}`)
+    .action(async (goalId: string, options: { requirement: string; note: string; reviewer?: string; json?: boolean }) => {
+      await runDecision('reject', goalId, options);
     });
 
   const a0 = program.command('a0')
