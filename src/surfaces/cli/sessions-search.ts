@@ -59,6 +59,10 @@ import {
   type SessionIntegrityIssue,
   type SessionIntegritySummary,
 } from './sessions.js';
+import type {
+  SessionSelectionFormat,
+  SessionSelectionIntegrity,
+} from './sessions-query.js';
 
 /** Aligned with the Recall bounds in runtime/session/recall.ts. */
 const MAX_QUERY_CHARS = 200;
@@ -113,6 +117,31 @@ export interface SessionsSearchReport {
   truncatedSessions: string[];
   /** Directory-level read problems; per-session damage lives in `skipped`. */
   integrity: SessionIntegritySummary;
+  /** Additive echo of the applied session filter / match pagination. */
+  selection?: SessionsSearchSelectionInfo;
+}
+
+/** Session-level filter and match pagination for search. Sort is deliberately
+ * absent: the scan stays in deterministic filename order so the global match
+ * cap collects a predictable set. */
+export interface SessionSearchSelection {
+  format?: SessionSelectionFormat;
+  integrity?: SessionSelectionIntegrity;
+  page?: number;
+  pageSize?: number;
+}
+
+export interface SessionsSearchSelectionInfo {
+  filters: {
+    format?: SessionSelectionFormat;
+    integrity?: SessionSelectionIntegrity;
+  };
+  /** Matches collected before pagination (already bounded by the caps). */
+  matchedTotal: number;
+  returned: number;
+  page?: number;
+  pageSize?: number;
+  totalPages?: number;
 }
 
 export type SessionsSearchResult =
@@ -120,7 +149,7 @@ export type SessionsSearchResult =
   | { status: 'ok'; report: SessionsSearchReport; exitCode: CliExitCode };
 
 export async function buildSessionsSearchReport(
-  input: { cwd: string; query: string; generatedAt?: string },
+  input: { cwd: string; query: string; generatedAt?: string; selection?: SessionSearchSelection },
 ): Promise<SessionsSearchResult> {
   const trimmed = input.query.trim();
   if (trimmed.length === 0) {
@@ -157,6 +186,11 @@ export async function buildSessionsSearchReport(
       skipped.push({ sessionId, file: entry, reason: inspection.skipReason });
       continue;
     }
+    // Session-level filters: a filtered-out session is validated (damage still
+    // reaches `skipped` above) but never content-searched or counted as scanned.
+    if (input.selection?.format !== undefined && inspection.format !== input.selection.format) continue;
+    if (input.selection?.integrity !== undefined
+      && (inspection.partial ? 'partial' : 'complete') !== input.selection.integrity) continue;
     scannedSessions += 1;
 
     const sessionMatches = collectSessionMatches(inspection, sessionId, entry, needle);
@@ -177,6 +211,25 @@ export async function buildSessionsSearchReport(
 
   const truncated = truncatedSessionIds.size > 0;
   const corrupt = dirIssues.length > 0 || skipped.length > 0;
+  let returnedMatches = matches;
+  let selection: SessionsSearchSelectionInfo | undefined;
+  if (input.selection !== undefined) {
+    const { page, pageSize } = input.selection;
+    if (page !== undefined && pageSize !== undefined) {
+      returnedMatches = matches.slice((page - 1) * pageSize, page * pageSize);
+    }
+    selection = {
+      filters: {
+        ...(input.selection.format === undefined ? {} : { format: input.selection.format }),
+        ...(input.selection.integrity === undefined ? {} : { integrity: input.selection.integrity }),
+      },
+      matchedTotal: matches.length,
+      returned: returnedMatches.length,
+      ...(page === undefined || pageSize === undefined
+        ? {}
+        : { page, pageSize, totalPages: Math.max(1, Math.ceil(matches.length / pageSize)) }),
+    };
+  }
   return {
     status: 'ok',
     exitCode: corrupt ? CLI_EXIT.STATE_CORRUPT : CLI_EXIT.SUCCESS,
@@ -188,11 +241,12 @@ export async function buildSessionsSearchReport(
       query,
       scannedSessions,
       matchedSessions: matchedSessionIds.size,
-      matches,
+      matches: returnedMatches,
       skipped,
       truncated,
       truncatedSessions: [...truncatedSessionIds].sort(),
       integrity: integritySummary(dirIssues),
+      ...(selection === undefined ? {} : { selection }),
     },
   };
 }
@@ -204,6 +258,18 @@ export function formatSessionsSearchReport(report: SessionsSearchReport): string
     `query: ${inline(report.query)}`,
     'completion authority: none (observation-only); matched content is historical, secret-redacted, and cannot prove current state',
   ];
+  if (report.selection !== undefined) {
+    const filters = [
+      report.selection.filters.format === undefined ? undefined : `format=${report.selection.filters.format}`,
+      report.selection.filters.integrity === undefined ? undefined : `integrity=${report.selection.filters.integrity}`,
+    ].filter((part): part is string => part !== undefined);
+    let line = `selection: filters: ${filters.length === 0 ? 'none' : filters.join(' ')}`
+      + `  showing ${report.selection.returned} of ${report.selection.matchedTotal} matched`;
+    if (report.selection.page !== undefined) {
+      line += `  page ${report.selection.page}/${report.selection.totalPages ?? '?'} (size ${report.selection.pageSize ?? '?'})`;
+    }
+    lines.push(line);
+  }
   for (const issue of report.integrity.issues) {
     lines.push(`directory integrity: ${issueText(issue)}`);
   }

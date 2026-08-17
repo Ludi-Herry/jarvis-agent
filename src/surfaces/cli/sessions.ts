@@ -37,6 +37,11 @@ import {
 } from '../../runtime/session/session-store.js';
 import { safeInline } from './approval.js';
 import { CLI_EXIT, type CliExitCode } from './exit-codes.js';
+import {
+  applySessionSelection,
+  type SessionSelectionInfo,
+  type SessionSelectionQuery,
+} from './sessions-query.js';
 
 const MAX_ISSUES_PER_SESSION = 50;
 
@@ -146,6 +151,8 @@ export interface SessionsListReport {
   integrity: SessionIntegritySummary;
   /** Sorted by last modification, newest first; name asc as tie-breaker. */
   sessions: SessionListItem[];
+  /** Additive echo of the applied filter/sort/page; absent when no selection flags were given. */
+  selection?: SessionSelectionInfo;
 }
 
 export interface SessionsShowReport {
@@ -237,7 +244,7 @@ export async function inspectSessionsDirectory(cwd: string): Promise<SessionsDir
 }
 
 export async function buildSessionsListReport(
-  input: { cwd: string; generatedAt?: string },
+  input: { cwd: string; generatedAt?: string; selection?: SessionSelectionQuery },
 ): Promise<{ report: SessionsListReport; exitCode: CliExitCode }> {
   const { dataDir, sessionsDir, dirIssues, entries } = await inspectSessionsDirectory(input.cwd);
   const inspections: SessionInspection[] = [];
@@ -260,8 +267,28 @@ export async function buildSessionsListReport(
     if (inspection !== undefined) inspections.push(inspection);
   }
   inspections.sort((left, right) => right.mtimeMs - left.mtimeMs || compareText(left.file, right.file));
-  const sessions = inspections.map(toListItem);
-  const corrupt = dirIssues.length > 0 || sessions.some((item) => item.resume.verdict === 'refuse-resume');
+  const allSessions = inspections.map(toListItem);
+  // Damage visibility is not selectable: corruption and exit 7 are computed on the full set.
+  const corrupt = dirIssues.length > 0 || allSessions.some((item) => item.resume.verdict === 'refuse-resume');
+  let sessions = allSessions;
+  let selection: SessionSelectionInfo | undefined;
+  if (input.selection !== undefined) {
+    const rows = inspections.map((inspection, index) => {
+      const item = allSessions[index];
+      return {
+        item,
+        id: item.id,
+        format: item.format,
+        integrityStatus: item.integrity.status,
+        resumeVerdict: item.resume.verdict,
+        modifiedMs: inspection.mtimeMs,
+        startedAt: item.startedAt,
+      };
+    });
+    const selected = applySessionSelection(rows, input.selection);
+    sessions = selected.items.map((row) => row.item);
+    selection = selected.info;
+  }
   return {
     report: {
       schemaVersion: 1,
@@ -270,6 +297,7 @@ export async function buildSessionsListReport(
       generatedAt: input.generatedAt ?? new Date().toISOString(),
       integrity: integritySummary(dirIssues),
       sessions,
+      ...(selection === undefined ? {} : { selection }),
     },
     exitCode: corrupt ? CLI_EXIT.STATE_CORRUPT : CLI_EXIT.SUCCESS,
   };
@@ -367,8 +395,11 @@ export function formatSessionsListReport(report: SessionsListReport): string {
   for (const issue of report.integrity.issues) {
     lines.push(`directory integrity: ${issueText(issue)}`);
   }
+  if (report.selection !== undefined) {
+    lines.push(selectionText(report.selection));
+  }
   if (report.sessions.length === 0) {
-    lines.push('', 'no sessions recorded');
+    lines.push('', report.selection === undefined ? 'no sessions recorded' : 'no sessions match the selection');
     return `${lines.join('\n')}\n`;
   }
   for (const session of report.sessions) {
@@ -635,6 +666,23 @@ export function integritySummary(issues: readonly SessionIntegrityIssue[]): Sess
     issues: issues.slice(0, MAX_ISSUES_PER_SESSION),
     omittedIssueCount: Math.max(0, issues.length - MAX_ISSUES_PER_SESSION),
   };
+}
+
+function selectionText(selection: SessionSelectionInfo): string {
+  const filters = [
+    selection.filters.format === undefined ? undefined : `format=${selection.filters.format}`,
+    selection.filters.integrity === undefined ? undefined : `integrity=${selection.filters.integrity}`,
+    selection.filters.resume === undefined ? undefined : `resume=${selection.filters.resume}`,
+  ].filter((part): part is string => part !== undefined);
+  const parts = [
+    `sort=${selection.sort} ${selection.order}`,
+    `filters: ${filters.length === 0 ? 'none' : filters.join(' ')}`,
+    `showing ${selection.returned} of ${selection.filtered} matching (${selection.total} total)`,
+  ];
+  if (selection.page !== undefined) {
+    parts.push(`page ${selection.page}/${selection.totalPages ?? '?'} (size ${selection.pageSize ?? '?'})`);
+  }
+  return `selection: ${parts.join('  ')}`;
 }
 
 function compositionText(composition: SessionCompositionSummary): string {

@@ -23,7 +23,15 @@ import {
 import {
   buildSessionsSearchReport,
   formatSessionsSearchReport,
+  type SessionSearchSelection,
 } from './sessions-search.js';
+import {
+  hasSessionSelection,
+  parseSessionSelection,
+  pickSelectionFlags,
+  type SessionSelectionFlags,
+  type SessionSelectionQuery,
+} from './sessions-query.js';
 import { JARVIS_VERSION } from './package-info.js';
 import { safeInline } from './approval.js';
 import {
@@ -245,15 +253,39 @@ Credential values are never printed. The sandbox command probe is local and does
     .command('list')
     .description('list sessions with identity, integrity, pending effects, and resume summaries')
     .option('--json', 'print the versioned SessionsListReport JSON contract')
+    .option('--format <v1|v2|unknown>', 'only list sessions of one log format')
+    .option('--integrity <complete|partial>', 'only list sessions with this integrity status')
+    .option('--resume <verdict>', 'only list sessions with this resume verdict')
+    .option('--sort <modified|started|id>', 'sort key (default: modified)')
+    .option('--order <asc|desc>', 'sort order (default: desc)')
+    .option('--page <n>', '1-based page number (default page size 50)')
+    .option('--page-size <n>', 'sessions per page (1-200)')
     .allowExcessArguments(false)
     .addHelpText('after', `
 Examples:
   jarvis sessions list
   jarvis sessions list --json
+  jarvis sessions list --integrity partial --sort id --order asc
+  jarvis sessions list --page 2 --page-size 20
+Damage visibility is not selectable: corrupt sessions still set exit 7 even when filters exclude them from the listing.
 Exit codes: 0 ok, 2 usage error, 7 damaged session state.`)
-    .action(async (options: { json?: boolean }) => {
+    .action(async (options: { json?: boolean } & SessionSelectionFlags) => {
       try {
-        const { report, exitCode } = await buildSessionsListReport({ cwd: extracted.cwd });
+        let selection: SessionSelectionQuery | undefined;
+        const flags = pickSelectionFlags(options);
+        if (hasSessionSelection(flags)) {
+          const parsed = parseSessionSelection(flags);
+          if (parsed.status === 'invalid') {
+            console.error(`[sessions] ${safeInline(parsed.reason)}`);
+            setExit(CLI_EXIT.USAGE);
+            return;
+          }
+          selection = parsed.query;
+        }
+        const { report, exitCode } = await buildSessionsListReport({
+          cwd: extracted.cwd,
+          ...(selection === undefined ? {} : { selection }),
+        });
         if (options.json) console.log(JSON.stringify(report, null, 2));
         else process.stdout.write(formatSessionsListReport(report));
         setExit(exitCode);
@@ -298,16 +330,41 @@ Exit codes: 0 ok, 2 unknown or unsafe session id, 7 damaged session state.`)
     .command('search <query>')
     .description('search session metadata and user/assistant message text across all sessions (linear scan)')
     .option('--json', 'print the versioned SessionsSearchReport JSON contract')
+    .option('--format <v1|v2|unknown>', 'only content-search sessions of one log format')
+    .option('--integrity <complete|partial>', 'only content-search sessions with this integrity status')
+    .option('--page <n>', '1-based page over the matched results (default page size 50)')
+    .option('--page-size <n>', 'matches per page (1-200)')
     .allowExcessArguments(false)
     .addHelpText('after', `
 Examples:
   jarvis sessions search "checkpoint rewind"
   jarvis sessions search "模型" --json
-Bounds: metadata (id/cwd/model) and append-only user/assistant text only; tool outputs, tool arguments, and system prompts are never searched. Excerpts are secret-redacted and bounded. Damaged sessions are skipped, not content-searched.
+  jarvis sessions search "rewind" --format v2 --page 1 --page-size 10
+Bounds: metadata (id/cwd/model) and append-only user/assistant text only; tool outputs, tool arguments, and system prompts are never searched. Excerpts are secret-redacted and bounded. Damaged sessions are skipped, not content-searched, and still set exit 7 even when filters exclude them.
 Exit codes: 0 ok (including no matches), 2 usage error, 7 damaged session state skipped.`)
-    .action(async (query: string, options: { json?: boolean }) => {
+    .action(async (query: string, options: { json?: boolean } & SessionSelectionFlags) => {
       try {
-        const result = await buildSessionsSearchReport({ cwd: extracted.cwd, query });
+        let selection: SessionSearchSelection | undefined;
+        const flags = pickSelectionFlags(options);
+        if (hasSessionSelection(flags)) {
+          const parsed = parseSessionSelection(flags);
+          if (parsed.status === 'invalid') {
+            console.error(`[sessions] ${safeInline(parsed.reason)}`);
+            setExit(CLI_EXIT.USAGE);
+            return;
+          }
+          selection = {
+            ...(parsed.query.format === undefined ? {} : { format: parsed.query.format }),
+            ...(parsed.query.integrity === undefined ? {} : { integrity: parsed.query.integrity }),
+            ...(parsed.query.page === undefined ? {} : { page: parsed.query.page }),
+            ...(parsed.query.pageSize === undefined ? {} : { pageSize: parsed.query.pageSize }),
+          };
+        }
+        const result = await buildSessionsSearchReport({
+          cwd: extracted.cwd,
+          query,
+          ...(selection === undefined ? {} : { selection }),
+        });
         if (result.status === 'invalid-query') {
           console.error(`[sessions] ${safeInline(result.reason)}`);
           setExit(CLI_EXIT.USAGE);
