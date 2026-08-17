@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import {
   createHistorySearchTool,
   createHistoryTurnTool,
+  matchExcerpt,
   projectSessionHistory,
 } from '../../src/runtime/session/recall.js';
 import {
@@ -428,3 +429,22 @@ async function writeSession(cwd: string, id: string, recordsToWrite: SessionReco
     'utf8',
   );
 }
+
+describe('matchExcerpt', () => {
+  it('returns undefined when the needle is absent', () => {
+    expect(matchExcerpt('nothing here', 'needle')).toBeUndefined();
+  });
+
+  it('excerpts the original string when case folding preserves length', () => {
+    const excerpt = matchExcerpt('a Needle reply', 'needle');
+    expect(excerpt).toContain('Needle');
+  });
+
+  it('keeps the window on the needle when case folding expands code units', () => {
+    // "İ".toLowerCase() is two code units ("i̇"), which used to shift the excerpt window off the match.
+    const content = `${'İ'.repeat(300)} needle at the end`;
+    const excerpt = matchExcerpt(content, 'needle');
+    expect(excerpt).toBeDefined();
+    expect(excerpt).toContain('needle');
+  });
+});

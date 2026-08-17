@@ -33,7 +33,7 @@
 import { readFile } from 'node:fs/promises';
 import { parseJsonlWithDiagnostics } from '../../runtime/jsonl-integrity.js';
 import {
-  excerptAround,
+  matchExcerpt,
   projectSessionHistory,
   redactHistoricalText,
 } from '../../runtime/session/recall.js';
@@ -335,15 +335,15 @@ function collectSessionMatches(
     for (const message of turn.messages) {
       if (message.role === 'tool') continue;
       const content = redactHistoricalText(message.content ?? '');
-      const at = content.toLowerCase().indexOf(needle);
-      if (at < 0) continue;
+      const excerpt = matchExcerpt(content, needle);
+      if (excerpt === undefined) continue;
       found.push({
         ...base,
         field: 'message',
         turn: turn.turn,
         role: message.role,
         recordOrdinal: message.recordOrdinal,
-        excerpt: excerptAround(content, at, needle.length),
+        excerpt,
       });
       if (found.length >= cap) break searchLoop;
     }

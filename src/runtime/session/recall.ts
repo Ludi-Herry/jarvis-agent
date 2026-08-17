@@ -158,8 +158,8 @@ function search(records: readonly SessionRecord[], input: SearchInput): ToolRunR
       if (message.role === 'tool' && !includeToolOutputs) continue;
       if (!('content' in message) || message.content === undefined) continue;
       const content = redactHistoricalText(message.content);
-      const at = content.toLowerCase().indexOf(needle);
-      if (at < 0) continue;
+      const excerpt = matchExcerpt(content, needle);
+      if (excerpt === undefined) continue;
       if (matches.length >= limit) {
         truncated = true;
         break searchLoop;
@@ -168,7 +168,7 @@ function search(records: readonly SessionRecord[], input: SearchInput): ToolRunR
         turn: turn.turn,
         role: message.role,
         recordOrdinal: message.recordOrdinal,
-        excerpt: excerptAround(content, at, query.length),
+        excerpt,
       });
     }
   }
@@ -313,6 +313,19 @@ export function excerptAround(content: string, at: number, queryLength: number):
   const start = Math.max(0, at - radius);
   const end = Math.min(content.length, start + SEARCH_EXCERPT_CHARS);
   return `${start > 0 ? '…' : ''}${content.slice(start, end)}${end < content.length ? '…' : ''}`;
+}
+
+/** Case-insensitive match excerpt with correct offsets. Lowercasing can expand
+ * code units (e.g. "İ" → "i̇"), which would shift every later index and slice
+ * the original string at the wrong window; when the fold changes the length
+ * the excerpt is taken from the folded string instead, so the window always
+ * contains the needle. */
+export function matchExcerpt(content: string, needle: string): string | undefined {
+  const folded = content.toLowerCase();
+  const at = folded.indexOf(needle);
+  if (at < 0) return undefined;
+  const source = folded.length === content.length ? content : folded;
+  return excerptAround(source, at, needle.length);
 }
 
 function historicalToolName(name: string): string {
