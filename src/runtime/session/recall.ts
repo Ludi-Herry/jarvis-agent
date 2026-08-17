@@ -280,7 +280,7 @@ async function loadFixedSessionRecords(source: SessionHistorySource): Promise<re
   return log.records;
 }
 
-function redactHistoricalText(text: string): string {
+export function redactHistoricalText(text: string): string {
   const redacted = redactSecrets(text)
     .replace(/\[jarvis-file-receipt\][^\r\n]*/giu, '[historical file receipt removed]')
     .replace(/\bfv1\.[A-Za-z0-9_-]{43}\b/gu, '[historical file version removed]')
@@ -308,7 +308,7 @@ function redactHistoricalText(text: string): string {
   }).join('');
 }
 
-function excerptAround(content: string, at: number, queryLength: number): string {
+export function excerptAround(content: string, at: number, queryLength: number): string {
   const radius = Math.max(0, Math.floor((SEARCH_EXCERPT_CHARS - queryLength) / 2));
   const start = Math.max(0, at - radius);
   const end = Math.min(content.length, start + SEARCH_EXCERPT_CHARS);

@@ -171,10 +171,18 @@ export interface SessionsShowReport {
 
 export { validateSessionId };
 
-export async function buildSessionsListReport(
-  input: { cwd: string; generatedAt?: string },
-): Promise<{ report: SessionsListReport; exitCode: CliExitCode }> {
-  const dataDir = join(input.cwd, 'data');
+/** Directory-level safety check shared by the read-only sessions reports:
+ * rejects symlink/reparse data roots, treats a missing directory as an empty
+ * entry set, and surfaces any other read failure as an integrity issue. */
+export interface SessionsDirectoryInspection {
+  dataDir: string;
+  sessionsDir: string;
+  dirIssues: SessionIntegrityIssue[];
+  entries: string[];
+}
+
+export async function inspectSessionsDirectory(cwd: string): Promise<SessionsDirectoryInspection> {
+  const dataDir = join(cwd, 'data');
   const sessionsDir = join(dataDir, 'sessions');
   const dirIssues: SessionIntegrityIssue[] = [];
   let entries: string[] = [];
@@ -225,6 +233,13 @@ export async function buildSessionsListReport(
       }
     }
   }
+  return { dataDir, sessionsDir, dirIssues, entries };
+}
+
+export async function buildSessionsListReport(
+  input: { cwd: string; generatedAt?: string },
+): Promise<{ report: SessionsListReport; exitCode: CliExitCode }> {
+  const { dataDir, sessionsDir, dirIssues, entries } = await inspectSessionsDirectory(input.cwd);
   const inspections: SessionInspection[] = [];
   for (const entry of [...entries].sort()) {
     if (!entry.endsWith('.jsonl')) continue;
@@ -614,7 +629,7 @@ function compositionSummary(header: SessionHeader | undefined): SessionCompositi
   };
 }
 
-function integritySummary(issues: readonly SessionIntegrityIssue[]): SessionIntegritySummary {
+export function integritySummary(issues: readonly SessionIntegrityIssue[]): SessionIntegritySummary {
   return {
     status: issues.length === 0 ? 'complete' : 'partial',
     issues: issues.slice(0, MAX_ISSUES_PER_SESSION),
@@ -660,20 +675,20 @@ function emptyCounts(): SessionCounts {
   };
 }
 
-function fileStem(file: string): string {
+export function fileStem(file: string): string {
   return file.endsWith('.jsonl') ? file.slice(0, -'.jsonl'.length) : file;
 }
 
-function localPath(dataDir: string, path: string): string {
+export function localPath(dataDir: string, path: string): string {
   const local = relative(dataDir, path);
   return (local === '' ? '.' : local).replaceAll('\\', '/');
 }
 
-function isNotFound(err: unknown): boolean {
+export function isNotFound(err: unknown): boolean {
   return typeof err === 'object' && err !== null && 'code' in err && (err as { code?: unknown }).code === 'ENOENT';
 }
 
-function describeReadError(err: unknown): string {
+export function describeReadError(err: unknown): string {
   if (!(err instanceof Error)) return String(err);
   const code = 'code' in err && typeof err.code === 'string' ? `${err.code}: ` : '';
   return `${code}${err.message}`;

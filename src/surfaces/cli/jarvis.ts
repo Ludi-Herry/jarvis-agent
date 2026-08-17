@@ -20,6 +20,10 @@ import {
   formatSessionsListReport,
   formatSessionsShowReport,
 } from './sessions.js';
+import {
+  buildSessionsSearchReport,
+  formatSessionsSearchReport,
+} from './sessions-search.js';
 import { JARVIS_VERSION } from './package-info.js';
 import { safeInline } from './approval.js';
 import {
@@ -283,6 +287,34 @@ Exit codes: 0 ok, 2 unknown or unsafe session id, 7 damaged session state.`)
         }
         if (options.json) console.log(JSON.stringify(result.report, null, 2));
         else process.stdout.write(formatSessionsShowReport(result.report));
+        setExit(result.exitCode);
+      } catch (err) {
+        console.error(`[sessions] ${safeInline(err instanceof Error ? err.message : String(err))}`);
+        setExit(CLI_EXIT.RUNTIME);
+      }
+    });
+
+  sessions
+    .command('search <query>')
+    .description('search session metadata and user/assistant message text across all sessions (linear scan)')
+    .option('--json', 'print the versioned SessionsSearchReport JSON contract')
+    .allowExcessArguments(false)
+    .addHelpText('after', `
+Examples:
+  jarvis sessions search "checkpoint rewind"
+  jarvis sessions search "模型" --json
+Bounds: metadata (id/cwd/model) and append-only user/assistant text only; tool outputs, tool arguments, and system prompts are never searched. Excerpts are secret-redacted and bounded. Damaged sessions are skipped, not content-searched.
+Exit codes: 0 ok (including no matches), 2 usage error, 7 damaged session state skipped.`)
+    .action(async (query: string, options: { json?: boolean }) => {
+      try {
+        const result = await buildSessionsSearchReport({ cwd: extracted.cwd, query });
+        if (result.status === 'invalid-query') {
+          console.error(`[sessions] ${safeInline(result.reason)}`);
+          setExit(CLI_EXIT.USAGE);
+          return;
+        }
+        if (options.json) console.log(JSON.stringify(result.report, null, 2));
+        else process.stdout.write(formatSessionsSearchReport(result.report));
         setExit(result.exitCode);
       } catch (err) {
         console.error(`[sessions] ${safeInline(err instanceof Error ? err.message : String(err))}`);
