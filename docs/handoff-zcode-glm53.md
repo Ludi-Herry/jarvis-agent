@@ -1,6 +1,6 @@
 # ZCode / GLM-5.3 交接：Jarvis 低权威 CLI 与 A0 机械切片
 
-> 状态（2026-08-17）：sessions 首切片及安全收口、headless event v1、A0 冻结 corpus、当前 Session Recall、typed config、checkpoint/rewind、TUI reducer/fallback、纯 TUI renderer、A0 只读 runner（v2 真实跑分 GO）与只读 `sessions search` 均已提交并通过独立门禁。GLM-5.3 剩余机械切片：sessions text/JSON 输出的筛选、排序与分页。提交级状态以 `docs/handoff-next.md` 为准。
+> 状态（2026-08-17）：sessions 首切片及安全收口、headless event v1、A0 冻结 corpus、当前 Session Recall、typed config、checkpoint/rewind、TUI reducer/fallback、纯 TUI renderer、A0 只读 runner（v2 真实跑分 GO）、只读 `sessions search` 与 sessions 筛选/排序/分页均已提交并通过独立门禁。ZCode 机械切片清单（本文件 §4）已全部收口；剩余工作为 Recall A/B、真实任务验收与写状态能力设计（需 Luis 放行/另行审批）。提交级状态以 `docs/handoff-next.md` 为准。
 
 > 状态：2026-08-14。本文面向接手实现的模型，范围已刻意收窄。开始前必须核对 Git 基线与工作树；发现 HEAD 或状态不一致时停止并汇报。
 
@@ -122,7 +122,7 @@ jarvis sessions show <session-id> [--json]
 这些任务都应单独开切片、独立验收：
 
 1. [x] `sessions search` 的只读 metadata/message 索引，先用线性扫描；不建数据库。（2026-08-17 已交付并通过独立提交门，见 `docs/handoff-next.md`。）
-2. sessions text/JSON 输出的筛选、排序与分页。
+2. [x] sessions text/JSON 输出的筛选、排序与分页。（2026-08-17 已交付并通过独立提交门，见 `docs/handoff-next.md`。）
 3. shell completion、帮助示例和 Windows UTF-8/空格路径契约测试。
 4. `status --watch` 与只读过滤器，继续消费 ObservationReport。
 5. A0 observations 文件加载、只读 runner、report 输出与 immutable run manifest；冻结 corpus、expected label、阈值和完成裁决不改。
