@@ -57,9 +57,17 @@ describe('jarvis completion', () => {
       for (const name of tableCommands) {
         expect(script.stdout).toContain(name);
       }
-      for (const flag of COMPLETION_GLOBAL_FLAGS) {
-        expect(script.stdout).toContain(flag);
-      }
+    }
+
+    // Global flags drift guard: compare the table against the Options: section
+    // of the real root help in both directions (asserting that a generated
+    // script contains the table's own flags would be self-referential).
+    const helpOptions = parseOptionsSection(rootHelp.stdout);
+    for (const flag of COMPLETION_GLOBAL_FLAGS) {
+      expect(helpOptions, `table flag ${flag} missing from --help options`).toContain(flag);
+    }
+    for (const flag of helpOptions) {
+      expect(COMPLETION_GLOBAL_FLAGS, `--help option ${flag} missing from the completion table`).toContain(flag);
     }
 
     for (const command of COMPLETION_COMMANDS) {
@@ -144,6 +152,20 @@ function parseHelpSection(help: string, heading: string): string[] {
     if (match !== null) names.push(match[1]);
   }
   return names;
+}
+
+/** Root help "Options:" rows hold the long flag as the first --token. */
+function parseOptionsSection(help: string): string[] {
+  const start = help.indexOf('Options:');
+  expect(start, 'root help Options: section exists').toBeGreaterThanOrEqual(0);
+  const lines = help.slice(start + 'Options:'.length).split('\n').slice(1);
+  const flags: string[] = [];
+  for (const line of lines) {
+    if (line.trim() === '') break;
+    const match = /--[a-z][a-z0-9-]*/u.exec(line);
+    if (match !== null) flags.push(match[0]);
+  }
+  return flags;
 }
 
 function execShell(command: string, shell: 'bash' | 'pwsh'): Promise<string> {
