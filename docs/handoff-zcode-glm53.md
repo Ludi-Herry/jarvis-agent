@@ -1,6 +1,6 @@
 # ZCode / GLM-5.3 交接：Jarvis 低权威 CLI 与 A0 机械切片
 
-> 状态（2026-08-18）：sessions 首切片及安全收口、headless event v1、A0 冻结 corpus、当前 Session Recall、typed config、checkpoint/rewind、TUI reducer/fallback、纯 TUI renderer、A0 只读 runner（v2 真实跑分 GO）、只读 `sessions search`、筛选/排序/分页、session mutation（fork/rename/archive/unarchive，写状态首切片，语义经 Luis 拍板）与终端 human review（`review list|show|approve|reject`）均已提交并通过独立门禁。ZCode 机械切片清单（本文件 §4）、写状态首切片与 review 表面全部收口；剩余工作为 Recall A/B、真实任务验收（烧钱，需 Luis 放行）、TUI renderer TTY 验收与 stop/completion/maintain-worktree preset 等后续产品化。提交级状态以 `docs/handoff-next.md` 为准。
+> 状态（2026-08-18）：sessions 首切片及安全收口、headless event v1、A0 冻结 corpus、当前 Session Recall、typed config、checkpoint/rewind、TUI reducer/fallback、纯 TUI renderer、A0 只读 runner（v2 真实跑分 GO）、只读 `sessions search`、筛选/排序/分页、session mutation（fork/rename/archive/unarchive，写状态首切片，语义经 Luis 拍板）与终端 human review（`review list|show|approve|reject`）、shell completion（`completion powershell|bash|zsh`）均已提交并通过独立门禁。ZCode 机械切片清单（本文件 §4）、写状态首切片、review 表面与补全全部收口；剩余工作为 Recall A/B、真实任务验收（烧钱，需 Luis 放行）、TUI renderer TTY 验收与 stop/maintain-worktree preset 等后续产品化。提交级状态以 `docs/handoff-next.md` 为准。
 
 > 状态：2026-08-14。本文面向接手实现的模型，范围已刻意收窄。开始前必须核对 Git 基线与工作树；发现 HEAD 或状态不一致时停止并汇报。
 
