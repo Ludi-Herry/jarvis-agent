@@ -22,6 +22,8 @@
 4. **任务来自时间或外部系统吗？** 单次扫描用 `npm run cron`；需要本机前台持续调度用 `npm run cron:daemon`。
 5. **已经产生多个 worktree 结果了吗？** 先用 `loop:finalize` 只读看 report；确认后再走 `--merge`；合入审计存在且 worktree clean 后再走 `--cleanup`。
 
+**objective 拆多细的量化依据（2026-08-17）**：单步成功率沿链路连乘衰减——单步 90% 的五步链路整体只剩约 59%（0.9⁵ ≈ 0.59）。所以 objective 拆小、每条独立可验收，长链任务靠 loop 逐条验收串联，别塞进单条 goal 硬扛。
+
 ## 什么时候别上 loop
 
 - 目标还没法验收，先回到 `dev` 或手写更清楚的 objective。
