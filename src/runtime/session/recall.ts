@@ -308,18 +308,18 @@ export function redactHistoricalText(text: string): string {
   }).join('');
 }
 
-export function excerptAround(content: string, at: number, queryLength: number): string {
+function excerptAround(content: string, at: number, queryLength: number): string {
   const radius = Math.max(0, Math.floor((SEARCH_EXCERPT_CHARS - queryLength) / 2));
   const start = Math.max(0, at - radius);
   const end = Math.min(content.length, start + SEARCH_EXCERPT_CHARS);
   return `${start > 0 ? '…' : ''}${content.slice(start, end)}${end < content.length ? '…' : ''}`;
 }
 
-/** Case-insensitive match excerpt with correct offsets. Lowercasing can expand
- * code units (e.g. "İ" → "i̇"), which would shift every later index and slice
- * the original string at the wrong window; when the fold changes the length
- * the excerpt is taken from the folded string instead, so the window always
- * contains the needle. */
+/** Case-insensitive match excerpt with correct offsets. `needle` must already
+ * be lowercased by the caller. Lowercasing can expand code units (e.g. "İ" →
+ * "i̇"), which would shift every later index and slice the original string at
+ * the wrong window; when the fold changes the length the excerpt is taken from
+ * the folded string instead, so the window always contains the needle. */
 export function matchExcerpt(content: string, needle: string): string | undefined {
   const folded = content.toLowerCase();
   const at = folded.indexOf(needle);
