@@ -85,7 +85,7 @@ Sessions 与动态恢复切片（2026-08-15）已完成：
 - [x] 根 `jarvis --cwd`、latest discovery 与 resolver 后二次读取共用同一错误分类；EACCES、EPERM、EIO 均有命令层或确定性触发测试。latest 目录枚举/条目消失、actual resume 二次读取、junction/canonical escape 与 loop 参数/map/resume/fatal 控制字符都有生产接线覆盖。
 - [x] 本切片的路径保证覆盖静态 symlink/junction/reparse 与 canonical escape。恶意同用户进程在校验和读取之间主动替换路径仍超出保证；Session 当前也没有跨进程 writer lock 或密码学真实性。hostile concurrent local writer 进入支持的威胁模型后，再评估 file-handle binding。
 
-仍待 v0.1 关键切片：A0 真实运行（runner 已于 2026-08-16 落地为 `jarvis a0 run|report`，真实 attempts 待显式 key/花费确认）、Recall 开关同形任务对照、完整 Windows 契约和 10–20 个真实任务。当前 Session 两级 Recall、typed config 与 `inspect/safe`、versioned headless JSONL agent-event v1、严格 A0 类型、六案冻结 corpus 与纯 report 已完成。当前 package bin 由锁定的 runtime `tsx@4.22.4` 启动源码；packed artifact 已在 Windows 空格路径下用 `--omit=dev` 安装，`jarvis --help`、`--version`、`status --json` 全部 exit 0。纯编译 bin、stop/review/completion、其余 sessions mutation 与更多 preset 属后续产品化；被忽略的 `dist/` 已在本轮误覆盖，现保持原样，未经授权不再清理或重建。
+仍待 v0.1 关键切片：A0 真实运行（runner 已于 2026-08-16 落地为 `jarvis a0 run|report`，真实 attempts 待显式 key/花费确认）、Recall 开关同形任务对照、完整 Windows 契约和 10–20 个真实任务。当前 Session 两级 Recall、typed config 与 `inspect/safe`、versioned headless JSONL agent-event v1、严格 A0 类型、六案冻结 corpus 与纯 report 已完成。当前 package bin 由锁定的 runtime `tsx@4.22.4` 启动源码；packed artifact 已在 Windows 空格路径下用 `--omit=dev` 安装，`jarvis --help`、`--version`、`status --json` 全部 exit 0。纯编译 bin 与更多 preset（如 `maintain/worktree`）属后续产品化；`stop`（2026-08-18）、review、completion、sessions mutation 均已落地。被忽略的 `dist/` 已在本轮误覆盖，现保持原样，未经授权不再清理或重建。
 
 - 单一 `jarvis` executable 与命令树：`run`、`goal`、`loop`、`resume`、`status`、`doctor`、`config` 为根帮助高频项；help/version/global flags 与旧入口退出码统一，版本读取 `package.json`。
 - 会话：v0.1 已交付只读 `sessions list|show` 与 `sessions search`（metadata + append-only user/assistant 文本的线性扫描，不建索引），list/search 的筛选、排序与分页已交付（list 三件套全量，search 为 session 筛选 + matches 分页）；写状态首切片 `sessions fork|rename|archive|unarchive` 已交付（fork 全量复制含 receipt + `forkedFrom` 血缘；rename = fork + 归档原会话，零删除零原地改写；archive 移动到 `data/sessions/archived/` 可逆）；实际 exact-session resume 会显示 cwd、模型、composition diff、pending effect 和停止原因。
@@ -107,7 +107,7 @@ jarvis resume [id|--last]
 jarvis sessions list|show|search|rename|fork|archive
 
 jarvis status [--watch] [--json] [--goal ID|--loop ID]
-jarvis stop <id>
+jarvis stop [--reason <text>] [--clear]
 jarvis review list|show|approve|reject
 jarvis finalize <loop-id> [--merge] [--cleanup]
 
@@ -150,6 +150,7 @@ R1 交付顺序：
 10. [x] `sessions fork|rename|archive|unarchive` 写状态首切片（2026-08-18，实现检查见下）。
 11. [x] `review list|show|approve|reject` 终端人工裁决（2026-08-18，实现检查见下）。
 12. [x] `completion powershell|bash|zsh` shell 补全（2026-08-18，实现检查见下）。
+13. [x] `stop` workspace 急停 CLI（2026-08-18，实现检查见下）。
 
 本切片检查（2026-08-15）：聚焦测试 12 files / 183 passed；`npm run typecheck`、`npm run lint`、`npm run build -- --noEmit`、`npm test` 全绿；全量测试为 119 files / 1334 passed / 2 skipped。独立提交门终审为 GO（P0=0、P1=0、P2=0、P3=1）；P3 是已记录的 hostile same-user check-to-read 并发替换窗口，不阻断当前威胁模型下的提交。代码提交为 `a814889`。已有 `dist/` 保持不动。
 
@@ -170,6 +171,8 @@ Session mutation 实现检查（2026-08-18）：写状态首切片，语义经 L
 终端 human review 实现检查（2026-08-18）：`review list|show|approve|reject` 落地（`src/surfaces/cli/review.ts`），能力层 `capabilities/goal/human-review.ts` 零改动——parked 探测（goal blocked + 末轮 couldNotVerify + human-route 需求）、decision 归一化、`decideVerdict` 重算、goal/loop 日志追加与 `data/human-reviews/` 审计全部复用。list/show 为 observation-only；approve/reject 一次裁决一条需求（`--requirement` + 必填 `--note` + 可选 `--reviewer`），authority 标 `human-review`，完成授权只来自结果里记录的 decideVerdict 输出。首轮独立 Reviewer NO-GO 抓到 P1（裁决落盘后全目录重算剩余数在兄弟日志损坏时把已记录误报 exit 7），修复为重扫失败只降级 `remainingParked`→`remainingUnknown: true`，目标自身损坏仍 exit 7 一字节不动；二轮复核 GO（39 项对抗探针全过，含 llm-route 伪造 human 前缀不进 pending、注入/超长截断、重复裁决 exit 2）。披露：loop 日志损坏时 goal 完成但 loop finish 缺失需人工修复（能力层既有窗口，本切片不碰）；exit 7 映射基于错误消息子串（构造上脆弱，当前无误判路径）；`remainingParked` 与 `remainingUnknown` 二选一。e2e 9/9、回归 69/69；全量 144 files / 1645 passed / 2 skipped（唯一失败为既有 sessions-cli 设备名用例的 10 秒子进程超时 flake，聚焦 22/22 通过）；`typecheck`、`lint`、`npm run build -- --noEmit`、`git diff --check` 全绿。代码提交 `0a3aed1`（切片）、`a0699d9`（P1 修复）。
 
 Shell completion 实现检查（2026-08-18）：`jarvis completion powershell|bash|zsh` 落地（`src/surfaces/cli/completion.ts`），单一静态命令表驱动三个 shell 生成器；v1 补全顶层命令、组子命令与全局旗标，命令级旗标留在 --help。防漂移双向交叉核对（命令表 ↔ 根/组 --help，含 Options 段全局旗标），开工即抓到表漏 `rewind`；bash COMP_WORDS 编程式调用与 PowerShell TabExpansion2 真实调用实证子命令与前缀过滤（两级定位 bug 由此抓到修复）；zsh 本机无运行时未实跑。独立提交门两轮 GO（P0=0、P1=0；P2-1 旗标核对自指已修；P2-2 为既有 sessions-cli 全量负载超时 flake 提醒，与本切片无关）。P3 披露：假想含引号表项无转义、`chat` 别名不进补全、PowerShell 第三词位回退文件名补全、`shadow` 排除项静默漂移窗口、zsh 未实机验证。e2e 5/5、回归 jarvis-cli 43/43；全量 145 files / 1651 passed / 2 skipped；`typecheck`、`lint`、`npm run build -- --noEmit`、`git diff --check` 全绿。代码提交 `05f4ae1`（切片）、`ced7a90`（旗标核对加固，纯测试）。
+
+Stop 实现检查（2026-08-18）：`jarvis stop [--reason <text>]` / `jarvis stop --clear` 落地（`src/surfaces/cli/stop.ts` + jarvis 接线），给既有 workspace emergency-stop 控制通道补 CLI 生产端。`runtime/control/emergency-stop.ts` 通道本体与 goal/loop/cron/cron-daemon 四个消费者的时间门控轮询零改动；stop 复用原子写 + append-only 审计并写后回读校验，clear 只删控制文件、不写审计。workspace 全局语义经 Luis 拍板：不接 per-id（位置参数 id exit 2 并说明；按 id 定向停需改通道形状，真实需求出现另开切片）；authority 标 `control`、无完成授权；默认 reason `CLI emergency stop` 由 CLI 层显式传入（Reviewer P2：help 宣称与通道默认值不一致，修复并补断言）。P3 披露：reason 无长度上限（通道既有，argv 为事实上界）、空 reason text 报告显示 `-`。e2e 8/8，含真实 cron-daemon 急停端到端与 stop 后新运行不受影响的时间门控验证（cron map 置工作区外规避 repo-controlled config 拒绝路径）；全量 146 files / 1659 passed / 2 skipped 零失败；`typecheck`、`lint`、`npm run build -- --noEmit`、`git diff --check` 全绿。代码提交 `277362f`（切片）、`c3cc198`（P2 默认 reason 修复）。
 
 ## 5. R2：增强行模式与全屏 TUI
 
