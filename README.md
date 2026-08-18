@@ -27,6 +27,7 @@
 **产品路线更新（2026-08-15）**：采用 CLI-first 两阶段，再继续 Desktop control surface。v0.1 CLI beta 先完成可信结果、Session/机器协议与产品外壳；v0.2 的 checkpoint/rewind 基础、TUI reducer 与可靠回退已完成，全屏 renderer 待独立切片；v0.3 完成 Desktop UI/UX 与 Luis 逐节验收。旧 R1-R9 证据继续保留为历史记录，R6 已从 CLI beta blocker 移到 v0.3。
 
 接手入口：
+- **使用与验收指南（面向 Luis 本人，含零成本验收路线与清单）→ `docs/usage-guide.md`**；
 - **当前路线与验收 → `docs/cli-first-plan.md`**；**最新全景与下一步 → `docs/handoff-next.md`**；**Sol Pro 裁决与落地修正 → `docs/sol-pro-cli-trust-review.md`**；**ZCode/GLM-5.3 交接 → `docs/handoff-zcode-glm53.md`**；
 - **Loop primitive 怎么选 → `docs/loop-primitives-guide.md`**；**Loop 重项收口记录（parallel resume / finalize / cron daemon）→ `docs/handoff-loop-remaining.md`**；**Phase D（GoalLoop + 三腿 + 腿3 裁判）→ `docs/handoff-D.md`**；**Hooks（tool-call / lifecycle / loop per-goal hook-map）→ `docs/handoff-hooks.md`**；
 - **B 阶段 + 当前安全态 → `docs/handoff-B.md`**（顶部「当前状态更新」段）；
