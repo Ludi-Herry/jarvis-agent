@@ -69,6 +69,8 @@ describe('jarvis stop (workspace emergency stop)', () => {
     expect(text).toMatchObject({ code: 0 });
     expect(text.stdout).toContain('Emergency stop requested (workspace-wide)');
     expect(text.stdout).toContain('completion authority: none (control action only)');
+    // the default reason must match the value promised by --help
+    expect(text.stdout).toContain('reason: CLI emergency stop');
   });
 
   it('clears the stop and reports no-stop-in-effect on a repeat clear', async () => {

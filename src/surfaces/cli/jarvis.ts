@@ -925,7 +925,7 @@ Exit codes: 0 ok, 2 usage error, 5 runtime failure.`)
       try {
         const { report, exitCode } = options.clear === true
           ? await runStopClear({ cwd: extracted.cwd })
-          : await runStop({ cwd: extracted.cwd, ...(options.reason === undefined ? {} : { reason: options.reason }) });
+          : await runStop({ cwd: extracted.cwd, reason: options.reason ?? 'CLI emergency stop' });
         if (options.json) console.log(JSON.stringify(report, null, 2));
         else process.stdout.write(formatStopReport(report));
         setExit(exitCode);
