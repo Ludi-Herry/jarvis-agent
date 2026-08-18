@@ -42,6 +42,7 @@ import {
   generateCompletionScript,
   isCompletionShell,
 } from './completion.js';
+import { formatStopReport, runStop, runStopClear } from './stop.js';
 import {
   buildReviewListReport,
   buildReviewShowReport,
@@ -894,6 +895,44 @@ Exit codes: 0 ok, 2 unknown shell.`)
       }
       process.stdout.write(generateCompletionScript(shell));
       setExit(CLI_EXIT.SUCCESS);
+    });
+
+  program
+    .command('stop [id]')
+    .description('request a workspace-wide emergency stop (goal/loop/cron halt at their next poll); --clear removes it')
+    .option('--reason <text>', 'reason recorded in the stop audit (default: CLI emergency stop)')
+    .option('--clear', 'remove the stop file instead of requesting a stop')
+    .option('--json', 'print the versioned StopReport JSON contract')
+    .allowExcessArguments(false)
+    .addHelpText('after', `
+Examples:
+  jarvis stop
+  jarvis stop --reason "freezing this workspace for maintenance"
+  jarvis stop --clear
+The stop is workspace-global: goal/loop/cron runs started before the request halt with emergency-stop (time-gated); runs started later are unaffected. There is no per-id stop — passing an id is a usage error.
+Exit codes: 0 ok, 2 usage error, 5 runtime failure.`)
+    .action(async (id: string | undefined, options: { reason?: string; clear?: boolean; json?: boolean }) => {
+      if (id !== undefined) {
+        console.error(`[stop] workspace-wide stop does not take an id (got ${safeInline(id)}); every goal/loop/cron run in this workspace started before the request will halt`);
+        setExit(CLI_EXIT.USAGE);
+        return;
+      }
+      if (options.clear === true && options.reason !== undefined) {
+        console.error('[stop] --reason does not apply to --clear');
+        setExit(CLI_EXIT.USAGE);
+        return;
+      }
+      try {
+        const { report, exitCode } = options.clear === true
+          ? await runStopClear({ cwd: extracted.cwd })
+          : await runStop({ cwd: extracted.cwd, ...(options.reason === undefined ? {} : { reason: options.reason }) });
+        if (options.json) console.log(JSON.stringify(report, null, 2));
+        else process.stdout.write(formatStopReport(report));
+        setExit(exitCode);
+      } catch (err) {
+        console.error(`[stop] ${safeInline(err instanceof Error ? err.message : String(err))}`);
+        setExit(CLI_EXIT.RUNTIME);
+      }
     });
 
   program.hook('preAction', (_command, actionCommand) => {

@@ -41,6 +41,7 @@ export const COMPLETION_COMMANDS: ReadonlyArray<{ name: string; subcommands?: re
   { name: 'loop' },
   { name: 'resume' },
   { name: 'status' },
+  { name: 'stop' },
   { name: 'doctor' },
   { name: 'sessions', subcommands: ['list', 'show', 'search', 'fork', 'rename', 'archive', 'unarchive'] },
   { name: 'checkpoints', subcommands: ['list', 'show'] },
