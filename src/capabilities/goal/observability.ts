@@ -1,5 +1,5 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
-import { join, relative } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import {
   isSessionRecord,
   replaySession,
@@ -7,6 +7,10 @@ import {
   type SessionFormat,
   type SessionRecord,
 } from '../../runtime/session/session-store.js';
+import {
+  readEmergencyStop,
+  type EmergencyStopState,
+} from '../../runtime/control/emergency-stop.js';
 import { parseJsonlWithDiagnostics, type JsonlMalformedLine, type JsonlRecordValidator } from '../../runtime/jsonl-integrity.js';
 import { type ApprovalAuditDecision, type ApprovalAuditRecord } from '../../runtime/permission/index.js';
 import { isApprovalAuditRecord } from '../../runtime/permission/approval-audit-store.js';
@@ -43,12 +47,20 @@ export interface ObservationInput {
   cron?: ObservationLog<LoopCronRecord>;
   cronDaemon?: ObservationLog<LoopCronDaemonRecord>;
   approvals?: Array<ObservationLog<ApprovalAuditRecord>>;
+  control: {
+    emergencyStop: EmergencyStopState;
+  };
   integrity?: ObservationIntegrityIssue[];
 }
 
 export interface ObservationReportOptions {
   sourceDataDir?: string;
   generatedAt?: string;
+}
+
+export interface LoadWorkspaceObservationOptions {
+  workspaceCwd?: string;
+  readEmergencyStop?: (cwd: string) => Promise<EmergencyStopState>;
 }
 
 export interface ObservationReport {
@@ -65,12 +77,16 @@ export interface ObservationReport {
       cron: true;
       cronDaemon: true;
       approvals: true;
+      control: true;
     };
   };
   authority: {
     mode: 'observation-only';
     canCompleteGoals: false;
     canCompleteLoops: false;
+  };
+  control: {
+    emergencyStop: EmergencyStopState;
   };
   integrity: ObservationIntegrity;
   status: {
@@ -281,9 +297,11 @@ export function buildObservationReport(input: ObservationInput, options: Observa
         cron: true,
         cronDaemon: true,
         approvals: true,
+        control: true,
       },
     },
     authority: { mode: 'observation-only', canCompleteGoals: false, canCompleteLoops: false },
+    control: input.control,
     integrity,
     status: {
       sessions: { total: sessionSummaries.length },
@@ -324,14 +342,20 @@ export function buildObservationReport(input: ObservationInput, options: Observa
   };
 }
 
-export async function loadWorkspaceObservation(dataDir: string): Promise<ObservationReport> {
-  const [sessionResult, goalResult, loopResult, cronResult, cronDaemonResult, approvalResult] = await Promise.all([
+export async function loadWorkspaceObservation(
+  dataDir: string,
+  options: LoadWorkspaceObservationOptions = {},
+): Promise<ObservationReport> {
+  const workspaceCwd = resolve(options.workspaceCwd ?? dirname(resolve(dataDir)));
+  const readControl = options.readEmergencyStop ?? readEmergencyStop;
+  const [sessionResult, goalResult, loopResult, cronResult, cronDaemonResult, approvalResult, emergencyStop] = await Promise.all([
     readJsonlDir(join(dataDir, 'sessions'), isSessionRecord, dataDir),
     readJsonlDir(join(dataDir, 'goals'), isGoalRecord, dataDir),
     readJsonlDir(join(dataDir, 'loops'), isLoopRecord, dataDir),
     readJsonlFile(join(dataDir, 'cron', 'loop-cron.jsonl'), isLoopCronRecord, dataDir),
     readJsonlFile(join(dataDir, 'cron', 'loop-cron-daemon.jsonl'), isLoopCronDaemonRecord, dataDir),
     readJsonlDir(join(dataDir, 'approvals'), isApprovalAuditRecord, dataDir),
+    readControl(workspaceCwd),
   ]);
   const sessionSemanticIntegrity = sessionResult.logs.flatMap((log) =>
     sessionSemanticIssues(log.records).map((issue) => ({
@@ -348,6 +372,7 @@ export async function loadWorkspaceObservation(dataDir: string): Promise<Observa
     ...(cronResult.logs[0] === undefined ? {} : { cron: cronResult.logs[0] }),
     ...(cronDaemonResult.logs[0] === undefined ? {} : { cronDaemon: cronDaemonResult.logs[0] }),
     approvals: approvalResult.logs,
+    control: { emergencyStop },
     integrity: [
       ...sessionResult.integrity,
       ...sessionSemanticIntegrity,
@@ -364,6 +389,7 @@ export function formatObservationReport(report: ObservationReport): string {
   const lines = [
     'Observation: status/usage/audit (read-only)',
     'completion authority: none',
+    formatEmergencyStop(report.control.emergencyStop),
     `integrity: ${report.integrity.status} corruptLines=${report.integrity.corruptLineCount} unreadableFiles=${report.integrity.unreadableFileCount}`,
     `sessions: ${report.status.sessions.total} messages=${report.usage.sessionMessages} compactions=${report.usage.sessionCompactions}`,
     `goals: ${report.status.goals.total} active=${report.status.goals.byState.active} complete=${report.status.goals.byState.complete} blocked=${report.status.goals.byState.blocked}`,
@@ -426,6 +452,14 @@ export function formatObservationReport(report: ObservationReport): string {
   }
 
   return `${lines.join('\n')}\n`;
+}
+
+function formatEmergencyStop(state: EmergencyStopState): string {
+  if (state.unreadable) {
+    return `emergency stop: unreadable requested=${state.requested} error=${inline(state.error ?? '-')}`;
+  }
+  if (!state.requested) return 'emergency stop: clear';
+  return `emergency stop: requested at=${inline(state.record?.requestedAt ?? '-')} source=${inline(state.record?.source ?? '-')} reason=${inline(state.record?.reason ?? '-')}`;
 }
 
 function summarizeSession(log: ObservationLog<SessionRecord>): SessionSummary | undefined {
@@ -1008,6 +1042,24 @@ function timestamp(value: string | undefined): number {
 
 function clip(value: string, max: number): string {
   return value.length <= max ? value : `${value.slice(0, max - 1)}...`;
+}
+
+function inline(value: string): string {
+  const safe = Array.from(value, (character) => {
+    const code = character.codePointAt(0) ?? 32;
+    const unsafe =
+      code < 32 ||
+      (code >= 127 && code <= 159) ||
+      code === 0x2028 ||
+      code === 0x2029 ||
+      code === 0x200e ||
+      code === 0x200f ||
+      code === 0x061c ||
+      (code >= 0x202a && code <= 0x202e) ||
+      (code >= 0x2066 && code <= 0x2069);
+    return unsafe ? ' ' : character;
+  }).join('').replace(/ +/gu, ' ').trim();
+  return clip(safe, 120);
 }
 
 function balancedJsonObject(text: string, start: number): string | undefined {

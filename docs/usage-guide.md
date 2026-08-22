@@ -48,9 +48,9 @@ cd H:\jarvis-agent
 npm run jarvis -- status
 ```
 
-**期望看到**：`completion authority: none`（只读）、sessions / goals / loops / cron 计数、audit 汇总。
+**期望看到**：`completion authority: none`（只读）、`emergency stop: clear|requested|unreadable`、sessions / goals / loops / cron 计数、audit 汇总。
 
-**已知缺口**（验收时可留意、值得提产品反馈）：status 目前**不显示**急停是否生效。判断急停状态的替代办法见 1.5。
+`--json` 的 additive 字段为 `control.emergencyStop`，`meta.schemaVersion` 仍为 `1`。控制文件损坏或不可读时，status 会显示 `unreadable` 与错误摘要，不会隐藏状态读取失败。
 
 ### 1.4 sessions 只读三件套
 
@@ -94,7 +94,7 @@ $LASTEXITCODE   # 应为 2；--reason 与 --clear 互斥
 
 - **全局生效**：停的是这个工作区里所有比它早启动的 goal / loop / cron 运行，没有按 id 定向停。
 - **时间门控**：只停「stop 请求之前」启动的运行；stop 之后新启动的运行不受影响。这样一份遗留的 stop 文件不会永久锁死工作区。
-- **状态查询缺口**：想确认「现在有没有 stop 生效」，目前靠 `stop --clear` 的回显（`cleared` = 之前有；`No emergency stop in effect` = 没有），或直接看 `data\control\emergency-stop.json` 是否存在。审计历史在 `data\control\emergency-stop.jsonl`，只追加、清除不写审计。
+- **状态查询**：运行 `npm run jarvis -- status`；`clear` 表示当前没有 stop 请求，`requested` 会带请求时间、来源和原因，`unreadable` 表示控制文件读取失败。审计历史在 `data\control\emergency-stop.jsonl`，只追加、清除不写审计。
 
 ### 1.6 completion shell 补全
 
@@ -313,7 +313,6 @@ npm run gui
 
 **已知缺口 / 披露**（验收时可留意，均为当前已知项，非 bug）：
 
-- status 不显示急停状态（见 1.3 的替代判断法）。
 - zsh 补全脚本生成但未在本机实机验证（本机无 zsh）。
 - `stop --reason ""` 空字符串在文本报告里显示 `-`；reason 没有长度上限（Windows 命令行长度是事实上界）。
 - PowerShell 下 `npm run dev -- --resume` 会被 npm 吞掉 `--resume`，统一用 `npm run jarvis -- resume` 这个形态。

@@ -92,11 +92,8 @@ describe('jarvis completion', () => {
 
   it('completes subcommands and partial words when the bash/powershell scripts are actually invoked', async () => {
     const bash = await runJarvis(['completion', 'bash']);
-    const bashScript = join(tmpdir(), `jarvis-completion-test-${process.pid}.bash`);
-    await writeFile(bashScript, bash.stdout, 'utf8');
-    const bashProbe = await execShell(
-      `source "${bashScript}"; COMP_WORDS=(jarvis sessions ""); COMP_CWORD=2; _jarvis_completions; echo "\${COMPREPLY[*]}"; COMP_WORDS=(jarvis rev); COMP_CWORD=1; _jarvis_completions; echo "\${COMPREPLY[*]}"`,
-      'bash',
+    const bashProbe = await execBashStdin(
+      `${bash.stdout}\nCOMP_WORDS=(jarvis sessions ""); COMP_CWORD=2; _jarvis_completions; echo "\${COMPREPLY[*]}"; COMP_WORDS=(jarvis rev); COMP_CWORD=1; _jarvis_completions; echo "\${COMPREPLY[*]}"`,
     );
     const [subLine, partialLine] = bashProbe.trim().split('\n');
     expect(subLine).toContain('archive');
@@ -178,6 +175,20 @@ function execShell(command: string, shell: 'bash' | 'pwsh'): Promise<string> {
       }
       resolveShell(stdout);
     });
+  });
+}
+
+function execBashStdin(script: string): Promise<string> {
+  return new Promise((resolveShell, rejectShell) => {
+    const child = execFile('bash', ['-s', '--'], { encoding: 'utf8', timeout: 20_000, windowsHide: true }, (error, stdout, stderr) => {
+      if (error !== null) {
+        rejectShell(new Error(`bash probe failed: ${stderr || error.message}`));
+        return;
+      }
+      resolveShell(stdout);
+    });
+    child.stdin?.on('error', (error) => rejectShell(new Error(`bash probe stdin failed: ${error.message}`)));
+    child.stdin?.end(script);
   });
 }
 

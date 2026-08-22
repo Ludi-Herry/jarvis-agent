@@ -7,9 +7,10 @@ const REPORT: ObservationReport = {
     schemaVersion: 1,
     generatedAt: '2026-07-03T12:00:00.000Z',
     source: { dataDir: 'data' },
-    scope: { sessions: true, goals: true, loops: true, cron: true, cronDaemon: true, approvals: true },
+    scope: { sessions: true, goals: true, loops: true, cron: true, cronDaemon: true, approvals: true, control: true },
   },
   authority: { mode: 'observation-only', canCompleteGoals: false, canCompleteLoops: false },
+  control: { emergencyStop: { path: 'stop.json', requested: false } },
   integrity: { status: 'complete', corruptLineCount: 0, unreadableFileCount: 0, affected: [], omittedAffectedCount: 0 },
   status: {
     sessions: { total: 1 },
@@ -75,6 +76,23 @@ describe('buildGuiTimeline', () => {
     });
 
     expect(items[0]).toMatchObject({ kind: 'control', tone: 'danger', detail: 'operator stop' });
+  });
+
+  it('shows an unreadable emergency stop before trusting the requested flag', () => {
+    const items = buildGuiTimeline(REPORT, {
+      path: 'stop.json',
+      requested: false,
+      unreadable: true,
+      error: 'permission denied',
+    });
+
+    expect(items.find((item) => item.id === 'stop')).toMatchObject({
+      kind: 'control',
+      title: '急停状态不可读',
+      detail: 'permission denied',
+      tone: 'danger',
+      meta: ['requested false'],
+    });
   });
 
   it('warns when legacy success records disagree with blocked loop work', () => {

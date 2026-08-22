@@ -58,7 +58,7 @@ function render(payload) {
   nodes.goals.textContent = `${report.status.goals.total}`;
   nodes.loops.textContent = `${report.status.loops.total}`;
   nodes.approvals.textContent = `${report.audit.approvals.requests}/${report.audit.approvals.results}`;
-  nodes.stopState.textContent = payload.stop.requested ? 'Stopped' : 'Armed';
+  nodes.stopState.textContent = payload.stop.unreadable ? 'Unknown' : payload.stop.requested ? 'Stopped' : 'Armed';
   nodes.updatedAt.textContent = shortTime(report.meta.generatedAt);
   nodes.latestGoal.textContent = formatLatestGoal(report.status.latestGoal);
   nodes.budget.textContent = report.status.latestGoalBudget

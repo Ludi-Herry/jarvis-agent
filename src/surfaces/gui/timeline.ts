@@ -22,7 +22,16 @@ export interface GuiStatusPayload {
 export function buildGuiTimeline(report: ObservationReport, stop: EmergencyStopState): GuiTimelineItem[] {
   const items: GuiTimelineItem[] = [];
 
-  if (stop.requested) {
+  if (stop.unreadable) {
+    items.push({
+      id: 'stop',
+      kind: 'control',
+      title: '急停状态不可读',
+      detail: stop.error ?? '无法确认急停控制文件状态。',
+      tone: 'danger',
+      meta: [`requested ${stop.requested}`],
+    });
+  } else if (stop.requested) {
     items.push({
       id: 'stop',
       kind: 'control',

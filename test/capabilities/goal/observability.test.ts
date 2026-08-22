@@ -9,6 +9,7 @@ import {
   type ObservationInput,
 } from '../../../src/capabilities/goal/observability.js';
 import type { LoopContract } from '../../../src/capabilities/goal/index.js';
+import { requestEmergencyStop } from '../../../src/runtime/control/emergency-stop.js';
 
 const CONTRACT: LoopContract = {
   maxGoals: 2,
@@ -33,6 +34,7 @@ afterEach(async () => {
 describe('buildObservationReport', () => {
   it('downgrades a historical checks-only complete record in summaries, counts, and activity', () => {
     const report = buildObservationReport({
+      control: { emergencyStop: { path: 'data/control/emergency-stop.json', requested: false } },
       goals: [{
         path: 'data/goals/legacy.jsonl',
         records: [
@@ -74,6 +76,7 @@ describe('buildObservationReport', () => {
 
   it('summarizes status, usage, and audit evidence without granting completion authority', () => {
     const input: ObservationInput = {
+      control: { emergencyStop: { path: 'data/control/emergency-stop.json', requested: false } },
       sessions: [
         {
           path: 'data/sessions/g1.jsonl',
@@ -313,6 +316,7 @@ describe('buildObservationReport', () => {
 
   it('keeps the recorded goal state and derives interruption from its halted parent loop', () => {
     const report = buildObservationReport({
+      control: { emergencyStop: { path: 'data/control/emergency-stop.json', requested: false } },
       goals: [
         {
           path: 'data/goals/L-stop-g0.jsonl',
@@ -363,6 +367,7 @@ describe('buildObservationReport', () => {
 
   it('warns on legacy daemon success records linked to a blocked loop', () => {
     const report = buildObservationReport({
+      control: { emergencyStop: { path: 'data/control/emergency-stop.json', requested: false } },
       loops: [
         {
           path: 'data/loops/L-old.jsonl',
@@ -437,6 +442,12 @@ describe('loadWorkspaceObservation', () => {
     const report = await loadWorkspaceObservation(join(dir, 'data'));
 
     expect(report.meta.source).toEqual({ dataDir: join(dir, 'data') });
+    expect(report.meta.schemaVersion).toBe(1);
+    expect(report.meta.scope.control).toBe(true);
+    expect(report.control.emergencyStop).toEqual({
+      path: join(dir, 'data', 'control', 'emergency-stop.json'),
+      requested: false,
+    });
     expect(report.status.sessions.total).toBe(1);
     expect(report.status.goals.total).toBe(1);
     expect(report.status.latestGoal).toMatchObject({ id: 'g1', state: 'blocked' });
@@ -451,7 +462,97 @@ describe('loadWorkspaceObservation', () => {
       omittedAffectedCount: 0,
     });
     expect(formatObservationReport(report)).toContain('integrity: partial corruptLines=1 unreadableFiles=0');
+    expect(formatObservationReport(report)).toContain('emergency stop: clear');
     expect(formatObservationReport(report)).toContain('- malformed-tail sessions/s1.jsonl:3');
+  });
+
+  it('includes an active emergency stop in the additive observation contract', async () => {
+    const escape = String.fromCharCode(27);
+    const bidiOverride = String.fromCodePoint(0x202e);
+    const hostileReason = `operator${escape}[31m\n${bidiOverride}stop`;
+    await requestEmergencyStop({
+      cwd: dir,
+      source: 'test',
+      reason: hostileReason,
+      now: () => new Date('2026-08-22T04:00:00.000Z'),
+      pid: 42,
+    });
+
+    const report = await loadWorkspaceObservation(join(dir, 'data'));
+
+    expect(report.meta.schemaVersion).toBe(1);
+    expect(report.control.emergencyStop).toMatchObject({
+      requested: true,
+      record: {
+        requestedAt: '2026-08-22T04:00:00.000Z',
+        source: 'test',
+        reason: hostileReason,
+      },
+    });
+    const text = formatObservationReport(report);
+    expect(text).toContain('reason=operator [31m stop');
+    expect(text).not.toContain(escape);
+    expect(text).not.toContain(bidiOverride);
+  });
+
+  it('surfaces an unreadable emergency stop without rejecting the observation report', async () => {
+    await mkdir(join(dir, 'data', 'control'), { recursive: true });
+    await writeFile(join(dir, 'data', 'control', 'emergency-stop.json'), '{', 'utf8');
+
+    const report = await loadWorkspaceObservation(join(dir, 'data'));
+
+    expect(report.meta.schemaVersion).toBe(1);
+    expect(report.control.emergencyStop).toMatchObject({
+      requested: true,
+      unreadable: true,
+    });
+    expect(report.control.emergencyStop.error).toBeTruthy();
+    expect(formatObservationReport(report)).toContain('emergency stop: unreadable requested=true error=');
+  });
+
+  it('sanitizes a hostile requestedAt value loaded from a shape-valid control record', async () => {
+    const escape = String.fromCharCode(27);
+    const bidiOverride = String.fromCodePoint(0x202e);
+    await mkdir(join(dir, 'data', 'control'), { recursive: true });
+    await writeFile(
+      join(dir, 'data', 'control', 'emergency-stop.json'),
+      JSON.stringify({
+        schemaVersion: 1,
+        requestedAt: `2026-08-22T04:00:00.000Z${escape}${bidiOverride}`,
+        source: 'test',
+        reason: 'operator stop',
+        pid: 42,
+        cwd: dir,
+      }),
+      'utf8',
+    );
+
+    const text = formatObservationReport(await loadWorkspaceObservation(join(dir, 'data')));
+
+    expect(text).not.toContain(escape);
+    expect(text).not.toContain(bidiOverride);
+    expect(text).toContain('requested at=2026-08-22T04:00:00.000Z');
+  });
+
+  it('keeps an injected control read failure visible when file existence is unknown', async () => {
+    const report = await loadWorkspaceObservation(join(dir, 'data'), {
+      workspaceCwd: dir,
+      readEmergencyStop: async (cwd) => ({
+        path: join(cwd, 'data', 'control', 'emergency-stop.json'),
+        requested: false,
+        unreadable: true,
+        error: 'permission denied',
+      }),
+    });
+
+    expect(report.control.emergencyStop).toMatchObject({
+      requested: false,
+      unreadable: true,
+      error: 'permission denied',
+    });
+    expect(formatObservationReport(report)).toContain(
+      'emergency stop: unreadable requested=false error=permission denied',
+    );
   });
 
   it('reports malformed middle lines and unreadable optional JSONL files while missing sources stay clean', async () => {

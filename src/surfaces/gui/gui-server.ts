@@ -65,7 +65,7 @@ async function handleRequest(
       return;
     }
     if (req.method === 'GET' && url.pathname === '/api/observation') {
-      json(res, 200, await loadWorkspaceObservation(context.dataDir));
+      json(res, 200, await loadWorkspaceObservation(context.dataDir, { workspaceCwd: context.cwd }));
       return;
     }
     if (req.method === 'GET' && url.pathname === '/api/human-reviews') {
@@ -120,7 +120,8 @@ async function handleRequest(
 }
 
 async function statusPayload(cwd: string, dataDir: string): Promise<GuiStatusPayload> {
-  const [report, stop] = await Promise.all([loadWorkspaceObservation(dataDir), readEmergencyStop(cwd)]);
+  const report = await loadWorkspaceObservation(dataDir, { workspaceCwd: cwd });
+  const stop = report.control.emergencyStop;
   return { report, stop, timeline: buildGuiTimeline(report, stop) };
 }
 

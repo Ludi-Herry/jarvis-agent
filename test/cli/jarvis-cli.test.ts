@@ -20,6 +20,7 @@ import {
   forwardChildProcess,
 } from '../../src/surfaces/cli/jarvis.js';
 import { parseSessionLog } from '../../src/runtime/session/session-store.js';
+import { requestEmergencyStop } from '../../src/runtime/control/emergency-stop.js';
 
 const repo = process.cwd();
 const entry = join(repo, 'src', 'surfaces', 'cli', 'jarvis.ts');
@@ -192,6 +193,77 @@ describe('jarvis root CLI', () => {
 
     expect(result.code).toBe(0);
     expect(report.meta.source.dataDir).toBe(resolve(workspace, 'data'));
+  });
+
+  it('shows clear and requested emergency-stop states in status JSON and text', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'jarvis-status-stop-'));
+    tempDirs.push(workspace);
+
+    const clear = await runJarvis(['status', '--cwd', workspace, '--json']);
+    expect(clear.code).toBe(0);
+    expect(JSON.parse(clear.stdout)).toMatchObject({
+      meta: { schemaVersion: 1 },
+      control: { emergencyStop: { requested: false } },
+    });
+
+    await requestEmergencyStop({
+      cwd: workspace,
+      source: 'test',
+      reason: 'operator stop',
+      now: () => new Date('2026-08-22T04:00:00.000Z'),
+      pid: 42,
+    });
+    const requested = await runJarvis(['status', '--cwd', workspace, '--json', '--data-dir', 'telemetry']);
+    const textStatus = await runJarvis(['status', '--cwd', workspace, '--data-dir', 'telemetry']);
+
+    expect(requested.code).toBe(0);
+    expect(JSON.parse(requested.stdout)).toMatchObject({
+      meta: { schemaVersion: 1 },
+      control: {
+        emergencyStop: {
+          requested: true,
+          record: {
+            requestedAt: '2026-08-22T04:00:00.000Z',
+            source: 'test',
+            reason: 'operator stop',
+          },
+        },
+      },
+    });
+    expect(textStatus).toMatchObject({ code: 0 });
+    expect(textStatus.stdout).toContain(
+      'emergency stop: requested at=2026-08-22T04:00:00.000Z source=test reason=operator stop',
+    );
+
+    const escape = String.fromCharCode(27);
+    const bidiOverride = String.fromCodePoint(0x202e);
+    await requestEmergencyStop({
+      cwd: workspace,
+      source: 'test',
+      reason: `operator${escape}[31m\n${bidiOverride}FORGED-LINE`,
+      pid: 43,
+    });
+    const hostile = await runJarvis(['status', '--cwd', workspace, '--data-dir', 'telemetry']);
+    expect(hostile).toMatchObject({ code: 0 });
+    expect(hostile.stdout).not.toContain(escape);
+    expect(hostile.stdout).not.toContain(bidiOverride);
+    expect(hostile.stdout).not.toContain('\nFORGED-LINE');
+  });
+
+  it('surfaces a real emergency-stop read failure in status JSON and text', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'jarvis-status-unreadable-'));
+    tempDirs.push(workspace);
+    await mkdir(join(workspace, 'data', 'control', 'emergency-stop.json'), { recursive: true });
+
+    const json = await runJarvis(['status', '--cwd', workspace, '--json']);
+    const text = await runJarvis(['status', '--cwd', workspace]);
+
+    expect(json.code).toBe(0);
+    expect(JSON.parse(json.stdout)).toMatchObject({
+      control: { emergencyStop: { requested: true, unreadable: true } },
+    });
+    expect(text).toMatchObject({ code: 0 });
+    expect(text.stdout).toContain('emergency stop: unreadable requested=true error=');
   });
 
   it('uses exit 2 for an invalid global cwd', async () => {

@@ -16,7 +16,7 @@ async function main(): Promise<void> {
 
   const dataDir = resolve(process.cwd(), args.dataDir ?? 'data');
   try {
-    const report = await loadWorkspaceObservation(dataDir);
+    const report = await loadWorkspaceObservation(dataDir, { workspaceCwd: process.cwd() });
     if (args.format === 'json') {
       console.log(JSON.stringify(report, null, 2));
     } else {

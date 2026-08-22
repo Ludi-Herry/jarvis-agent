@@ -49,7 +49,7 @@ describe('GUI server security guard', () => {
   });
 
   it('requires a GUI-only header before accepting emergency stop POSTs', async () => {
-    const server = createGuiServer({ cwd: dir, dataDir: join(dir, 'data') });
+    const server = createGuiServer({ cwd: dir, dataDir: join(dir, 'alternate-data') });
     const base = await listen(server);
     try {
       const missingHeader = await httpJson(base.port, {
@@ -78,6 +78,24 @@ describe('GUI server security guard', () => {
         record: { reason: 'operator stop', source: 'gui' },
         stop: { requested: true },
       });
+
+      const status = await httpJson(base.port, {
+        path: '/api/status',
+        method: 'GET',
+        headers: { host: `127.0.0.1:${base.port}` },
+      });
+      expect(status.body).toMatchObject({
+        report: {
+          meta: { schemaVersion: 1 },
+          control: { emergencyStop: { requested: true, record: { reason: 'operator stop', source: 'gui' } } },
+        },
+        stop: { requested: true, record: { reason: 'operator stop', source: 'gui' } },
+      });
+      const statusBody = status.body as {
+        report: { control: { emergencyStop: unknown } };
+        stop: unknown;
+      };
+      expect(statusBody.report.control.emergencyStop).toEqual(statusBody.stop);
     } finally {
       await close(server);
     }
@@ -95,9 +113,42 @@ describe('GUI server security guard', () => {
 
       expect(result.status).toBe(200);
       expect(result.body).toMatchObject({
-        report: { authority: { mode: 'observation-only' } },
+        report: {
+          meta: { schemaVersion: 1 },
+          authority: { mode: 'observation-only' },
+          control: { emergencyStop: { requested: false } },
+        },
         stop: { requested: false },
         timeline: expect.any(Array),
+      });
+      const body = result.body as {
+        report: { control: { emergencyStop: unknown } };
+        stop: unknown;
+      };
+      expect(body.report.control.emergencyStop).toEqual(body.stop);
+    } finally {
+      await close(server);
+    }
+  });
+
+  it('keeps an emergency-stop read failure visible in the status contract and timeline', async () => {
+    await mkdir(join(dir, 'data', 'control', 'emergency-stop.json'), { recursive: true });
+    const server = createGuiServer({ cwd: dir, dataDir: join(dir, 'data') });
+    const base = await listen(server);
+    try {
+      const result = await httpJson(base.port, {
+        path: '/api/status',
+        method: 'GET',
+        headers: { host: `127.0.0.1:${base.port}` },
+      });
+
+      expect(result.status).toBe(200);
+      expect(result.body).toMatchObject({
+        report: { control: { emergencyStop: { requested: true, unreadable: true } } },
+        stop: { requested: true, unreadable: true },
+        timeline: expect.arrayContaining([
+          expect.objectContaining({ id: 'stop', title: '急停状态不可读', tone: 'danger' }),
+        ]),
       });
     } finally {
       await close(server);
