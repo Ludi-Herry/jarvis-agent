@@ -68,7 +68,7 @@ Redirect 必须等 `runClosed`。若 pending/unknown effect 为真，状态进�
 - TTY 仅在 renderer adapter 已注册时选择 TUI；缺 adapter 时显式回退 line REPL，不等待第二套输入源。
 - GLM-5.3 可以在本合同和 reducer 测试 GO 后实现纯 renderer、布局、折叠与键位展示。它不能改 reducer transition、audit、AgentEvent、PermissionGate、Session、checkpoint 或完成授权。
 
-Renderer 实现记录（2026-08-16）：纯渲染与键位解析在 `src/surfaces/cli/tui-renderer.ts`（frame 行无控制符、宽度感知折叠截断、`/redirect ` 行首前缀、approval 态 y/s/n）；终端 adapter 在 `src/surfaces/cli/tui-host.ts`（raw mode、30fps 全清重绘、resize、UTF-8 分片缓冲，stream 注入可测）；TUI 宿主 `src/surfaces/cli/tui-repl.ts` 复用 repl.ts 抽出的同一 `createReplRunner`（审批、checkpoint、recall、Session、agent-event 均单一实现，无第二副本），效果执行权在宿主、exit 前 drain 全部 action audit。TTY 下默认进入 TUI；`--no-tui`、非 TTY、headless 回退保持不变。折叠续行宽度含前缀缩进，截断以 `…` 标记。真实 TTY 的视觉验收（布局观感、键位手感）留给 Luis 按节验收。
+Renderer 实现记录（2026-08-16）：纯渲染与键位解析在 `src/surfaces/cli/tui-renderer.ts`（frame 行无控制符、宽度感知折叠截断、`/redirect ` 行首前缀、approval 态 y/s/n）；终端 adapter 在 `src/surfaces/cli/tui-host.ts`（raw mode、30fps 全清重绘、resize、UTF-8 分片缓冲，stream 注入可测）；TUI 宿主 `src/surfaces/cli/tui-repl.ts` 复用 repl.ts 抽出的同一 `createReplRunner`（审批、checkpoint、recall、Session、agent-event 均单一实现，无第二副本），效果执行权在宿主、exit 前 drain 全部 action audit。TTY 下默认进入 TUI；`--no-tui`、非 TTY、headless 回退保持不变。折叠续行宽度含前缀缩进，截断以 `…` 标记。真实 TTY 的视觉验收（布局观感、键位手感）留给 Ludi 按节验收。
 
 ## 6. 必须触发的测试
 
@@ -81,7 +81,7 @@ Renderer 实现记录（2026-08-16）：纯渲染与键位解析在 `src/surface
 
 ## 7. 当前门禁证据
 
-- Renderer 切片（2026-08-16）：`tui-renderer/tui-host/tui-repl` 新增测试 33 个，连同既有 reducer/surface/line-REPL 组合 6 files / 64 passed；全量 139 files / 1594 passed / 2 skipped。`npm run typecheck`、`npm run lint`、`npm run build -- --noEmit` 与 whitespace 检查通过。真实 TTY 视觉验收待 Luis 逐节进行。
+- Renderer 切片（2026-08-16）：`tui-renderer/tui-host/tui-repl` 新增测试 33 个，连同既有 reducer/surface/line-REPL 组合 6 files / 64 passed；全量 139 files / 1594 passed / 2 skipped。`npm run typecheck`、`npm run lint`、`npm run build -- --noEmit` 与 whitespace 检查通过。真实 TTY 视觉验收待 Ludi 逐节进行。
 
 - 修复 Reviewer P1（project-ignored 文件从快照/drift/restore 静默消失，rewind 可误报成功）后新增 6 个触发测试：4 个 ShadowGit 层（单文件捕获恢复、目录嵌套、preview 后 drift、防误删）+ 1 个真实 `rewind --files` CLI 路径 + 1 个 negation 回归；修复前 RED 证据为 5 failed / 35 passed。
 - 聚焦测试：ShadowGit + checkpoint CLI 40 passed；checkpoint/rewind/TUI/REPL 组合 10 files / 105 passed。

@@ -189,7 +189,7 @@ describe('GUI server security guard', () => {
           'x-jarvis-gui': '1',
         },
         body: JSON.stringify({
-          reviewer: 'Luis',
+          reviewer: 'Ludi',
           decisions: [{ requirementId: 'r1', decision: 'approve', note: 'Looks good.' }],
         }),
       });
@@ -329,7 +329,7 @@ const cleanChecks: DeterministicChecks = {
 
 async function writeParkedHumanGoal(goalId: string): Promise<void> {
   await mkdir(join(dir, 'data', 'goals'), { recursive: true });
-  const pinned: PinnedRequirement[] = [{ id: 'r1', text: 'Luis confirms the GUI copy reads naturally', route: 'human' }];
+  const pinned: PinnedRequirement[] = [{ id: 'r1', text: 'Ludi confirms the GUI copy reads naturally', route: 'human' }];
   const report = composeVerifierReport({
     pinned,
     routes: new Map([['r1', 'human']]),

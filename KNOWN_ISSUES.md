@@ -3,7 +3,7 @@
 Date: 2026-08-15
 
 - The unified `jarvis` shell, local doctor, read-only sessions surface, strict managed writes, Session v2 receipts, and dynamic-addendum resume checks are available in the current source. The v0.1 release gate still needs one headless JSONL agent-event contract, A0, current-session Recall, typed configuration with `inspect/safe`, Windows contract coverage, and 10–20 real tasks. Session mutations, stop/review, completion, extra presets, and a pure compiled bin are later productization slices; full-screen TUI and checkpoint/rewind remain for v0.2. See `docs/cli-first-plan.md`.
-- GUI UI/UX polish and Luis section-by-section sign-off remain pending for the v0.3 Desktop control surface.
+- GUI UI/UX polish and Ludi section-by-section sign-off remain pending for the v0.3 Desktop control surface.
 - Cron daemon uses a single workspace lock. If a daemon is force-killed, the lock may need stale recovery before another daemon can start.
 - Human-review audit writes are local JSONL only; there is no multi-user identity, connector, team workflow, or remote notification layer.
 - `loop:finalize --cleanup` still has a LOW follow-up: add a fixture covering verified patch cleanup when a goal worktree contains the `node_modules` dependency bridge.

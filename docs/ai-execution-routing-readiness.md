@@ -53,7 +53,7 @@ OpenSquilla 最值得 Jarvis 借的是 harness-native evidence flywheel：每次
 Jarvis 的可融入形态按保守顺序排列：
 
 1. **Model council as read-only review**：人工触发的多模型 / 多子代理 review panel，只产出分歧清单、盲点、风险和建议，不给 `verified`。落点已存在（2026-07-08 源码确认）：Phase C 视角评审面板（`npm run demo:c2`）就是 council 的壳；`roster.ts` 每个角色已有 `model` 字段，`subagent-manager.ts` 的 `providerFor()` 注释明写按「等第二个 endpoint 出现再路由」预留。届时是接线活（`providerFor` 按 `role.model` 路由到第二 provider），无需新建面板、不新增抽象。
-2. **Verifier aggregation**：多个只读 verifier 针对同一 pinned requirements 产出 report，再合成一个保守 `VerifierReport`。任一模型指出 broken / incomplete 时不能通过；分歧、超时、覆盖不全和 `cannotVerify` 都 park；最终仍交给 `decideVerdict`。落地 gate：若需要一个 goal 配多个 verifier 而扩 `--verifier-map` schema，按 `AGENTS.md` 硬约束必须先由 Luis 明确推翻「不新增 verifier / route / scheduler 抽象」条款并先改规范，再动代码——拿着本文不构成动手授权。
+2. **Verifier aggregation**：多个只读 verifier 针对同一 pinned requirements 产出 report，再合成一个保守 `VerifierReport`。任一模型指出 broken / incomplete 时不能通过；分歧、超时、覆盖不全和 `cannotVerify` 都 park；最终仍交给 `decideVerdict`。落地 gate：若需要一个 goal 配多个 verifier 而扩 `--verifier-map` schema，按 `AGENTS.md` 硬约束必须先由 Ludi 明确推翻「不新增 verifier / route / scheduler 抽象」条款并先改规范，再动代码——拿着本文不构成动手授权。
 3. **Route telemetry**：`observe` / GUI 展示 model、provider、verifier key、requirement route、tokens、cost、latency、park reason 和 disagreement summary。这一步先做观测，不做自动选择。
 4. **Selector later, router unchanged**：等 JSONL 历史足够后，才考虑在已确定 route 内选择执行资源。selector 只能在 safety / verification route 之后运行，不能新增第 5 套 map。
 
@@ -173,6 +173,6 @@ Jarvis 已经具备几类显式路由，但它们主要服务安全、验收和�
 - 不为了成本优化削弱 `cannotVerify -> park`。
 - 不把 cwd 内文件当作 routing authority。
 - 不让模型自评“我适合便宜模型执行”。
-- 不自动蒸馏 skill 或 nightly 修改 skill，除非 Luis 单独确认 skill 沉淀机制。
+- 不自动蒸馏 skill 或 nightly 修改 skill，除非 Ludi 单独确认 skill 沉淀机制。
 - 不引入隐藏的后台执行队列。后台/常驻行为继续走显式 `cron:daemon` 边界。
 - 不把多模型 aggregator 的结论当完成授权；它最多生成可审计 evidence，再由现有 verifier / verdict 链路处理。

@@ -1,6 +1,6 @@
 # Jarvis-Agent
 
-**Jarvis-Agent** —— 自研的 TypeScript/Node 编码 agent（CLI + agent harness，陆凌华 / Luis）。核心架构：**有状态宿主 + 纯函数决策点**的 agent loop，事件流 day-1 解耦前端，渐进披露 skill，确定性交脚本、判断交模型。
+**Jarvis-Agent** —— 自研的 TypeScript/Node 编码 agent（CLI + agent harness，陆凌华 / Ludi）。核心架构：**有状态宿主 + 纯函数决策点**的 agent loop，事件流 day-1 解耦前端，渐进披露 skill，确定性交脚本、判断交模型。
 
 > 设计依据不在本仓库重写，以知识库蓝图为准（见 `AGENTS.md`「唯一设计依据」）。
 
@@ -24,10 +24,10 @@
 
 `npm run typecheck / lint / test` 与无输出 build compile 最近一轮全绿（测试数与当轮证据以 `docs/handoff-next.md` 为准；已有 `dist/` 未覆盖；Windows 平台专属 skip 见 `docs/cli-first-plan.md`）。命令安全根（PermissionGate + 命令解析器 + bash 审批）经**六轮独立 codex 对抗核查**确认无破闸 HIGH；goal 验收子系统（确定性三腿 + 腿3 裁判 + bash/Linux 密钥加固）经**多轮多裁判对抗核查**（codex + 独立 Claude 子代理，含一轮 4 裁判收尾）。Phase E 各切片与 Hooks slice-1/2 均经 **codex 跨模型对抗审查逐层加固**（vision 四轮 / bash 白名单 Path A 经 7 HIGH 撤回、保留命令级 Path B / Hooks 信任边界修 HIGH / slice-2 每切片 2 轮 SHIP）。方法 / 严重度基线 / 历史见 `docs/security-review-baseline.md`。
 
-**产品路线更新（2026-08-15）**：采用 CLI-first 两阶段，再继续 Desktop control surface。v0.1 CLI beta 先完成可信结果、Session/机器协议与产品外壳；v0.2 的 checkpoint/rewind 基础、TUI reducer 与可靠回退已完成，全屏 renderer 待独立切片；v0.3 完成 Desktop UI/UX 与 Luis 逐节验收。旧 R1-R9 证据继续保留为历史记录，R6 已从 CLI beta blocker 移到 v0.3。
+**产品路线更新（2026-08-15）**：采用 CLI-first 两阶段，再继续 Desktop control surface。v0.1 CLI beta 先完成可信结果、Session/机器协议与产品外壳；v0.2 的 checkpoint/rewind 基础、TUI reducer 与可靠回退已完成，全屏 renderer 待独立切片；v0.3 完成 Desktop UI/UX 与 Ludi 逐节验收。旧 R1-R9 证据继续保留为历史记录，R6 已从 CLI beta blocker 移到 v0.3。
 
 接手入口：
-- **使用与验收指南（面向 Luis 本人，含零成本验收路线与清单）→ `docs/usage-guide.md`**；
+- **使用与验收指南（面向 Ludi 本人，含零成本验收路线与清单）→ `docs/usage-guide.md`**；
 - **当前路线与验收 → `docs/cli-first-plan.md`**；**最新全景与下一步 → `docs/handoff-next.md`**；**Sol Pro 裁决与落地修正 → `docs/sol-pro-cli-trust-review.md`**；**ZCode/GLM-5.3 交接 → `docs/handoff-zcode-glm53.md`**；
 - **Loop primitive 怎么选 → `docs/loop-primitives-guide.md`**；**Loop 重项收口记录（parallel resume / finalize / cron daemon）→ `docs/handoff-loop-remaining.md`**；**Phase D（GoalLoop + 三腿 + 腿3 裁判）→ `docs/handoff-D.md`**；**Hooks（tool-call / lifecycle / loop per-goal hook-map）→ `docs/handoff-hooks.md`**；
 - **B 阶段 + 当前安全态 → `docs/handoff-B.md`**（顶部「当前状态更新」段）；

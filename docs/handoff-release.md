@@ -9,7 +9,7 @@
 - 验收侧已全线就绪：确定性三腿 + trusted requirements（sandbox-command/llm/human）+ held-out + `decideVerdict` 零信任链；2026-07-03 最终本地四关卡全绿，`npm test` = 102 files / 1060 passed / 1 skipped。
 - 切片 2 前，行动侧的 write 结构性封死：`--unattended` 无 approver，gate 对一切 `ask` fail-closed deny；goal/loop CLI 不加载 RuleResolver（`loop-cli.ts` 用裸 `defaultPolicy()`），所以无人值守下 builder 写不了任何文件。2026-07-03 已补一条收窄例外：`--unattended --parallel` 的 per-goal gate 只自动放行落在该 goal worktree 内的 built-in `write`。
 - GUI human-review 能力层/API 已按真实 parked sample 的需求落地；2026-07-03 已把内置 Browser 失败的 `window.prompt` 裁决入口改成页面内联表单，并完成真实 audit / verdict 验收。
-- 结论：只读巡检、worktree 隔离写、GUI 裁决流和 R7 安全 HIGH 修复均已收口；发布前剩 GUI UI/UX 打磨与 Luis 验收。
+- 结论：只读巡检、worktree 隔离写、GUI 裁决流和 R7 安全 HIGH 修复均已收口；发布前剩 GUI UI/UX 打磨与 Ludi 验收。
 
 ## 1. 发布定义（Definition of Done，全局终线）
 
@@ -22,12 +22,12 @@ v1 可发布 = 以下每条都有**可验证证据**（跑过的命令 / 截图 
 | R3 | 急停演练 ≥1 次：GUI 按钮按下后，运行中的 loop 在一个轮询周期内中断且审计留痕 | `data/control/emergency-stop.jsonl` + loop halt 记录 |
 | R4 | 无人值守写码切片（worktree 隔离 write）落地并通过 codex 对抗审查（无未缓解 HIGH） | 审查记录追加进 `security-review-baseline.md` |
 | R5 | GUI human-review 裁决流可用：human route 的 parked requirement 能被人工裁决、回写 verifier report、留 audit trail | 端到端真实 goal 演示一次。2026-07-03 内置 Browser 已复验：`data/human-reviews/g-human-gui-smoke.jsonl` 写入 audit，goal `complete / verified` |
-| R6 | GUI UI/UX 打磨完成且 Luis 逐节验收通过（视觉层级、文案、空态/错误态、响应式） | 每节验收记录（见切片 4） |
+| R6 | GUI UI/UX 打磨完成且 Ludi 逐节验收通过（视觉层级、文案、空态/错误态、响应式） | 每节验收记录（见切片 4） |
 | R7 | GUI server 安全修复落地（Host 校验等，见切片 0），且对 GUI 控制面做过一轮安全审查 | 同 R4。2026-07-03 已修 human-review provenance spoof 与 `loop:finalize` false-positive merge 系列 HIGH（goal/session/human audit/diff hash/patch hash/latest attempt），最终 codex 复审 `HIGH? no`，见 `docs/security-review-baseline.md` |
 | R8 | 文档一致：README、`docs/handoff-next.md`、本文状态段与实际行为无出入 | neat-freak 式核对 |
 | R9 | 发布检查单走完（版本号、changelog、已知问题清单） | `package.json` / `package-lock.json` version `0.1.0`，`CHANGELOG.md`、`RELEASE_NOTES.md`、`KNOWN_ISSUES.md` |
 
-**发布动作本身（npm publish / git push / 对外公开）是人工红线，永远等 Luis 明示，agent 不得代做。**
+**发布动作本身（npm publish / git push / 对外公开）是人工红线，永远等 Ludi 明示，agent 不得代做。**
 
 ## 2. 全局边界（先读，贯穿所有切片）
 
@@ -130,7 +130,7 @@ v1 可发布 = 以下每条都有**可验证证据**（跑过的命令 / 截图 
 5. GUI UI：首版人工裁决队列展示 goal / requirement / reason，支持单条通过或驳回并填写备注；备注输入当前依赖 `window.prompt`。
 6. 测试：`test/capabilities/goal/human-review.test.ts` 覆盖列表、approve、reject、audit、loop finish；`test/surfaces/gui/gui-server.test.ts` 覆盖 API、CSRF 和编码路径穿越拒绝。
 
-**仍待补**：切片 4 中继续打磨裁决表单体验、键盘可达性、错误态和证据详情密度；发布前让 Luis 做逐节 UI/UX 验收。
+**仍待补**：切片 4 中继续打磨裁决表单体验、键盘可达性、错误态和证据详情密度；发布前让 Ludi 做逐节 UI/UX 验收。
 
 **边界**：单用户本地场景；不做多人协作、不做 agent identity、不做通知系统。
 
@@ -138,7 +138,7 @@ v1 可发布 = 以下每条都有**可验证证据**（跑过的命令 / 截图 
 
 ### 切片 4：GUI UI/UX 打磨
 
-**目标**：以 Luis（UI/UX 设计师，产品唯一用户）的标准把 GUI 从「晴天模式外壳」打磨到可日常使用。R6 的来源。
+**目标**：以 Ludi（UI/UX 设计师，产品唯一用户）的标准把 GUI 从「晴天模式外壳」打磨到可日常使用。R6 的来源。
 
 **设计输入（2026-07-08，Tutti 对照分析）**：信息架构从「按时间」转成「按注意力优先级」——总控台先回答「需要我干什么」，再回答「发生了什么」。页面分区自上而下：① 等你决定（待审批、parked human reviews、halted/blocked goal，数量徽标化）；② 正在跑（round/budget 进度）；③ 刚完成待过目（verdict + diff 摘要 + 产物路径，产物导向）；④ 完整时间线收进底部或详情抽屉。observe contract（schemaVersion 1）现有字段已覆盖全部四区，纯前端重排，不新增事件或 API。验收标准：打开 GUI 三秒内知道要批什么。
 
@@ -150,11 +150,11 @@ v1 可发布 = 以下每条都有**可验证证据**（跑过的命令 / 截图 
 - 响应式与主题：至少桌面窗口尺寸自适应；暗色模式按需。
 - 中英文混排、时间格式、数字对齐等排版细节。
 
-**方法**：每完成一节交 Luis 验收（全局工作法），过了再作为后续基准；截图验证前先停旧实例、确认实际端口。可用视觉走查工具（`H:\走查插件`）辅助测距与标注。
+**方法**：每完成一节交 Ludi 验收（全局工作法），过了再作为后续基准；截图验证前先停旧实例、确认实际端口。可用视觉走查工具（`H:\走查插件`）辅助测距与标注。
 
-**边界**：不加新功能性板块（新数据视图需求回切片 3 或记 backlog）；不引入前端框架重写（现有 vanilla JS 体量不值得，除非 Luis 明确要求）。
+**边界**：不加新功能性板块（新数据视图需求回切片 3 或记 backlog）；不引入前端框架重写（现有 vanilla JS 体量不值得，除非 Ludi 明确要求）。
 
-**验收**：Luis 逐节签收记录齐全；无 console 报错；GUI 在 `data/` 空、单 goal、长队列三种数据形态下渲染正常。
+**验收**：Ludi 逐节签收记录齐全；无 console 报错；GUI 在 `data/` 空、单 goal、长队列三种数据形态下渲染正常。
 
 ### 切片 5：发布收口
 
@@ -165,16 +165,16 @@ v1 可发布 = 以下每条都有**可验证证据**（跑过的命令 / 截图 
 2. 安全基线复查：`security-review-baseline.md` 汇总本路线图所有审查轮；确认无未缓解 HIGH；deferred 项（TOCTOU 同串不同义、off-bus token 计费、监控惰性）逐条确认缓解说明仍成立。
 3. 文档一致性（R8）：README「上手」路径按新人视角实走一遍；handoff 链更新（本文状态段 + `handoff-next.md`）；memory 索引同步。
 4. 版本号、changelog、已知问题清单。
-5. 停在发布线前：向 Luis 提交发布检查单，publish/push 等待人工明示。
+5. 停在发布线前：向 Ludi 提交发布检查单，publish/push 等待人工明示。
 
 **验收**：R1-R9 逐条打勾且每条有证据链接（命令输出 / JSONL 路径 / 审查记录 / 验收记录）。
 
-**历史状态（2026-07-03 第二轮发布检查）**：非 UX 阻塞项已收口，当时的 GUI-first 发布停在 R6。R1 四关卡全绿：`npm run typecheck`、`npm run lint`、`npm run build`、`npm test`（102 files / 1060 passed / 1 skipped）。R2 真实间隔 cron daemon 6/5 且 false verified `0`；R3 内置 Browser 急停写入 `loop-halted emergency-stop`；R4 worktree 写隔离通过；R5 内置 Browser 裁决通过；R7 human-review spoof 与 `loop:finalize` false-positive merge 系列 HIGH 已修，最终 codex 复审 `HIGH? no`；R8 本文 / `handoff-next.md` / 试点笔记已同步；R9 已补 `0.1.0` 版本、`CHANGELOG.md`、`RELEASE_NOTES.md`、`KNOWN_ISSUES.md`。R6 UI/UX 打磨与 Luis 逐节验收当时仍未做。
+**历史状态（2026-07-03 第二轮发布检查）**：非 UX 阻塞项已收口，当时的 GUI-first 发布停在 R6。R1 四关卡全绿：`npm run typecheck`、`npm run lint`、`npm run build`、`npm test`（102 files / 1060 passed / 1 skipped）。R2 真实间隔 cron daemon 6/5 且 false verified `0`；R3 内置 Browser 急停写入 `loop-halted emergency-stop`；R4 worktree 写隔离通过；R5 内置 Browser 裁决通过；R7 human-review spoof 与 `loop:finalize` false-positive merge 系列 HIGH 已修，最终 codex 复审 `HIGH? no`；R8 本文 / `handoff-next.md` / 试点笔记已同步；R9 已补 `0.1.0` 版本、`CHANGELOG.md`、`RELEASE_NOTES.md`、`KNOWN_ISSUES.md`。R6 UI/UX 打磨与 Ludi 逐节验收当时仍未做。
 
 ## 4. 对抗式审查制度（本路线图执行标准）
 
 - **必须开轮的切片**：切片 2（permission 核心）、切片 3（GUI 控制面 + 注入面）。切片 0 并入就近轮次；切片 1/4 不动安全面，不强制。
-- **执行方式**：codex CLI 独立代理，多 lens（绕过、注入、TOCTOU、fail-open、可达性）；实现者不得自评通过。审查发现按 `security-review-baseline.md` 的严重度尺子分级，HIGH 必须修或书面缓解 + Luis 知情。
+- **执行方式**：codex CLI 独立代理，多 lens（绕过、注入、TOCTOU、fail-open、可达性）；实现者不得自评通过。审查发现按 `security-review-baseline.md` 的严重度尺子分级，HIGH 必须修或书面缓解 + Ludi 知情。
 - **审查记录**：每轮追加进 `security-review-baseline.md`（沿用现有格式），修复 commit 与发现一一对应。
 - **元教训继续生效**：组件级 review 挡不住系统级不可达 → 每条新 guardrail 配真实接线触发测试；死 guardrail 成对出现 → 删除时找它的孪生兄弟。
 

@@ -1,14 +1,14 @@
 # v0.3 GUI 范围规划：晴天模式外壳打磨
 
-> 状态（2026-08-22）：规划已获 Luis 拍板（GUI 与 CLI 收尾证据并行开工）。执行方为 Codex；Luis 持设计权与逐节验收权。同日并入 OpenHanako 增量裁决：竞品参考、锚点批注验收格式、GA 故障注入切片与 post-real-use 候选登记（§3，依据 `docs/analysis-openhanako-increments.md`）。
-> 定位继承：GUI-first 时代留下的 R6（UI/UX 打磨 + Luis 逐节验收）由 v0.3 承接，目标口径不变——「以 Luis 的标准把 GUI 从晴天模式外壳打磨到可日常使用」（见 `docs/handoff-release.md`）。
+> 状态（2026-08-22）：规划已获 Ludi 拍板（GUI 与 CLI 收尾证据并行开工）。执行方为 Codex；Ludi 持设计权与逐节验收权。同日并入 OpenHanako 增量裁决：竞品参考、锚点批注验收格式、GA 故障注入切片与 post-real-use 候选登记（§3，依据 `docs/analysis-openhanako-increments.md`）。
+> 定位继承：GUI-first 时代留下的 R6（UI/UX 打磨 + Ludi 逐节验收）由 v0.3 承接，目标口径不变——「以 Ludi 的标准把 GUI 从晴天模式外壳打磨到可日常使用」（见 `docs/handoff-release.md`）。
 > 本文是执行依据；与 `AGENTS.md` 或蓝图冲突时以那边为准并停下来问。
 
 ## 1. 产品定位
 
-- **用户**：Luis 一人（UI/UX 设计师，产品唯一用户）。
-- **场景**：晴天模式——agent 在终端跑，Luis 大部分时间不看；看的时候要一眼知道「在干什么、信不信、要不要插手」。插手手段只有三个：审批、急停、人工裁决。
-- **完成定义**：每个视图的视觉层级、文案、空态/错误态、响应式经 Luis 逐节验收通过（R6 原标准），且窄控制面边界零变化。
+- **用户**：Ludi 一人（UI/UX 设计师，产品唯一用户）。
+- **场景**：晴天模式——agent 在终端跑，Ludi 大部分时间不看；看的时候要一眼知道「在干什么、信不信、要不要插手」。插手手段只有三个：审批、急停、人工裁决。
+- **完成定义**：每个视图的视觉层级、文案、空态/错误态、响应式经 Ludi 逐节验收通过（R6 原标准），且窄控制面边界零变化。
 
 ## 2. 现状盘点（2026-08-22 实核）
 
@@ -21,9 +21,9 @@
 
 ## 3. 竞品参考与增量裁决（OpenHanako，2026-08-22）
 
-完整裁决与证据分级见 `docs/analysis-openhanako-increments.md`（Luis × Codex 讨论存档）。本文只收执行相关结论。
+完整裁决与证据分级见 `docs/analysis-openhanako-increments.md`（Ludi × Codex 讨论存档）。本文只收执行相关结论。
 
-**参考使用规则**：OpenHanako 为 v0.3 GUI 指定竞品参考（Luis 拍板）。只有公开源码+测试确认的机制可当实现参考；创作者演示口径（1 万问卷/亿 token/成本数字）与 HanaAgent 1.0 批注预告只能当产品方向，不得升级为能力结论。
+**参考使用规则**：OpenHanako 为 v0.3 GUI 指定竞品参考（Ludi 拍板）。只有公开源码+测试确认的机制可当实现参考；创作者演示口径（1 万问卷/亿 token/成本数字）与 HanaAgent 1.0 批注预告只能当产品方向，不得升级为能力结论。
 
 **对 v0.3 GUI 直接生效的三条**：
 
@@ -41,15 +41,15 @@
 
 | 角色 | 职责 |
 |---|---|
-| Luis | G0 走查与 UX 问题清单、IA/视觉/文案决策、每节验收、G5 开闸与否 |
+| Ludi | G0 走查与 UX 问题清单、IA/视觉/文案决策、每节验收、G5 开闸与否 |
 | Codex | 切片实现、测试、静态门禁、独立对抗复核、文档收口 |
 | ZCode（GLM） | 规划维护、跨模型复核（verifier 角色）、边界仲裁记录 |
 
 ## 5. 切片清单（按价值顺序，各自独立交付）
 
-### G0 · 走查与 UX 问题清单（Luis 主导，Codex 只记录）
+### G0 · 走查与 UX 问题清单（Ludi 主导，Codex 只记录）
 
-- Luis 起 `npm run gui` 用真实数据走查，产出 `docs/gui-redesign-walkthrough.md`；IA 草图（视图划分、每视图信息优先级）一并产出，喂给 G2。
+- Ludi 起 `npm run gui` 用真实数据走查，产出 `docs/gui-redesign-walkthrough.md`；IA 草图（视图划分、每视图信息优先级）一并产出，喂给 G2。
 - 竞品参考定为 OpenHanako（§3 使用规则），可用 ref-hunt/ref-study 深拆，非必需。
 - **走查问题记录格式 = 产物级锚点批注**（OpenHanako 裁决的验收证据升级）：每条问题写 `artifact_ref`（页面/区域/截图）、`anchor`（元素/行/选区）、`annotation`（问题描述）、`severity`（阻断日常使用 / 改了更好 / 锦上添花）、`reviewer` + 时间。这套字段就是未来批注面板的雏形。
 
@@ -66,13 +66,13 @@
 - **GA-1 Session 单调持久性**：长 session 连续追加 → 重启 → resume → fork → archive → rewind，断言源文件长度、seq、历史内容无倒退无消失（上游 #2473 九天会话被截到最后三条的反例）。
 - **GA-2 异常流零重复**：构造 missing/unknown `finish_reason` 与流中断，断言单一失败终态、零重复回复、零 orphan side effect（上游 #2468 四次重试留四份回复的反例）。
 
-边界：纯测试新增；若测试暴露真实产品缺陷，停下记录证据并汇报 Luis，不就地改产品代码。
+边界：纯测试新增；若测试暴露真实产品缺陷，停下记录证据并汇报 Ludi，不就地改产品代码。
 
-### G2 · 信息架构与视觉改版（Luis 设计 → Codex 分节实现）
+### G2 · 信息架构与视觉改版（Ludi 设计 → Codex 分节实现）
 
-- 按 G0 的 IA 草图重组视图（候选：总览 / 时间线 / 裁决 / 审批历史 / 会话只读；以 Luis 定稿为准）。
-- 技术约束：保持 vanilla 无构建栈；若设计需要组件化，Codex 先提方案给 Luis 拍板，未经批准不引依赖。
-- 交付节奏：每视图一节，截图 + 本地 URL 交 Luis 验收，过了才作为下一节基准。
+- 按 G0 的 IA 草图重组视图（候选：总览 / 时间线 / 裁决 / 审批历史 / 会话只读；以 Ludi 定稿为准）。
+- 技术约束：保持 vanilla 无构建栈；若设计需要组件化，Codex 先提方案给 Ludi 拍板，未经批准不引依赖。
+- 交付节奏：每视图一节，截图 + 本地 URL 交 Ludi 验收，过了才作为下一节基准。
 
 ### G3 · 裁决体验对齐 CLI
 
@@ -84,10 +84,10 @@
 - 审批历史视图（`data/approvals/*.jsonl`，只读）；时间线按 goal/loop 过滤；goal_round 事件的轮次/token/预算进度展示。
 - 全部只读，无新控制能力。
 
-### G5 · GUI 审批中继（默认不做，等 Luis 开闸）
+### G5 · GUI 审批中继（默认不做，等 Ludi 开闸）
 
 - 把 attended run/goal 的终端审批搬到 GUI（注入式 Approver 已预留，架构可行）。
-- 涉及运行进程与 GUI 的桥接，风险与复杂度显著高于前四片；G2 走查后由 Luis 单独拍板是否开切片，本文不预支范围。
+- 涉及运行进程与 GUI 的桥接，风险与复杂度显著高于前四片；G2 走查后由 Ludi 单独拍板是否开切片，本文不预支范围。
 
 ## 6. 明确范围外（整个 v0.3 期间不做）
 
@@ -103,7 +103,7 @@
 2. `npm run typecheck` / `npm run lint` / `npm run build -- --noEmit` / `npm test`（`--maxWorkers=4`）/ `git diff --check` 全绿。
 3. 独立对抗复核（跨模型或换上下文），P0/P1 修完复核 GO 才提交；commit message 英文。
 4. `docs/handoff-next.md` 增加对应切片条目（验证证据、Reviewer 结论、提交 SHA）。
-5. 同一失败连续 3 次未解即停，落盘证据与选项，交回 Luis 裁决。
+5. 同一失败连续 3 次未解即停，落盘证据与选项，交回 Ludi 裁决。
 
 ## 附录 · Codex 执行 prompt（复制即用）
 
@@ -119,19 +119,19 @@
 6. docs/gui-readonly-pilot-notes.md（历史走查证据）
 7. src/surfaces/gui/（gui-server.ts / timeline.ts / assets/）与 test/surfaces/gui/gui-server.test.ts
 
-任务：先做 G1（状态可见性补齐），随后 GA（两项故障注入测试，纯测试新增），再按规划进入 G2+。G0 走查由 Luis 主导，你不用做。
+任务：先做 G1（状态可见性补齐），随后 GA（两项故障注入测试，纯测试新增），再按规划进入 G2+。G0 走查由 Ludi 主导，你不用做。
 
 硬边界（命中即停并汇报，不自行扩权）：
 - GUI 保持窄控制面：只读观测 + 急停 + 人工裁决；不启动 goal/loop、不 merge、不编辑 map、无完成授权、不碰 decideVerdict 与权限闸门。
-- 前端保持 no-build vanilla 栈；引入任何依赖或构建链前必须先问 Luis。
+- 前端保持 no-build vanilla 栈；引入任何依赖或构建链前必须先问 Ludi。
 - observe/JSON 契约只 additive 演进，schemaVersion 不降；安全姿态不降（loopback Host 校验、POST 的 x-jarvis-gui: 1、非 loopback 绑定警告）。
-- GA 只写测试，零产品改动；测试暴露真实产品缺陷时停手记录证据并汇报 Luis，不就地修。
+- GA 只写测试，零产品改动；测试暴露真实产品缺陷时停手记录证据并汇报 Ludi，不就地修。
 - GUI 渲染遵守「显示与持久化分离」：时间线/消息渲染区分 JSONL 持久化事实与显示投影，不用「界面没显示」推导「模型没生成」。
 - OpenHanako 只当参考与失效案例来源（见分析文档证据分级）；post-real-use 候选（Reminder、工具目录延迟加载、持续子代理）与排除项（千节点 Workflow、通用插件、自动学 Skill、陪伴记忆）都不在本迭代范围。
 - 不 git push、不 npm publish、不动 dist/、不删文件。
 - 每切片完成标准：聚焦测试覆盖新行为（含失败路径）+ npm run typecheck / lint / build -- --noEmit / npm test（--maxWorkers=4）全绿 + git diff --check 干净 + 独立对抗复核 P0/P1 清零 → 英文 commit → 更新 docs/handoff-next.md 对应条目。
-- UI 切片分节交付：每节给截图 + 本地 URL，Luis 验收通过才作为下一节基准。
-- 同一失败连续 3 次未解即停，写清证据与选项后交回 Luis。
+- UI 切片分节交付：每节给截图 + 本地 URL，Ludi 验收通过才作为下一节基准。
+- 同一失败连续 3 次未解即停，写清证据与选项后交回 Ludi。
 
-第一步：读完上述文件后，输出一份不超过 15 行的 G1 实施确认（改动文件清单、契约字段设计、测试清单），等 Luis 回「开工」再动代码。
+第一步：读完上述文件后，输出一份不超过 15 行的 G1 实施确认（改动文件清单、契约字段设计、测试清单），等 Ludi 回「开工」再动代码。
 ```

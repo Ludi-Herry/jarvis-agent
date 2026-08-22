@@ -7,7 +7,7 @@
 
 Recommended direction after Phase 3 v1: keep `cannotVerify -> park` and unattended raw bash `fail-closed deny` for generic runtime/app/browser/network work. The useful sandbox surface is a narrow `SandboxRunner` capability contract with fixed callers, visible audit evidence, and no fallback to raw `bash`. Do not turn the bash analyzer or command allow-list into unattended auto-allow.
 
-Best next prototype on Luis' current machine: WSL2-backed Linux sandbox, because WSL2 Ubuntu exists locally and exposes user namespace quota plus cgroup v2. It still needs a deliberate runtime story: run from a copied project snapshot inside the Linux filesystem, keep Windows mounts out of scope, start with network disabled, and install/use a real sandbox primitive only after approval.
+Best next prototype on Ludi' current machine: WSL2-backed Linux sandbox, because WSL2 Ubuntu exists locally and exposes user namespace quota plus cgroup v2. It still needs a deliberate runtime story: run from a copied project snapshot inside the Linux filesystem, keep Windows mounts out of scope, start with network disabled, and install/use a real sandbox primitive only after approval.
 
 Windows-native AppContainer is the stronger long-term native Windows route, but it has higher implementation cost and likely needs a small native helper. Docker/Podman would give better operational UX if already installed; on this machine they are not present, and installing them is a system-level action.
 

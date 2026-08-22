@@ -1,4 +1,4 @@
-# OpenHanako 增量裁决（2026-08-22，Luis × Codex 讨论）
+# OpenHanako 增量裁决（2026-08-22，Ludi × Codex 讨论）
 
 > 本文为讨论结论的原样存档（ZCode 代录，正文未改写），作为 `docs/v03-gui-plan.md` 竞品参考与验收补强的依据。
 > 来源材料：[视频字幕](H:/LLM本地知识库/采集/clippings/bilibili/2026-08-20-如果这几天玩dsh累了，就来试试 HanaAgent 吧！.md) 与 [公开仓库](https://github.com/liliMozi/openhanako)（当前公开版本 `0.447.4`，release 准备提交停在 8 月 14 日）。

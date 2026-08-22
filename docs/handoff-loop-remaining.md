@@ -199,7 +199,7 @@ daemon 只负责调度、锁、可观测性、信号退出。它不自动 resume
 - 多工作区统一 daemon。
 - GUI 托盘、Windows service、开机自启。
 - OS scheduler 安装脚本。
-- per-goal hook map 支持，除非 Luis 明确要求 cron task 触发 hooks；如加，按 `--hook-map` 信任边界完整实现。
+- per-goal hook map 支持，除非 Ludi 明确要求 cron task 触发 hooks；如加，按 `--hook-map` 信任边界完整实现。
 
 ### 关键测试
 
@@ -247,7 +247,7 @@ Windows 子进程测试偶发 timeout / EBUSY，失败先重跑确认。不要�
 ```text
 接手 H:\jarvis-agent，先读 README.md → docs/handoff-codex.md → docs/handoff-next.md → docs/handoff-loop-remaining.md → docs/superpowers/plans/2026-07-02-cron-daemon-plan.md。
 
-目标：loop 重项已收口。若 Luis 新开 loop 核心需求，先输出一个具体 plan：范围、文件、信任边界、失败模式测试、验收命令；确认后再做最小 slice、独立 commit。
+目标：loop 重项已收口。若 Ludi 新开 loop 核心需求，先输出一个具体 plan：范围、文件、信任边界、失败模式测试、验收命令；确认后再做最小 slice、独立 commit。
 
 当前已完成：mid-goal resume、per-goal verifier、per-goal hook runner、parallel worktree first slice、parallel resume 最小 slice、cron single-scan first slice、cron foreground daemon、loop finalize 只读报告、loop finalize --merge 交互 apply、loop finalize --cleanup 交互清理、真实 --hook-map CLI smoke、Windows \\?\ / symlink / junction hook-map smoke。
 

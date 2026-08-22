@@ -42,7 +42,7 @@ afterEach(async () => {
 
 describe('human review capability', () => {
   it('lists parked human-routed requirements with local evidence for GUI review', async () => {
-    await writeParkedGoal('g-human', [{ id: 'r1', text: 'Luis confirms the copy reads naturally' }]);
+    await writeParkedGoal('g-human', [{ id: 'r1', text: 'Ludi confirms the copy reads naturally' }]);
 
     const pending = await listPendingHumanReviews(dataDir);
 
@@ -51,7 +51,7 @@ describe('human review capability', () => {
       goalId: 'g-human',
       state: 'blocked',
       verdict: 'couldNotVerify',
-      requirements: [{ requirementId: 'r1', text: 'Luis confirms the copy reads naturally' }],
+      requirements: [{ requirementId: 'r1', text: 'Ludi confirms the copy reads naturally' }],
     });
     expect(pending[0].report.observed).toContain('waiting for human verification');
   });
@@ -77,7 +77,7 @@ describe('human review capability', () => {
 
   it('fails closed when a parked goal log contains a structurally invalid middle record', async () => {
     const goalId = 'g-corrupt';
-    await writeParkedGoal(goalId, [{ id: 'r1', text: 'Luis confirms the copy reads naturally' }]);
+    await writeParkedGoal(goalId, [{ id: 'r1', text: 'Ludi confirms the copy reads naturally' }]);
     const path = join(dataDir, 'goals', `${goalId}.jsonl`);
     const lines = (await readFile(path, 'utf8')).split('\n');
     lines.splice(1, 0, '{}');
@@ -87,20 +87,20 @@ describe('human review capability', () => {
     await expect(applyHumanReviewDecision({
       dataDir,
       goalId,
-      reviewer: 'Luis',
+      reviewer: 'Ludi',
       decisions: [{ requirementId: 'r1', decision: 'approve', note: 'must not apply' }],
     })).rejects.toThrow('goal state is corrupt at line 2 (invalid-record)');
   });
 
   it('applies an approval as verifier evidence, appends audit, and updates loop finish state', async () => {
-    const pinned = [{ id: 'r1', text: 'Luis confirms the copy reads naturally' }];
+    const pinned = [{ id: 'r1', text: 'Ludi confirms the copy reads naturally' }];
     await writeParkedGoal('g-human', pinned);
     await writeLoopWithBlockedGoal('loop-human', 'g-human');
 
     const result = await applyHumanReviewDecision({
       dataDir,
       goalId: 'g-human',
-      reviewer: 'Luis',
+      reviewer: 'Ludi',
       at: '2026-07-03T18:00:00.000Z',
       decisions: [{ requirementId: 'r1', decision: 'approve', note: 'Copy is clear and ready.' }],
     });
@@ -120,7 +120,7 @@ describe('human review capability', () => {
     expect(audit).toHaveLength(1);
     expect(audit[0]).toMatchObject({
       goalId: 'g-human',
-      reviewer: 'Luis',
+      reviewer: 'Ludi',
       verdict: 'verified',
       decisions: [{ requirementId: 'r1', decision: 'approve', note: 'Copy is clear and ready.' }],
     });
@@ -140,7 +140,7 @@ describe('human review capability', () => {
     const result = await applyHumanReviewDecision({
       dataDir,
       goalId: 'g-human',
-      reviewer: 'Luis',
+      reviewer: 'Ludi',
       at: '2026-07-03T18:05:00.000Z',
       decisions: [{ requirementId: 'r1', decision: 'reject', note: 'Screenshot does not match spacing.' }],
     });

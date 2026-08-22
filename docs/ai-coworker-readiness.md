@@ -55,7 +55,7 @@ These are the hard parts for a coding agent. They should stay the core.
 
 ## Future Concepts To Keep
 
-Only revisit these after the GUI shell is useful for Luis' day-to-day work.
+Only revisit these after the GUI shell is useful for Ludi' day-to-day work.
 
 1. **AgentIdentity**
    - A first-class label for a running agent persona or role.
@@ -115,7 +115,7 @@ Only revisit these after the GUI shell is useful for Luis' day-to-day work.
 Reopen this note only when one of these becomes true:
 
 - The GUI has a stable first workflow and needs a visible agent timeline.
-- Luis needs the same Jarvis run to be resumed, inspected, or steered from multiple surfaces.
+- Ludi needs the same Jarvis run to be resumed, inspected, or steered from multiple surfaces.
 - Local knowledge-base / repo-doc context is repeatedly being gathered by hand.
 - A long-running cron / loop workflow needs a user-facing kill switch and audit view.
 - The project starts defining multiple durable agent roles with different memory and tool access.

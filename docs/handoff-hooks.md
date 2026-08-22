@@ -72,8 +72,8 @@ gate.check  →  (deny ⇒ 立即返回，hooks 不被咨询)
 ```json
 {
   "goals": [
-    { "index": 0, "hookPath": "C:\\Users\\Luis\\.jarvis\\hooks-strict.json" },
-    { "index": 2, "hookPath": "C:\\Users\\Luis\\.jarvis\\hooks-observe.json" }
+    { "index": 0, "hookPath": "C:\\Users\\Ludi\\.jarvis\\hooks-strict.json" },
+    { "index": 2, "hookPath": "C:\\Users\\Ludi\\.jarvis\\hooks-observe.json" }
   ]
 }
 ```

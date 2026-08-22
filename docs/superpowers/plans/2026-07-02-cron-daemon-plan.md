@@ -63,7 +63,7 @@ npm run cron:daemon -- --cron-map <trusted-json>
 }
 ```
 
-本次未补 `hookMapPath`。若 Luis 明确需要 cron task 触发 per-goal hooks，再加：
+本次未补 `hookMapPath`。若 Ludi 明确需要 cron task 触发 per-goal hooks，再加：
 
 ```json
 {
@@ -198,7 +198,7 @@ daemon 是前台进程：
 2. **daemon lock**：已复用 `FileLoopCronLock`，daemon lock CLI smoke 覆盖 fresh held；stale / recovery guard 由 lock 单测覆盖。
 3. **CLI shell**：已新增 `cron-daemon-cli.ts`，前台 sleep + scan loop，支持 SIGINT/SIGTERM。
 4. **task lifecycle**：已新增 task-started/task-finished/parked 记录和 replay；状态文件缺失时从空状态启动，不可读时 fail-closed。
-5. **可选 hookMapPath**：本次未做；如 Luis 明确需要 cron 触发 per-goal hooks，再补 schema 与 command 拼接。
+5. **可选 hookMapPath**：本次未做；如 Ludi 明确需要 cron 触发 per-goal hooks，再补 schema 与 command 拼接。
 6. **对抗审查**：收口时重点复核信任边界、crash replay、重复执行、锁恢复、无人值守 bash。
 
 ## 暂不做

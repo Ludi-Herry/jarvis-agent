@@ -102,12 +102,12 @@ describe('FileLoopStore round-trip', () => {
       contract: CONTRACT,
       objectives: ['a'],
       createdAt: 't0',
-      verifierMapPath: 'C:\\Users\\Luis\\.jarvis\\loop-verifiers.json',
+      verifierMapPath: 'C:\\Users\\Ludi\\.jarvis\\loop-verifiers.json',
     });
 
     const replay = await loadLoop(path);
 
-    expect(replay.verifierMapPath).toBe('C:\\Users\\Luis\\.jarvis\\loop-verifiers.json');
+    expect(replay.verifierMapPath).toBe('C:\\Users\\Ludi\\.jarvis\\loop-verifiers.json');
   });
 
   it('replays the trusted hook-map path metadata from loop-created', async () => {
@@ -118,12 +118,12 @@ describe('FileLoopStore round-trip', () => {
       contract: CONTRACT,
       objectives: ['a'],
       createdAt: 't0',
-      hookMapPath: 'C:\\Users\\Luis\\.jarvis\\loop-hooks.json',
+      hookMapPath: 'C:\\Users\\Ludi\\.jarvis\\loop-hooks.json',
     });
 
     const replay = await loadLoop(path);
 
-    expect(replay.hookMapPath).toBe('C:\\Users\\Luis\\.jarvis\\loop-hooks.json');
+    expect(replay.hookMapPath).toBe('C:\\Users\\Ludi\\.jarvis\\loop-hooks.json');
   });
 
   it('replays the trusted sandbox-check-map path metadata from loop-created', async () => {
@@ -134,13 +134,13 @@ describe('FileLoopStore round-trip', () => {
       contract: CONTRACT,
       objectives: ['a'],
       createdAt: 't0',
-      sandboxCheckMapPath: 'C:\\Users\\Luis\\.jarvis\\loop-sandbox-checks.json',
+      sandboxCheckMapPath: 'C:\\Users\\Ludi\\.jarvis\\loop-sandbox-checks.json',
     };
     await store.writeCreated(created);
 
     const replay = await loadLoop(path);
 
-    expect((replay as { sandboxCheckMapPath?: string }).sandboxCheckMapPath).toBe('C:\\Users\\Luis\\.jarvis\\loop-sandbox-checks.json');
+    expect((replay as { sandboxCheckMapPath?: string }).sandboxCheckMapPath).toBe('C:\\Users\\Ludi\\.jarvis\\loop-sandbox-checks.json');
   });
 
   it('replays the trusted goal-setter requirements map path and hash metadata from loop-created', async () => {
@@ -151,13 +151,13 @@ describe('FileLoopStore round-trip', () => {
       contract: CONTRACT,
       objectives: ['a'],
       createdAt: 't0',
-      goalSetterRequirementsMapPath: 'C:\\Users\\Luis\\.jarvis\\loop-goal-setter-requirements.json',
+      goalSetterRequirementsMapPath: 'C:\\Users\\Ludi\\.jarvis\\loop-goal-setter-requirements.json',
       goalSetterRequirementsMapHash: 'sha256:abc',
     });
 
     const replay = await loadLoop(path);
 
-    expect(replay.goalSetterRequirementsMapPath).toBe('C:\\Users\\Luis\\.jarvis\\loop-goal-setter-requirements.json');
+    expect(replay.goalSetterRequirementsMapPath).toBe('C:\\Users\\Ludi\\.jarvis\\loop-goal-setter-requirements.json');
     expect(replay.goalSetterRequirementsMapHash).toBe('sha256:abc');
   });
 

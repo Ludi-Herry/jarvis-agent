@@ -78,7 +78,7 @@ describe('jarvis review (terminal human review)', () => {
   it('lists and shows a parked goal with sanitized requirement text', async () => {
     const workspace = await tempWorkspace('show ');
     await writeParkedGoal(workspace, 'g-park', [
-      { id: 'r1', text: `Luis confirms the copy‮ reads naturally\nsecond line ${ESC}[31m` },
+      { id: 'r1', text: `Ludi confirms the copy‮ reads naturally\nsecond line ${ESC}[31m` },
     ]);
 
     const list = await runJarvis(['--cwd', workspace, 'review', 'list']);
@@ -105,11 +105,11 @@ describe('jarvis review (terminal human review)', () => {
 
   it('records an approval end to end: goal completes via decideVerdict, audit lands, list empties', async () => {
     const workspace = await tempWorkspace('approve ');
-    await writeParkedGoal(workspace, 'g-ok', [{ id: 'r1', text: 'Luis confirms the copy reads naturally' }]);
+    await writeParkedGoal(workspace, 'g-ok', [{ id: 'r1', text: 'Ludi confirms the copy reads naturally' }]);
 
     const approve = await runJarvis([
       '--cwd', workspace, 'review', 'approve', 'g-ok',
-      '--requirement', 'r1', '--note', 'Copy is clear and ready.', '--reviewer', 'Luis', '--json',
+      '--requirement', 'r1', '--note', 'Copy is clear and ready.', '--reviewer', 'Ludi', '--json',
     ]);
 
     expect(approve.code).toBe(0);
@@ -125,7 +125,7 @@ describe('jarvis review (terminal human review)', () => {
       goalId: 'g-ok',
       requirementId: 'r1',
       decision: 'approve',
-      reviewer: 'Luis',
+      reviewer: 'Ludi',
       verdict: 'verified',
       state: 'complete',
       remainingParked: 0,
@@ -148,8 +148,8 @@ describe('jarvis review (terminal human review)', () => {
   it('keeps undecided requirements parked and turns a rejection into a rejected verdict', async () => {
     const workspace = await tempWorkspace('partial ');
     await writeParkedGoal(workspace, 'g-two', [
-      { id: 'r1', text: 'Luis confirms the copy reads naturally' },
-      { id: 'r2', text: 'Luis confirms the layout matches the design' },
+      { id: 'r1', text: 'Ludi confirms the copy reads naturally' },
+      { id: 'r2', text: 'Ludi confirms the layout matches the design' },
     ]);
 
     const approveOne = await runJarvis([
@@ -170,7 +170,7 @@ describe('jarvis review (terminal human review)', () => {
 
   it('appends the loop finish record when the parked goal belongs to a loop', async () => {
     const workspace = await tempWorkspace('loop ');
-    await writeParkedGoal(workspace, 'g-loop', [{ id: 'r1', text: 'Luis confirms the behavior' }]);
+    await writeParkedGoal(workspace, 'g-loop', [{ id: 'r1', text: 'Ludi confirms the behavior' }]);
     await writeLoopWithBlockedGoal(workspace, 'loop-1', 'g-loop');
 
     const approve = await runJarvis([
@@ -192,7 +192,7 @@ describe('jarvis review (terminal human review)', () => {
 
   it('rejects usage errors with exit 2 and isolates sibling-log corruption from a recorded decision', async () => {
     const workspace = await tempWorkspace('errors ');
-    await writeParkedGoal(workspace, 'g-err', [{ id: 'r1', text: 'Luis confirms the behavior' }]);
+    await writeParkedGoal(workspace, 'g-err', [{ id: 'r1', text: 'Ludi confirms the behavior' }]);
 
     const missingNote = await runJarvis(['--cwd', workspace, 'review', 'approve', 'g-err', '--requirement', 'r1']);
     expect(missingNote.code).toBe(CLI_EXIT.USAGE);
@@ -237,7 +237,7 @@ describe('jarvis review (terminal human review)', () => {
 
   it('fails closed with exit 7 and appends nothing when the target goal log itself is corrupt', async () => {
     const workspace = await tempWorkspace('target corrupt ');
-    await writeParkedGoal(workspace, 'g-target', [{ id: 'r1', text: 'Luis confirms the behavior' }]);
+    await writeParkedGoal(workspace, 'g-target', [{ id: 'r1', text: 'Ludi confirms the behavior' }]);
     const goalPath = join(workspace, 'data', 'goals', 'g-target.jsonl');
     const original = await readFile(goalPath, 'utf8');
     const lines = original.trim().split('\n');
@@ -258,7 +258,7 @@ describe('jarvis review (terminal human review)', () => {
     expect(source).not.toMatch(/createProvider|loadDoubaoConfig|loadEnvFile|ARK_API_KEY/u);
 
     const workspace = await tempWorkspace('nokey ');
-    await writeParkedGoal(workspace, 'g-key', [{ id: 'r1', text: 'Luis confirms the behavior' }]);
+    await writeParkedGoal(workspace, 'g-key', [{ id: 'r1', text: 'Ludi confirms the behavior' }]);
 
     const list = await runJarvis(['--cwd', workspace, 'review', 'list'], KEY_SENTINEL);
     const approve = await runJarvis(

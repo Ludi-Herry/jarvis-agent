@@ -85,7 +85,7 @@
 
 4. **GUI 可读性仍偏日志化**
    - 现象：parked goal 能看到 `blocked / couldNotVerify`，但人需要继续读很多 ID 才知道原因来自 `human route`。
-   - 影响：对 Luis 这种产品/UX 视角使用者，最关键的“为什么停、下一步该谁做”还不够直观。
+   - 影响：对 Ludi 这种产品/UX 视角使用者，最关键的“为什么停、下一步该谁做”还不够直观。
    - 后续：切片 3 human-review flow 需要把 parked reason 提到卡片主层级，并给出明确行动入口。
 
 ## 当前计数

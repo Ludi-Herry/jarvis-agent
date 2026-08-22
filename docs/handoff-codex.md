@@ -1,6 +1,6 @@
 # 交接：codex 自主接手（Claude 不可用后的「接手宪法」）
 
-> 前提：实现者从 Claude 换成 **codex（GPT 系）**，且 Claude 不再可用。你（codex）此后**既是实现者又是审查者，属同一模型族**——对抗强度天然弱于跨模型（原项目正因此用「Claude 实现 → codex 审」）。本文档是补偿：把 Claude 走后无法再靠"换族挑错"守住的红线**钉死成文字**，并把「判断对错」这一环明确交回**人（Luis）**。
+> 前提：实现者从 Claude 换成 **codex（GPT 系）**，且 Claude 不再可用。你（codex）此后**既是实现者又是审查者，属同一模型族**——对抗强度天然弱于跨模型（原项目正因此用「Claude 实现 → codex 审」）。本文档是补偿：把 Claude 走后无法再靠"换族挑错"守住的红线**钉死成文字**，并把「判断对错」这一环明确交回**人（Ludi）**。
 >
 > 上手先读：`README.md`（全景）→ 本页 → `docs/handoff-next.md`（下一步 + GUI 就绪盘点）→ `docs/handoff-loop-remaining.md`（loop 重项收口记录）→ `docs/handoff-D.md`（验收架构）→ `docs/handoff-hooks.md`（Hooks）→ `docs/security-review-baseline.md`（审查方法 + 严重度尺子 + 历史元教训）。项目 memory 里 `phase-d-goalloop-deterministic-legs` / `restore-bash-session-allow` / `hooks-slice-1` / `codex-for-adversarial-review` 是配套。
 
@@ -49,12 +49,12 @@
 ### ✅ 能 codex 自闭环（红线清晰、机械独立）
 Hooks slice-2 的 ③ 每-hook timeout、⑤ round/session 级事件、给 hook 传 tool result 已落地；⑥ shadow restore 交互确认、⑧ vision MIME sniff + 活体验证、loop mid-goal resume、per-goal verifier、per-goal hook runner、并行目标/worktree first slice、parallel resume 最小 slice、loop finalize 只读报告、loop finalize `--merge` 交互 apply、loop finalize `--cleanup` 交互清理、cron first slice（含同工作区扫描锁）、cron foreground daemon 已落地。仍要：plan 先行、四关卡、多实例对抗审（见四）。
 
-### ⚠️ 必须 plan + 人（Luis）把关（碰核心 / 信任边界，同族自审不够）
-- **hook 信任来源扩展**：多来源合并已按不变量 #2 落地。后续若再新增来源，每个来源都要 realpath 规范化 + 拒 cwd 内 + 只从可信来源加载；绝不新增扫 cwd 的路径。**slice-1 的 HIGH 就栽在信任边界**——这类改动做完**必须请 Luis 在关键项做最终闸**，别单靠同族自审 SHIP。
-- **⑦ loop 的重项**（并行目标/worktree first slice、parallel resume 最小 slice、loop finalize 只读报告、loop finalize `--merge` 交互 apply、loop finalize `--cleanup` 交互清理、cron first slice、cron foreground daemon、per-goal verifier、per-goal hook runner 已落地）：碰 `decideVerdict` / 裁判架构 / worktree/调度基建。改错 = 验收被绕 = 自主性信任根崩。后续若扩展 daemon 自动 resume、merge/cleanup、hook map 或跨工作区调度，先读 `docs/handoff-loop-remaining.md`，再写 plan，把「不得删 / 不得绕三腿 / 不得自动合并推送」写进方案、请 Luis 把关。mid-goal resume 已作为 crash/replay 子切片落地。
+### ⚠️ 必须 plan + 人（Ludi）把关（碰核心 / 信任边界，同族自审不够）
+- **hook 信任来源扩展**：多来源合并已按不变量 #2 落地。后续若再新增来源，每个来源都要 realpath 规范化 + 拒 cwd 内 + 只从可信来源加载；绝不新增扫 cwd 的路径。**slice-1 的 HIGH 就栽在信任边界**——这类改动做完**必须请 Ludi 在关键项做最终闸**，别单靠同族自审 SHIP。
+- **⑦ loop 的重项**（并行目标/worktree first slice、parallel resume 最小 slice、loop finalize 只读报告、loop finalize `--merge` 交互 apply、loop finalize `--cleanup` 交互清理、cron first slice、cron foreground daemon、per-goal verifier、per-goal hook runner 已落地）：碰 `decideVerdict` / 裁判架构 / worktree/调度基建。改错 = 验收被绕 = 自主性信任根崩。后续若扩展 daemon 自动 resume、merge/cleanup、hook map 或跨工作区调度，先读 `docs/handoff-loop-remaining.md`，再写 plan，把「不得删 / 不得绕三腿 / 不得自动合并推送」写进方案、请 Ludi 把关。mid-goal resume 已作为 crash/replay 子切片落地。
 
 ### ⛔ 能力天花板，先别硬凑
-- **沙箱 #2 客观路由 / #6 裁判 exec**：需 OS 级沙箱（容器 / seccomp / 只读 fs / 网络命名空间）才能「可信地跑任意程序」。没有沙箱，「只读 exec」做不到真只读，给裁判 exec 会破坏「裁判被注入也不能行动」核心属性。当前 `cannotVerify → park` / `fail-closed deny` 是**正确的能力天花板**。要解先建沙箱基建（环境层工程 + Luis 的方向决策），别用命令白名单硬凑。
+- **沙箱 #2 客观路由 / #6 裁判 exec**：需 OS 级沙箱（容器 / seccomp / 只读 fs / 网络命名空间）才能「可信地跑任意程序」。没有沙箱，「只读 exec」做不到真只读，给裁判 exec 会破坏「裁判被注入也不能行动」核心属性。当前 `cannotVerify → park` / `fail-closed deny` 是**正确的能力天花板**。要解先建沙箱基建（环境层工程 + Ludi 的方向决策），别用命令白名单硬凑。
 - **propose_skill（skill 自动沉淀）**：已拍板不做（投机、判定弱、无证实复用场景）。
 
 ---
@@ -65,7 +65,7 @@ Hooks slice-2 的 ③ 每-hook timeout、⑤ round/session 级事件、给 hook 
 1. **多个独立 codex 实例、各带不同攻击视角**（盲批 → decoy 隐藏真实副作用 → 截断走私 → bidi 视觉欺骗 → 边界/竞态），**别单实例读一遍就 SHIP**。
 2. **经验性验证，别只读代码**：安全改动真跑 `analyzeCommand` / `decide`（照 `zz-probe` 那套），只有「analyze clean 且 decide 结论符合预期」才算数——读代码自信会骗你（盲区 ③）。
 3. **完备性批评者**：最后一个 agent 专问「什么没验 / 什么没读 / 哪条 guardrail 没走真实接线」。
-4. **人是最后的跨判断来源**：碰安全核心 / 信任边界 / 验收的改动，**Luis 在关键项做最终闸**。这是 Claude 走后唯一还「换了一个判断源」的环节——别省。判断对错这一环始终攥在人手里（这是 Luis 的「认知投降」红线）。
+4. **人是最后的跨判断来源**：碰安全核心 / 信任边界 / 验收的改动，**Ludi 在关键项做最终闸**。这是 Claude 走后唯一还「换了一个判断源」的环节——别省。判断对错这一环始终攥在人手里（这是 Ludi 的「认知投降」红线）。
 
 ---
 
@@ -95,4 +95,4 @@ Hooks slice-2 的 ③ 每-hook timeout、⑤ round/session 级事件、给 hook 
 
 ## 七、GUI（下一大阶段）前置
 
-三支柱（EventBus / 注入式 Approver / JSONL load）已就位，见 `docs/handoff-next.md`「GUI 就绪盘点」。GUI 前唯一真前置 = 决定「审批是否加 `approval_request`/`approval_result` 事件」（当前审批走 Approver 回调、不进事件流 / 不持久化）。GUI 属大阶段，开工前请 Luis 定方向。
+三支柱（EventBus / 注入式 Approver / JSONL load）已就位，见 `docs/handoff-next.md`「GUI 就绪盘点」。GUI 前唯一真前置 = 决定「审批是否加 `approval_request`/`approval_result` 事件」（当前审批走 Approver 回调、不进事件流 / 不持久化）。GUI 属大阶段，开工前请 Ludi 定方向。

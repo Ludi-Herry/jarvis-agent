@@ -769,7 +769,7 @@ async function writeHumanVerifiedGoalLog(cwd: string, goalId: string, sessionCwd
             feature: 'works',
             expected: 'Human-routed requirements must be reviewed.',
             observed:
-              'human review observed:\nr-human-1: human approve by Luis at t-review\nr-human-2: human approve by Luis at t-review',
+              'human review observed:\nr-human-1: human approve by Ludi at t-review\nr-human-2: human approve by Ludi at t-review',
             evidence:
               'human review evidence:\nr-human-1: note: Looks good.\nr-human-2: note: Copy is readable.',
             perRequirement: [
@@ -874,7 +874,7 @@ async function writeHumanAudit(
     `${JSON.stringify({
       t: 'human-review-decision',
       goalId,
-      reviewer: 'Luis',
+      reviewer: 'Ludi',
       at: 't-review',
       previousRound: 1,
       decisions,
