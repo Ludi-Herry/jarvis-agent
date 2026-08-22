@@ -8,18 +8,105 @@
   </head>
   <body>
     <main class="shell">
-      <aside class="rail" aria-label="Jarvis status">
+      <aside class="rail" aria-label="Jarvis navigation">
         <div class="brand">
           <span class="brand-mark" aria-hidden="true"></span>
           <div>
             <h1>Jarvis</h1>
-            <p>Control Console</p>
+            <p>本地 Agent 控制台</p>
           </div>
         </div>
 
-        <section class="summary" aria-label="Runtime summary">
+        <nav class="section-nav" aria-label="Workspace sections">
+          <span class="nav-label">工作台</span>
+          <a class="nav-item" href="#current-run">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h4l2.5-6 4 12 2-6H20" /></svg>
+            <span>当前运行</span>
+          </a>
+          <a class="nav-item" href="#human-review">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14v16H5zM8 9h8M8 13h5" /></svg>
+            <span>待裁决</span>
+            <strong id="nav-review-count" class="nav-count">0</strong>
+          </a>
+          <a class="nav-item" href="#activity-log">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19V9m7 10V5m7 14v-7" /></svg>
+            <span>活动记录</span>
+          </a>
+        </nav>
+
+        <div class="rail-status" aria-label="Observation authority">
+          <span class="rail-status-dot" aria-hidden="true"></span>
+          <span>本机观测</span>
+          <small>read-only</small>
+        </div>
+      </aside>
+
+      <section class="workspace" aria-label="Jarvis current run">
+        <header id="current-run" class="topbar">
           <div>
-            <span class="label">Authority</span>
+            <span class="section-kicker">本次运行</span>
+            <h2>当前状态</h2>
+          </div>
+          <div class="top-actions">
+            <span class="updated-label">更新时间</span>
+            <span id="updated-at" class="updated">waiting</span>
+          </div>
+        </header>
+
+        <section class="meters" aria-label="Current run meters">
+          <div class="meter meter-primary">
+            <span>当前目标</span>
+            <strong id="latest-goal">-</strong>
+          </div>
+          <div class="meter">
+            <span>执行预算</span>
+            <strong id="budget">-</strong>
+          </div>
+          <div class="meter token-meter">
+            <span>Token 记录</span>
+            <div class="token-values">
+              <div>
+                <span>Goal 明细</span>
+                <strong id="goal-tokens">0</strong>
+              </div>
+              <div>
+                <span>Loop 汇总</span>
+                <strong id="loop-tokens">0</strong>
+              </div>
+            </div>
+            <small id="token-coverage" class="token-coverage">去重计量 0 · 覆盖 partial · 未计量 unknown</small>
+          </div>
+        </section>
+
+        <section id="human-review" class="review-panel" aria-label="Human review">
+          <div class="review-heading">
+            <div>
+              <span class="section-kicker">人工介入</span>
+              <h2>需要你处理</h2>
+            </div>
+            <strong id="review-count">0</strong>
+          </div>
+          <div id="human-reviews" class="review-list" aria-live="polite"></div>
+        </section>
+
+        <section id="activity-log" class="activity-section" aria-label="Activity log">
+          <div class="activity-heading">
+            <span class="section-kicker">持久化记录的显示投影</span>
+            <h2>活动记录</h2>
+          </div>
+          <ol id="timeline" class="timeline" aria-live="polite"></ol>
+        </section>
+      </section>
+
+      <aside class="context-rail" aria-label="Workspace context">
+        <div class="context-heading">
+          <span class="section-kicker">工作区</span>
+          <h2>运行控制</h2>
+        </div>
+
+        <section class="summary context-card" aria-label="Runtime summary">
+          <div>
+            <span class="label">权限</span>
             <strong id="authority">read-only</strong>
           </div>
           <div>
@@ -36,67 +123,19 @@
           </div>
         </section>
 
-        <section class="stop-panel" aria-label="Emergency stop">
+        <section class="stop-panel context-card" aria-label="Emergency stop">
           <div>
-            <span class="label">Run Control</span>
-            <strong id="stop-state">Armed</strong>
+            <span class="label">急停状态</span>
+            <strong id="stop-state">待命</strong>
           </div>
           <button id="stop-button" class="stop-button" type="button">
             <span class="stop-icon" aria-hidden="true"></span>
-            急停
+            立即急停
           </button>
         </section>
+
+        <p class="context-note">控制面只提供观测、急停与人工裁决。完成授权仍由既有验证链决定。</p>
       </aside>
-
-      <section class="workspace" aria-label="Timeline">
-        <header class="topbar">
-          <div>
-            <span class="eyebrow">observe / timeline</span>
-            <h2>运行时间线</h2>
-          </div>
-          <div class="top-actions">
-            <span id="updated-at" class="updated">waiting</span>
-          </div>
-        </header>
-
-        <section class="meters" aria-label="Current run meters">
-          <div class="meter">
-            <span>Latest goal</span>
-            <strong id="latest-goal">-</strong>
-          </div>
-          <div class="meter">
-            <span>Budget</span>
-            <strong id="budget">-</strong>
-          </div>
-          <div class="meter token-meter">
-            <span>Token accounting</span>
-            <div class="token-values">
-              <div>
-                <span>Goal recorded</span>
-                <strong id="goal-tokens">0</strong>
-              </div>
-              <div>
-                <span>Loop rollup</span>
-                <strong id="loop-tokens">0</strong>
-              </div>
-            </div>
-            <small id="token-coverage" class="token-coverage">Unique measured 0 · partial coverage · unmeasured unknown</small>
-          </div>
-        </section>
-
-        <section class="review-panel" aria-label="Human review">
-          <div class="review-heading">
-            <div>
-              <span class="eyebrow">human review</span>
-              <h2>人工裁决</h2>
-            </div>
-            <strong id="review-count">0</strong>
-          </div>
-          <div id="human-reviews" class="review-list" aria-live="polite"></div>
-        </section>
-
-        <ol id="timeline" class="timeline" aria-live="polite"></ol>
-      </section>
     </main>
 
     <script src="/app.js" type="module"></script>

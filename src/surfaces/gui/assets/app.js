@@ -20,6 +20,7 @@ const nodes = {
   goalTokens: document.querySelector('#goal-tokens'),
   loopTokens: document.querySelector('#loop-tokens'),
   tokenCoverage: document.querySelector('#token-coverage'),
+  navReviewCount: document.querySelector('#nav-review-count'),
   reviewCount: document.querySelector('#review-count'),
   humanReviews: document.querySelector('#human-reviews'),
   timeline: document.querySelector('#timeline'),
@@ -58,15 +59,16 @@ function render(payload) {
   nodes.goals.textContent = `${report.status.goals.total}`;
   nodes.loops.textContent = `${report.status.loops.total}`;
   nodes.approvals.textContent = `${report.audit.approvals.requests}/${report.audit.approvals.results}`;
-  nodes.stopState.textContent = payload.stop.unreadable ? 'Unknown' : payload.stop.requested ? 'Stopped' : 'Armed';
+  nodes.stopState.textContent = payload.stop.unreadable ? '状态未知' : payload.stop.requested ? '已急停' : '待命';
   nodes.updatedAt.textContent = shortTime(report.meta.generatedAt);
   nodes.latestGoal.textContent = formatLatestGoal(report.status.latestGoal);
   nodes.budget.textContent = report.status.latestGoalBudget
-    ? `${report.status.latestGoalBudget.roundsUsed}/${report.status.latestGoalBudget.maxRounds} rounds`
+    ? `${report.status.latestGoalBudget.roundsUsed}/${report.status.latestGoalBudget.maxRounds} 轮`
     : '-';
   nodes.goalTokens.textContent = `${report.usage.goalTokens}`;
   nodes.loopTokens.textContent = `${report.usage.loopTokens}`;
-  nodes.tokenCoverage.textContent = `Unique measured ${report.usage.uniqueTotalTokens} · ${report.usage.coverage} coverage · unmeasured ${report.usage.coverage === 'partial' ? 'unknown' : '0'}`;
+  nodes.tokenCoverage.textContent = `去重计量 ${report.usage.uniqueTotalTokens} · 覆盖 ${report.usage.coverage} · 未计量 ${report.usage.coverage === 'partial' ? 'unknown' : '0'}`;
+  nodes.navReviewCount.textContent = `${payload.reviews.length}`;
   nodes.reviewCount.textContent = `${payload.reviews.length}`;
   nodes.humanReviews.replaceChildren(...renderReviews(payload.reviews));
   nodes.timeline.replaceChildren(...payload.timeline.map(renderItem));
