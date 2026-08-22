@@ -17,7 +17,7 @@ describe('G2.1 GUI shell assets', () => {
     expect(html).toContain('href="#current-run"');
     expect(html).toContain('href="#human-review"');
     expect(html).toContain('href="#activity-log"');
-    for (const id of ['authority', 'goals', 'loops', 'approvals', 'stop-state', 'stop-button', 'updated-at', 'latest-goal', 'budget', 'goal-tokens', 'loop-tokens', 'token-coverage', 'nav-review-count', 'review-count', 'human-reviews', 'timeline']) {
+    for (const id of ['authority', 'goals', 'loops', 'approvals', 'stop-state', 'stop-button', 'updated-at', 'run-state', 'attention-strip', 'attention-title', 'attention-label', 'attention-action', 'attention-action-label', 'latest-goal', 'latest-goal-meta', 'budget-label', 'budget', 'budget-progress', 'budget-caption', 'unique-tokens', 'goal-tokens', 'loop-tokens', 'token-coverage', 'nav-review-count', 'review-count', 'human-reviews', 'timeline']) {
       expect(html.match(new RegExp(`id="${id}"`, 'gu'))).toHaveLength(1);
     }
     const selectors = [...js.matchAll(/document\.querySelector\('#([^']+)'\)/gu)].map((match) => match[1]);
@@ -26,6 +26,13 @@ describe('G2.1 GUI shell assets', () => {
       expect(html.match(new RegExp(`id="${id}"`, 'gu'))).toHaveLength(1);
     }
     expect(html).not.toContain('aria-current="page"');
+    expect(html).toContain('class="run-overview"');
+    expect(html).toContain('class="attention-strip"');
+    expect(html).toContain('class="goal-focus"');
+    expect(html).toContain('class="usage-disclosure"');
+    expect(html).toContain('class="t-learn"');
+    expect(html).toContain('role="status" aria-live="polite" aria-atomic="true"');
+    expect(html).toContain('aria-labelledby="budget-label budget-caption"');
   });
 
   it('uses the approved Jarvis warm-paper tokens without wide ghost-card shadows', async () => {

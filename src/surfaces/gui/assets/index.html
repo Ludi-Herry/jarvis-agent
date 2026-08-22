@@ -42,39 +42,71 @@
       </aside>
 
       <section class="workspace" aria-label="Jarvis current run">
-        <header id="current-run" class="topbar">
-          <div>
-            <span class="section-kicker">本次运行</span>
-            <h2>当前状态</h2>
-          </div>
-          <div class="top-actions">
-            <span class="updated-label">更新时间</span>
-            <span id="updated-at" class="updated">waiting</span>
-          </div>
-        </header>
-
-        <section class="meters" aria-label="Current run meters">
-          <div class="meter meter-primary">
-            <span>当前目标</span>
-            <strong id="latest-goal">-</strong>
-          </div>
-          <div class="meter">
-            <span>执行预算</span>
-            <strong id="budget">-</strong>
-          </div>
-          <div class="meter token-meter">
-            <span>Token 记录</span>
-            <div class="token-values">
-              <div>
-                <span>Goal 明细</span>
-                <strong id="goal-tokens">0</strong>
-              </div>
-              <div>
-                <span>Loop 汇总</span>
-                <strong id="loop-tokens">0</strong>
+        <section id="current-run" class="run-overview" aria-labelledby="run-title">
+          <header class="topbar">
+            <div>
+              <span class="section-kicker">本次运行</span>
+              <div class="run-title-row">
+                <h2 id="run-title">当前运行</h2>
+                <strong id="run-state" class="status-chip" data-tone="neutral" role="status" aria-live="polite" aria-atomic="true">空闲</strong>
               </div>
             </div>
-            <small id="token-coverage" class="token-coverage">去重计量 0 · 覆盖 partial · 未计量 unknown</small>
+            <div class="top-actions">
+              <span class="updated-label">更新时间</span>
+              <span id="updated-at" class="updated">waiting</span>
+            </div>
+          </header>
+
+          <div id="attention-strip" class="attention-strip" data-tone="neutral" role="status" aria-live="polite" aria-atomic="true">
+            <span class="attention-dot" aria-hidden="true"></span>
+            <div>
+              <span id="attention-title">运行状态</span>
+              <strong id="attention-label">等待新的目标</strong>
+            </div>
+            <a id="attention-action" class="t-learn" href="#activity-log" hidden>
+              <span id="attention-action-label">查看记录</span>
+              <span class="t-learn-chevron" aria-hidden="true">
+                <svg viewBox="0 0 16 16">
+                  <path class="t-learn-arm t-learn-arm-top" d="M6 4L10 8" />
+                  <path class="t-learn-arm t-learn-arm-bot" d="M10 8L6 12" />
+                </svg>
+              </span>
+            </a>
+          </div>
+
+          <div class="goal-focus">
+            <span class="label">当前目标</span>
+            <h3 id="latest-goal">当前没有运行中的目标</h3>
+            <p id="latest-goal-meta">等待终端创建新的 goal 或 loop</p>
+          </div>
+
+          <div class="run-support">
+            <section class="budget-panel" aria-label="Goal budget">
+              <div>
+                <span id="budget-label" class="label">执行预算</span>
+                <strong id="budget">-</strong>
+              </div>
+              <progress id="budget-progress" max="1" value="0" aria-labelledby="budget-label budget-caption">0%</progress>
+              <small id="budget-caption">暂无 goal 预算记录</small>
+            </section>
+
+            <details class="usage-disclosure">
+              <summary>
+                <span>Token 使用</span>
+                <strong id="unique-tokens">0</strong>
+              </summary>
+              <div class="token-values">
+                <div>
+                  <span>Goal 明细</span>
+                  <strong id="goal-tokens">0</strong>
+                </div>
+                <div>
+                  <span>Loop 汇总</span>
+                  <strong id="loop-tokens">0</strong>
+                </div>
+              </div>
+              <small id="token-coverage" class="token-coverage">覆盖 部分 · 未计量 未知</small>
+            </details>
           </div>
         </section>
 

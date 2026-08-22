@@ -127,7 +127,7 @@ async function statusPayload(cwd: string, dataDir: string): Promise<GuiStatusPay
 
 async function serveAsset(pathname: string, res: ServerResponse): Promise<void> {
   const name = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '');
-  if (!['index.html', 'app.css', 'app.js'].includes(name)) {
+  if (!['index.html', 'app.css', 'app.js', 'presentation.js'].includes(name)) {
     json(res, 404, { error: 'not found' });
     return;
   }

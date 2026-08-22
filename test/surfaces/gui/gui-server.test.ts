@@ -205,6 +205,24 @@ describe('GUI server security guard', () => {
     }
   });
 
+  it('serves the presentation module with a JavaScript content type', async () => {
+    const server = createGuiServer({ cwd: dir, dataDir: join(dir, 'data') });
+    const base = await listen(server);
+    try {
+      const result = await httpText(base.port, {
+        path: '/presentation.js',
+        method: 'GET',
+        headers: { host: `127.0.0.1:${base.port}` },
+      });
+
+      expect(result.status).toBe(200);
+      expect(result.contentType).toBe('text/javascript; charset=utf-8');
+      expect(result.body).toContain('export function buildRunPresentation');
+    } finally {
+      await close(server);
+    }
+  });
+
   it('lists and applies human-review decisions through the GUI control API', async () => {
     await writeParkedHumanGoal('g-human');
     const server = createGuiServer({ cwd: dir, dataDir: join(dir, 'data') });
@@ -368,6 +386,33 @@ function httpJson(
     req.on('error', reject);
     if (options.body !== undefined) req.end(options.body);
     else req.end();
+  });
+}
+
+function httpText(
+  port: number,
+  options: { path: string; method: string; headers: Record<string, string> },
+): Promise<{ status: number; body: string; contentType: string | undefined }> {
+  return new Promise((resolveRequest, reject) => {
+    const req = request({
+      host: '127.0.0.1',
+      port,
+      path: options.path,
+      method: options.method,
+      headers: options.headers,
+    }, (res) => {
+      const chunks: Buffer[] = [];
+      res.on('data', (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+      res.on('end', () => {
+        resolveRequest({
+          status: res.statusCode ?? 0,
+          body: Buffer.concat(chunks).toString('utf8'),
+          contentType: res.headers['content-type'],
+        });
+      });
+    });
+    req.on('error', reject);
+    req.end();
   });
 }
 

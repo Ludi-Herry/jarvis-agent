@@ -1,5 +1,7 @@
 /* global document, fetch, window */
 
+import { buildRunPresentation } from '/presentation.js';
+
 const state = {
   busy: false,
   activeDraftKey: undefined,
@@ -15,8 +17,18 @@ const nodes = {
   stopState: document.querySelector('#stop-state'),
   stopButton: document.querySelector('#stop-button'),
   updatedAt: document.querySelector('#updated-at'),
+  runState: document.querySelector('#run-state'),
+  attentionStrip: document.querySelector('#attention-strip'),
+  attentionTitle: document.querySelector('#attention-title'),
+  attentionLabel: document.querySelector('#attention-label'),
+  attentionAction: document.querySelector('#attention-action'),
+  attentionActionLabel: document.querySelector('#attention-action-label'),
   latestGoal: document.querySelector('#latest-goal'),
+  latestGoalMeta: document.querySelector('#latest-goal-meta'),
   budget: document.querySelector('#budget'),
+  budgetProgress: document.querySelector('#budget-progress'),
+  budgetCaption: document.querySelector('#budget-caption'),
+  uniqueTokens: document.querySelector('#unique-tokens'),
   goalTokens: document.querySelector('#goal-tokens'),
   loopTokens: document.querySelector('#loop-tokens'),
   tokenCoverage: document.querySelector('#token-coverage'),
@@ -55,34 +67,38 @@ async function refresh() {
 
 function render(payload) {
   const report = payload.report;
+  const run = buildRunPresentation(report, payload.stop, payload.reviews.length);
   nodes.authority.textContent = report.authority.mode;
   nodes.goals.textContent = `${report.status.goals.total}`;
   nodes.loops.textContent = `${report.status.loops.total}`;
   nodes.approvals.textContent = `${report.audit.approvals.requests}/${report.audit.approvals.results}`;
   nodes.stopState.textContent = payload.stop.unreadable ? '状态未知' : payload.stop.requested ? '已急停' : '待命';
   nodes.updatedAt.textContent = shortTime(report.meta.generatedAt);
-  nodes.latestGoal.textContent = formatLatestGoal(report.status.latestGoal);
-  nodes.budget.textContent = report.status.latestGoalBudget
-    ? `${report.status.latestGoalBudget.roundsUsed}/${report.status.latestGoalBudget.maxRounds} 轮`
-    : '-';
-  nodes.goalTokens.textContent = `${report.usage.goalTokens}`;
-  nodes.loopTokens.textContent = `${report.usage.loopTokens}`;
-  nodes.tokenCoverage.textContent = `去重计量 ${report.usage.uniqueTotalTokens} · 覆盖 ${report.usage.coverage} · 未计量 ${report.usage.coverage === 'partial' ? 'unknown' : '0'}`;
+  nodes.runState.textContent = run.state.label;
+  nodes.runState.dataset.tone = run.state.tone;
+  nodes.attentionStrip.dataset.tone = run.attention.tone;
+  nodes.attentionTitle.textContent = run.attention.title;
+  nodes.attentionLabel.textContent = run.attention.label;
+  nodes.attentionAction.hidden = run.attention.href === undefined;
+  if (run.attention.href !== undefined) {
+    nodes.attentionAction.href = run.attention.href;
+    nodes.attentionActionLabel.textContent = run.attention.action;
+  }
+  nodes.latestGoal.textContent = run.goal.title;
+  nodes.latestGoalMeta.textContent = run.goal.meta;
+  nodes.budget.textContent = run.budget.label;
+  nodes.budgetProgress.max = run.budget.max;
+  nodes.budgetProgress.value = run.budget.value;
+  nodes.budgetProgress.hidden = !run.budget.available;
+  nodes.budgetCaption.textContent = run.budget.caption;
+  nodes.uniqueTokens.textContent = `${run.usage.unique}`;
+  nodes.goalTokens.textContent = `${run.usage.goal}`;
+  nodes.loopTokens.textContent = `${run.usage.loop}`;
+  nodes.tokenCoverage.textContent = `覆盖 ${run.usage.coverage} · 未计量 ${run.usage.unmetered}`;
   nodes.navReviewCount.textContent = `${payload.reviews.length}`;
   nodes.reviewCount.textContent = `${payload.reviews.length}`;
   nodes.humanReviews.replaceChildren(...renderReviews(payload.reviews));
   nodes.timeline.replaceChildren(...payload.timeline.map(renderItem));
-}
-
-function formatLatestGoal(goal) {
-  if (!goal) return '-';
-  const recordedState = goal.recordedState || goal.state;
-  const effectiveState = goal.effectiveState || recordedState;
-  const parts = [effectiveState, goal.verdict || '-'];
-  if (effectiveState !== recordedState) parts.push(`recorded ${recordedState}`);
-  if (goal.effectiveReason) parts.push(goal.effectiveReason);
-  if (goal.effectiveSource?.loopId) parts.push(`loop ${goal.effectiveSource.loopId}`);
-  return parts.join(' · ');
 }
 
 function renderReviews(reviews) {
