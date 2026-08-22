@@ -4,7 +4,7 @@
 
 > Phase D 腿3 整套**已全部落地 + 经 5 轮多裁判对抗核查 + 诚实文档化**——背景见 `docs/handoff-D.md`（主交接）、`docs/phase-D-leg3-checklist.md`（5 条全收口）、`docs/security-review-baseline.md`（审查历史 + 元教训）、memory `phase-d-goalloop-deterministic-legs`。
 > Phase E 四条独立第一切片（vision / bash-allow / loop / shadow-git）**已全部合进本地 main**（见下「合并收口」）。
-> 当前交接重点：v0.1 的 Recall A/B 对照与 10–20 个真实任务证据（烧钱，待 Luis 放行）；renderer 真实 TTY 视觉验收留给 Luis。A0 只读 runner 与 v2 真实跑分（GO）、checkpoint/rewind 基础、TUI reducer/fallback、纯 TUI renderer、sessions search、筛选/排序/分页与 session mutation（fork/rename/archive）均已完成代码门禁，GUI UI/UX 排在 v0.3。
+> 当前交接重点：v0.1 的 Recall A/B 对照与 10–20 个真实任务证据（烧钱，待 Luis 放行）；renderer 真实 TTY 视觉验收留给 Luis。A0 只读 runner 与 v2 真实跑分（GO）、checkpoint/rewind 基础、TUI reducer/fallback、纯 TUI renderer、sessions search、筛选/排序/分页与 session mutation（fork/rename/archive）均已完成代码门禁。GUI UI/UX（v0.3）已于 2026-08-22 与 CLI 收尾并行开工：范围与切片见 `docs/v03-gui-plan.md`（G0 走查 Luis 主导、G1 起 Codex 执行，窄控制面边界不变）。
 
 > sessions/resume 收口从 main `85f3eea` 开工并已完成。`implementation-notes.md` 只承担本轮临时偏差记录，不进入阶段提交；有效内容以本文件、`docs/cli-first-plan.md` 与 `docs/checkpoint-tui-contract.md` 为准，提交门完成后按授权精确删除。
 
