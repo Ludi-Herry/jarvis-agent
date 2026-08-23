@@ -162,6 +162,17 @@ export interface ObservationActivityItem {
   at?: string;
   source: string;
   meta: string[];
+  scope?: { goalId?: string; loopId?: string };
+  goalRoundProgress?: {
+    round: number;
+    maxRounds: number;
+    roundTurns: number | null;
+    cumulativeTurns: number | null;
+    maxTotalTurns?: number;
+    roundTokens: number | null;
+    cumulativeTokens: number | null;
+    maxTotalTokens?: number;
+  };
 }
 
 export interface SessionSummary {
@@ -176,6 +187,8 @@ export interface SessionSummary {
 
 export interface GoalSummary {
   id: string;
+  /** Parent loop derived from persisted goal-started/goal-finished records, when present. */
+  loopId?: string;
   objective: string;
   /** Backward-compatible raw state replayed from the goal audit log. */
   state: GoalState;
@@ -509,6 +522,7 @@ export function deriveEffectiveGoalSummaries(
   loops: readonly ObservationLog<LoopRecord>[],
 ): GoalSummary[] {
   const interruptions = new Map<string, { loopId: string; reason: LoopHaltReason }>();
+  const parentLoopByGoal = new Map<string, string>();
 
   for (const log of loops) {
     const created = log.records.find((record): record is LoopCreatedRecord => record.t === 'loop-created');
@@ -519,6 +533,7 @@ export function deriveEffectiveGoalSummaries(
     for (const [index, record] of log.records.entries()) {
       if (record.t === 'goal-started' || record.t === 'goal-finished') {
         latestAttempts.set(record.index, { index, record });
+        parentLoopByGoal.set(record.goalId, created.id);
       }
       if (record.t === 'loop-halted') latestHalt = { index, reason: record.reason };
     }
@@ -532,10 +547,12 @@ export function deriveEffectiveGoalSummaries(
   }
 
   return goals.map((goal) => {
+    const loopId = parentLoopByGoal.get(goal.id);
+    const scopedGoal = loopId === undefined ? goal : { ...goal, loopId };
     const interruption = interruptions.get(goal.id);
-    if (goal.recordedState !== 'active' || interruption === undefined) return goal;
+    if (goal.recordedState !== 'active' || interruption === undefined) return scopedGoal;
     return {
-      ...goal,
+      ...scopedGoal,
       effectiveState: 'interrupted',
       effectiveReason: interruption.reason,
       effectiveSource: { kind: 'loop-halt', loopId: interruption.loopId },
@@ -734,6 +751,26 @@ function summarizeApprovals(records: ApprovalAuditRecord[]): ApprovalAuditSummar
 
 function recentActivity(input: ObservationInput): ObservationActivityItem[] {
   const items: ObservationActivityItem[] = [];
+  const loopIds = new Set(
+    (input.loops ?? []).flatMap((log) => log.records
+      .filter((record): record is Extract<LoopRecord, { t: 'loop-created' }> => record.t === 'loop-created')
+      .map((record) => record.id)),
+  );
+  const parentLoopByGoal = new Map<string, string>();
+  for (const log of input.loops ?? []) {
+    const loopId = log.records.find((record) => record.t === 'loop-created')?.id;
+    if (loopId === undefined) continue;
+    for (const record of log.records) {
+      if (record.t === 'goal-started' || record.t === 'goal-finished') {
+        parentLoopByGoal.set(record.goalId, loopId);
+      }
+    }
+  }
+  const goalBySession = new Map<string, string>();
+  for (const log of input.goals ?? []) {
+    const created = log.records.find((record) => record.t === 'goal-created');
+    if (created !== undefined) goalBySession.set(created.sessionId, created.id);
+  }
   const blockedLoopIds = new Set(
     (input.loops ?? [])
       .filter((log) => log.records.some((record) => record.t === 'goal-finished' && record.state === 'blocked'))
@@ -753,6 +790,7 @@ function recentActivity(input: ObservationInput): ObservationActivityItem[] {
       at: header.startedAt,
       source: log.path,
       meta: [`messages ${log.records.filter((record) => record.t === 'message').length}`, header.cwd],
+      ...optional('scope', scopeForSession(header.id, goalBySession, loopIds, parentLoopByGoal)),
     });
   }
 
@@ -760,6 +798,10 @@ function recentActivity(input: ObservationInput): ObservationActivityItem[] {
     const created = log.records.find((record) => record.t === 'goal-created');
     const goalId = created?.id ?? 'unknown-goal';
     const summary = summarizeGoal(log);
+    let cumulativeTurns = 0;
+    let cumulativeTokens = 0;
+    let turnsComplete = true;
+    let tokensComplete = true;
     for (const [index, record] of log.records.entries()) {
       if (record.t === 'goal-created') {
         items.push({
@@ -771,8 +813,15 @@ function recentActivity(input: ObservationInput): ObservationActivityItem[] {
           at: record.createdAt,
           source: log.path,
           meta: [`max rounds ${record.budget.maxRounds}`, `session ${record.sessionId}`],
+          scope: goalActivityScope(record.id, parentLoopByGoal),
         });
       } else if (record.t === 'goal-round') {
+        const roundTurns = record.turns ?? null;
+        const roundTokens = record.tokens ?? null;
+        if (roundTurns === null) turnsComplete = false;
+        else cumulativeTurns += roundTurns;
+        if (roundTokens === null) tokensComplete = false;
+        else cumulativeTokens += roundTokens;
         const recordedOutcome = record.verdict?.outcome;
         const outcome = recomputeRoundVerdict(record, created?.pinned ?? []);
         items.push({
@@ -786,9 +835,22 @@ function recentActivity(input: ObservationInput): ObservationActivityItem[] {
           meta: [
             `goal ${goalId}`,
             ...(recordedOutcome !== undefined && recordedOutcome !== outcome ? [`recorded ${recordedOutcome}`] : []),
-            `turns ${record.turns ?? 0}`,
-            `tokens ${record.tokens ?? 0}`,
+            `turns ${roundTurns ?? 'unrecorded'}`,
+            `tokens ${roundTokens ?? 'unrecorded'}`,
           ],
+          scope: goalActivityScope(goalId, parentLoopByGoal),
+          ...(created === undefined ? {} : {
+            goalRoundProgress: {
+              round: record.round,
+              maxRounds: created.budget.maxRounds,
+              roundTurns,
+              cumulativeTurns: turnsComplete ? cumulativeTurns : null,
+              ...optional('maxTotalTurns', created.budget.maxTotalTurns),
+              roundTokens,
+              cumulativeTokens: tokensComplete ? cumulativeTokens : null,
+              ...optional('maxTotalTokens', created.budget.maxTotalTokens),
+            },
+          }),
         });
       } else if (record.t === 'goal-state') {
         const effectiveState = record.state === 'complete' && summary?.effectiveState === 'blocked' ? 'blocked' : record.state;
@@ -801,6 +863,7 @@ function recentActivity(input: ObservationInput): ObservationActivityItem[] {
           at: record.at,
           source: log.path,
           meta: [],
+          scope: goalActivityScope(goalId, parentLoopByGoal),
         });
       }
     }
@@ -821,6 +884,7 @@ function recentActivity(input: ObservationInput): ObservationActivityItem[] {
           at: record.createdAt,
           source: log.path,
           meta: contractMeta(record),
+          scope: { loopId: record.id },
         });
       } else if (record.t === 'goal-started') {
         items.push({
@@ -832,6 +896,7 @@ function recentActivity(input: ObservationInput): ObservationActivityItem[] {
           at: record.at,
           source: log.path,
           meta: [`loop ${loopId}`],
+          scope: { loopId, goalId: record.goalId },
         });
       } else if (record.t === 'goal-finished') {
         items.push({
@@ -843,6 +908,7 @@ function recentActivity(input: ObservationInput): ObservationActivityItem[] {
           at: record.at,
           source: log.path,
           meta: [`rounds ${record.rounds}`, `tokens ${record.tokens}`],
+          scope: { loopId, goalId: record.goalId },
         });
       } else if (record.t === 'loop-halted') {
         const effectiveReason = effectiveLoopHalt(record.reason, blocked) ?? record.reason;
@@ -855,6 +921,7 @@ function recentActivity(input: ObservationInput): ObservationActivityItem[] {
           at: record.at,
           source: log.path,
           meta: [`loop ${loopId}`, ...(effectiveReason === record.reason ? [] : [`recorded ${record.reason}`])],
+          scope: { loopId },
         });
       }
     }
@@ -873,6 +940,7 @@ function recentActivity(input: ObservationInput): ObservationActivityItem[] {
         at: record.finishedAt,
         source: cron.path,
         meta: record.loopId === undefined ? [`next ${record.nextRunAt}`] : [`loop ${record.loopId}`, `next ${record.nextRunAt}`],
+        ...(record.loopId === undefined ? {} : { scope: { loopId: record.loopId } }),
       });
     }
   }
@@ -907,6 +975,7 @@ function recentActivity(input: ObservationInput): ObservationActivityItem[] {
           at: record.at,
           source: log.path,
           meta: compactMeta([record.sessionId === undefined ? undefined : `session ${record.sessionId}`, record.capability, record.reason]),
+          ...optional('scope', scopeForSession(record.sessionId, goalBySession, loopIds, parentLoopByGoal)),
         });
       } else {
         items.push({
@@ -918,6 +987,7 @@ function recentActivity(input: ObservationInput): ObservationActivityItem[] {
           at: record.at,
           source: log.path,
           meta: compactMeta([record.sessionId === undefined ? undefined : `session ${record.sessionId}`, record.error]),
+          ...optional('scope', scopeForSession(record.sessionId, goalBySession, loopIds, parentLoopByGoal)),
         });
       }
     }
@@ -926,6 +996,31 @@ function recentActivity(input: ObservationInput): ObservationActivityItem[] {
   return items
     .sort((a, b) => timestamp(b.at) - timestamp(a.at))
     .slice(0, 20);
+}
+
+function goalActivityScope(
+  goalId: string,
+  parentLoopByGoal: ReadonlyMap<string, string>,
+): { goalId: string; loopId?: string } {
+  const loopId = parentLoopByGoal.get(goalId);
+  return { goalId, ...(loopId === undefined ? {} : { loopId }) };
+}
+
+function scopeForSession(
+  sessionId: string | undefined,
+  goalBySession: ReadonlyMap<string, string>,
+  loopIds: ReadonlySet<string>,
+  parentLoopByGoal: ReadonlyMap<string, string>,
+): { goalId?: string; loopId?: string } | undefined {
+  if (sessionId === undefined) return undefined;
+  const goalId = goalBySession.get(sessionId);
+  if (goalId !== undefined) return goalActivityScope(goalId, parentLoopByGoal);
+  if (loopIds.has(sessionId)) return { loopId: sessionId };
+  if (sessionId.startsWith('loop-')) {
+    const loopId = sessionId.slice('loop-'.length);
+    if (loopIds.has(loopId)) return { loopId };
+  }
+  return undefined;
 }
 
 function cronDaemonActivity(
@@ -973,6 +1068,7 @@ function cronDaemonActivity(
         tone: record.exitCode === 0 && !inconsistent ? 'good' : 'warn',
         at: record.finishedAt,
         meta: record.loopId === undefined ? [] : [`loop ${record.loopId}`],
+        ...(record.loopId === undefined ? {} : { scope: { loopId: record.loopId } }),
       };
     }
     case 'task-parked':

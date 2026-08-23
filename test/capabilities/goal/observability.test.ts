@@ -32,6 +32,129 @@ afterEach(async () => {
 });
 
 describe('buildObservationReport', () => {
+  it('projects persisted goal-round facts into cumulative budget progress with goal and loop scope', () => {
+    const report = buildObservationReport({
+      control: { emergencyStop: { path: 'data/control/emergency-stop.json', requested: false } },
+      sessions: [{
+        path: 'data/sessions/session-g-progress.jsonl',
+        records: [{
+          t: 'session',
+          id: 'session-g-progress',
+          model: 'builder',
+          cwd: 'H:\\jarvis-agent',
+          startedAt: '2026-08-24T01:00:00.000Z',
+        }],
+      }],
+      goals: [{
+        path: 'data/goals/g-progress.jsonl',
+        records: [
+          {
+            t: 'goal-created',
+            id: 'g-progress',
+            objective: 'measure two rounds',
+            objectiveHash: 'hash',
+            budget: { maxRounds: 4, maxTotalTurns: 10, maxTotalTokens: 200 },
+            sessionId: 'session-g-progress',
+            createdAt: '2026-08-24T01:00:00.000Z',
+          },
+          { t: 'goal-round', round: 1, turns: 2, tokens: 30, at: '2026-08-24T01:01:00.000Z' },
+          { t: 'goal-round', round: 2, turns: 3, tokens: 50, at: '2026-08-24T01:02:00.000Z' },
+          { t: 'goal-round', round: 3, at: '2026-08-24T01:03:00.000Z' },
+        ],
+      }],
+      loops: [{
+        path: 'data/loops/L-progress.jsonl',
+        records: [
+          {
+            t: 'loop-created',
+            id: 'L-progress',
+            contract: CONTRACT,
+            objectives: ['measure two rounds'],
+            createdAt: '2026-08-24T00:59:00.000Z',
+          },
+          { t: 'goal-started', index: 0, goalId: 'g-progress', at: '2026-08-24T01:00:00.000Z' },
+        ],
+      }],
+      approvals: [
+        {
+          path: 'data/approvals/session-g-progress.jsonl',
+          records: [{
+            t: 'approval-request',
+            requestId: 'standalone',
+            sessionId: 'session-g-progress',
+            toolName: 'write',
+            capability: 'writes-files',
+            reason: 'writes files',
+            detail: '路径: README.md',
+            at: '2026-08-24T01:02:30.000Z',
+          }],
+        },
+        {
+          path: 'data/approvals/L-progress.jsonl',
+          records: [{
+            t: 'approval-request',
+            requestId: 'loop',
+            sessionId: 'loop-L-progress',
+            toolName: 'bash',
+            capability: 'executes-code',
+            reason: 'executes code',
+            detail: 'npm test',
+            at: '2026-08-24T01:02:31.000Z',
+          }],
+        },
+      ],
+    });
+
+    expect(report.status.latestGoal).toMatchObject({ id: 'g-progress', loopId: 'L-progress' });
+    expect(report.activity.recent.find((item) => item.title === 'Session session-g-progress')).toMatchObject({
+      scope: { goalId: 'g-progress', loopId: 'L-progress' },
+    });
+    expect(report.activity.recent.find((item) => item.title === 'Approval request write')).toMatchObject({
+      scope: { goalId: 'g-progress', loopId: 'L-progress' },
+    });
+    expect(report.activity.recent.find((item) => item.title === 'Approval request bash')).toMatchObject({
+      scope: { loopId: 'L-progress' },
+    });
+    expect(report.activity.recent.find((item) => item.title === 'Goal round 1')).toMatchObject({
+      scope: { goalId: 'g-progress', loopId: 'L-progress' },
+      goalRoundProgress: {
+        round: 1,
+        maxRounds: 4,
+        roundTurns: 2,
+        cumulativeTurns: 2,
+        maxTotalTurns: 10,
+        roundTokens: 30,
+        cumulativeTokens: 30,
+        maxTotalTokens: 200,
+      },
+    });
+    expect(report.activity.recent.find((item) => item.title === 'Goal round 2')).toMatchObject({
+      scope: { goalId: 'g-progress', loopId: 'L-progress' },
+      goalRoundProgress: {
+        round: 2,
+        maxRounds: 4,
+        roundTurns: 3,
+        cumulativeTurns: 5,
+        maxTotalTurns: 10,
+        roundTokens: 50,
+        cumulativeTokens: 80,
+        maxTotalTokens: 200,
+      },
+    });
+    expect(report.activity.recent.find((item) => item.title === 'Goal round 3')).toMatchObject({
+      goalRoundProgress: {
+        round: 3,
+        maxRounds: 4,
+        roundTurns: null,
+        cumulativeTurns: null,
+        maxTotalTurns: 10,
+        roundTokens: null,
+        cumulativeTokens: null,
+        maxTotalTokens: 200,
+      },
+    });
+  });
+
   it('downgrades a historical checks-only complete record in summaries, counts, and activity', () => {
     const report = buildObservationReport({
       control: { emergencyStop: { path: 'data/control/emergency-stop.json', requested: false } },
@@ -401,6 +524,7 @@ describe('buildObservationReport', () => {
         title: 'Cron task daily finished',
         detail: 'exit 0 / linked loop has blocked goals',
         tone: 'warn',
+        scope: { loopId: 'L-old' },
       }),
     );
     expect(report.activity.recent).toContainEqual(

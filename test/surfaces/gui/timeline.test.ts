@@ -19,7 +19,7 @@ const REPORT: ObservationReport = {
     cron: { attempts: 1, lastAttempt: { taskId: 'daily', exitCode: 0, startedAt: '2026-07-03T11:00:00.000Z', finishedAt: '2026-07-03T11:01:00.000Z', loopId: 'L1' } },
     cronDaemon: { records: 0, parkedTasks: [] },
     latestSession: { id: 's1', model: 'builder', cwd: 'H:\\jarvis-agent', startedAt: '2026-07-03T10:00:00.000Z', messages: 3, format: 'v2', pendingTools: 0 },
-    latestGoal: { id: 'g1', objective: 'ship GUI', state: 'complete', recordedState: 'complete', effectiveState: 'complete', rounds: 1, verdict: 'verified', lastAt: '2026-07-03T11:30:00.000Z' },
+    latestGoal: { id: 'g1', loopId: 'L1', objective: 'ship GUI', state: 'complete', recordedState: 'complete', effectiveState: 'complete', rounds: 1, verdict: 'verified', lastAt: '2026-07-03T11:30:00.000Z' },
     latestGoalBudget: { goalId: 'g1', roundsUsed: 1, maxRounds: 8, totalTurns: 2, totalTokens: 120, lastAt: '2026-07-03T11:30:00.000Z' },
     latestLoop: { id: 'L1', objectives: 1, completed: 1, blocked: 0, inFlight: 0, tokens: 120, halted: 'queue-empty', lastAt: '2026-07-03T11:31:00.000Z' },
   },
@@ -33,6 +33,27 @@ const REPORT: ObservationReport = {
   activity: {
     recent: [
       {
+        id: 'goal-round:g1:1',
+        kind: 'goal',
+        title: 'Goal round 1',
+        detail: 'verdict verified',
+        tone: 'good',
+        at: '2026-07-03T11:30:00.000Z',
+        source: 'data/goals/g1.jsonl',
+        meta: ['goal g1', 'turns 2', 'tokens 120'],
+        scope: { goalId: 'g1', loopId: 'L1' },
+        goalRoundProgress: {
+          round: 1,
+          maxRounds: 8,
+          roundTurns: 2,
+          cumulativeTurns: 2,
+          maxTotalTurns: 10,
+          roundTokens: 120,
+          cumulativeTokens: 120,
+          maxTotalTokens: 500,
+        },
+      },
+      {
         id: 'approval:g1:1',
         kind: 'approval',
         title: 'Approval allow-once',
@@ -41,6 +62,7 @@ const REPORT: ObservationReport = {
         at: '2026-07-03T11:29:00.000Z',
         source: 'data/approvals/g1.jsonl',
         meta: ['session g1'],
+        scope: { goalId: 'g1', loopId: 'L1' },
       },
     ],
   },
@@ -53,6 +75,21 @@ describe('buildGuiTimeline', () => {
     expect(items.map((item) => item.kind)).toContain('loop');
     expect(items.map((item) => item.kind)).toContain('goal');
     expect(items).toContainEqual(expect.objectContaining({ id: 'activity-approval:g1:1', title: 'Approval allow-once' }));
+    expect(items.find((item) => item.id === 'goal-g1')?.scope).toEqual({ goalId: 'g1', loopId: 'L1' });
+    expect(items.find((item) => item.id === 'budget-g1')?.scope).toEqual({ goalId: 'g1', loopId: 'L1' });
+    expect(items.find((item) => item.id === 'activity-goal-round:g1:1')).toMatchObject({
+      scope: { goalId: 'g1', loopId: 'L1' },
+      goalRoundProgress: {
+        round: 1,
+        maxRounds: 8,
+        roundTurns: 2,
+        cumulativeTurns: 2,
+        maxTotalTurns: 10,
+        roundTokens: 120,
+        cumulativeTokens: 120,
+        maxTotalTokens: 500,
+      },
+    });
     expect(items.map((item) => item.kind)).toContain('authority');
     expect(items.find((item) => item.kind === 'authority')).toMatchObject({
       detail: 'observation-only',

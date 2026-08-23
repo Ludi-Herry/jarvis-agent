@@ -1,12 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import {
   advanceMutationBarrier,
+  approvalHistorySnapshot,
+  approvalStatusPresentation,
   buildRunPresentation,
+  buildTimelineFilterOptions,
   buildTimelineProjection,
   commitMutationThenRefresh,
+  filterTimelineItems,
   formatReviewNoteLength,
   reconcileReviewExpansion,
   reconcileExpandedTimeline,
+  reconcileTimelineFilter,
   reviewDecisionKey,
   reviewDecisionKeys,
   reviewHistorySnapshot,
@@ -15,6 +20,7 @@ import {
   settleSequencedRefresh,
   shouldApplyRefresh,
   timelineProjectionSnapshot,
+  timelineFilterKey,
 } from '../../../src/surfaces/gui/assets/presentation.js';
 
 const report = (overrides = {}) => ({
@@ -45,9 +51,9 @@ const report = (overrides = {}) => ({
 
 describe('G2.4 timeline projection', () => {
   const items = [
-    { id: 'goal-g1', kind: 'goal', title: 'Goal g1' },
-    { id: 'activity-goal:1', kind: 'goal', title: 'Goal started' },
-    { id: 'activity-goal:2', kind: 'goal', title: 'Round finished' },
+    { id: 'goal-g1', kind: 'goal', title: 'Goal g1', scope: { goalId: 'g1', loopId: 'L1' } },
+    { id: 'activity-goal:1', kind: 'goal', title: 'Goal started', scope: { goalId: 'g1', loopId: 'L1' } },
+    { id: 'activity-goal:2', kind: 'goal', title: 'Round finished', scope: { goalId: 'g2', loopId: 'L1' } },
     { id: 'authority', kind: 'authority', title: '只读观测' },
   ];
 
@@ -78,6 +84,44 @@ describe('G2.4 timeline projection', () => {
   it('changes the projection snapshot only when timeline facts or summaries change', () => {
     expect(timelineProjectionSnapshot(items)).toBe(timelineProjectionSnapshot(JSON.parse(JSON.stringify(items))));
     expect(timelineProjectionSnapshot(items)).not.toBe(timelineProjectionSnapshot(items.slice(1)));
+    expect(timelineProjectionSnapshot(items, timelineFilterKey('goal', 'g1')))
+      .not.toBe(timelineProjectionSnapshot(items, timelineFilterKey('loop', 'L1')));
+  });
+
+  it('builds stable goal and loop choices and filters only by explicit scope', () => {
+    const goalFilter = timelineFilterKey('goal', 'g1');
+    const loopFilter = timelineFilterKey('loop', 'L1');
+    const options = buildTimelineFilterOptions(items);
+
+    expect(options).toEqual([
+      { value: 'all', label: '全部运行' },
+      { value: goalFilter, label: 'Goal · g1' },
+      { value: timelineFilterKey('goal', 'g2'), label: 'Goal · g2' },
+      { value: loopFilter, label: 'Loop · L1' },
+    ]);
+    expect(filterTimelineItems(items, goalFilter).map((item) => item.id)).toEqual(['goal-g1', 'activity-goal:1']);
+    expect(filterTimelineItems(items, loopFilter).map((item) => item.id)).toEqual([
+      'goal-g1',
+      'activity-goal:1',
+      'activity-goal:2',
+    ]);
+    expect(filterTimelineItems(items, 'hostile')).toEqual(items);
+    expect(reconcileTimelineFilter(goalFilter, options)).toBe(goalFilter);
+    expect(reconcileTimelineFilter(timelineFilterKey('goal', 'gone'), options)).toBe('all');
+  });
+});
+
+describe('G4 approval history presentation', () => {
+  it('keeps persisted history changes observable and labels every failure state', () => {
+    const history = { records: [{ requestId: 'a1', status: 'pending' }], total: 1, coverage: 'complete', warnings: [] };
+    expect(approvalHistorySnapshot(history)).toBe(approvalHistorySnapshot(JSON.parse(JSON.stringify(history))));
+    expect(approvalHistorySnapshot(history)).not.toBe(approvalHistorySnapshot({ ...history, coverage: 'partial' }));
+    expect(approvalStatusPresentation('allowed', 'allow-once')).toEqual({ label: '单次允许', tone: 'good' });
+    expect(approvalStatusPresentation('allowed', 'allow-session')).toEqual({ label: '本次会话允许', tone: 'good' });
+    expect(approvalStatusPresentation('denied', 'deny')).toEqual({ label: '已拒绝', tone: 'danger' });
+    expect(approvalStatusPresentation('error', 'error')).toEqual({ label: '审批错误', tone: 'danger' });
+    expect(approvalStatusPresentation('orphan-result', 'deny')).toEqual({ label: '缺少 request', tone: 'warn' });
+    expect(approvalStatusPresentation('pending')).toEqual({ label: '等待结果', tone: 'warn' });
   });
 });
 

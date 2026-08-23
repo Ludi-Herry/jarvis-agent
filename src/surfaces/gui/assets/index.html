@@ -28,6 +28,11 @@
             <span>待裁决</span>
             <strong id="nav-review-count" class="nav-count">0</strong>
           </a>
+          <a class="nav-item" href="#approval-history-section">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5h12v14H6zM9 9h6M9 13h6" /></svg>
+            <span>审批历史</span>
+            <strong id="nav-approval-count" class="nav-count">0</strong>
+          </a>
           <a class="nav-item" href="#activity-log">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19V9m7 10V5m7 14v-7" /></svg>
             <span>活动记录</span>
@@ -132,11 +137,33 @@
           </details>
         </section>
 
+        <section id="approval-history-section" class="approval-history-section" aria-labelledby="approval-history-title">
+          <div class="approval-history-heading">
+            <div>
+              <span class="section-kicker">持久化审批事实</span>
+              <div class="review-title-row">
+                <h2 id="approval-history-title">审批历史</h2>
+                <strong id="approval-history-count">0</strong>
+              </div>
+              <p id="approval-history-meta">request/result 来自 data/approvals，配对只用于显示。</p>
+            </div>
+          </div>
+          <div id="approval-history" class="approval-history-list" aria-labelledby="approval-history-title approval-history-meta"></div>
+        </section>
+
         <section id="activity-log" class="activity-section" aria-label="Activity log">
-          <div class="activity-heading">
-            <span class="section-kicker">显示投影与持久化事实分开</span>
-            <h2>活动记录</h2>
-            <p>折叠只影响界面密度，JSONL 记录保持完整。</p>
+          <div class="activity-heading-row">
+            <div class="activity-heading">
+              <span class="section-kicker">显示投影与持久化事实分开</span>
+              <h2>活动记录</h2>
+              <p>筛选与折叠只影响界面密度，JSONL 记录保持完整。</p>
+            </div>
+            <label class="timeline-filter-field" for="timeline-filter">
+              <span>筛选运行</span>
+              <select id="timeline-filter" name="timeline-filter">
+                <option value="all">全部运行</option>
+              </select>
+            </label>
           </div>
           <div id="timeline" class="timeline" aria-live="polite"></div>
         </section>

@@ -11,6 +11,7 @@ import {
   type HumanReviewDecisionInput,
 } from '../../capabilities/goal/index.js';
 import { readEmergencyStop, requestEmergencyStop } from '../../runtime/index.js';
+import { listGuiApprovalHistory } from './approval-history.js';
 import { buildGuiTimeline, type GuiStatusPayload } from './timeline.js';
 
 interface GuiArgs {
@@ -75,6 +76,10 @@ async function handleRequest(
         listHumanReviewHistory(context.dataDir),
       ]);
       json(res, 200, { reviews, history });
+      return;
+    }
+    if (req.method === 'GET' && url.pathname === '/api/approval-history') {
+      json(res, 200, await listGuiApprovalHistory(context.dataDir));
       return;
     }
     if (req.method === 'GET' && url.pathname === '/api/emergency-stop') {

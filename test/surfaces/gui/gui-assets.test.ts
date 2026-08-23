@@ -16,8 +16,9 @@ describe('G2.1 GUI shell assets', () => {
     expect(html).toContain('class="context-rail"');
     expect(html).toContain('href="#current-run"');
     expect(html).toContain('href="#human-review"');
+    expect(html).toContain('href="#approval-history-section"');
     expect(html).toContain('href="#activity-log"');
-    for (const id of ['authority', 'goals', 'loops', 'approvals', 'stop-state', 'stop-button', 'updated-at', 'run-state', 'attention-strip', 'attention-title', 'attention-label', 'attention-action', 'attention-action-label', 'latest-goal', 'latest-goal-meta', 'budget-label', 'budget', 'budget-progress', 'budget-caption', 'unique-tokens', 'goal-tokens', 'loop-tokens', 'token-coverage', 'nav-review-count', 'review-count', 'human-reviews', 'review-history-title', 'review-history-count', 'review-history-meta', 'review-history', 'timeline']) {
+    for (const id of ['authority', 'goals', 'loops', 'approvals', 'stop-state', 'stop-button', 'updated-at', 'run-state', 'attention-strip', 'attention-title', 'attention-label', 'attention-action', 'attention-action-label', 'latest-goal', 'latest-goal-meta', 'budget-label', 'budget', 'budget-progress', 'budget-caption', 'unique-tokens', 'goal-tokens', 'loop-tokens', 'token-coverage', 'nav-review-count', 'nav-approval-count', 'review-count', 'human-reviews', 'review-history-title', 'review-history-count', 'review-history-meta', 'review-history', 'approval-history-title', 'approval-history-count', 'approval-history-meta', 'approval-history', 'timeline-filter', 'timeline']) {
       expect(html.match(new RegExp(`id="${id}"`, 'gu'))).toHaveLength(1);
     }
     const selectors = [...js.matchAll(/document\.querySelector\('#([^']+)'\)/gu)].map((match) => match[1]);
@@ -35,8 +36,9 @@ describe('G2.1 GUI shell assets', () => {
     expect(html).toContain('aria-labelledby="budget-label budget-caption"');
     expect(html).toContain('按目标折叠，先处理影响当前运行的判断。');
     expect(html).toContain('持久化裁决记录来自 data/human-reviews。');
+    expect(html).toContain('request/result 来自 data/approvals，配对只用于显示。');
     expect(html).toContain('显示投影与持久化事实分开');
-    expect(html).toContain('折叠只影响界面密度，JSONL 记录保持完整。');
+    expect(html).toContain('筛选与折叠只影响界面密度，JSONL 记录保持完整。');
   });
 
   it('uses the approved Jarvis warm-paper tokens without wide ghost-card shadows', async () => {
@@ -72,12 +74,15 @@ describe('G2.1 GUI shell assets', () => {
     expect(css).toContain('@media (prefers-reduced-motion: reduce)');
     expect(tabletCss).toMatch(/\.rail \{[^}]*display: grid;/u);
     expect(tabletCss).not.toMatch(/\.rail \{[^}]*display: none;/u);
-    expect(tabletCss).toMatch(/\.section-nav \{[^}]*grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);/u);
+    expect(tabletCss).toMatch(/\.section-nav \{[^}]*grid-template-columns: repeat\(4, minmax\(0, 1fr\)\);/u);
+    expect(mobileCss).toMatch(/\.section-nav \{[^}]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/u);
     expect(mobileCss).toMatch(/\.stop-panel \{[^}]*position: fixed;[^}]*right: 12px;[^}]*bottom: 12px;[^}]*left: 12px;[^}]*z-index: 20;/u);
     expect(mobileCss).toMatch(/body \{[^}]*height: auto;[^}]*overflow: auto;/u);
     expect(mobileCss).toMatch(/\.workspace \{[^}]*padding: 18px 14px 116px;[^}]*overflow: visible;/u);
     expect(css).toContain('outline: 2px solid var(--accent-hover)');
     expect(js).toContain("navReviewCount: document.querySelector('#nav-review-count')");
+    expect(js).toContain("navApprovalCount: document.querySelector('#nav-approval-count')");
+    expect(js).toContain("timelineFilter: document.querySelector('#timeline-filter')");
     expect(js).toContain("payload.stop.unreadable ? '状态未知' : payload.stop.requested ? '已急停' : '待命'");
     expect(js).toContain('if (nextSnapshot === state.reviewSnapshot) return');
     expect(js).toContain('settleSequencedRefresh(');
@@ -94,7 +99,7 @@ describe('G2.1 GUI shell assets', () => {
     expect(js).toContain("state.expandedReviews.add(goalId)");
     expect(js).toContain("title: '当前快照'");
     expect(js).toContain("title: '持久化事件'");
-    expect(js).toContain('timelineProjectionSnapshot(items)');
+    expect(js).toContain('timelineProjectionSnapshot(items, state.timelineFilter)');
     expect(js).toContain("archive.open ? '收起' : '展开'");
     expect(js).toContain('if (item.at) time.dateTime = item.at');
     expect(js).toContain("summary.textContent = '查看验证上下文'");
@@ -106,7 +111,19 @@ describe('G2.1 GUI shell assets', () => {
     expect(js).toContain("note.setAttribute('aria-describedby'");
     expect(js).toContain('formatReviewNoteLength(note.value, note.maxLength)');
     expect(js).toContain('renderReviewHistory(payload.reviewHistory)');
+    expect(js).toContain("fetch('/api/approval-history', { cache: 'no-store' })");
+    expect(js).toContain('renderApprovalHistory(payload.approvalHistory)');
+    expect(js).toContain('buildTimelineFilterOptions(items)');
+    expect(js).toContain("title.textContent = '进度投影'");
+    expect(js).toContain('当前轮 JSONL 事实');
+    expect(js).toContain("value === null ? `${unit} 未记录`");
+    expect(js).toContain('用量未记录');
+    expect(js).toContain('disclosure.dataset.goalId = item.scope.goalId');
+    expect(js).toContain('disclosure.dataset.loopId = item.scope.loopId');
     expect(css).toContain('.review-history-item');
     expect(css).toContain('.review-note-length[data-near-limit="true"]');
+    expect(css).toContain('.approval-history-item');
+    expect(css).toContain('.timeline-filter-field');
+    expect(css).toContain('.goal-round-progress');
   });
 });

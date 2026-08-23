@@ -80,6 +80,25 @@ export function reviewHistorySnapshot(history) {
   return JSON.stringify(history);
 }
 
+export function approvalHistorySnapshot(history) {
+  return JSON.stringify(history);
+}
+
+export function approvalStatusPresentation(status, decision) {
+  switch (status) {
+    case 'allowed':
+      return { label: decision === 'allow-session' ? '本次会话允许' : '单次允许', tone: 'good' };
+    case 'denied':
+      return { label: '已拒绝', tone: 'danger' };
+    case 'error':
+      return { label: '审批错误', tone: 'danger' };
+    case 'orphan-result':
+      return { label: '缺少 request', tone: 'warn' };
+    default:
+      return { label: '等待结果', tone: 'warn' };
+  }
+}
+
 export function reviewDecisionKeys(reviews) {
   return reviews.flatMap((review) => review.requirements.map((requirement) => (
     reviewDecisionKey(review.goalId, requirement.requirementId)
@@ -122,10 +141,11 @@ export async function commitMutationThenRefresh({ request, commit, refresh }) {
   }
 }
 
-export function buildTimelineProjection(items, visibleEventLimit = 12) {
+export function buildTimelineProjection(items, visibleEventLimit = 12, filter = 'all') {
+  const filteredItems = filterTimelineItems(items, filter);
   const snapshots = [];
   const events = [];
-  for (const item of items) {
+  for (const item of filteredItems) {
     if (item.id.startsWith('activity-')) events.push(item);
     else snapshots.push(item);
   }
@@ -140,8 +160,45 @@ export function buildTimelineProjection(items, visibleEventLimit = 12) {
   };
 }
 
-export function timelineProjectionSnapshot(items) {
-  return JSON.stringify(items);
+export function timelineFilterKey(kind, id) {
+  return JSON.stringify([kind, id]);
+}
+
+export function buildTimelineFilterOptions(items) {
+  const goals = new Set();
+  const loops = new Set();
+  for (const item of items) {
+    if (item.scope?.goalId) goals.add(item.scope.goalId);
+    if (item.scope?.loopId) loops.add(item.scope.loopId);
+  }
+  return [
+    { value: 'all', label: '全部运行' },
+    ...[...goals].sort().map((id) => ({ value: timelineFilterKey('goal', id), label: `Goal · ${id}` })),
+    ...[...loops].sort().map((id) => ({ value: timelineFilterKey('loop', id), label: `Loop · ${id}` })),
+  ];
+}
+
+export function reconcileTimelineFilter(value, options) {
+  return options.some((option) => option.value === value) ? value : 'all';
+}
+
+export function filterTimelineItems(items, filter) {
+  if (filter === 'all') return [...items];
+  let parsed;
+  try {
+    parsed = JSON.parse(filter);
+  } catch {
+    return [...items];
+  }
+  if (!Array.isArray(parsed) || parsed.length !== 2) return [...items];
+  const [kind, id] = parsed;
+  if (kind === 'goal') return items.filter((item) => item.scope?.goalId === id);
+  if (kind === 'loop') return items.filter((item) => item.scope?.loopId === id);
+  return [...items];
+}
+
+export function timelineProjectionSnapshot(items, filter = 'all') {
+  return JSON.stringify([filter, items]);
 }
 
 export function reconcileExpandedTimeline(itemIds, expandedIds) {

@@ -2,12 +2,16 @@
 
 import {
   advanceMutationBarrier,
+  approvalHistorySnapshot,
+  approvalStatusPresentation,
+  buildTimelineFilterOptions,
   buildRunPresentation,
   buildTimelineProjection,
   commitMutationThenRefresh,
   formatReviewNoteLength,
   reconcileReviewExpansion,
   reconcileExpandedTimeline,
+  reconcileTimelineFilter,
   reviewDecisionKey,
   reviewDecisionKeys,
   reviewHistorySnapshot,
@@ -25,10 +29,14 @@ const state = {
   reviewQueueInitialized: false,
   reviewSnapshot: undefined,
   reviewHistorySnapshot: undefined,
+  approvalHistorySnapshot: undefined,
   activeReviewForm: undefined,
   refreshSequence: 0,
   appliedRefreshSequence: 0,
   timelineSnapshot: undefined,
+  timelineItems: [],
+  timelineFilter: 'all',
+  timelineFilterOptionsSnapshot: undefined,
   expandedTimeline: new Set(),
   timelineArchiveOpen: false,
   timer: undefined,
@@ -73,13 +81,23 @@ const nodes = {
   loopTokens: document.querySelector('#loop-tokens'),
   tokenCoverage: document.querySelector('#token-coverage'),
   navReviewCount: document.querySelector('#nav-review-count'),
+  navApprovalCount: document.querySelector('#nav-approval-count'),
   reviewCount: document.querySelector('#review-count'),
   humanReviews: document.querySelector('#human-reviews'),
   reviewHistoryCount: document.querySelector('#review-history-count'),
   reviewHistoryMeta: document.querySelector('#review-history-meta'),
   reviewHistory: document.querySelector('#review-history'),
+  approvalHistoryCount: document.querySelector('#approval-history-count'),
+  approvalHistoryMeta: document.querySelector('#approval-history-meta'),
+  approvalHistory: document.querySelector('#approval-history'),
+  timelineFilter: document.querySelector('#timeline-filter'),
   timeline: document.querySelector('#timeline'),
 };
+
+nodes.timelineFilter.addEventListener('change', () => {
+  state.timelineFilter = nodes.timelineFilter.value;
+  renderTimeline(state.timelineItems, true);
+});
 
 nodes.stopButton.addEventListener('click', async () => {
   if (state.busy) return;
@@ -109,20 +127,24 @@ async function refresh() {
   const result = await settleSequencedRefresh(
     sequence,
     async () => {
-      const [statusResponse, reviewsResponse] = await Promise.all([
+      const [statusResponse, reviewsResponse, approvalsResponse] = await Promise.all([
         fetch('/api/status', { cache: 'no-store' }),
         fetch('/api/human-reviews', { cache: 'no-store' }),
+        fetch('/api/approval-history', { cache: 'no-store' }),
       ]);
       if (!statusResponse.ok) throw new Error(`status ${statusResponse.status}`);
       if (!reviewsResponse.ok) throw new Error(`reviews ${reviewsResponse.status}`);
+      if (!approvalsResponse.ok) throw new Error(`approval history ${approvalsResponse.status}`);
       const payload = await statusResponse.json();
       const reviewsPayload = await reviewsResponse.json();
+      const approvalHistory = await approvalsResponse.json();
       return {
         ...payload,
         reviews: reviewsPayload.reviews || [],
         reviewHistory: reviewsPayload.history || {
           records: [], total: 0, truncated: false, coverage: 'partial', warnings: ['已裁决历史响应缺失'],
         },
+        approvalHistory,
       };
     },
     () => state.appliedRefreshSequence,
@@ -163,33 +185,45 @@ function render(payload) {
   nodes.loopTokens.textContent = `${run.usage.loop}`;
   nodes.tokenCoverage.textContent = `覆盖 ${run.usage.coverage} · 未计量 ${run.usage.unmetered}`;
   nodes.navReviewCount.textContent = `${payload.reviews.length}`;
+  nodes.navApprovalCount.textContent = `${payload.approvalHistory.total}`;
   nodes.reviewCount.textContent = `${payload.reviews.length}`;
   renderReviewQueue(payload.reviews);
   renderReviewHistory(payload.reviewHistory);
+  renderApprovalHistory(payload.approvalHistory);
   renderTimeline(payload.timeline);
 }
 
-function renderTimeline(items) {
-  const nextSnapshot = timelineProjectionSnapshot(items);
-  if (nextSnapshot === state.timelineSnapshot) return;
+function renderTimeline(items, force = false) {
+  state.timelineItems = items;
+  const options = buildTimelineFilterOptions(items);
+  state.timelineFilter = reconcileTimelineFilter(state.timelineFilter, options);
+  updateTimelineFilterOptions(options);
+  const nextSnapshot = timelineProjectionSnapshot(items, state.timelineFilter);
+  if (!force && nextSnapshot === state.timelineSnapshot) return;
   state.timelineSnapshot = nextSnapshot;
 
   const focusedKey = document.activeElement?.dataset?.timelineFocusKey;
+  const projection = buildTimelineProjection(items, 12, state.timelineFilter);
+  const visibleIds = [
+    ...projection.snapshots,
+    ...projection.events.visible,
+    ...projection.events.hidden,
+  ].map((item) => item.id);
   state.expandedTimeline = new Set(reconcileExpandedTimeline(
-    items.map((item) => item.id),
+    visibleIds,
     [...state.expandedTimeline],
   ));
-  const projection = buildTimelineProjection(items);
+  const filterLabel = options.find((option) => option.value === state.timelineFilter)?.label || '全部运行';
   const sections = [
     renderTimelineGroup({
       title: '当前快照',
-      description: '由现有记录聚合出的状态投影，仅用于观察。',
+      description: `由现有记录聚合出的状态投影，仅用于观察。当前筛选：${filterLabel}。`,
       source: 'snapshot',
       items: projection.snapshots,
     }),
     renderTimelineGroup({
       title: '持久化事件',
-      description: '来自 activity.recent 对应的 JSONL 事实。',
+      description: `来自 activity.recent 对应的 JSONL 事实。当前筛选：${filterLabel}。`,
       source: 'persistent',
       items: projection.events.visible,
       hiddenItems: projection.events.hidden,
@@ -202,6 +236,21 @@ function renderTimeline(items) {
       .find((element) => element.dataset.timelineFocusKey === focusedKey);
     nextFocused?.focus();
   }
+}
+
+function updateTimelineFilterOptions(options) {
+  const nextSnapshot = JSON.stringify(options);
+  if (nextSnapshot !== state.timelineFilterOptionsSnapshot) {
+    const elements = options.map((option) => {
+      const element = document.createElement('option');
+      element.value = option.value;
+      element.textContent = option.label;
+      return element;
+    });
+    nodes.timelineFilter.replaceChildren(...elements);
+    state.timelineFilterOptionsSnapshot = nextSnapshot;
+  }
+  nodes.timelineFilter.value = state.timelineFilter;
 }
 
 function renderTimelineGroup({ title, description, source, items, hiddenItems = [], total = items.length }) {
@@ -225,6 +274,13 @@ function renderTimelineGroup({ title, description, source, items, hiddenItems = 
   list.className = 'timeline-list';
   list.append(...items.map(renderItem));
   section.append(heading, list);
+
+  if (items.length === 0 && hiddenItems.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'timeline-empty';
+    empty.textContent = '当前筛选下没有记录。';
+    section.append(empty);
+  }
 
   if (hiddenItems.length > 0) {
     const archive = document.createElement('details');
@@ -344,6 +400,89 @@ function renderReviewHistoryRecord(record) {
   body.append(meta, decisions);
   item.append(summary, body);
   return item;
+}
+
+function renderApprovalHistory(history) {
+  nodes.approvalHistoryCount.textContent = `${history.total}`;
+  nodes.approvalHistoryMeta.textContent = history.coverage === 'partial'
+    ? `已显示 ${history.records.length}/${history.total} 条可读配对，部分审批事实读取失败。`
+    : history.truncated
+      ? `已显示最近 ${history.records.length}/${history.total} 条，完整 JSONL 保留在 data/approvals。`
+      : `${history.total} 条审批配对，request/result 来自 data/approvals。`;
+  const nextSnapshot = approvalHistorySnapshot(history);
+  if (nextSnapshot === state.approvalHistorySnapshot) return;
+  state.approvalHistorySnapshot = nextSnapshot;
+
+  const content = [];
+  if (history.warnings.length > 0) {
+    const warning = document.createElement('p');
+    warning.className = 'approval-history-warning';
+    warning.textContent = history.warnings.join('；');
+    content.push(warning);
+  }
+  if (history.records.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'approval-history-empty';
+    empty.textContent = history.coverage === 'partial' ? '暂时没有可读的审批历史' : '暂无审批历史，终端发生审批时会在这里出现。';
+    content.push(empty);
+  } else {
+    content.push(...history.records.map(renderApprovalHistoryRecord));
+  }
+  nodes.approvalHistory.replaceChildren(...content);
+}
+
+function renderApprovalHistoryRecord(record) {
+  const status = approvalStatusPresentation(record.status, record.decision);
+  const item = document.createElement('details');
+  item.className = 'approval-history-item';
+  item.dataset.tone = status.tone;
+  const summary = document.createElement('summary');
+  summary.className = 'approval-history-summary';
+  const dot = document.createElement('span');
+  dot.className = 'approval-history-dot';
+  dot.setAttribute('aria-hidden', 'true');
+  const copy = document.createElement('div');
+  const tool = document.createElement('strong');
+  tool.textContent = record.toolName;
+  const identity = document.createElement('span');
+  identity.textContent = `${record.sessionId ? `${record.sessionId} · ` : ''}${record.requestId}`;
+  copy.append(tool, identity);
+  const stateLabel = document.createElement('strong');
+  stateLabel.className = 'approval-history-state';
+  stateLabel.textContent = status.label;
+  const time = document.createElement('time');
+  const at = record.resolvedAt || record.requestedAt;
+  time.textContent = at ? timelineTime(at) : '时间未知';
+  if (at) time.dateTime = at;
+  summary.append(dot, copy, stateLabel, time);
+
+  const body = document.createElement('div');
+  body.className = 'approval-history-body';
+  const projection = document.createElement('p');
+  projection.className = 'approval-history-projection';
+  projection.textContent = `显示投影：按 requestId 配对 ${record.persistedRecords.request ? 'request' : '缺少 request'} / ${record.persistedRecords.result ? 'result' : '缺少 result'}。`;
+  const facts = document.createElement('dl');
+  facts.append(
+    approvalFact('能力', record.capability),
+    approvalFact('原因', record.reason),
+    approvalFact('详情', record.detail),
+    approvalFact('决定', record.decision),
+    approvalFact('错误', record.error),
+    approvalFact('来源', record.source),
+  );
+  body.append(projection, facts);
+  item.append(summary, body);
+  return item;
+}
+
+function approvalFact(label, value) {
+  const fragment = document.createDocumentFragment();
+  const term = document.createElement('dt');
+  term.textContent = label;
+  const description = document.createElement('dd');
+  description.textContent = value || '无记录';
+  fragment.append(term, description);
+  return fragment;
 }
 
 function renderReviews(reviews) {
@@ -746,6 +885,8 @@ function renderItem(item) {
   const disclosure = document.createElement('details');
   disclosure.className = 'timeline-item';
   disclosure.dataset.tone = item.tone;
+  if (item.scope?.goalId) disclosure.dataset.goalId = item.scope.goalId;
+  if (item.scope?.loopId) disclosure.dataset.loopId = item.scope.loopId;
   disclosure.open = state.expandedTimeline.has(item.id);
   disclosure.addEventListener('toggle', () => {
     if (disclosure.open) state.expandedTimeline.add(item.id);
@@ -801,9 +942,49 @@ function renderItem(item) {
   }
 
   body.append(detail, meta);
+  if (item.goalRoundProgress) body.append(renderGoalRoundProgress(item.goalRoundProgress));
   disclosure.append(summary, body);
   li.append(disclosure);
   return li;
+}
+
+function renderGoalRoundProgress(progress) {
+  const section = document.createElement('section');
+  section.className = 'goal-round-progress';
+  const title = document.createElement('strong');
+  title.textContent = '进度投影';
+  const note = document.createElement('p');
+  note.textContent = `当前轮 JSONL 事实：${recordedMetric(progress.roundTurns, 'turns')} · ${recordedMetric(progress.roundTokens, 'tokens')}。`;
+  const metrics = document.createElement('div');
+  metrics.append(
+    progressMetric('轮次预算', progress.round, progress.maxRounds, '轮'),
+    progressMetric('Token 预算', progress.cumulativeTokens, progress.maxTotalTokens, 'tokens'),
+    progressMetric('Turn 预算', progress.cumulativeTurns, progress.maxTotalTurns, 'turns'),
+  );
+  section.append(title, note, metrics);
+  return section;
+}
+
+function progressMetric(label, value, max, unit) {
+  const metric = document.createElement('div');
+  metric.className = 'goal-round-progress-metric';
+  const copy = document.createElement('span');
+  copy.textContent = value === null
+    ? `${label}：用量未记录${max === undefined ? '' : ` · 上限 ${max} ${unit}`}`
+    : max === undefined ? `${label}：累计 ${value} ${unit}` : `${label}：${value}/${max} ${unit}`;
+  metric.append(copy);
+  if (max !== undefined && value !== null) {
+    const bar = document.createElement('progress');
+    bar.max = Math.max(1, max);
+    bar.value = Math.min(Math.max(0, value), bar.max);
+    bar.setAttribute('aria-label', `${label} ${value}/${max}`);
+    metric.append(bar);
+  }
+  return metric;
+}
+
+function recordedMetric(value, unit) {
+  return value === null ? `${unit} 未记录` : `${value} ${unit}`;
 }
 
 function timelineTime(value) {

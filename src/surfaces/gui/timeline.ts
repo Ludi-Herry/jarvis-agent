@@ -11,6 +11,17 @@ export interface GuiTimelineItem {
   tone: GuiTimelineTone;
   at?: string;
   meta: string[];
+  scope?: { goalId?: string; loopId?: string };
+  goalRoundProgress?: {
+    round: number;
+    maxRounds: number;
+    roundTurns: number | null;
+    cumulativeTurns: number | null;
+    maxTotalTurns?: number;
+    roundTokens: number | null;
+    cumulativeTokens: number | null;
+    maxTotalTokens?: number;
+  };
 }
 
 export interface GuiStatusPayload {
@@ -21,6 +32,15 @@ export interface GuiStatusPayload {
 
 export function buildGuiTimeline(report: ObservationReport, stop: EmergencyStopState): GuiTimelineItem[] {
   const items: GuiTimelineItem[] = [];
+  const loopByGoal = new Map<string, string>();
+  if (report.status.latestGoal?.loopId !== undefined) {
+    loopByGoal.set(report.status.latestGoal.id, report.status.latestGoal.loopId);
+  }
+  for (const activity of report.activity.recent) {
+    if (activity.scope?.goalId !== undefined && activity.scope.loopId !== undefined) {
+      loopByGoal.set(activity.scope.goalId, activity.scope.loopId);
+    }
+  }
 
   if (stop.unreadable) {
     items.push({
@@ -57,6 +77,7 @@ export function buildGuiTimeline(report: ObservationReport, stop: EmergencyStopS
         ...(loop.recordedHalt === undefined ? [] : [`recorded ${loop.recordedHalt}`]),
         `tokens ${loop.tokens}`,
       ],
+      scope: { loopId: loop.id },
     });
   }
 
@@ -84,6 +105,10 @@ export function buildGuiTimeline(report: ObservationReport, stop: EmergencyStopS
         ...(goal.recordedVerdict === undefined ? [] : [`recorded verdict ${goal.recordedVerdict}`]),
         `rounds ${goal.rounds}`,
       ],
+      scope: {
+        goalId: goal.id,
+        ...optionalLoopScope(loopByGoal.get(goal.id)),
+      },
     });
   }
 
@@ -97,6 +122,7 @@ export function buildGuiTimeline(report: ObservationReport, stop: EmergencyStopS
       tone: budget.roundsUsed >= budget.maxRounds ? 'warn' : 'info',
       at: budget.lastAt,
       meta: [`goal ${budget.goalId}`],
+      scope: { goalId: budget.goalId, ...optionalLoopScope(loopByGoal.get(budget.goalId)) },
     });
   }
 
@@ -121,6 +147,8 @@ export function buildGuiTimeline(report: ObservationReport, stop: EmergencyStopS
       tone: activity.tone,
       at: activity.at,
       meta: activity.meta,
+      ...(activity.scope === undefined ? {} : { scope: activity.scope }),
+      ...(activity.goalRoundProgress === undefined ? {} : { goalRoundProgress: activity.goalRoundProgress }),
     });
   }
 
@@ -145,6 +173,9 @@ export function buildGuiTimeline(report: ObservationReport, stop: EmergencyStopS
       detail: `${report.audit.sandboxEvidence.length} captured checks`,
       tone: 'info',
       meta: latest ? [`backend ${latest.backend ?? '-'}`, `network ${latest.networkMode ?? '-'}`] : [],
+      ...(latest === undefined ? {} : {
+        scope: { goalId: latest.goalId, ...optionalLoopScope(loopByGoal.get(latest.goalId)) },
+      }),
     });
   }
 
@@ -158,6 +189,7 @@ export function buildGuiTimeline(report: ObservationReport, stop: EmergencyStopS
       tone: cron.exitCode === 0 && !cron.inconsistent ? 'good' : 'warn',
       at: cron.finishedAt,
       meta: cron.loopId ? [`loop ${cron.loopId}`] : [],
+      ...(cron.loopId === undefined ? {} : { scope: { loopId: cron.loopId } }),
     });
   }
 
@@ -199,6 +231,10 @@ export function buildGuiTimeline(report: ObservationReport, stop: EmergencyStopS
 
 function formatCap(value: number, max: number | undefined): string {
   return max === undefined ? String(value) : `${value}/${max}`;
+}
+
+function optionalLoopScope(loopId: string | undefined): { loopId?: string } {
+  return loopId === undefined ? {} : { loopId };
 }
 
 function timestamp(value: string | undefined): number {

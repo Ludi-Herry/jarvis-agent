@@ -131,6 +131,86 @@ describe('GUI server security guard', () => {
     }
   });
 
+  it('serves paired approval audit history through a read-only endpoint', async () => {
+    const approvalsDir = join(dir, 'data', 'approvals');
+    await mkdir(approvalsDir, { recursive: true });
+    await writeFile(
+      join(approvalsDir, 'g1.jsonl'),
+      [
+        {
+          t: 'approval-request',
+          requestId: 'a1',
+          sessionId: 'g1',
+          toolName: 'bash',
+          capability: 'executes-code',
+          reason: 'executes code',
+          detail: 'npm test',
+          at: '2026-08-24T01:00:00.000Z',
+        },
+        {
+          t: 'approval-result',
+          requestId: 'a1',
+          sessionId: 'g1',
+          toolName: 'bash',
+          decision: 'allow-once',
+          at: '2026-08-24T01:00:01.000Z',
+        },
+      ].map((record) => JSON.stringify(record)).join('\n') + '\n',
+      'utf8',
+    );
+    const server = createGuiServer({ cwd: dir, dataDir: join(dir, 'data') });
+    const base = await listen(server);
+    try {
+      const result = await httpJson(base.port, {
+        path: '/api/approval-history',
+        method: 'GET',
+        headers: { host: `127.0.0.1:${base.port}` },
+      });
+
+      expect(result.status).toBe(200);
+      expect(result.body).toMatchObject({
+        total: 1,
+        truncated: false,
+        coverage: 'complete',
+        warnings: [],
+        records: [{
+          requestId: 'a1',
+          sessionId: 'g1',
+          status: 'allowed',
+          decision: 'allow-once',
+          source: 'approvals/g1.jsonl',
+          persistedRecords: { request: true, result: true },
+        }],
+      });
+    } finally {
+      await close(server);
+    }
+  });
+
+  it('keeps approval-history read failures visible without turning them into a server error', async () => {
+    await writeFile(join(dir, 'data', 'approvals'), 'unsafe replacement', 'utf8');
+    const server = createGuiServer({ cwd: dir, dataDir: join(dir, 'data') });
+    const base = await listen(server);
+    try {
+      const result = await httpJson(base.port, {
+        path: '/api/approval-history',
+        method: 'GET',
+        headers: { host: `127.0.0.1:${base.port}` },
+      });
+
+      expect(result.status).toBe(200);
+      expect(result.body).toEqual({
+        records: [],
+        total: 0,
+        truncated: false,
+        coverage: 'partial',
+        warnings: ['审批历史路径不是安全目录'],
+      });
+    } finally {
+      await close(server);
+    }
+  });
+
   it('keeps an emergency-stop read failure visible in the status contract and timeline', async () => {
     await mkdir(join(dir, 'data', 'control', 'emergency-stop.json'), { recursive: true });
     const server = createGuiServer({ cwd: dir, dataDir: join(dir, 'data') });
