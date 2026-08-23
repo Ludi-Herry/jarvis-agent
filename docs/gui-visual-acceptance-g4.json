@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "acceptanceId": "g4-2026-08-24",
+  "acceptedAt": "2026-08-24",
+  "reviewer": "Ludi",
+  "surface": "Codex Desktop request_user_input",
+  "decision": "accepted",
+  "scope": ["G4"],
+  "implementationCommits": {
+    "G4": "c8643e3"
+  },
+  "screenshots": {
+    "desktop": "jarvis-g4-observability-desktop.png",
+    "mobile": "jarvis-g4-observability-mobile.png"
+  },
+  "localUrl": "http://127.0.0.1:4317/",
+  "result": "Approved as the baseline for subsequent GUI work."
+}
