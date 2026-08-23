@@ -1,6 +1,6 @@
 # G2.3 裁决队列刷新线性化提案
 
-> 状态：等待 Ludi 裁决。2026-08-22 第三轮连续复核仍命中同一并发 P1，已触发 `docs/v03-gui-plan.md` 的止损线；G2.3 停止提交，G2.4 尚未开工。
+> 状态：已批准并解决。Ludi 于 2026-08-23 批准选项 A；统一 mutation barrier 随代码提交 `8dab2df` 落地，最终独立复核 `GO（P0=0 / P1=0）`。
 
 ## 触发条件
 
@@ -67,3 +67,12 @@ G2.3 的三轮独立复核连续发现同族问题：人工裁决写入与 1.5 �
 ## 待裁决问题
 
 是否批准选项 A，以统一 mutation barrier 收口 human-review 与 emergency-stop 的旧响应失效语义？
+
+## 最终解决记录（2026-08-23）
+
+- `advanceMutationBarrier()` 把 requested/applied 水位一起推进到 `max + 1`，human-review 与 emergency-stop 在 POST 成功后调用同一 barrier。
+- `settleSequencedRefresh()` 让旧刷新无论成功、HTTP 失败、网络失败或 JSON 失败都静默失效；当前刷新错误继续可见，后续新轮询可恢复。
+- 两类 mutation 共用 `commitMutationThenRefresh()`；POST 非 2xx 不建立 barrier，刷新失败不回滚“已记录”事实。
+- G2.3 同时完成按 goal 折叠、单表单互斥、草稿/焦点保持、成功行防重复提交与完整目标展示。
+- 聚焦 4 files / 37 passed；canonical 148 files / 1688 passed / 2 skipped；typecheck、lint、build `--noEmit`、diff check 全绿。
+- Browser 1440×900 验证 6 张卡、默认展开 1 张、可见表单 0、console warning/error 0；最终复核 GO。
