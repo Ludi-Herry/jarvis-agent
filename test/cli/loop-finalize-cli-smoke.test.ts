@@ -298,7 +298,17 @@ describe('loop finalize CLI smoke', () => {
       await writeHumanAudit(fixture.cwd, 'g0', [
         { requirementId: 'r-human-1', decision: 'approve', note: 'Looks good.' },
         { requirementId: 'r-human-2', decision: 'approve', note: 'Copy is readable.' },
-      ]);
+      ], { decisionId: 'decision-planned', phase: 'planned' });
+
+      const planned = await runFinalizeCli(['--loop', fixture.loopId, '--worktree-root', fixture.worktreeRoot], fixture.cwd);
+      expect(planned.code).toBe(0);
+      expect(planned.stdout).toContain('missing-human-review-audit');
+      expect(planned.stdout).toContain('Merge proposals: 0');
+
+      await writeHumanAudit(fixture.cwd, 'g0', [
+        { requirementId: 'r-human-1', decision: 'approve', note: 'Looks good.' },
+        { requirementId: 'r-human-2', decision: 'approve', note: 'Copy is readable.' },
+      ], { decisionId: 'decision-committed', phase: 'committed' });
 
       const complete = await runFinalizeCli(['--loop', fixture.loopId, '--worktree-root', fixture.worktreeRoot], fixture.cwd);
 
@@ -867,12 +877,14 @@ async function writeHumanAudit(
   cwd: string,
   goalId: string,
   decisions: Array<{ requirementId: string; decision: 'approve' | 'reject'; note: string }>,
+  transaction?: { decisionId: string; phase: 'planned' | 'committed' },
 ): Promise<void> {
   await mkdir(join(cwd, 'data', 'human-reviews'), { recursive: true });
   await writeFile(
     join(cwd, 'data', 'human-reviews', `${goalId}.jsonl`),
     `${JSON.stringify({
       t: 'human-review-decision',
+      ...transaction,
       goalId,
       reviewer: 'Ludi',
       at: 't-review',

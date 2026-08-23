@@ -6,6 +6,7 @@ import { loadWorkspaceObservation } from '../../capabilities/index.js';
 import {
   applyHumanReviewDecision,
   HumanReviewError,
+  listHumanReviewHistory,
   listPendingHumanReviews,
   type HumanReviewDecisionInput,
 } from '../../capabilities/goal/index.js';
@@ -69,7 +70,11 @@ async function handleRequest(
       return;
     }
     if (req.method === 'GET' && url.pathname === '/api/human-reviews') {
-      json(res, 200, { reviews: await listPendingHumanReviews(context.dataDir) });
+      const [reviews, history] = await Promise.all([
+        listPendingHumanReviews(context.dataDir),
+        listHumanReviewHistory(context.dataDir),
+      ]);
+      json(res, 200, { reviews, history });
       return;
     }
     if (req.method === 'GET' && url.pathname === '/api/emergency-stop') {

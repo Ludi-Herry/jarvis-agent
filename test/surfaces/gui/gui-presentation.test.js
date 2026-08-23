@@ -4,10 +4,13 @@ import {
   buildRunPresentation,
   buildTimelineProjection,
   commitMutationThenRefresh,
+  formatReviewNoteLength,
   reconcileReviewExpansion,
   reconcileExpandedTimeline,
   reviewDecisionKey,
   reviewDecisionKeys,
+  reviewHistorySnapshot,
+  reviewNoteFieldIdentity,
   reviewQueueSnapshot,
   settleSequencedRefresh,
   shouldApplyRefresh,
@@ -182,6 +185,28 @@ describe('G2.3 review expansion projection', () => {
       reviewDecisionKey('g1', 'r1'),
       reviewDecisionKey('g1', 'r2'),
     ]);
+  });
+
+  it('gives every decision note a stable collision-safe form identity and length feedback', () => {
+    expect(reviewNoteFieldIdentity('a-b', 'c')).not.toEqual(reviewNoteFieldIdentity('a', 'b-c'));
+    expect(reviewNoteFieldIdentity('目标 1', '文案/确认')).toEqual(
+      reviewNoteFieldIdentity('目标 1', '文案/确认'),
+    );
+    expect(reviewNoteFieldIdentity('目标 1', '文案/确认')).toMatchObject({
+      id: expect.stringMatching(/^human-review-note-/u),
+      name: expect.stringMatching(/^human-review-note-/u),
+    });
+    expect(formatReviewNoteLength('裁决备注', 1000)).toBe('4 / 1000');
+  });
+
+  it('changes the history snapshot only when persisted decisions or coverage change', () => {
+    const history = { records: [{ goalId: 'g1', at: 't1' }], total: 1, coverage: 'complete', warnings: [] };
+    expect(reviewHistorySnapshot(history)).toBe(reviewHistorySnapshot(JSON.parse(JSON.stringify(history))));
+    expect(reviewHistorySnapshot(history)).not.toBe(reviewHistorySnapshot({
+      ...history,
+      coverage: 'partial',
+      warnings: ['unreadable'],
+    }));
   });
 
   it('changes the queue snapshot when authoritative review data changes', () => {

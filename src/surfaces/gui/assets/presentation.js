@@ -61,8 +61,23 @@ export function reviewDecisionKey(goalId, requirementId) {
   return JSON.stringify([goalId, requirementId]);
 }
 
+export function reviewNoteFieldIdentity(goalId, requirementId) {
+  const goal = encodeURIComponent(String(goalId));
+  const requirement = encodeURIComponent(String(requirementId));
+  const key = `human-review-note-${goal.length}-${goal}-${requirement.length}-${requirement}`;
+  return { id: key, name: key };
+}
+
+export function formatReviewNoteLength(value, maxLength = 1000) {
+  return `${String(value).length} / ${maxLength}`;
+}
+
 export function reviewQueueSnapshot(reviews) {
   return JSON.stringify(reviews);
+}
+
+export function reviewHistorySnapshot(history) {
+  return JSON.stringify(history);
 }
 
 export function reviewDecisionKeys(reviews) {

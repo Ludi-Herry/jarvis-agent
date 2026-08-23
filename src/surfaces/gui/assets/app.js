@@ -5,10 +5,13 @@ import {
   buildRunPresentation,
   buildTimelineProjection,
   commitMutationThenRefresh,
+  formatReviewNoteLength,
   reconcileReviewExpansion,
   reconcileExpandedTimeline,
   reviewDecisionKey,
   reviewDecisionKeys,
+  reviewHistorySnapshot,
+  reviewNoteFieldIdentity,
   reviewQueueSnapshot,
   settleSequencedRefresh,
   timelineProjectionSnapshot,
@@ -21,6 +24,7 @@ const state = {
   expandedReviews: new Set(),
   reviewQueueInitialized: false,
   reviewSnapshot: undefined,
+  reviewHistorySnapshot: undefined,
   activeReviewForm: undefined,
   refreshSequence: 0,
   appliedRefreshSequence: 0,
@@ -71,6 +75,9 @@ const nodes = {
   navReviewCount: document.querySelector('#nav-review-count'),
   reviewCount: document.querySelector('#review-count'),
   humanReviews: document.querySelector('#human-reviews'),
+  reviewHistoryCount: document.querySelector('#review-history-count'),
+  reviewHistoryMeta: document.querySelector('#review-history-meta'),
+  reviewHistory: document.querySelector('#review-history'),
   timeline: document.querySelector('#timeline'),
 };
 
@@ -110,7 +117,13 @@ async function refresh() {
       if (!reviewsResponse.ok) throw new Error(`reviews ${reviewsResponse.status}`);
       const payload = await statusResponse.json();
       const reviewsPayload = await reviewsResponse.json();
-      return { ...payload, reviews: reviewsPayload.reviews || [] };
+      return {
+        ...payload,
+        reviews: reviewsPayload.reviews || [],
+        reviewHistory: reviewsPayload.history || {
+          records: [], total: 0, truncated: false, coverage: 'partial', warnings: ['已裁决历史响应缺失'],
+        },
+      };
     },
     () => state.appliedRefreshSequence,
   );
@@ -152,6 +165,7 @@ function render(payload) {
   nodes.navReviewCount.textContent = `${payload.reviews.length}`;
   nodes.reviewCount.textContent = `${payload.reviews.length}`;
   renderReviewQueue(payload.reviews);
+  renderReviewHistory(payload.reviewHistory);
   renderTimeline(payload.timeline);
 }
 
@@ -259,6 +273,79 @@ function renderReviewQueue(reviews) {
   }
 }
 
+function renderReviewHistory(history) {
+  nodes.reviewHistoryCount.textContent = `${history.total}`;
+  nodes.reviewHistoryMeta.textContent = history.coverage === 'partial'
+    ? `已显示 ${history.records.length}/${history.total} 条可读记录，部分历史读取失败。`
+    : history.truncated
+      ? `已显示最近 ${history.records.length}/${history.total} 条，完整记录保留在 data/human-reviews。`
+      : `${history.total} 条持久化裁决记录，来源 data/human-reviews。`;
+
+  const nextSnapshot = reviewHistorySnapshot(history);
+  if (nextSnapshot === state.reviewHistorySnapshot) return;
+  state.reviewHistorySnapshot = nextSnapshot;
+  const content = [];
+  if (history.warnings.length > 0) {
+    const warning = document.createElement('p');
+    warning.className = 'review-history-warning';
+    warning.textContent = history.warnings.join('；');
+    content.push(warning);
+  }
+  if (history.records.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'review-history-empty';
+    empty.textContent = history.coverage === 'partial' ? '暂时没有可读的已裁决记录' : '暂无已裁决记录';
+    content.push(empty);
+  } else {
+    content.push(...history.records.map(renderReviewHistoryRecord));
+  }
+  nodes.reviewHistory.replaceChildren(...content);
+}
+
+function renderReviewHistoryRecord(record) {
+  const item = document.createElement('details');
+  item.className = 'review-history-item';
+  const summary = document.createElement('summary');
+  const time = document.createElement('time');
+  time.dateTime = record.at;
+  time.textContent = timelineTime(record.at);
+  const identity = document.createElement('span');
+  identity.className = 'review-history-identity';
+  identity.textContent = record.goalId;
+  const outcome = document.createElement('strong');
+  const uncertain = record.phase === 'planned';
+  outcome.dataset.tone = uncertain
+    ? 'uncertain'
+    : record.decisions.some((decision) => decision.decision === 'reject') ? 'reject' : 'approve';
+  outcome.textContent = uncertain ? `${record.decisions.length} 项 · 待核对` : `${record.decisions.length} 项 · ${record.verdict}`;
+  summary.append(time, identity, outcome);
+
+  const body = document.createElement('div');
+  body.className = 'review-history-body';
+  const meta = document.createElement('p');
+  meta.textContent = uncertain
+    ? `裁决人 ${record.reviewer} · 第 ${record.previousRound + 1} 轮 · goal 写入状态待核对`
+    : `裁决人 ${record.reviewer} · 第 ${record.previousRound + 1} 轮 · 状态 ${record.state}`;
+  const decisions = document.createElement('ul');
+  for (const decision of record.decisions) {
+    const row = document.createElement('li');
+    const heading = document.createElement('div');
+    const requirementId = document.createElement('code');
+    requirementId.textContent = decision.requirementId;
+    const badge = document.createElement('strong');
+    badge.dataset.tone = decision.decision;
+    badge.textContent = decision.decision === 'approve' ? '通过' : '驳回';
+    heading.append(requirementId, badge);
+    const note = document.createElement('p');
+    note.textContent = decision.note;
+    row.append(heading, note);
+    decisions.append(row);
+  }
+  body.append(meta, decisions);
+  item.append(summary, body);
+  return item;
+}
+
 function renderReviews(reviews) {
   if (reviews.length === 0) {
     state.expandedReviews.clear();
@@ -315,27 +402,108 @@ function renderReview(review) {
   goalId.className = 'review-goal-id';
   goalId.textContent = review.goalId;
   const meta = document.createElement('span');
-  meta.textContent = review.verdict;
+  meta.textContent = `${review.state} · ${review.verdict} · ${timelineTime(review.lastAt)}`;
   header.append(goalId, meta);
 
   const objective = document.createElement('p');
   objective.className = 'review-objective';
   objective.textContent = review.objective;
 
+  const context = renderReviewContext(review);
+
   const requirements = document.createElement('div');
   requirements.className = 'review-requirements';
   for (const [index, requirement] of review.requirements.entries()) {
-    requirements.append(renderRequirement(review.goalId, requirement, index + 1, article));
+    requirements.append(renderRequirement(review, requirement, index + 1, article));
   }
 
-  body.append(header, objective, requirements);
+  body.append(header, objective, context, requirements);
   article.append(summary, body);
   return article;
 }
 
-function renderRequirement(goalId, requirement, index, reviewCard) {
+function renderReviewContext(review) {
+  const context = document.createElement('details');
+  context.className = 'review-context';
+  const summary = document.createElement('summary');
+  summary.textContent = '查看验证上下文';
+  const body = document.createElement('div');
+  body.className = 'review-context-body';
+
+  const checks = document.createElement('div');
+  checks.className = 'review-checks';
+  checks.append(
+    reviewCheck('目标检查', review.checks.objectiveChecksPassed ? '通过' : '未通过'),
+    reviewCheck('测试篡改', review.checks.testTamper),
+    reviewCheck('命令结果', `${review.checks.results.length} 条`),
+    reviewCheck('Verifier', review.report.feature),
+  );
+
+  const report = document.createElement('dl');
+  report.className = 'review-report';
+  report.append(
+    reviewReportRow('预期', review.report.expected),
+    reviewReportRow('观察', review.report.observed),
+    reviewReportRow('证据', review.report.evidence),
+    reviewReportRow('结论', review.report.rationale),
+  );
+
+  const pinned = document.createElement('div');
+  pinned.className = 'review-pinned';
+  const pinnedTitle = document.createElement('strong');
+  pinnedTitle.textContent = `固定要求 ${review.pinned.length} 项`;
+  const pinnedList = document.createElement('ul');
+  for (const requirement of review.pinned) {
+    const item = document.createElement('li');
+    const id = document.createElement('code');
+    id.textContent = requirement.id;
+    const text = document.createElement('span');
+    text.textContent = `${requirement.route ? `[${requirement.route}] ` : ''}${requirement.text}`;
+    item.append(id, text);
+    pinnedList.append(item);
+  }
+  pinned.append(pinnedTitle, pinnedList);
+  body.append(checks, report);
+  if (review.report.couldNotVerify.length > 0) {
+    const unresolved = document.createElement('div');
+    unresolved.className = 'review-unresolved';
+    const unresolvedTitle = document.createElement('strong');
+    unresolvedTitle.textContent = `仍待验证 ${review.report.couldNotVerify.length} 项`;
+    const unresolvedList = document.createElement('ul');
+    for (const reason of review.report.couldNotVerify) {
+      const item = document.createElement('li');
+      item.textContent = reason;
+      unresolvedList.append(item);
+    }
+    unresolved.append(unresolvedTitle, unresolvedList);
+    body.append(unresolved);
+  }
+  body.append(pinned);
+  context.append(summary, body);
+  return context;
+}
+
+function reviewCheck(label, value) {
+  const item = document.createElement('span');
+  item.textContent = `${label} ${value}`;
+  return item;
+}
+
+function reviewReportRow(label, value) {
+  const fragment = document.createDocumentFragment();
+  const term = document.createElement('dt');
+  term.textContent = label;
+  const description = document.createElement('dd');
+  description.textContent = value || '无记录';
+  fragment.append(term, description);
+  return fragment;
+}
+
+function renderRequirement(review, requirement, index, reviewCard) {
+  const goalId = review.goalId;
   const draftKey = reviewDecisionKey(goalId, requirement.requirementId);
   const draft = state.drafts.get(draftKey);
+  const pinned = review.pinned.find((candidate) => candidate.id === requirement.requirementId);
   const row = document.createElement('div');
   row.className = 'review-requirement';
 
@@ -345,11 +513,14 @@ function renderRequirement(goalId, requirement, index, reviewCard) {
 
   const copy = document.createElement('div');
   copy.className = 'review-copy';
+  const requirementMeta = document.createElement('span');
+  requirementMeta.className = 'review-requirement-meta';
+  requirementMeta.textContent = `${requirement.requirementId} · ${pinned?.route || 'human'}`;
   const text = document.createElement('strong');
   text.textContent = requirement.text;
   const reason = document.createElement('span');
-  reason.textContent = requirement.reason;
-  copy.append(text, reason);
+  reason.textContent = `等待原因：${requirement.reason}`;
+  copy.append(requirementMeta, text, reason);
 
   const actions = document.createElement('div');
   actions.className = 'review-actions';
@@ -362,26 +533,43 @@ function renderRequirement(goalId, requirement, index, reviewCard) {
   form.className = 'review-form';
   form.hidden = true;
 
+  const fieldIdentity = reviewNoteFieldIdentity(goalId, requirement.requirementId);
   const note = document.createElement('textarea');
   note.className = 'review-note';
+  note.id = fieldIdentity.id;
+  note.name = fieldIdentity.name;
   note.rows = 2;
   note.maxLength = 1000;
+  note.required = true;
+  note.autocomplete = 'off';
   note.placeholder = '裁决备注';
 
   const noteField = document.createElement('label');
   noteField.className = 'review-note-field';
+  noteField.htmlFor = note.id;
   const noteLabel = document.createElement('span');
   noteLabel.textContent = '裁决备注（必填）';
-  noteField.append(noteLabel, note);
+  const noteLength = document.createElement('output');
+  noteLength.className = 'review-note-length';
+  noteLength.id = `${note.id}-length`;
+  noteLength.htmlFor = note.id;
+  noteLength.textContent = formatReviewNoteLength('', note.maxLength);
+  const noteHeading = document.createElement('span');
+  noteHeading.className = 'review-note-heading';
+  noteHeading.append(noteLabel, noteLength);
+  noteField.append(noteHeading, note);
 
   const error = document.createElement('span');
   error.className = 'review-form-error';
+  error.id = `${note.id}-error`;
   error.setAttribute('aria-live', 'polite');
+  note.setAttribute('aria-describedby', `${noteLength.id} ${error.id}`);
 
   const formActions = document.createElement('div');
   formActions.className = 'review-form-actions';
   const submit = document.createElement('button');
   submit.type = 'submit';
+  submit.name = 'decision';
   submit.className = 'review-submit';
   const cancel = document.createElement('button');
   cancel.type = 'button';
@@ -407,6 +595,7 @@ function renderRequirement(goalId, requirement, index, reviewCard) {
     applyDraftToForm(decision);
     form.hidden = false;
     error.textContent = '';
+    updateNoteLength();
     state.activeReviewForm = { key: draftKey, close: closeForm };
     note.focus();
   }
@@ -418,14 +607,23 @@ function renderRequirement(goalId, requirement, index, reviewCard) {
     state.drafts.delete(draftKey);
     form.hidden = true;
     note.value = '';
+    note.setCustomValidity('');
     error.textContent = '';
+    updateNoteLength();
   }
 
   cancel.addEventListener('click', closeForm);
 
   note.addEventListener('input', () => {
+    note.setCustomValidity('');
+    error.textContent = '';
+    updateNoteLength();
     if (pendingDecision === undefined) return;
     state.drafts.set(draftKey, { goalId, decision: pendingDecision, note: note.value });
+  });
+
+  note.addEventListener('invalid', () => {
+    error.textContent = '请填写裁决备注';
   });
 
   form.addEventListener('submit', async (event) => {
@@ -433,7 +631,9 @@ function renderRequirement(goalId, requirement, index, reviewCard) {
     const value = note.value.trim();
     if (pendingDecision === undefined) return;
     if (value === '') {
+      note.setCustomValidity('请填写裁决备注');
       error.textContent = '请填写裁决备注';
+      note.reportValidity();
       note.focus();
       return;
     }
@@ -452,6 +652,7 @@ function renderRequirement(goalId, requirement, index, reviewCard) {
 
   if (draft !== undefined) {
     note.value = draft.note;
+    updateNoteLength();
     applyDraftToForm(draft.decision);
     form.hidden = false;
     if (state.activeDraftKey === draftKey) {
@@ -462,7 +663,14 @@ function renderRequirement(goalId, requirement, index, reviewCard) {
 
   function applyDraftToForm(decision) {
     submit.textContent = decision === 'approve' ? '确认通过' : '确认驳回';
+    submit.value = decision;
+    note.placeholder = decision === 'approve' ? '说明通过依据' : '说明驳回原因';
     form.dataset.decision = decision;
+  }
+
+  function updateNoteLength() {
+    noteLength.textContent = formatReviewNoteLength(note.value, note.maxLength);
+    noteLength.dataset.nearLimit = note.value.length >= note.maxLength * 0.9 ? 'true' : 'false';
   }
 
   row.append(indexLabel, copy, actions, form, commitStatus);

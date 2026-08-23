@@ -1,5 +1,6 @@
-import { appendFile, mkdir, readFile, readdir } from 'node:fs/promises';
-import { basename, join } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { appendFile, lstat, mkdir, open, opendir, readFile, readdir, realpath } from 'node:fs/promises';
+import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { redactSecrets } from '../../core/model/errors.js';
 import {
   assertOperationalJsonlIntegrity,
@@ -57,6 +58,8 @@ export interface PendingHumanReview {
 
 export interface HumanReviewAuditRecord {
   t: 'human-review-decision';
+  decisionId?: string;
+  phase?: 'planned' | 'committed';
   goalId: string;
   reviewer: string;
   at: string;
@@ -64,6 +67,19 @@ export interface HumanReviewAuditRecord {
   decisions: HumanReviewDecisionInput[];
   verdict: VerdictOutcome;
   state: GoalState;
+}
+
+export interface HumanReviewHistory {
+  records: HumanReviewAuditRecord[];
+  total: number;
+  truncated: boolean;
+  coverage: 'complete' | 'partial';
+  warnings: string[];
+}
+
+export interface HumanReviewHistoryTestHooks {
+  afterPathValidation?: (path: string) => Promise<void>;
+  afterOpen?: (path: string) => Promise<void>;
 }
 
 export interface ApplyHumanReviewDecisionInput {
@@ -81,6 +97,7 @@ export interface ApplyHumanReviewDecisionResult {
   report: VerifierReport;
   round: number;
   audit: HumanReviewAuditRecord;
+  auditStatus: 'committed' | 'uncertain';
   loop?: { loopId: string; index: number };
 }
 
@@ -99,6 +116,13 @@ const HUMAN_REVIEW_PREFIX = 'human verification required for ';
 const MAX_NOTE_LENGTH = 1000;
 const MAX_REVIEWER_LENGTH = 100;
 const MAX_DISPLAY_TEXT_LENGTH = 4000;
+const DEFAULT_HISTORY_LIMIT = 100;
+const MAX_HISTORY_DIRECTORY_ENTRIES = 1000;
+const MAX_HISTORY_FILES = 200;
+const MAX_HISTORY_FILE_BYTES = 256 * 1024;
+const MAX_HISTORY_RECORDS = 1000;
+const MAX_HISTORY_WARNINGS = 20;
+const decisionQueues = new Map<string, Promise<void>>();
 
 export async function listPendingHumanReviews(dataDir: string): Promise<PendingHumanReview[]> {
   const entries = await jsonlEntries(join(dataDir, 'goals'));
@@ -112,7 +136,156 @@ export async function listPendingHumanReviews(dataDir: string): Promise<PendingH
   return reviews.sort((a, b) => a.lastAt.localeCompare(b.lastAt));
 }
 
+export async function listHumanReviewHistory(
+  dataDir: string,
+  limit = DEFAULT_HISTORY_LIMIT,
+  hooks: HumanReviewHistoryTestHooks = {},
+): Promise<HumanReviewHistory> {
+  const historyDir = join(dataDir, 'human-reviews');
+  let canonicalHistoryDir: string;
+  const entries: string[] = [];
+  const warnings: string[] = [];
+  try {
+    const directory = await lstat(historyDir);
+    if (directory.isSymbolicLink() || !directory.isDirectory()) {
+      return partialHumanReviewHistory('已裁决历史路径不是安全目录');
+    }
+    canonicalHistoryDir = await realpath(historyDir);
+    const stream = await opendir(historyDir);
+    let scannedEntries = 0;
+    for await (const entry of stream) {
+      scannedEntries++;
+      if (scannedEntries > MAX_HISTORY_DIRECTORY_ENTRIES) {
+        addHistoryWarning(warnings, `已裁决历史目录超过 ${MAX_HISTORY_DIRECTORY_ENTRIES} 个条目，停止继续枚举`);
+        break;
+      }
+      if (!entry.name.endsWith('.jsonl')) continue;
+      if (entries.length >= MAX_HISTORY_FILES) {
+        addHistoryWarning(warnings, `已裁决历史文件超过 ${MAX_HISTORY_FILES} 个，只读取有界子集`);
+        break;
+      }
+      entries.push(entry.name);
+    }
+    entries.sort();
+  } catch (err) {
+    if (isNotFoundError(err)) return emptyHumanReviewHistory();
+    return partialHumanReviewHistory('已裁决历史目录无法读取');
+  }
+
+  const records: HumanReviewAuditRecord[] = [];
+  for (const entry of entries) {
+    if (records.length >= MAX_HISTORY_RECORDS) {
+      addHistoryWarning(warnings, `已裁决历史记录超过 ${MAX_HISTORY_RECORDS} 条，停止继续解析`);
+      break;
+    }
+    const goalId = basename(entry, '.jsonl');
+    if (!isSafeLogId(goalId)) {
+      addHistoryWarning(warnings, '已忽略名称不安全的裁决历史文件');
+      continue;
+    }
+    const path = join(historyDir, entry);
+    let handle: Awaited<ReturnType<typeof open>> | undefined;
+    try {
+      const pathInfo = await lstat(path);
+      if (
+        pathInfo.isSymbolicLink()
+        || !pathInfo.isFile()
+        || pathInfo.nlink !== 1
+      ) {
+        addHistoryWarning(warnings, '有一份裁决历史不是安全文件');
+        continue;
+      }
+      const canonicalFile = await realpath(path);
+      if (!isContainedPath(canonicalHistoryDir, canonicalFile)) {
+        addHistoryWarning(warnings, '有一份裁决历史不是安全文件');
+        continue;
+      }
+      await hooks.afterPathValidation?.(path);
+      handle = await open(canonicalFile, 'r');
+      const fileInfo = await handle.stat();
+      if (
+        !fileInfo.isFile()
+        || fileInfo.nlink !== 1
+        || pathInfo.dev !== fileInfo.dev
+        || pathInfo.ino !== fileInfo.ino
+      ) {
+        addHistoryWarning(warnings, '有一份裁决历史不是安全文件');
+        continue;
+      }
+      if (fileInfo.size > MAX_HISTORY_FILE_BYTES) {
+        addHistoryWarning(warnings, `有一份裁决历史超过 ${MAX_HISTORY_FILE_BYTES} 字节，已跳过`);
+        continue;
+      }
+      await hooks.afterOpen?.(path);
+      const bounded = await readBoundedUtf8(handle, MAX_HISTORY_FILE_BYTES);
+      const finalInfo = await handle.stat();
+      if (
+        bounded.exceeded
+        || fileInfo.size !== finalInfo.size
+        || fileInfo.mtimeMs !== finalInfo.mtimeMs
+        || fileInfo.ctimeMs !== finalInfo.ctimeMs
+      ) {
+        addHistoryWarning(warnings, `有一份裁决历史超过 ${MAX_HISTORY_FILE_BYTES} 字节或读取期间发生变化，已跳过`);
+        continue;
+      }
+      const parsed = parseHumanReviewAuditBounded(
+        bounded.text,
+        MAX_HISTORY_RECORDS - records.length,
+      );
+      if (parsed.malformed) {
+        addHistoryWarning(warnings, '有一份裁决历史包含无法解析的记录');
+      }
+      if (parsed.truncated) {
+        addHistoryWarning(warnings, `已裁决历史记录超过 ${MAX_HISTORY_RECORDS} 条，停止继续解析`);
+      }
+      let identityMismatch = false;
+      for (const record of parsed.records) {
+        if (records.length >= MAX_HISTORY_RECORDS) {
+          addHistoryWarning(warnings, `已裁决历史记录超过 ${MAX_HISTORY_RECORDS} 条，停止继续解析`);
+          break;
+        }
+        if (record.goalId !== goalId) {
+          identityMismatch = true;
+          continue;
+        }
+        records.push(displaySafeAuditRecord(record));
+      }
+      if (identityMismatch) addHistoryWarning(warnings, '有一份裁决历史包含身份不匹配记录');
+    } catch {
+      addHistoryWarning(warnings, '有一份裁决历史无法安全读取');
+    } finally {
+      await handle?.close().catch(() => undefined);
+    }
+  }
+
+  const collapsed = collapseHumanReviewAudit(records, warnings);
+  collapsed.sort((a, b) => b.at.localeCompare(a.at)
+    || a.goalId.localeCompare(b.goalId)
+    || b.previousRound - a.previousRound);
+  const boundedLimit = Number.isFinite(limit) ? Math.max(0, Math.floor(limit)) : DEFAULT_HISTORY_LIMIT;
+  return {
+    records: collapsed.slice(0, boundedLimit),
+    total: collapsed.length,
+    truncated: collapsed.length > boundedLimit,
+    coverage: warnings.length === 0 ? 'complete' : 'partial',
+    warnings,
+  };
+}
+
 export async function applyHumanReviewDecision(
+  input: ApplyHumanReviewDecisionInput,
+): Promise<ApplyHumanReviewDecisionResult> {
+  const key = `${resolve(input.dataDir)}\0${input.goalId}`;
+  const previous = decisionQueues.get(key) ?? Promise.resolve();
+  const run = previous.catch(() => undefined).then(() => applyHumanReviewDecisionUnlocked(input));
+  const tail = run.then(() => undefined, () => undefined);
+  decisionQueues.set(key, tail);
+  return run.finally(() => {
+    if (decisionQueues.get(key) === tail) decisionQueues.delete(key);
+  });
+}
+
+async function applyHumanReviewDecisionUnlocked(
   input: ApplyHumanReviewDecisionInput,
 ): Promise<ApplyHumanReviewDecisionResult> {
   assertSafeLogId(input.goalId);
@@ -129,8 +302,10 @@ export async function applyHumanReviewDecision(
   const state: GoalState = verdict.outcome === 'verified' ? 'complete' : 'blocked';
   const round = pending.round + 1;
 
-  const audit: HumanReviewAuditRecord = {
+  const decisionId = `human-review-${randomUUID()}`;
+  const auditBase = {
     t: 'human-review-decision',
+    decisionId,
     goalId: input.goalId,
     reviewer,
     at,
@@ -138,7 +313,12 @@ export async function applyHumanReviewDecision(
     decisions,
     verdict: verdict.outcome,
     state,
-  };
+  } satisfies Omit<HumanReviewAuditRecord, 'phase'>;
+
+  await mkdir(join(input.dataDir, 'human-reviews'), { recursive: true });
+  const auditPath = join(input.dataDir, 'human-reviews', `${input.goalId}.jsonl`);
+  const plannedAudit: HumanReviewAuditRecord = { ...auditBase, phase: 'planned' };
+  await appendFile(auditPath, `${JSON.stringify(plannedAudit)}\n`, 'utf8');
 
   const goalPath = join(input.dataDir, 'goals', `${input.goalId}.jsonl`);
   await appendFile(
@@ -155,12 +335,15 @@ export async function applyHumanReviewDecision(
     'utf8',
   );
 
-  await mkdir(join(input.dataDir, 'human-reviews'), { recursive: true });
-  await appendFile(
-    join(input.dataDir, 'human-reviews', `${input.goalId}.jsonl`),
-    `${JSON.stringify(audit)}\n`,
-    'utf8',
-  );
+  const committedAudit: HumanReviewAuditRecord = { ...auditBase, phase: 'committed' };
+  let audit: HumanReviewAuditRecord = committedAudit;
+  let auditStatus: ApplyHumanReviewDecisionResult['auditStatus'] = 'committed';
+  try {
+    await appendFile(auditPath, `${JSON.stringify(committedAudit)}\n`, 'utf8');
+  } catch {
+    audit = plannedAudit;
+    auditStatus = 'uncertain';
+  }
 
   const loop = await appendLoopFinishIfPresent(input.dataDir, input.goalId, {
     state,
@@ -170,7 +353,16 @@ export async function applyHumanReviewDecision(
     at,
   });
 
-  return { goalId: input.goalId, state, verdict, report, round, audit, ...(loop === undefined ? {} : { loop }) };
+  return {
+    goalId: input.goalId,
+    state,
+    verdict,
+    report,
+    round,
+    audit,
+    auditStatus,
+    ...(loop === undefined ? {} : { loop }),
+  };
 }
 
 export function parseHumanReviewAuditLog(text: string): HumanReviewAuditRecord[] {
@@ -180,6 +372,10 @@ export function parseHumanReviewAuditLog(text: string): HumanReviewAuditRecord[]
 export function isHumanReviewAuditRecord(value: unknown): value is HumanReviewAuditRecord {
   return isJsonObject(value)
     && value.t === 'human-review-decision'
+    && ((value.decisionId === undefined && value.phase === undefined)
+      || (typeof value.decisionId === 'string'
+        && value.decisionId.length > 0
+        && (value.phase === 'planned' || value.phase === 'committed')))
     && hasStringFields(value, 'goalId', 'reviewer', 'at')
     && hasFiniteNumberFields(value, 'previousRound')
     && Array.isArray(value.decisions)
@@ -249,11 +445,13 @@ function humanRequirementsFrom(
       .map((score) => score.requirementId),
   );
   const requirements: PendingHumanReviewRequirement[] = [];
+  const seen = new Set<string>();
   for (const reason of report.couldNotVerify) {
     const parsed = parseHumanReviewReason(reason);
-    if (parsed === undefined || !cannotVerify.has(parsed.requirementId)) continue;
+    if (parsed === undefined || !cannotVerify.has(parsed.requirementId) || seen.has(parsed.requirementId)) continue;
     const pinnedText = humanPinnedById.get(parsed.requirementId);
     if (pinnedText === undefined) continue;
+    seen.add(parsed.requirementId);
     requirements.push({
       requirementId: parsed.requirementId,
       text: pinnedText,
@@ -327,6 +525,121 @@ function displaySafePendingReview(review: PendingHumanReview): PendingHumanRevie
       rationale: safeReviewText(review.report.rationale),
     },
   };
+}
+
+function displaySafeAuditRecord(record: HumanReviewAuditRecord): HumanReviewAuditRecord {
+  return {
+    ...record,
+    goalId: safeReviewText(record.goalId),
+    reviewer: safeReviewText(record.reviewer),
+    at: safeReviewText(record.at),
+    decisions: record.decisions.map((decision) => ({
+      ...decision,
+      requirementId: safeReviewText(decision.requirementId),
+      note: safeReviewText(decision.note),
+    })),
+  };
+}
+
+async function readBoundedUtf8(
+  handle: Awaited<ReturnType<typeof open>>,
+  maxBytes: number,
+): Promise<{ text: string; exceeded: boolean }> {
+  const buffer = Buffer.alloc(maxBytes + 1);
+  let offset = 0;
+  while (offset < buffer.length) {
+    const { bytesRead } = await handle.read(buffer, offset, buffer.length - offset, offset);
+    if (bytesRead === 0) break;
+    offset += bytesRead;
+  }
+  return {
+    text: buffer.subarray(0, Math.min(offset, maxBytes)).toString('utf8'),
+    exceeded: offset > maxBytes,
+  };
+}
+
+function parseHumanReviewAuditBounded(
+  text: string,
+  maxRecords: number,
+): { records: HumanReviewAuditRecord[]; malformed: boolean; truncated: boolean } {
+  const records: HumanReviewAuditRecord[] = [];
+  let malformed = false;
+  let cursor = 0;
+  while (cursor <= text.length) {
+    const newline = text.indexOf('\n', cursor);
+    const end = newline === -1 ? text.length : newline;
+    const line = text.slice(cursor, end).trim();
+    if (line !== '') {
+      if (records.length >= maxRecords) return { records, malformed, truncated: true };
+      try {
+        const value: unknown = JSON.parse(line);
+        if (isHumanReviewAuditRecord(value)) records.push(value);
+        else malformed = true;
+      } catch {
+        malformed = true;
+      }
+    }
+    if (newline === -1) break;
+    cursor = newline + 1;
+  }
+  return { records, malformed, truncated: false };
+}
+
+function collapseHumanReviewAudit(
+  records: readonly HumanReviewAuditRecord[],
+  warnings: string[],
+): HumanReviewAuditRecord[] {
+  const legacy: HumanReviewAuditRecord[] = [];
+  const transactions = new Map<string, { planned?: HumanReviewAuditRecord; committed?: HumanReviewAuditRecord }>();
+  for (const record of records) {
+    if (record.decisionId === undefined || record.phase === undefined) {
+      legacy.push(record);
+      continue;
+    }
+    const transaction = transactions.get(record.decisionId) ?? {};
+    if (transaction[record.phase] !== undefined) {
+      addHistoryWarning(warnings, '已裁决历史包含重复事务阶段');
+    }
+    transaction[record.phase] = record;
+    transactions.set(record.decisionId, transaction);
+  }
+  const collapsed = [...legacy];
+  for (const transaction of transactions.values()) {
+    if (transaction.committed !== undefined) collapsed.push(transaction.committed);
+    else if (transaction.planned !== undefined) {
+      collapsed.push(transaction.planned);
+      addHistoryWarning(warnings, '有一条裁决写入状态待核对');
+    }
+  }
+  return collapsed;
+}
+
+function emptyHumanReviewHistory(): HumanReviewHistory {
+  return {
+    records: [],
+    total: 0,
+    truncated: false,
+    coverage: 'complete',
+    warnings: [],
+  };
+}
+
+function partialHumanReviewHistory(warning: string): HumanReviewHistory {
+  return { ...emptyHumanReviewHistory(), coverage: 'partial', warnings: [warning] };
+}
+
+function addHistoryWarning(warnings: string[], warning: string): void {
+  if (warnings.includes(warning)) return;
+  if (warnings.length < MAX_HISTORY_WARNINGS) {
+    warnings.push(warning);
+    return;
+  }
+  warnings[MAX_HISTORY_WARNINGS - 1] = '更多裁决历史问题已省略';
+}
+
+function isContainedPath(parent: string, child: string): boolean {
+  const local = relative(resolve(parent), resolve(child));
+  return local !== '' && local !== '..' && !local.startsWith(`..${sep}`) && !isAbsolute(local);
 }
 
 function applyDecisionsToReport(
@@ -449,6 +762,10 @@ function assertSafeLogId(value: string): void {
 
 function isSafeLogId(value: string): boolean {
   return SAFE_LOG_ID.test(value) && !value.includes('/') && !value.includes('\\');
+}
+
+function isNotFoundError(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && (err as { code?: unknown }).code === 'ENOENT';
 }
 
 function appendSection(current: string, label: string, body: string): string {

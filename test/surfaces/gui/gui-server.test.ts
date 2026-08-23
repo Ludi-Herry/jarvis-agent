@@ -237,6 +237,7 @@ describe('GUI server security guard', () => {
       expect(list.status).toBe(200);
       expect(list.body).toMatchObject({
         reviews: [{ goalId: 'g-human', requirements: [{ requirementId: 'r1' }] }],
+        history: { records: [], total: 0, truncated: false, coverage: 'complete', warnings: [] },
       });
 
       const missingHeader = await httpJson(base.port, {
@@ -266,6 +267,51 @@ describe('GUI server security guard', () => {
       expect(decided.status).toBe(200);
       expect(decided.body).toMatchObject({
         result: { state: 'complete', verdict: { outcome: 'verified' } },
+      });
+
+      const updated = await httpJson(base.port, {
+        path: '/api/human-reviews',
+        method: 'GET',
+        headers: { host: `127.0.0.1:${base.port}` },
+      });
+      expect(updated.status).toBe(200);
+      expect(updated.body).toMatchObject({
+        reviews: [],
+        history: {
+          total: 1,
+          coverage: 'complete',
+          records: [{
+            goalId: 'g-human',
+            reviewer: 'Ludi',
+            decisions: [{ requirementId: 'r1', decision: 'approve', note: 'Looks good.' }],
+          }],
+        },
+      });
+    } finally {
+      await close(server);
+    }
+  });
+
+  it('keeps the pending queue available when decided history is unreadable', async () => {
+    await writeParkedHumanGoal('g-history-degraded');
+    await writeFile(join(dir, 'data', 'human-reviews'), 'unsafe replacement', 'utf8');
+    const server = createGuiServer({ cwd: dir, dataDir: join(dir, 'data') });
+    const base = await listen(server);
+    try {
+      const result = await httpJson(base.port, {
+        path: '/api/human-reviews',
+        method: 'GET',
+        headers: { host: `127.0.0.1:${base.port}` },
+      });
+
+      expect(result.status).toBe(200);
+      expect(result.body).toMatchObject({
+        reviews: [{ goalId: 'g-history-degraded', requirements: [{ requirementId: 'r1' }] }],
+        history: {
+          records: [],
+          coverage: 'partial',
+          warnings: ['已裁决历史路径不是安全目录'],
+        },
       });
     } finally {
       await close(server);

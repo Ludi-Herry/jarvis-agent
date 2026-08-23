@@ -293,6 +293,7 @@ async function hasMatchingHumanReviewAudit(
   return parsed.records.some(
     (record) =>
       record.goalId === goalId &&
+      (record.phase === undefined || record.phase === 'committed') &&
       record.previousRound === previousRound &&
       record.state === state &&
       record.verdict === outcome &&
