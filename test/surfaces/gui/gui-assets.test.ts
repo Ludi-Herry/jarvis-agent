@@ -33,6 +33,7 @@ describe('G2.1 GUI shell assets', () => {
     expect(html).toContain('class="t-learn"');
     expect(html).toContain('role="status" aria-live="polite" aria-atomic="true"');
     expect(html).toContain('aria-labelledby="budget-label budget-caption"');
+    expect(html).toContain('按目标折叠，先处理影响当前运行的判断。');
   });
 
   it('uses the approved Jarvis warm-paper tokens without wide ghost-card shadows', async () => {
@@ -75,5 +76,18 @@ describe('G2.1 GUI shell assets', () => {
     expect(css).toContain('outline: 2px solid var(--accent-hover)');
     expect(js).toContain("navReviewCount: document.querySelector('#nav-review-count')");
     expect(js).toContain("payload.stop.unreadable ? '状态未知' : payload.stop.requested ? '已急停' : '待命'");
+    expect(js).toContain('if (nextSnapshot === state.reviewSnapshot) return');
+    expect(js).toContain('settleSequencedRefresh(');
+    expect(js).toContain('commit: applyMutationBarrier');
+    expect(js.match(/applyMutationBarrier\(\);/gu)).toHaveLength(1);
+    expect(js).toContain('急停已记录，刷新失败');
+    expect(js).toContain('急停失败');
+    expect(js).toContain("querySelectorAll('[data-review-focus-key]')");
+    expect(js).toContain('state.activeReviewForm?.close()');
+    expect(js).toContain("row.dataset.reviewState = 'committed'");
+    expect(js).toContain("control.closest('[data-review-state=\"committed\"]')");
+    expect(js).toContain('裁决已记录，队列刷新失败；自动刷新会继续重试。');
+    expect(js).toContain("document.createElement('details')");
+    expect(js).toContain("state.expandedReviews.add(goalId)");
   });
 });

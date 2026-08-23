@@ -1,11 +1,26 @@
 /* global document, fetch, window */
 
-import { buildRunPresentation } from '/presentation.js';
+import {
+  advanceMutationBarrier,
+  buildRunPresentation,
+  commitMutationThenRefresh,
+  reconcileReviewExpansion,
+  reviewDecisionKey,
+  reviewDecisionKeys,
+  reviewQueueSnapshot,
+  settleSequencedRefresh,
+} from '/presentation.js';
 
 const state = {
   busy: false,
   activeDraftKey: undefined,
   drafts: new Map(),
+  expandedReviews: new Set(),
+  reviewQueueInitialized: false,
+  reviewSnapshot: undefined,
+  activeReviewForm: undefined,
+  refreshSequence: 0,
+  appliedRefreshSequence: 0,
   timer: undefined,
 };
 
@@ -42,27 +57,45 @@ nodes.stopButton.addEventListener('click', async () => {
   if (state.busy) return;
   setBusy(true);
   try {
-    await fetch('/api/emergency-stop', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-jarvis-gui': '1' },
-      body: JSON.stringify({ reason: 'GUI emergency stop' }),
+    const result = await commitMutationThenRefresh({
+      request: () => fetch('/api/emergency-stop', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-jarvis-gui': '1' },
+        body: JSON.stringify({ reason: 'GUI emergency stop' }),
+      }),
+      commit: applyMutationBarrier,
+      refresh,
     });
-    await refresh();
+    if (result.refreshError !== undefined) {
+      nodes.updatedAt.textContent = `急停已记录，刷新失败：${errorMessage(result.refreshError)}`;
+    }
+  } catch (err) {
+    nodes.updatedAt.textContent = `急停失败：${errorMessage(err)}`;
   } finally {
     setBusy(false);
   }
 });
 
 async function refresh() {
-  const [statusResponse, reviewsResponse] = await Promise.all([
-    fetch('/api/status', { cache: 'no-store' }),
-    fetch('/api/human-reviews', { cache: 'no-store' }),
-  ]);
-  if (!statusResponse.ok) throw new Error(`status ${statusResponse.status}`);
-  if (!reviewsResponse.ok) throw new Error(`reviews ${reviewsResponse.status}`);
-  const payload = await statusResponse.json();
-  const reviewsPayload = await reviewsResponse.json();
-  render({ ...payload, reviews: reviewsPayload.reviews || [] });
+  const sequence = ++state.refreshSequence;
+  const result = await settleSequencedRefresh(
+    sequence,
+    async () => {
+      const [statusResponse, reviewsResponse] = await Promise.all([
+        fetch('/api/status', { cache: 'no-store' }),
+        fetch('/api/human-reviews', { cache: 'no-store' }),
+      ]);
+      if (!statusResponse.ok) throw new Error(`status ${statusResponse.status}`);
+      if (!reviewsResponse.ok) throw new Error(`reviews ${reviewsResponse.status}`);
+      const payload = await statusResponse.json();
+      const reviewsPayload = await reviewsResponse.json();
+      return { ...payload, reviews: reviewsPayload.reviews || [] };
+    },
+    () => state.appliedRefreshSequence,
+  );
+  if (!result.accepted) return;
+  state.appliedRefreshSequence = sequence;
+  render(result.value);
 }
 
 function render(payload) {
@@ -97,31 +130,92 @@ function render(payload) {
   nodes.tokenCoverage.textContent = `覆盖 ${run.usage.coverage} · 未计量 ${run.usage.unmetered}`;
   nodes.navReviewCount.textContent = `${payload.reviews.length}`;
   nodes.reviewCount.textContent = `${payload.reviews.length}`;
-  nodes.humanReviews.replaceChildren(...renderReviews(payload.reviews));
+  renderReviewQueue(payload.reviews);
   nodes.timeline.replaceChildren(...payload.timeline.map(renderItem));
+}
+
+function renderReviewQueue(reviews) {
+  const validDraftKeys = new Set(reviewDecisionKeys(reviews));
+  for (const key of state.drafts.keys()) {
+    if (!validDraftKeys.has(key)) state.drafts.delete(key);
+  }
+  if (state.activeDraftKey !== undefined && !validDraftKeys.has(state.activeDraftKey)) {
+    state.activeDraftKey = undefined;
+    state.activeReviewForm = undefined;
+  }
+
+  const nextSnapshot = reviewQueueSnapshot(reviews);
+  if (nextSnapshot === state.reviewSnapshot) return;
+  state.reviewSnapshot = nextSnapshot;
+
+  const focusedKey = document.activeElement?.dataset?.reviewFocusKey;
+  state.activeReviewForm = undefined;
+  nodes.humanReviews.replaceChildren(...renderReviews(reviews));
+  if (state.activeDraftKey === undefined && focusedKey !== undefined) {
+    const nextFocused = [...nodes.humanReviews.querySelectorAll('[data-review-focus-key]')]
+      .find((element) => element.dataset.reviewFocusKey === focusedKey);
+    nextFocused?.focus();
+  }
 }
 
 function renderReviews(reviews) {
   if (reviews.length === 0) {
+    state.expandedReviews.clear();
+    state.reviewQueueInitialized = false;
     const empty = document.createElement('p');
     empty.className = 'review-empty';
     empty.textContent = '暂无待裁决项';
     return [empty];
   }
+  const expansion = reconcileReviewExpansion(
+    reviews.map((review) => review.goalId),
+    [...state.expandedReviews],
+    state.reviewQueueInitialized,
+  );
+  state.expandedReviews = new Set(expansion.expandedIds);
+  state.reviewQueueInitialized = expansion.initialized;
+  for (const draft of state.drafts.values()) state.expandedReviews.add(draft.goalId);
   return reviews.map(renderReview);
 }
 
 function renderReview(review) {
-  const article = document.createElement('article');
+  const article = document.createElement('details');
   article.className = 'review-card';
+  article.open = state.expandedReviews.has(review.goalId);
+  article.addEventListener('toggle', () => {
+    if (article.open) state.expandedReviews.add(review.goalId);
+    else state.expandedReviews.delete(review.goalId);
+  });
 
+  const summary = document.createElement('summary');
+  summary.className = 'review-summary';
+  summary.dataset.reviewFocusKey = `summary:${review.goalId}`;
+  const summaryCopy = document.createElement('div');
+  summaryCopy.className = 'review-summary-copy';
+  const eyebrow = document.createElement('span');
+  eyebrow.textContent = `${review.requirements.length} 项待判断`;
+  const title = document.createElement('h3');
+  title.textContent = review.objective;
+  summaryCopy.append(eyebrow, title);
+  const summaryMeta = document.createElement('span');
+  summaryMeta.className = 'review-summary-meta';
+  summaryMeta.textContent = `第 ${review.round} 轮`;
+  const chevron = document.createElement('span');
+  chevron.className = 'review-chevron';
+  chevron.setAttribute('aria-hidden', 'true');
+  chevron.textContent = '⌄';
+  summary.append(summaryCopy, summaryMeta, chevron);
+
+  const body = document.createElement('div');
+  body.className = 'review-card-body';
   const header = document.createElement('div');
   header.className = 'review-card-head';
-  const title = document.createElement('h3');
-  title.textContent = review.goalId;
+  const goalId = document.createElement('span');
+  goalId.className = 'review-goal-id';
+  goalId.textContent = review.goalId;
   const meta = document.createElement('span');
-  meta.textContent = `${review.verdict} · round ${review.round}`;
-  header.append(title, meta);
+  meta.textContent = review.verdict;
+  header.append(goalId, meta);
 
   const objective = document.createElement('p');
   objective.className = 'review-objective';
@@ -129,19 +223,24 @@ function renderReview(review) {
 
   const requirements = document.createElement('div');
   requirements.className = 'review-requirements';
-  for (const requirement of review.requirements) {
-    requirements.append(renderRequirement(review.goalId, requirement));
+  for (const [index, requirement] of review.requirements.entries()) {
+    requirements.append(renderRequirement(review.goalId, requirement, index + 1, article));
   }
 
-  article.append(header, objective, requirements);
+  body.append(header, objective, requirements);
+  article.append(summary, body);
   return article;
 }
 
-function renderRequirement(goalId, requirement) {
-  const draftKey = reviewDraftKey(goalId, requirement.requirementId);
+function renderRequirement(goalId, requirement, index, reviewCard) {
+  const draftKey = reviewDecisionKey(goalId, requirement.requirementId);
   const draft = state.drafts.get(draftKey);
   const row = document.createElement('div');
   row.className = 'review-requirement';
+
+  const indexLabel = document.createElement('span');
+  indexLabel.className = 'requirement-index';
+  indexLabel.textContent = `${index}`.padStart(2, '0');
 
   const copy = document.createElement('div');
   copy.className = 'review-copy';
@@ -154,8 +253,8 @@ function renderRequirement(goalId, requirement) {
   const actions = document.createElement('div');
   actions.className = 'review-actions';
   actions.append(
-    reviewButton('通过', 'approve', () => openReviewForm('approve', note.value)),
-    reviewButton('驳回', 'reject', () => openReviewForm('reject', note.value)),
+    reviewButton('通过', 'approve', `approve:${draftKey}`, () => openReviewForm('approve', note.value)),
+    reviewButton('驳回', 'reject', `reject:${draftKey}`, () => openReviewForm('reject', note.value)),
   );
 
   const form = document.createElement('form');
@@ -167,6 +266,12 @@ function renderRequirement(goalId, requirement) {
   note.rows = 2;
   note.maxLength = 1000;
   note.placeholder = '裁决备注';
+
+  const noteField = document.createElement('label');
+  noteField.className = 'review-note-field';
+  const noteLabel = document.createElement('span');
+  noteLabel.textContent = '裁决备注（必填）';
+  noteField.append(noteLabel, note);
 
   const error = document.createElement('span');
   error.className = 'review-form-error';
@@ -182,32 +287,44 @@ function renderRequirement(goalId, requirement) {
   cancel.className = 'review-cancel';
   cancel.textContent = '取消';
   formActions.append(submit, cancel);
-  form.append(note, error, formActions);
+  form.append(noteField, error, formActions);
+
+  const commitStatus = document.createElement('p');
+  commitStatus.className = 'review-commit-status';
+  commitStatus.hidden = true;
+  commitStatus.setAttribute('aria-live', 'polite');
 
   let pendingDecision = draft?.decision;
 
   function openReviewForm(decision, currentNote) {
+    if (state.activeReviewForm?.key !== draftKey) state.activeReviewForm?.close();
     pendingDecision = decision;
     state.activeDraftKey = draftKey;
-    state.drafts.set(draftKey, { decision, note: currentNote ?? '' });
+    state.drafts.set(draftKey, { goalId, decision, note: currentNote ?? '' });
+    state.expandedReviews.add(goalId);
+    reviewCard.open = true;
     applyDraftToForm(decision);
     form.hidden = false;
     error.textContent = '';
+    state.activeReviewForm = { key: draftKey, close: closeForm };
     note.focus();
   }
 
-  cancel.addEventListener('click', () => {
+  function closeForm() {
     pendingDecision = undefined;
     if (state.activeDraftKey === draftKey) state.activeDraftKey = undefined;
+    if (state.activeReviewForm?.key === draftKey) state.activeReviewForm = undefined;
     state.drafts.delete(draftKey);
     form.hidden = true;
     note.value = '';
     error.textContent = '';
-  });
+  }
+
+  cancel.addEventListener('click', closeForm);
 
   note.addEventListener('input', () => {
     if (pendingDecision === undefined) return;
-    state.drafts.set(draftKey, { decision: pendingDecision, note: note.value });
+    state.drafts.set(draftKey, { goalId, decision: pendingDecision, note: note.value });
   });
 
   form.addEventListener('submit', async (event) => {
@@ -219,7 +336,17 @@ function renderRequirement(goalId, requirement) {
       note.focus();
       return;
     }
-    await decideHumanReview(goalId, requirement.requirementId, pendingDecision, value, draftKey);
+    await decideHumanReview(goalId, requirement.requirementId, pendingDecision, value, draftKey, {
+      onCommit: () => {
+        row.dataset.reviewState = 'committed';
+        form.hidden = true;
+        commitStatus.hidden = false;
+        commitStatus.textContent = '裁决已记录，正在刷新队列';
+      },
+      onRefreshError: () => {
+        commitStatus.textContent = '裁决已记录，队列刷新失败；自动刷新会继续重试。';
+      },
+    });
   });
 
   if (draft !== undefined) {
@@ -227,6 +354,7 @@ function renderRequirement(goalId, requirement) {
     applyDraftToForm(draft.decision);
     form.hidden = false;
     if (state.activeDraftKey === draftKey) {
+      state.activeReviewForm = { key: draftKey, close: closeForm };
       window.setTimeout(() => note.focus(), 0);
     }
   }
@@ -236,40 +364,50 @@ function renderRequirement(goalId, requirement) {
     form.dataset.decision = decision;
   }
 
-  row.append(copy, actions, form);
+  row.append(indexLabel, copy, actions, form, commitStatus);
   return row;
 }
 
-function reviewButton(label, tone, onClick) {
+function reviewButton(label, tone, focusKey, onClick) {
   const button = document.createElement('button');
   button.type = 'button';
   button.className = `review-action ${tone}`;
   button.textContent = label;
+  button.dataset.reviewFocusKey = focusKey;
   button.addEventListener('click', onClick);
   return button;
 }
 
-function reviewDraftKey(goalId, requirementId) {
-  return `${goalId}:${requirementId}`;
-}
-
-async function decideHumanReview(goalId, requirementId, decision, note, draftKey) {
+async function decideHumanReview(goalId, requirementId, decision, note, draftKey, lifecycle) {
   if (state.busy) return;
   setBusy(true);
   try {
-    const response = await fetch(`/api/human-reviews/${encodeURIComponent(goalId)}/decide`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-jarvis-gui': '1' },
-      body: JSON.stringify({
-        decisions: [{ requirementId, decision, note }],
+    const result = await commitMutationThenRefresh({
+      request: () => fetch(`/api/human-reviews/${encodeURIComponent(goalId)}/decide`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-jarvis-gui': '1' },
+        body: JSON.stringify({
+          decisions: [{ requirementId, decision, note }],
+        }),
       }),
+      commit: () => {
+        if (state.activeReviewForm?.key === draftKey) state.activeReviewForm.close();
+        else {
+          state.drafts.delete(draftKey);
+          if (state.activeDraftKey === draftKey) state.activeDraftKey = undefined;
+        }
+        applyMutationBarrier();
+        state.reviewSnapshot = undefined;
+        lifecycle.onCommit();
+      },
+      refresh,
     });
-    if (!response.ok) throw new Error(`review ${response.status}`);
-    state.drafts.delete(draftKey);
-    if (state.activeDraftKey === draftKey) state.activeDraftKey = undefined;
-    await refresh();
+    if (result.refreshError !== undefined) {
+      lifecycle.onRefreshError();
+      nodes.updatedAt.textContent = `裁决已记录，刷新失败：${errorMessage(result.refreshError)}`;
+    }
   } catch (err) {
-    nodes.updatedAt.textContent = err instanceof Error ? err.message : String(err);
+    nodes.updatedAt.textContent = `裁决失败：${errorMessage(err)}`;
   } finally {
     setBusy(false);
   }
@@ -279,8 +417,19 @@ function setBusy(value) {
   state.busy = value;
   nodes.stopButton.disabled = value;
   for (const control of document.querySelectorAll('.review-action, .review-note, .review-submit, .review-cancel')) {
-    control.disabled = value;
+    control.disabled = value || control.closest('[data-review-state="committed"]') !== null;
   }
+}
+
+function errorMessage(value) {
+  return value instanceof Error ? value.message : String(value);
+}
+
+function applyMutationBarrier() {
+  const next = advanceMutationBarrier(state.refreshSequence, state.appliedRefreshSequence);
+  state.refreshSequence = next.refreshSequence;
+  state.appliedRefreshSequence = next.appliedRefreshSequence;
+  return next.barrier;
 }
 
 function renderItem(item) {

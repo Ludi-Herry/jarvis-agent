@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { buildRunPresentation } from '../../../src/surfaces/gui/assets/presentation.js';
+import {
+  advanceMutationBarrier,
+  buildRunPresentation,
+  commitMutationThenRefresh,
+  reconcileReviewExpansion,
+  reviewDecisionKey,
+  reviewDecisionKeys,
+  reviewQueueSnapshot,
+  settleSequencedRefresh,
+  shouldApplyRefresh,
+} from '../../../src/surfaces/gui/assets/presentation.js';
 
 const report = (overrides = {}) => ({
   status: {
@@ -94,5 +104,143 @@ describe('G2.2 run presentation', () => {
     expect(view.goal.title).toBe('当前没有运行中的目标');
     expect(view.state).toEqual({ label: '空闲', tone: 'neutral' });
     expect(view.budget).toMatchObject({ available: false, value: 0, max: 1 });
+  });
+});
+
+describe('G2.3 review expansion projection', () => {
+  it('opens only the first goal on initial render', () => {
+    expect(reconcileReviewExpansion(['g1', 'g2'], [], false)).toEqual({
+      expandedIds: ['g1'],
+      initialized: true,
+    });
+  });
+
+  it('keeps an intentionally collapsed queue collapsed across polling', () => {
+    expect(reconcileReviewExpansion(['g1', 'g2'], [], true)).toEqual({
+      expandedIds: [],
+      initialized: true,
+    });
+  });
+
+  it('prunes resolved goals and resets after the queue becomes empty', () => {
+    expect(reconcileReviewExpansion(['g2'], ['g1', 'g2'], true)).toEqual({
+      expandedIds: ['g2'],
+      initialized: true,
+    });
+    expect(reconcileReviewExpansion([], ['g2'], true)).toEqual({
+      expandedIds: [],
+      initialized: false,
+    });
+  });
+
+  it('uses collision-safe decision keys and prunes against current requirements', () => {
+    expect(reviewDecisionKey('a:b', 'c')).not.toBe(reviewDecisionKey('a', 'b:c'));
+    expect(reviewDecisionKeys([
+      { goalId: 'g1', requirements: [{ requirementId: 'r1' }, { requirementId: 'r2' }] },
+    ])).toEqual([
+      reviewDecisionKey('g1', 'r1'),
+      reviewDecisionKey('g1', 'r2'),
+    ]);
+  });
+
+  it('changes the queue snapshot when authoritative review data changes', () => {
+    const base = [{ goalId: 'g1', round: 1, requirements: [{ requirementId: 'r1', text: 'Check it' }] }];
+
+    expect(reviewQueueSnapshot(base)).toBe(reviewQueueSnapshot(JSON.parse(JSON.stringify(base))));
+    expect(reviewQueueSnapshot(base)).not.toBe(reviewQueueSnapshot([
+      ...base,
+      { goalId: 'g2', round: 1, requirements: [{ requirementId: 'r2', text: 'Check more' }] },
+    ]));
+    expect(reviewQueueSnapshot(base)).not.toBe(reviewQueueSnapshot([
+      { goalId: 'g1', round: 2, requirements: [{ requirementId: 'r1', text: 'Check it' }] },
+    ]));
+  });
+
+  it('rejects refresh responses older than the last applied sequence', () => {
+    expect(shouldApplyRefresh(4, 5)).toBe(false);
+    expect(shouldApplyRefresh(5, 5)).toBe(true);
+    expect(shouldApplyRefresh(6, 5)).toBe(true);
+  });
+
+  it('invalidates an in-flight poll even when the post-mutation refresh fails', () => {
+    const inFlightPoll = 5;
+    const barrier = advanceMutationBarrier(inFlightPoll, 4);
+
+    expect(barrier).toEqual({
+      barrier: 6,
+      refreshSequence: 6,
+      appliedRefreshSequence: 6,
+    });
+    expect(shouldApplyRefresh(inFlightPoll, barrier.appliedRefreshSequence)).toBe(false);
+    expect(shouldApplyRefresh(7, barrier.appliedRefreshSequence)).toBe(true);
+  });
+
+  it('never moves an applied refresh watermark backwards', () => {
+    expect(advanceMutationBarrier(5, 9)).toEqual({
+      barrier: 10,
+      refreshSequence: 10,
+      appliedRefreshSequence: 10,
+    });
+  });
+
+  it('commits exactly once before a failed refresh and reports the refresh failure', async () => {
+    const calls = [];
+    const refreshError = new Error('status unavailable');
+    let sequencing = { refreshSequence: 5, appliedRefreshSequence: 4 };
+    const result = await commitMutationThenRefresh({
+      request: async () => {
+        calls.push('request');
+        return { ok: true, status: 200 };
+      },
+      commit: () => {
+        calls.push('commit');
+        sequencing = advanceMutationBarrier(sequencing.refreshSequence, sequencing.appliedRefreshSequence);
+      },
+      refresh: async () => {
+        calls.push('refresh');
+        throw refreshError;
+      },
+    });
+
+    expect(calls).toEqual(['request', 'commit', 'refresh']);
+    expect(result).toEqual({ refreshError });
+    expect(shouldApplyRefresh(5, sequencing.appliedRefreshSequence)).toBe(false);
+  });
+
+  it('does not commit or refresh after a rejected decision request', async () => {
+    const calls = [];
+    const sequencing = { refreshSequence: 5, appliedRefreshSequence: 4 };
+
+    await expect(commitMutationThenRefresh({
+      request: async () => ({ ok: false, status: 409 }),
+      commit: () => calls.push('commit'),
+      refresh: async () => calls.push('refresh'),
+    })).rejects.toThrow('review 409');
+    expect(calls).toEqual([]);
+    expect(sequencing).toEqual({ refreshSequence: 5, appliedRefreshSequence: 4 });
+  });
+
+  it('silences a stale refresh error raised after a mutation barrier', async () => {
+    let appliedSequence = 4;
+    const result = await settleSequencedRefresh(
+      5,
+      async () => {
+        appliedSequence = 6;
+        throw new Error('old poll failed');
+      },
+      () => appliedSequence,
+    );
+
+    expect(result).toEqual({ accepted: false });
+  });
+
+  it('keeps a current refresh error visible', async () => {
+    await expect(settleSequencedRefresh(
+      6,
+      async () => {
+        throw new Error('current poll failed');
+      },
+      () => 6,
+    )).rejects.toThrow('current poll failed');
   });
 });

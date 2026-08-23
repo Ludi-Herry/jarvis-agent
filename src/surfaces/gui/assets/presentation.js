@@ -47,6 +47,66 @@ export function buildRunPresentation(report, stop, reviewCount) {
   };
 }
 
+export function reconcileReviewExpansion(reviewIds, expandedIds, initialized) {
+  if (reviewIds.length === 0) {
+    return { expandedIds: [], initialized: false };
+  }
+  const available = new Set(reviewIds);
+  const next = expandedIds.filter((id) => available.has(id));
+  if (!initialized && next.length === 0) next.push(reviewIds[0]);
+  return { expandedIds: next, initialized: true };
+}
+
+export function reviewDecisionKey(goalId, requirementId) {
+  return JSON.stringify([goalId, requirementId]);
+}
+
+export function reviewQueueSnapshot(reviews) {
+  return JSON.stringify(reviews);
+}
+
+export function reviewDecisionKeys(reviews) {
+  return reviews.flatMap((review) => review.requirements.map((requirement) => (
+    reviewDecisionKey(review.goalId, requirement.requirementId)
+  )));
+}
+
+export function shouldApplyRefresh(sequence, appliedSequence) {
+  return sequence >= appliedSequence;
+}
+
+export function advanceMutationBarrier(refreshSequence, appliedRefreshSequence) {
+  const barrier = Math.max(refreshSequence, appliedRefreshSequence) + 1;
+  return {
+    barrier,
+    refreshSequence: barrier,
+    appliedRefreshSequence: barrier,
+  };
+}
+
+export async function settleSequencedRefresh(sequence, load, getAppliedSequence) {
+  try {
+    const value = await load();
+    if (!shouldApplyRefresh(sequence, getAppliedSequence())) return { accepted: false };
+    return { accepted: true, value };
+  } catch (error) {
+    if (!shouldApplyRefresh(sequence, getAppliedSequence())) return { accepted: false };
+    throw error;
+  }
+}
+
+export async function commitMutationThenRefresh({ request, commit, refresh }) {
+  const response = await request();
+  if (!response.ok) throw new Error(`review ${response.status}`);
+  commit();
+  try {
+    await refresh();
+    return { refreshError: undefined };
+  } catch (refreshError) {
+    return { refreshError };
+  }
+}
+
 function buildAttention(stop, reviewCount, effectiveState) {
   if (stop.unreadable) {
     return { title: '需要确认', label: '急停状态无法读取', tone: 'danger', href: '#activity-log', action: '查看记录' };
