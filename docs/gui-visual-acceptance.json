@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "acceptanceId": "g2.2-g2.4-2026-08-23",
+  "acceptedAt": "2026-08-23",
+  "reviewer": "Ludi",
+  "surface": "Codex Desktop request_user_input",
+  "decision": "accepted",
+  "scope": ["G2.2", "G2.3", "G2.4"],
+  "implementationCommits": {
+    "G2.2": "9cfc26a",
+    "G2.3": "8dab2df",
+    "G2.4": "09ca030"
+  },
+  "screenshots": {
+    "G2.2": "jarvis-g2-2-overview.png",
+    "G2.3": "jarvis-g2-3-review-queue.png",
+    "G2.4": "jarvis-g2-4-timeline.png"
+  },
+  "localUrl": "http://127.0.0.1:4317/",
+  "result": "Approved as the baseline for subsequent GUI work."
+}
