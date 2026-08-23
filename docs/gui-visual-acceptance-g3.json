@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "acceptanceId": "g3-2026-08-23",
+  "acceptedAt": "2026-08-23",
+  "reviewer": "Ludi",
+  "surface": "Codex Desktop chat",
+  "decision": "accepted",
+  "scope": ["G3"],
+  "implementationCommits": {
+    "G3": "fe187a4"
+  },
+  "screenshotEvidence": {
+    "surface": "Codex Desktop in-app Browser",
+    "status": "delivered-in-task"
+  },
+  "localUrl": "http://127.0.0.1:4317/",
+  "result": "Approved as the baseline for subsequent GUI work."
+}
