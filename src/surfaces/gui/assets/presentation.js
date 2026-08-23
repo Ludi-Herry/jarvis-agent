@@ -107,6 +107,33 @@ export async function commitMutationThenRefresh({ request, commit, refresh }) {
   }
 }
 
+export function buildTimelineProjection(items, visibleEventLimit = 12) {
+  const snapshots = [];
+  const events = [];
+  for (const item of items) {
+    if (item.id.startsWith('activity-')) events.push(item);
+    else snapshots.push(item);
+  }
+  const limit = Math.max(0, Math.floor(visibleEventLimit));
+  return {
+    snapshots,
+    events: {
+      visible: events.slice(0, limit),
+      hidden: events.slice(limit),
+      total: events.length,
+    },
+  };
+}
+
+export function timelineProjectionSnapshot(items) {
+  return JSON.stringify(items);
+}
+
+export function reconcileExpandedTimeline(itemIds, expandedIds) {
+  const available = new Set(itemIds);
+  return expandedIds.filter((id) => available.has(id));
+}
+
 function buildAttention(stop, reviewCount, effectiveState) {
   if (stop.unreadable) {
     return { title: '需要确认', label: '急停状态无法读取', tone: 'danger', href: '#activity-log', action: '查看记录' };

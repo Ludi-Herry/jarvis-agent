@@ -2,13 +2,16 @@ import { describe, expect, it } from 'vitest';
 import {
   advanceMutationBarrier,
   buildRunPresentation,
+  buildTimelineProjection,
   commitMutationThenRefresh,
   reconcileReviewExpansion,
+  reconcileExpandedTimeline,
   reviewDecisionKey,
   reviewDecisionKeys,
   reviewQueueSnapshot,
   settleSequencedRefresh,
   shouldApplyRefresh,
+  timelineProjectionSnapshot,
 } from '../../../src/surfaces/gui/assets/presentation.js';
 
 const report = (overrides = {}) => ({
@@ -35,6 +38,44 @@ const report = (overrides = {}) => ({
     coverage: 'partial',
   },
   ...overrides,
+});
+
+describe('G2.4 timeline projection', () => {
+  const items = [
+    { id: 'goal-g1', kind: 'goal', title: 'Goal g1' },
+    { id: 'activity-goal:1', kind: 'goal', title: 'Goal started' },
+    { id: 'activity-goal:2', kind: 'goal', title: 'Round finished' },
+    { id: 'authority', kind: 'authority', title: '只读观测' },
+  ];
+
+  it('separates synthesized snapshots from persisted activity without losing order', () => {
+    const projection = buildTimelineProjection(items, 1);
+
+    expect(projection.snapshots.map((item) => item.id)).toEqual(['goal-g1', 'authority']);
+    expect(projection.events.visible.map((item) => item.id)).toEqual(['activity-goal:1']);
+    expect(projection.events.hidden.map((item) => item.id)).toEqual(['activity-goal:2']);
+    expect(projection.events.total).toBe(2);
+    expect([
+      ...projection.snapshots,
+      ...projection.events.visible,
+      ...projection.events.hidden,
+    ]).toHaveLength(items.length);
+  });
+
+  it('keeps an empty persisted stream explicit and supports a zero-item preview', () => {
+    expect(buildTimelineProjection(items.filter((item) => !item.id.startsWith('activity-')), 12).events)
+      .toEqual({ visible: [], hidden: [], total: 0 });
+    expect(buildTimelineProjection(items, 0).events.visible).toEqual([]);
+  });
+
+  it('preserves disclosure state only for timeline items that still exist', () => {
+    expect(reconcileExpandedTimeline(['a', 'c'], ['a', 'b'])).toEqual(['a']);
+  });
+
+  it('changes the projection snapshot only when timeline facts or summaries change', () => {
+    expect(timelineProjectionSnapshot(items)).toBe(timelineProjectionSnapshot(JSON.parse(JSON.stringify(items))));
+    expect(timelineProjectionSnapshot(items)).not.toBe(timelineProjectionSnapshot(items.slice(1)));
+  });
 });
 
 describe('G2.2 run presentation', () => {

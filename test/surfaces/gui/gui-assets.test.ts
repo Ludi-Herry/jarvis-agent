@@ -34,6 +34,8 @@ describe('G2.1 GUI shell assets', () => {
     expect(html).toContain('role="status" aria-live="polite" aria-atomic="true"');
     expect(html).toContain('aria-labelledby="budget-label budget-caption"');
     expect(html).toContain('按目标折叠，先处理影响当前运行的判断。');
+    expect(html).toContain('显示投影与持久化事实分开');
+    expect(html).toContain('折叠只影响界面密度，JSONL 记录保持完整。');
   });
 
   it('uses the approved Jarvis warm-paper tokens without wide ghost-card shadows', async () => {
@@ -89,5 +91,10 @@ describe('G2.1 GUI shell assets', () => {
     expect(js).toContain('裁决已记录，队列刷新失败；自动刷新会继续重试。');
     expect(js).toContain("document.createElement('details')");
     expect(js).toContain("state.expandedReviews.add(goalId)");
+    expect(js).toContain("title: '当前快照'");
+    expect(js).toContain("title: '持久化事件'");
+    expect(js).toContain('timelineProjectionSnapshot(items)');
+    expect(js).toContain("archive.open ? '收起' : '展开'");
+    expect(js).toContain('if (item.at) time.dateTime = item.at');
   });
 });

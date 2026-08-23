@@ -3,12 +3,15 @@
 import {
   advanceMutationBarrier,
   buildRunPresentation,
+  buildTimelineProjection,
   commitMutationThenRefresh,
   reconcileReviewExpansion,
+  reconcileExpandedTimeline,
   reviewDecisionKey,
   reviewDecisionKeys,
   reviewQueueSnapshot,
   settleSequencedRefresh,
+  timelineProjectionSnapshot,
 } from '/presentation.js';
 
 const state = {
@@ -21,8 +24,26 @@ const state = {
   activeReviewForm: undefined,
   refreshSequence: 0,
   appliedRefreshSequence: 0,
+  timelineSnapshot: undefined,
+  expandedTimeline: new Set(),
+  timelineArchiveOpen: false,
   timer: undefined,
 };
+
+const TIMELINE_KIND_LABELS = Object.freeze({
+  approval: '审批',
+  authority: '权限',
+  budget: '预算',
+  contract: '合同',
+  control: '控制',
+  cron: '定时',
+  'cron-daemon': '守护进程',
+  goal: 'Goal',
+  loop: 'Loop',
+  sandbox: '沙箱',
+  session: '会话',
+  worktree: '工作区',
+});
 
 const nodes = {
   authority: document.querySelector('#authority'),
@@ -131,7 +152,87 @@ function render(payload) {
   nodes.navReviewCount.textContent = `${payload.reviews.length}`;
   nodes.reviewCount.textContent = `${payload.reviews.length}`;
   renderReviewQueue(payload.reviews);
-  nodes.timeline.replaceChildren(...payload.timeline.map(renderItem));
+  renderTimeline(payload.timeline);
+}
+
+function renderTimeline(items) {
+  const nextSnapshot = timelineProjectionSnapshot(items);
+  if (nextSnapshot === state.timelineSnapshot) return;
+  state.timelineSnapshot = nextSnapshot;
+
+  const focusedKey = document.activeElement?.dataset?.timelineFocusKey;
+  state.expandedTimeline = new Set(reconcileExpandedTimeline(
+    items.map((item) => item.id),
+    [...state.expandedTimeline],
+  ));
+  const projection = buildTimelineProjection(items);
+  const sections = [
+    renderTimelineGroup({
+      title: '当前快照',
+      description: '由现有记录聚合出的状态投影，仅用于观察。',
+      source: 'snapshot',
+      items: projection.snapshots,
+    }),
+    renderTimelineGroup({
+      title: '持久化事件',
+      description: '来自 activity.recent 对应的 JSONL 事实。',
+      source: 'persistent',
+      items: projection.events.visible,
+      hiddenItems: projection.events.hidden,
+      total: projection.events.total,
+    }),
+  ];
+  nodes.timeline.replaceChildren(...sections);
+  if (focusedKey !== undefined) {
+    const nextFocused = [...nodes.timeline.querySelectorAll('[data-timeline-focus-key]')]
+      .find((element) => element.dataset.timelineFocusKey === focusedKey);
+    nextFocused?.focus();
+  }
+}
+
+function renderTimelineGroup({ title, description, source, items, hiddenItems = [], total = items.length }) {
+  const section = document.createElement('section');
+  section.className = 'timeline-group';
+  section.dataset.source = source;
+
+  const heading = document.createElement('div');
+  heading.className = 'timeline-group-heading';
+  const copy = document.createElement('div');
+  const groupTitle = document.createElement('h3');
+  groupTitle.textContent = title;
+  const groupDescription = document.createElement('p');
+  groupDescription.textContent = description;
+  copy.append(groupTitle, groupDescription);
+  const count = document.createElement('strong');
+  count.textContent = `${total}`;
+  heading.append(copy, count);
+
+  const list = document.createElement('ol');
+  list.className = 'timeline-list';
+  list.append(...items.map(renderItem));
+  section.append(heading, list);
+
+  if (hiddenItems.length > 0) {
+    const archive = document.createElement('details');
+    archive.className = 'timeline-archive';
+    archive.open = state.timelineArchiveOpen;
+    const archiveSummary = document.createElement('summary');
+    const updateArchiveLabel = () => {
+      archiveSummary.textContent = `${archive.open ? '收起' : '展开'}其余 ${hiddenItems.length} 条持久化事件`;
+    };
+    archive.addEventListener('toggle', () => {
+      state.timelineArchiveOpen = archive.open;
+      updateArchiveLabel();
+    });
+    updateArchiveLabel();
+    const archiveList = document.createElement('ol');
+    archiveList.className = 'timeline-list timeline-list-archive';
+    archiveList.append(...hiddenItems.map(renderItem));
+    archive.append(archiveSummary, archiveList);
+    section.append(archive);
+  }
+
+  return section;
 }
 
 function renderReviewQueue(reviews) {
@@ -434,25 +535,50 @@ function applyMutationBarrier() {
 
 function renderItem(item) {
   const li = document.createElement('li');
-  li.className = 'timeline-item';
-  li.dataset.tone = item.tone;
+  const disclosure = document.createElement('details');
+  disclosure.className = 'timeline-item';
+  disclosure.dataset.tone = item.tone;
+  disclosure.open = state.expandedTimeline.has(item.id);
+  disclosure.addEventListener('toggle', () => {
+    if (disclosure.open) state.expandedTimeline.add(item.id);
+    else state.expandedTimeline.delete(item.id);
+  });
+
+  const summary = document.createElement('summary');
+  summary.className = 'timeline-summary';
+  summary.dataset.timelineFocusKey = item.id;
 
   const dot = document.createElement('span');
   dot.className = 'timeline-dot';
   dot.setAttribute('aria-hidden', 'true');
 
-  const main = document.createElement('div');
-  main.className = 'timeline-main';
+  const kind = document.createElement('span');
+  kind.className = 'timeline-kind';
+  kind.textContent = TIMELINE_KIND_LABELS[item.kind] || item.kind;
 
-  const head = document.createElement('div');
-  head.className = 'timeline-head';
+  const summaryCopy = document.createElement('div');
+  summaryCopy.className = 'timeline-summary-copy';
   const title = document.createElement('h3');
   title.className = 'timeline-title';
   title.textContent = item.title;
+  const preview = document.createElement('span');
+  preview.className = 'timeline-preview';
+  preview.textContent = item.detail;
+  summaryCopy.append(title, preview);
+
   const time = document.createElement('time');
   time.className = 'timeline-time';
-  time.textContent = item.at ? shortTime(item.at) : '-';
-  head.append(title, time);
+  time.textContent = item.at ? timelineTime(item.at) : '快照';
+  if (item.at) time.dateTime = item.at;
+
+  const chevron = document.createElement('span');
+  chevron.className = 'timeline-chevron';
+  chevron.setAttribute('aria-hidden', 'true');
+  chevron.textContent = '⌄';
+  summary.append(dot, kind, summaryCopy, time, chevron);
+
+  const body = document.createElement('div');
+  body.className = 'timeline-body';
 
   const detail = document.createElement('p');
   detail.className = 'timeline-detail';
@@ -466,9 +592,21 @@ function renderItem(item) {
     meta.append(chip);
   }
 
-  main.append(head, detail, meta);
-  li.append(dot, main);
+  body.append(detail, meta);
+  disclosure.append(summary, body);
+  li.append(disclosure);
   return li;
+}
+
+function timelineTime(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date);
 }
 
 function shortTime(value) {

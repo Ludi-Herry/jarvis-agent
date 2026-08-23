@@ -126,10 +126,11 @@
 
         <section id="activity-log" class="activity-section" aria-label="Activity log">
           <div class="activity-heading">
-            <span class="section-kicker">持久化记录的显示投影</span>
+            <span class="section-kicker">显示投影与持久化事实分开</span>
             <h2>活动记录</h2>
+            <p>折叠只影响界面密度，JSONL 记录保持完整。</p>
           </div>
-          <ol id="timeline" class="timeline" aria-live="polite"></ol>
+          <div id="timeline" class="timeline" aria-live="polite"></div>
         </section>
       </section>
 
