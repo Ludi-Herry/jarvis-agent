@@ -16,6 +16,7 @@
 - Preserved filesystem failure identity through the root `--cwd`, latest-session discovery, and resolver-to-read window: only `ENOENT` maps to not found, while permission and I/O failures remain visible at exit 7.
 - Halted uncertain tool and child-agent executions as durable unknown effects; tightened v2 logical-execution/projection and compaction-intent validation; parked finalize when receipt coverage is legacy or pending.
 - Extended observation with Session format, pending tool effects, and v2 header/version/sequence integrity diagnostics.
+- Completed the v0.3 G1-G4 GUI slices: additive emergency-stop observation, the warm-paper three-region workspace, CLI-equivalent human-review detail/history, bounded read-only approval history, explicit goal/loop timeline filters, and persisted `goal_round` budget progress. Ludi visual acceptance and independent browser verification are recorded in `docs/handoff-next.md`.
 - Recorded the GPT-5.6 Sol Pro trust review, implementation corrections, narrowed v0.1 route, and a bounded ZCode/GLM-5.3 sessions handoff.
 - Removed the earlier temporary R0.5 implementation notes and the unreferenced root placeholder after explicit cleanup approval.
 

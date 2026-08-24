@@ -86,7 +86,7 @@ Built-in file write 采用显式并发前置条件：`read` 会返回 opaque `fv
 | checkpoints / 回退 | `jarvis checkpoints list|show`、`jarvis rewind` | 只读检查独立 audit；conversation rewind 创建新 Session，`--files` 经预览与一次性确认恢复文件 |
 | A0 / 冻结评测 | `jarvis a0 run\|report` | 对冻结 corpus 每案跑 3 次 verifier 调用并写不可变 observations+manifest；`report` 重放并校验 provenance，全部 observation-only |
 | status / usage / audit | `jarvis status` | 只读汇总 JSONL 和 sandbox audit evidence，不给完成授权 |
-| GUI / timeline / stop / review | `npm run gui` | 本地观测面板，复用 observe contract，提供急停控制和 human-review 裁决 |
+| GUI / observe / stop / review | `npm run gui` | 本地观测面板：运行总览、审批/裁决历史、goal/loop 筛选、round 预算进度、急停与 human-review 裁决 |
 
 ```bash
 npm run jarvis -- run "inspect the current changes" # 统一入口；省略 prompt 时进入普通 REPL
@@ -116,7 +116,7 @@ npm run loop:finalize -- --loop <id> --cleanup # 交互式清理：必须输入 
 npm run cron -- --cron-map <trusted-json> # cron 单次扫描：可信 cwd 外计划文件，到期任务触发普通 loop；task 必须 unattended:true；带同工作区扫描锁 + stale 回收 + task 前心跳；记录 data/cron/loop-cron.jsonl，不常驻
 npm run cron:daemon -- --cron-map <trusted-json> [--poll-ms <n>] # cron 前台 daemon：可信 cwd 外计划文件；默认 poll=60000；daemon lock + scan lock；写 data/cron/loop-cron-daemon.jsonl；SIGINT/SIGTERM 释放锁退出；不自动 resume/merge/cleanup，不后台 fork
 npm run observe     # 只读观测：汇总 status / usage / audit / integrity；显示 Session 格式与 pending tool effects；坏 JSONL 返回 partial + exit 7；--json 输出 schemaVersion=1 给 GUI/脚本
-npm run gui         # 本地 GUI 第一版：http://127.0.0.1:4317 起，时间线 + 急停键 + human-review 裁决；若端口占用会自动向后找可用端口
+npm run gui         # 本地 GUI：http://127.0.0.1:4317 起，运行总览 + 审批/裁决历史 + goal/loop 筛选 + round 进度 + 急停/人工裁决
 npm run typecheck   # tsc --noEmit
 npm test            # vitest（测试数与平台专属 skip 以 docs/handoff-next.md 最近一轮证据为准）
 npm run build       # tsc 产出到 dist/
@@ -197,9 +197,11 @@ Attended `goal` and `loop` runs emit `approval_request` / `approval_result` even
 
 Human-routed verifier requirements park as `cannotVerify` until a person reviews them in the GUI. The capability/API path writes a separate `data/human-reviews/<goalId>.jsonl` audit record, appends a new goal round with the merged verifier report, and calls `decideVerdict` to produce the final verdict. The GUI uses an inline review-note form; the built-in Browser verification confirmed the audit write and final `complete / verified` result, so R5 is closed.
 
-### GUI first slice
+### GUI v0.3 surface
 
-`npm run gui` starts a local HTTP UI on `127.0.0.1:4317` by default. It serves a compact timeline built from the same `loadWorkspaceObservation` contract behind `npm run observe -- --json`, including `activity.recent` event rows and aggregate status cards, plus a visible emergency stop control and a human-review queue for parked verifier requirements.
+`npm run gui` starts a local HTTP UI on `127.0.0.1:4317` by default. It uses the same `loadWorkspaceObservation` contract behind `npm run observe -- --json` and presents an attention-first run overview, a human-review queue with decided history, read-only approval history, and a timeline split between persisted `activity.recent` facts and aggregate display projections.
+
+The timeline filters by explicit goal/loop scope carried in the observation contract. `goal_round` entries show the persisted round turns/tokens, cumulative usage, and available round/turn/token ceilings; legacy missing measurements remain `unrecorded`. `GET /api/approval-history` reads `data/approvals/*.jsonl` with bounded directory/file/byte/record limits and returns partial coverage warnings when a log cannot be read safely. Pairing request/result rows is a display projection and does not rewrite audit JSONL.
 
 The GUI server only accepts loopback `Host` headers (`127.0.0.1`, `localhost`, `[::1]`, with optional port). GUI control POSTs (`/api/emergency-stop` and `/api/human-reviews/:goalId/decide`) require `x-jarvis-gui: 1`, and binding `--host` to a non-loopback address prints an unauthenticated-control warning.
 
