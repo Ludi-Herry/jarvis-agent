@@ -1,6 +1,6 @@
 # v0.3 GUI 范围规划：晴天模式外壳打磨
 
-> 状态（2026-08-22）：规划已获 Ludi 拍板（GUI 与 CLI 收尾证据并行开工）。执行方为 Codex；Ludi 持设计权与逐节验收权。同日并入 OpenHanako 增量裁决：竞品参考、锚点批注验收格式、GA 故障注入切片与 post-real-use 候选登记（§3，依据 `docs/analysis-openhanako-increments.md`）。
+> 状态（2026-08-24）：G1、GA、G2.1–G2.4、G3、G4 已全部交付并通过 Ludi 视觉验收 + ZCode 独立浏览器验证（逐片记录见 `docs/handoff-next.md`）。G0 走查实际被 G2 设计提案的逐节审批吸收，未单独成文。唯一悬置项为 G5（GUI 审批中继，默认不开）：与 v0.1 真实任务实证（Recall A/B + 10–20 真实任务）联动决策——真实 attended 任务跑起来后，终端审批若成为实际打断点再开。
 > 定位继承：GUI-first 时代留下的 R6（UI/UX 打磨 + Ludi 逐节验收）由 v0.3 承接，目标口径不变——「以 Ludi 的标准把 GUI 从晴天模式外壳打磨到可日常使用」（见 `docs/handoff-release.md`）。
 > 本文是执行依据；与 `AGENTS.md` 或蓝图冲突时以那边为准并停下来问。
 
