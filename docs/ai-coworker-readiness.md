@@ -1,6 +1,6 @@
 # AI coworker readiness
 
-> Status: direction note only. This document records what the Claude Tag / Glean independent-agent pattern means for Jarvis-Agent. It is not part of the current implementation plan.
+> Type: dated product-radar note. It records what the Claude Tag / Glean independent-agent pattern means for Jarvis-Agent and defines reopening triggers; it does not authorize implementation.
 
 ## Conclusion
 

@@ -1,5 +1,7 @@
 # 持久化段方案 · append-only JSONL + 断点续跑
 
+> 类型：历史实现计划。本文记录早期持久化段的设计；落地快照见 `docs/handoff-persistence.md`，Session v2 当前合同见 `src/runtime/session/session-store.ts`。
+
 > Phase B 之后的「持久化段」（phase-B-plan §1 决策 5 / §6 推迟项，到此段拍定）。
 > 状态（2026-06-28）：Phase B 全完成（B1–B6 ✅）。本段已绿灯，**一项定调决策**：shadow-git 本段不做，推迟到 Phase D 无人值守长跑真需要自动回滚时再上；本段只做 **append-only JSONL 会话日志 + 断点续跑**（用户拍板）。
 

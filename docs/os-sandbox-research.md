@@ -1,6 +1,6 @@
 # OS sandbox research
 
-> Snapshot: 2026-07-02. Scope: unblock the two deferred items in `docs/handoff-next.md`: #2 objective routing and #6 verifier exec.
+> Type: research snapshot plus implemented-boundary record, dated 2026-07-02. It preserves the evidence behind objective routing and verifier execution; current guarantees must be cross-checked against the referenced source symbols and tests.
 > Update 2026-07-03: minimal builder-facing `sandboxed_check` and `browser_smoke(static-dist)` paths now run fixed feedback checks in the OS sandbox and return output to the builder. They are self-iteration feedback channels with no verdict or completion authority.
 
 ## Decision summary

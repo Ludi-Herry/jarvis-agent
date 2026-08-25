@@ -241,8 +241,8 @@ Examples:
     'jarvis status --data-dir <path>',
   ], forward);
   addPassthrough(program, 'finalize', 'report, merge, or clean up a completed loop', 'loop-finalize-cli', [
-    'jarvis finalize <loop-id>',
-    'jarvis finalize <loop-id> --merge',
+    'jarvis finalize --loop <loop-id>',
+    'jarvis finalize --loop <loop-id> --merge',
   ], forward);
   addPassthrough(program, 'shadow', 'inspect or restore ShadowGit snapshots', 'shadow-cli', [
     'jarvis shadow log 10',

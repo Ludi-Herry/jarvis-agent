@@ -1,15 +1,15 @@
-# GPT-5.6 Sol Pro CLI 可信性复核：采纳、修正与落地结果
+# GPT-5.6 Sol Pro CLI 可信性复核：采纳、修正与落地结果（2026-08-15）
 
-> 状态：2026-08-15 收口。外部复核基于打包材料完成，无法直接读取仓库或运行测试；本文用当前源码与本地验证结果校准其建议。原始回答保存在本机 Codex attachment，未全文复制进仓库。
+> 类型：日期化决策记录。外部复核基于打包材料完成，无法直接读取仓库或运行测试；本文记录 2026-08-15 的本地校准、采纳边界和后续落地顺序。该日期之后的实现状态见 [Changelog](../CHANGELOG.md)，仍开放的人工门槛见 [v0.1 收口手册](TODO-v01-evidence.md)。原始回答保存在本机 Codex attachment，未全文复制进仓库。
 
 ## 1. 最终裁决
 
-| 问题 | 当前裁决 | 依据 |
+| 问题 | 截至 2026-08-15 的裁决 | 依据 |
 |---|---|---|
 | DeepSeek Harness、Cordis、Pi、dsh-slice 的采用边界 | 有条件 GO | 只吸收轨迹、Recall、Preset 心智和评测方法；不接入外部 runtime |
 | R0 / R0.5 可信性实现 | GO | R0.5 独立终审第三轮 P0=0、P1=0、P2=0；sessions 与动态恢复独立提交门终审 P0=0、P1=0、P2=0、P3=1；全量检查为 119 files / 1334 passed / 2 skipped |
-| 直接发布 v0.1 CLI beta | NO-GO | 机器事件协议、A0 冻结 corpus、当前 Session Recall 与 typed config 已闭环；A0 runner/真实运行、Recall A/B、完整 Windows 契约与真实任务证据仍未闭环 |
-| 全屏 TUI、checkpoint/rewind | v0.2 基础切片已落地 | checkpoint/rewind、纯 reducer、action audit 与可靠 fallback 已通过本地门禁；全屏 renderer 仍待独立切片 |
+| 直接发布 v0.1 CLI beta | NO-GO | 当时仍缺 A0 真实运行、Recall A/B、Windows 契约与真实任务证据；其中只有 Recall A/B 和真实任务证据仍在当前人工门槛内 |
+| 全屏 TUI、checkpoint/rewind | v0.2 基础切片已落地 | 当时已完成 checkpoint/rewind、纯 reducer、action audit 与可靠 fallback；renderer 后续已进入代码基线，真实 TTY 体验仍待 Ludi 验收 |
 
 Sol Pro 原始回答最重要的价值，是把“文件写入成功”和“崩溃后能安全恢复”提升到发布前信任门槛。这个判断已经落实到 R0.5；此前完成的 verdict、deadline、退出码和 JSONL integrity 无需重开。
 
@@ -78,18 +78,18 @@ R0、R0.5 与统一 CLI 改动共享 SessionStore、runAgent、CLI composition r
 - Recall 进入 v0.1，但要先冻结机器事件和 A0 基线，确保注入、陈旧事实和成本变化可以量化。
 - checkpoint/rewind、TUI reducer 与 fallback 已进入 v0.2 基础切片；全屏 renderer 保留为后续独立适配器。
 
-## 5. 当前采用顺序
+## 5. 当时采用顺序与后续完成情况
 
 1. 固化本轮代码与文档基线。
 2. [x] 交付只读 `sessions list|show`。
 3. [x] 收口动态 composition/addendum 的 resume 比较、来源展示与可行动提示。
 4. [x] 冻结 versioned headless JSONL、A0 strict types、六案 corpus 与纯 report；代码提交 `b5588ff`，提交门及 P2 窄复核 GO（P0=0、P1=0、P2=0、P3=1）。
-5. [x] 实现 A0 只读 runner，并生成不可变 model/prompt policy manifest 与 observations artifact（2026-08-16，`jarvis a0 run|report`，实现记录见 `docs/headless-a0-contract.md` §7；真实 attempts 待显式 key/花费确认）。
+5. [x] 实现 A0 runner，并生成不可变 model/prompt policy manifest 与 observations artifact；v2 真实跑分后续完成并通过门禁，合同见 `docs/headless-a0-contract.md`。
 6. [x] 增加 REPL 当前 Session 的 `history_search/history_turn`；host-bound、append-only、bounded、historical-low，`--no-recall` 保留旧 composition exact resume。代码提交 `81f96e0`，独立提交门 GO（P0=0、P1=0、P2=0、P3=1）。
 7. [ ] 用 Recall 开关跑同形对照；当前 fixture/E2E 只证明合同与隔离，尚未证明任务收益。
 8. [x] 增加 typed config、有效来源展示与 `inspect/safe`；三层 TOML、项目只收紧、凭据拒绝、环境 endpoint identity、原型继承键拒绝、真实 gate 与 resume composition 已覆盖。代码提交 `9d53d1a`，修复首轮 P1/P2 后独立提交门 GO（P0=0、P1=0、P2=0、P3=1）。
 9. 运行 10–20 个真实同形任务，要求零 false-verified、零无限等待、零 orphan side effect。
-10. [x] 完成 v0.2 的用户 checkpoint、conversation fork、受控文件 restore、TUI reducer/action audit 与 line/headless fallback；纯全屏 renderer 仍待后续切片。
+10. [x] 完成 v0.2 的用户 checkpoint、conversation fork、受控文件 restore、TUI reducer/action audit、全屏 renderer 与 line/headless fallback；真实 TTY 体验由 `docs/TODO-v01-evidence.md` 收口。
 11. A0 稳定后再做 DeepSeek V4 Provider opt-in spike。
 
 权威计划见 `docs/cli-first-plan.md`；ZCode/GLM-5.3 的有界任务包见 `docs/handoff-zcode-glm53.md`。

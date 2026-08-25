@@ -1,8 +1,8 @@
 # ZCode / GLM-5.3 交接：Jarvis 低权威 CLI 与 A0 机械切片
 
-> 状态（2026-08-18）：sessions 首切片及安全收口、headless event v1、A0 冻结 corpus、当前 Session Recall、typed config、checkpoint/rewind、TUI reducer/fallback、纯 TUI renderer、A0 只读 runner（v2 真实跑分 GO）、只读 `sessions search`、筛选/排序/分页、session mutation（fork/rename/archive/unarchive，写状态首切片，语义经 Ludi 拍板）、终端 human review（`review list|show|approve|reject`）、shell completion（`completion powershell|bash|zsh`）与 workspace 急停（`stop [--reason]/--clear`，通道与消费者零改动）均已提交并通过独立门禁。ZCode 机械切片清单（本文件 §4）、写状态首切片、review 表面、补全与 stop 全部收口；剩余工作为 Recall A/B、真实任务验收（烧钱，需 Ludi 放行）、TUI renderer TTY 验收与 maintain/worktree preset 等后续产品化。提交级状态以 `docs/handoff-next.md` 为准。
-
-> 状态：2026-08-14。本文面向接手实现的模型，范围已刻意收窄。开始前必须核对 Git 基线与工作树；发现 HEAD 或状态不一致时停止并汇报。
+> 类型：历史任务包。本文记录 2026-08-14 至 2026-08-18 交给 ZCode/GLM-5.3 的有界机械切片；清单内工作已经完成，文末 prompt 不应再次派发。当前人工收口入口是 `docs/TODO-v01-evidence.md`，实现变化见 `CHANGELOG.md`。
+>
+> 收口快照（2026-08-18）：sessions 首切片、headless event v1、A0、Recall、typed config、checkpoint/rewind、TUI renderer、sessions search/mutation、terminal review、completion 与 workspace stop 均已提交并通过当时的独立门禁。测试数字和 commit 只代表对应日期。
 
 ## 1. 当前基线
 
@@ -15,7 +15,7 @@
 - typed config 当前验证：聚焦测试 12 files / 190 passed；`typecheck`、`lint`、`npm run build -- --noEmit`、`npm test` 与 diff check 全绿；126 test files / 1456 passed / 2 skipped。环境 endpoint 已绑定 composition identity，原型继承键 fail-closed，`safe` 不再继承 unattended worktree 自动写入；修复首轮 P1/P2 后，独立提交门为 GO（P0=0、P1=0、P2=0、P3=1），代码提交为 `9d53d1a`。
 - checkpoint/TUI 本地门禁：首轮独立 Reviewer 唯一 P1（project-ignored 文件从 inventory、`add -A` 与 drift/restore 中静默消失，rewind 可误报成功）已于 2026-08-16 修复：普通 project-ignored 文件经两次 `--ignored` 清单差集 + 显式分批 `add -f` 强制捕获，shadow 自身 structural/secret 排除保持唯一边界，negation 暴露 fail-closed，rewind 对磁盘仍存在的 project-ignored 删除项要求 target 带捕获标记。修复后聚焦 ShadowGit + checkpoint CLI 40 passed、组合 10 files / 105 passed；全量 134 files / 1538 passed / 2 skipped，静态门禁与 whitespace 检查全绿；修复后独立 Reviewer 复核 GO（P0=0、P1=0、P2=0、P3=4，P3 清单见 `docs/handoff-next.md`），原 P1 确认关闭。conversation fork 使用 receipt-free projection，tool-bound checkpoint 拒绝 rewind；文件恢复保留 preflight 并拒绝 hook/external diff、protected/link/hard-link path 与 drift。代码 SHA 记录见 `docs/handoff-next.md`。
 - 产品路线：v0.1 CLI beta → v0.2 checkpoint/rewind 基础 + TUI reducer + 纯 renderer → v0.3 Desktop control surface。
-- `implementation-notes.md` 是本轮临时偏差记录，不进入阶段提交；有效内容以正式文档为准，提交门后按授权精确删除。根目录历史占位文件 `f` 的早期清理记录保持不变。
+- 后续判断以正式合同、Changelog、源码与当前门禁为准；本任务包中的临时文件和清理记录只保留历史含义。
 
 先读：
 
@@ -39,7 +39,7 @@
 - 不自动修复、迁移、重写、归档或删除任何 Session 文件。
 - 不触碰 PermissionGate、runAgent、GoalLoop、loop finalize 和恢复授权链。
 
-## 3. 首个可交接任务
+## 3. 首个可交接任务（已完成的历史合同）
 
 ### Outcome
 
@@ -117,7 +117,7 @@ jarvis sessions show <session-id> [--json]
 4. 已知边界和未解决风险。
 5. `git diff --stat`；不要 push，不要改 tag，不要清理并发文件。
 
-## 4. 接受首切片后可继续交接的工作
+## 4. 后续已完成的机械切片
 
 这些任务都应单独开切片、独立验收：
 
@@ -142,7 +142,7 @@ rename、fork、archive 属写状态能力，必须等只读切片稳定后另�
 - [x] TUI interrupt/redirect/approval 纯状态机、action audit 与 line/headless 回退；全屏 renderer 保留给独立机械切片。
 - DeepSeek V4 Provider 的 finish reason、abort、tool schema、secret redaction 与 A/B 评测。
 
-## 6. 可直接复制给 ZCode 的任务说明
+## 6. 历史派发 prompt（已完成，勿再次派发）
 
 ```text
 Outcome

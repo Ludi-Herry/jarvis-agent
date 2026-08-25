@@ -1,5 +1,7 @@
 # Phase B 搭建方案 · 安全地干活
 
+> 类型：历史实现计划。本文保留 Phase B 的原始方案和威胁模型；落地结果见 `docs/handoff-B.md`，当前安全边界见 `AGENTS.md` 与现行测试。
+
 > 依据蓝图 §1/§7/§10/§12（`H:\LLM本地知识库\采集\external\agent-harness-调研\agent-harness-Part2-架构蓝图.md`）+ Part5/Part6 的实现对照深挖。
 > **首要代码参照**：codex `execpolicy`（BANNED_PREFIX 黑名单 + 命令降级纯函数）+ openhanako 命令树解析（穿透嵌套 shell 拦 `git push --force`）+ CodeWhale `ToolCapability`（正交能力枚举派生权限）+ Claude Code permission（`decisionReason` + input 相关谓词）。反面教材：deepcode（让模型自报 `sideEffects` 可绕闸）。
 > 状态（2026-06-28）：Phase A 全部完成（A0–A6 ✅，见 `handoff-A.md`）。Phase B 已绿灯，**两项定调决策**：① 范围 = 安全执行核心（PermissionGate + 命令解析 + Bash + 审批 + RuleResolver），持久化/断点续跑推迟到下一段；② 沙箱 = 务实方案（确定性解析 + 受限 cwd + 审批闸，不上内核级沙箱）。

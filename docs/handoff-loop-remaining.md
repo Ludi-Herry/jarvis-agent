@@ -1,6 +1,6 @@
 # Loop 重项收口记录
 
-> 状态：2026-07-02 收口。当前 main 已完成 mid-goal resume、per-goal verifier、per-goal hook runner、parallel worktree first slice、parallel resume 最小 slice、loop finalize 只读报告、loop finalize `--merge` 交互 apply、loop finalize `--cleanup` 交互清理、cron single-scan first slice、cron foreground daemon。本文保留边界、测试清单和后续禁区，避免后续会话重新打开已收口范围。
+> 类型：2026-07-02 的日期化收口记录。本文保留 mid-goal resume、per-goal verifier/hook、parallel worktree/resume、finalize 与 cron daemon 的边界和失败模式；当前命令以 CLI help 为准。
 
 ## 先读
 

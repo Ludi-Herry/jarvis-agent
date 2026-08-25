@@ -1,5 +1,7 @@
 # 交接：Phase D 完成（GoalLoop + 三条腿独立验收，2026-06-29）
 
+> 类型：历史阶段快照。本文保留 GoalLoop 与三腿验收的落地证据；当前完成授权边界以 `AGENTS.md` 和 `src/capabilities/goal/verdict.ts` 的 `decideVerdict` 为准。
+
 给接手者（人或 AI）。读完这页你应知道：Phase D 两批做了什么、关键决策与 gotcha、验收怎么映射到测试、安全边界、怎么运行、下一步。完整设计见 `phase-D-plan.md`（第一批）+ Plan agent spec（第二批，已落地）；C 阶段见 `handoff-C.md`；项目规则见根 `AGENTS.md`。
 
 ## 一句话状态
@@ -59,7 +61,7 @@
 ## 关键决策
 
 - **裁判≠运动员，走确定性两条腿**（用户拍板）：完成判定不信 builder 自报 status——腿1 harness 真重跑四关卡采信真退出码，腿2 检测测试篡改。最防作弊、不需第二模型、最便宜。
-- **GoalLoop 不改 runAgent**：runGoal 是外循环，runAgent 仍是注入式单消息内循环、不知道 goal。复用同一 messages（builder 看到上轮 + 反馈），continuation 注入成 user 消息（持久 + 可压缩，不是 systemAddendum）。
+- **GoalLoop 不改 runAgent**：runGoal 是外循环，runAgent 仍是注入式单消息内循环、不知道 goal。复用同一 messages（builder 看到上轮 + 反馈），continuation 注入成可持久、可压缩的 user 消息；systemAddendum 不承载这类反馈。
 - **腿1 命令只从 config，绝不沾 claim**：`checkCommands` 来自 deps（缺省四关卡常量），builder 的 `verification` 只当提示——堵「报个 trivial 命令蒙混」。腿1 不过 gate（harness 自发起的固定命令，builder 不可控）。
 - **decideVerdict 兜底永不默认 verified**：verified 仅「两腿 clean && report===undefined」显式分支；任何未识别组合 → couldNotVerify。
 - **熔断真接进 runGoal**（修 Part7 P0-2 死代码）：两条 reject 路径都经 `recordReject` 读返回，连续 3 reject → halt → blocked。

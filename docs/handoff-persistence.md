@@ -1,5 +1,7 @@
 # 交接：持久化段完成（P1–P3，2026-06-28）
 
+> 类型：历史阶段快照。本文描述早期 Session 持久化合同；Session v2 的当前合同见 `src/runtime/session/session-store.ts` 与 `docs/cli-first-plan.md`。
+
 给接手者。本段在 Phase B 之后做：**会话落盘 + 断点续跑**。完整设计见 `persistence-plan.md`；Phase B 见 `handoff-B.md`。
 
 ## 一句话状态

@@ -1,8 +1,6 @@
 # GUI Read-Only Pilot Notes
 
-日期：2026-07-03
-
-范围：切片 1 只读巡检试点。本文只记录真实运行证据、observe/GUI 可读性问题和后续输入；不在本切片新增 harness 功能。
+> 类型：2026-07-03 的试点证据。范围为切片 1 的真实运行、observe/GUI 可读性问题和后续设计输入；当前 GUI 入口与结果见 `docs/v03-gui-plan.md` 和 `docs/handoff-next.md`。
 
 ## 运行证据
 

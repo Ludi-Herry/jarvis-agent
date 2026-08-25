@@ -1,6 +1,8 @@
 # 交接：A0 + A1（2026-06-27）
 
-给接手者（人或 AI）。读完这页你应知道：A0/A1 做了什么、怎么验证、留了哪些已知小账、下一步从哪开始。完整设计见 `phase-A-plan.md`，项目规则见根 `AGENTS.md`，A2 接手 prompt 见 `next-session-A2-prompt.md`。
+> 类型：历史阶段快照。本文保留 A0/A1 当时的实现、验证与下一步；当前入口见 `docs/README.md`，完整 Phase A 收口见 `docs/handoff-A.md`。
+
+完整设计见 `phase-A-plan.md`，项目规则见根 `AGENTS.md`。
 
 ## 一句话状态
 

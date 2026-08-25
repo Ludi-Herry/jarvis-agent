@@ -54,6 +54,14 @@ describe('jarvis root CLI', () => {
     expect(result.stderr).not.toContain('ARK_API_KEY');
   });
 
+  it('shows finalize examples that match the passthrough parser', async () => {
+    const result = await runJarvis(['finalize', '--help']);
+
+    expect(result).toMatchObject({ code: 0 });
+    expect(result.stdout).toContain('jarvis finalize --loop <loop-id>');
+    expect(result.stdout).not.toContain('jarvis finalize <loop-id>');
+  });
+
   it('documents the explicit Recall off switch on run and resume', async () => {
     const runHelp = await runJarvis(['run', '--help']);
     const resumeHelp = await runJarvis(['resume', '--help']);

@@ -1,12 +1,12 @@
 # Changelog
 
-## Unreleased - 2026-08-15
+## Unreleased
 
 - Changed deterministic-only results to `checksOnly`; routine project checks no longer authorize goal completion.
 - Added Git tamper-baseline enforcement with an explicit serial `--allow-no-git` checks-only override.
 - Added trustworthy loop/cron result propagation, stable exit codes, model/goal deadlines, and fail-closed refusal/unknown finish handling.
 - Added JSONL integrity diagnostics to observe reports, including partial status, paths, line numbers, and exit code 7.
-- Switched the active product route to CLI-first; full-screen TUI and checkpoint/rewind are planned before the Desktop UI/UX release line.
+- Switched the active product route to CLI-first; added checkpoint/rewind, the TUI reducer/renderer/fallback path, and a separate v0.3 Desktop control-surface track.
 - Added the unified `jarvis` root command, package bin metadata, package-derived version, pre-config `--cwd`, local read-only doctor text/JSON reports, and compatibility forwarding to existing CLI primitives.
 - Added strict managed file mutations: read versions, expected-version updates, create-only writes, post versions, same-process serialization, and actionable conflict results.
 - Added Session JSONL v2 with contiguous sequence numbers, full base composition identity, hashed request receipts, durable tool intent/terminal receipts, pending-effect resume blocking, and legacy v1 read compatibility.
@@ -19,8 +19,9 @@
 - Completed the v0.3 G1-G4 GUI slices: additive emergency-stop observation, the warm-paper three-region workspace, CLI-equivalent human-review detail/history, bounded read-only approval history, explicit goal/loop timeline filters, and persisted `goal_round` budget progress. Ludi visual acceptance and independent browser verification are recorded in `docs/handoff-next.md`.
 - Recorded the GPT-5.6 Sol Pro trust review, implementation corrections, narrowed v0.1 route, and a bounded ZCode/GLM-5.3 sessions handoff.
 - Removed the earlier temporary R0.5 implementation notes and the unreferenced root placeholder after explicit cleanup approval.
+- Reorganized the documentation around one canonical home per fact: a concise README, a complete document map, current known-issue boundaries, and clearly labeled historical plans and handoffs.
 
-## 0.1.0 - 2026-07-03
+## 0.1.0 GUI-first candidate - 2026-07-03
 
 - Added the GUI read-only console with observe-backed timeline, emergency stop, and human-review controls.
 - Routed human-review decisions through trusted `human` route provenance, inline GUI note forms, JSONL audit, verifier report rewrite, and `decideVerdict`.

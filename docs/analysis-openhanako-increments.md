@@ -1,7 +1,7 @@
-# OpenHanako 增量裁决（2026-08-22，Ludi × Codex 讨论）
+# OpenHanako 增量裁决（2026-08-22）
 
-> 本文为讨论结论的原样存档（ZCode 代录，正文未改写），作为 `docs/v03-gui-plan.md` 竞品参考与验收补强的依据。
-> 来源材料：[视频字幕](H:/LLM本地知识库/采集/clippings/bilibili/2026-08-20-如果这几天玩dsh累了，就来试试 HanaAgent 吧！.md) 与 [公开仓库](https://github.com/liliMozi/openhanako)（当前公开版本 `0.447.4`，release 准备提交停在 8 月 14 日）。
+> 类型：日期化外部材料裁决。本文保存证据等级、Jarvis 增量映射与重开条件，作为 `docs/v03-gui-plan.md` 的竞品参考与验收输入。
+> 来源材料：[本地视频字幕](H:/LLM本地知识库/采集/clippings/bilibili/2026-08-20-如果这几天玩dsh累了，就来试试 HanaAgent 吧！.md) 与 [公开仓库](https://github.com/liliMozi/openhanako)；截至快照日期核对的公开版本为 `0.447.4`，release 准备提交停在 8 月 14 日。
 
 结论：不改变上一轮已经同意的基线。OpenHanako 带来两个真实的未来技术增量——「缓存稳定前缀下的动态提醒」和「工具目录按需加载」；另有两个 UX/验收增量——「带稳定身份的持续子代理」和「对产物直接批注」。它们暂时都不构成当前开发任务，当前仍应进入零成本验收、Recall A/B 和真实任务实证。
 

@@ -1,6 +1,7 @@
 # Phase D 第一批方案 · GoalLoop + 确定性两条腿验收
 
-> 完整设计文档（长期留存）。落地依据：知识库蓝图 §9 + `agent-harness-Part7-Guardian验收设计`。A/B/C 见各自 plan。
+> 类型：历史实现计划。本文保留 Phase D 第一批 GoalLoop 与两腿验收设计；腿3和 held-out 的落地结果见 `docs/handoff-D.md` 与 `docs/phase-D-leg3-checklist.md`。
+> 落地依据：知识库蓝图 §9 + `agent-harness-Part7-Guardian验收设计`。A/B/C 见各自 plan。
 
 ## 一句话目标
 
@@ -14,7 +15,7 @@
 3. **范围 = 只做核心 GoalLoop + 验收**；Hooks / skill 自动沉淀 / Loop 调度（cron）/ 多模态全推后。
 
 ### 工程决策（Plan agent 已读代码核实）
-1. **GoalLoop 组合**：复用同一 messages 数组（builder 要看到上轮 + 反馈）；continuation 注入成 **user 消息**（不是 systemAddendum——后者不入 messages、不被压缩，反馈必须持久 + round-trip）；整个 goal **一个 bus**；token 累计**订阅 bus `usage` 事件**。
+1. **GoalLoop 组合**：复用同一 messages 数组（builder 要看到上轮 + 反馈）；continuation 注入成需要持久化和 round-trip 的 **user 消息**，systemAddendum 不进入 messages 且不会被压缩；整个 goal **一个 bus**；token 累计**订阅 bus `usage` 事件**。
 2. **update_goal 拦截**：**闭包共享 claim 状态**（镜像 `createDelegateTool`），runAgent 返回后读；**不强制停该轮**（靠 builder prompt 约定调完即停，runAgent 契约不变、不需知道 goal）。
 3. **腿1 跑 check**：抽 `runCommand`（bash 工具把退出码塞进文本 note，拿不到结构化 code）；命令来源 = **配置固定列表**（缺省 npm typecheck/lint/test/build），**绝不沾 `claim.verification`**；**不过 gate**（harness 自发起、builder 不可控的固定命令）。
 4. **腿2 篡改检测**：纯函数 `classifyTestDiff`（删 test / 新增 skip.only.xit / 测试数骤降）；判不了语义弱化（记缺口、腿3 补）；**baseline 在 goal 创建时拍**（HEAD sha + 测试文件 blobHash 快照、落盘）→ 对 goal 前脏改动免疫 + 重启可比。

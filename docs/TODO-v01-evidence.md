@@ -33,19 +33,19 @@ npm run jarvis -- goal "审查 KNOWN_ISSUES.md 的每一条，对照当前仓库
 npm run jarvis -- goal "对照 AGENTS.md 的命令清单与 package.json 的 scripts，找出两者口径不一致的地方，回复里列清单，不改文件"
 
 # A5 文档补全（写 + 审批）
-npm run jarvis -- goal "给 docs/usage-guide.md 补一小节说明 GUI 的审批历史视图与时间线 goal/loop 过滤（G4 新增），风格与该文档现有小节一致"
+npm run jarvis -- goal "给 docs/usage-guide.md 的 doctor 小节补一段 config show / config validate 的零成本检查，说明前者看生效值、后者查配置错误；同步更新文末验收清单"
 
 # A6 只读
 npm run jarvis -- goal "找出 docs/ 中所有引用 data/a0/run/（v1 旧产物）的段落，回复里列文件与行号清单，不改文件"
 
 # A7 小写入
-npm run jarvis -- goal "统计 docs/ 下每个 markdown 文件的字数，生成 markdown 表写到 docs/docs-inventory.md，不改其他任何文件"
+npm run jarvis -- goal "如果 A2 已生成 docs/test-inventory.md，把它作为日期化生成快照加入 docs/README.md 的正确分类；只改 docs/README.md"
 
 # A8 只读
 npm run jarvis -- goal "扫描 src/ 中超过 300 行的 .ts 文件，按行数从大到小列出文件与行数，不改文件"
 
 # A9 文档更新（写 + 审批）
-npm run jarvis -- goal "把 README.md 的当前状态表更新：加一行 v0.3 GUI（G1-G4 已完成、G5 悬置待拍板），其他行不动"
+npm run jarvis -- goal "如果 A2 与 A7 都完成，在 CHANGELOG.md 的 Unreleased 中补一条 test inventory 与文档地图入口；只改 CHANGELOG.md"
 
 # A10 只读交叉核对
 npm run jarvis -- goal "列出 package.json scripts 中从未被 docs/ 任何文档提及的脚本，回复里给清单，不改文件"
@@ -97,7 +97,7 @@ npm run jarvis -- run --no-recall "本仓库 stop 切片一共几个 commit，�
 
 ```powershell
 cd H:\jarvis-agent
-npm run dev
+npm run jarvis -- run
 ```
 
 进 TUI 后检查五点：① 全屏布局与信息层级；② 折叠/展开行为；③ 键位提示是否可见可懂；④ 发一条消息看 model-running/tool-running 状态流转；⑤ Esc 与双 Ctrl-C 的停止路径。你的观感（布局、字号密度、键位手感）直接记成一句话清单，交回主会话。

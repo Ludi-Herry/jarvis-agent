@@ -1,5 +1,7 @@
 # 交接：Phase B 完成（B1–B6，2026-06-28）
 
+> 类型：历史阶段快照。测试数量、后续路线和“当前”表述只代表对应日期；当前安全边界以 `AGENTS.md`、源码和现行测试为准。
+
 给接手者（人或 AI）。读完这页你应知道：Phase B 做了什么、关键决策与 gotcha、§5 验收怎么映射到测试、安全残留边界、怎么运行、下一步从哪开始。完整设计见 `phase-B-plan.md`；A 阶段见 `handoff-A.md`；项目规则见根 `AGENTS.md`。
 
 ## 一句话状态
@@ -19,7 +21,7 @@
 
 命令安全根核心不变量（decide 对 executes-code 永不 allow、grep 跳密钥、解析器 fail-closed、gatedRun 先裁决、bash 不在无闸注册表）经**六轮 codex（B 阶段四轮 + 本批两轮）**确认未破。复核方法 / 严重度基线 / 历史见 `security-review-baseline.md`；逐项 commit 见 git log（`7cdbd3e`…`8d19c13`）。
 
-**新残留（务实档、已接受）**：realpath→I/O 的 TOCTOU、硬链接绕不过 realpath、inline `BASH_ENV=… bash -c …` 仍 ask 非 hard-deny——都需 bash 人审前置，符合「cwd 是锚点不是牢笼」。bash session-allow 仍按 memory `restore-bash-session-allow` 故意不恢复，留待 Phase D 白名单。
+**新残留（务实档、已接受）**：realpath→I/O 的 TOCTOU、硬链接绕不过 realpath、inline `BASH_ENV=… bash -c …` 仍 ask 非 hard-deny——都需 bash 人审前置。cwd 只提供路径锚点，安全边界继续由解析器和人审承担。bash session-allow 仍按 memory `restore-bash-session-allow` 故意不恢复，留待 Phase D 白名单。
 
 ## 架构一句话
 
@@ -52,8 +54,8 @@ A 阶段「裸做无权限护栏」，B 阶段补上那道闸门：**工具执�
 ## 关键决策
 
 - **权限的根 = 确定性解析命令树，绝不让模型自报**（plan §1 决策 3）。deepcode 让模型自报 `sideEffects=[]` 就绕闸是真实漏洞；B2 照 codex/openhanako 解析命令树。
-- **沙箱 = 务实档**（plan §1 决策 2）：确定性解析 + 受限 cwd + .env/密钥黑名单 + 审批闸，**不上内核级沙箱**。cwd 是锚点不是牢笼——真正的防护是解析器 + 人审。
-- **ToolCapability = 单值 4 元枚举**（read-only/writes-files/executes-code/network），不是数组——B 阶段工具都单一副作用；真要组合副作用再加宽（1 行类型改动）。
+- **沙箱 = 务实档**（plan §1 决策 2）：确定性解析 + 受限 cwd + .env/密钥黑名单 + 审批闸，**不上内核级沙箱**。cwd 提供路径锚点，解析器与人审承担防护。
+- **ToolCapability = 单值 4 元枚举**（read-only/writes-files/executes-code/network）。B 阶段工具都只有一种副作用；出现组合副作用后再加宽类型。
 - **目标 shell = Git Bash / POSIX sh**（用户拍板）：参照实现都是 POSIX 语义；解析与执行同一种 shell，不语义错位。cmd/PowerShell 待扩。
 - **裁判≠运动员**：B2/B3 安全关键里程碑用独立子代理做对抗性核查；B6 用独立子代理做最终验收，不自评。
 

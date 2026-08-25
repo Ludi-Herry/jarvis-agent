@@ -1,6 +1,6 @@
 # LangChain ecosystem reference
 
-> Status: direction note only. Research snapshot from 2026-08-08: four read-only passes over the official repos and docs (deepagents, langchain, langgraph, langchain-academy, langgraph-101, docs.langchain.com, docs.smith.langchain.com, pricing). Not part of the current implementation plan. Feeds A0 design and future post-v1 evaluation only; the "no external framework / platform" verdict stands.
+> Type: research snapshot dated 2026-08-08. It records four read-only passes over the official repositories and docs (deepagents, langchain, langgraph, langchain-academy, langgraph-101, docs.langchain.com, docs.smith.langchain.com, pricing). It feeds A0 design and future post-v1 evaluation, and does not authorize adopting an external framework or platform.
 
 ## Conclusion
 

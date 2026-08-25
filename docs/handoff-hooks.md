@@ -1,6 +1,7 @@
-# Handoff — Hooks 能力（tool-call + lifecycle）
+# Hooks 合同与收口记录（tool-call + lifecycle）
 
-> 状态：Hooks slice-1 + slice-2 已落地：PreToolUse 阻断、PostToolUse 咨询与反馈回灌、PostToolUse result env、每 hook timeout、round/session lifecycle 事件、多来源配置合并、loop per-goal hook-map。本页记录当前行为、硬不变量、配置语义与剩余 defer。
+> 类型：稳定合同 + 日期化收口记录。当前行为、硬不变量和配置语义以本页对应源码为准；测试数字与 slice 状态只代表记录日期。
+> Hooks slice-1 + slice-2 已落地：PreToolUse 阻断、PostToolUse 咨询与反馈回灌、PostToolUse result env、每 hook timeout、round/session lifecycle 事件、多来源配置合并、loop per-goal hook-map。
 
 ## 是什么
 

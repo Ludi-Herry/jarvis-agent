@@ -1,6 +1,7 @@
-# Jarvis-Agent CLI-first 路线与验收计划
+# Jarvis-Agent CLI-first 路线与验收合同
 
-> 状态：2026-08-15 已更新。本文覆盖产品版本线、可信结果修复和 CLI/TUI 后续范围。GPT-5.6 Sol Pro 复核、落地结果与修正见 `docs/sol-pro-cli-trust-review.md`；历史 GUI-first 证据继续保留在 `docs/handoff-release.md`。
+> 类型：持续维护的产品路线与验收合同。版本定位、信任边界和发布门槛以本文为准；每个切片的测试数字与 commit 属日期化证据。
+> 仍开放的人工门槛集中在 `docs/TODO-v01-evidence.md`。GPT-5.6 Sol Pro 的日期化复核见 `docs/sol-pro-cli-trust-review.md`；GUI-first 历史证据见 `docs/handoff-release.md`。
 
 ## 1. 成功标准
 
@@ -37,11 +38,11 @@ Jarvis 先成为维护者可日常依赖的本地 CLI。用户需要随时看清
 | 7 | 状态文件损坏或观测不完整 |
 | 130 | 用户中断 / emergency stop |
 
-本轮退出码已覆盖 `goal`、`loop`、`cron`、`cron:daemon` 与 `observe` 的可信结果路径。`dev`、`loop:finalize`、`shadow` 的旧通用 exit 1，以及当前 `0.0.0` CLI 版本漂移，随 R1 统一命令外壳一起收口。
+R0 首轮先覆盖 `goal`、`loop`、`cron`、`cron:daemon` 与 `observe` 的可信结果路径；统一 `jarvis` 外壳随后收口版本来源与兼容入口。当前命令及退出码以对应子命令的 `--help` 为准。
 
-R0 验收：所有 guardrail 有真实触发路径测试；text 与 JSONL 都不能把非完成状态着成绿色；10–20 个真实任务中要求 0 假绿、0 无限等待，每个 blocked 都给原因、下一步和日志路径。
+R0 验收：所有 guardrail 有真实触发路径测试；text 与 JSONL 都不能把非完成状态着成绿色；10–14 个真实任务中要求 0 假绿、0 无限等待，每个 blocked 都给原因、下一步和日志路径。
 
-实现检查（2026-08-12）：`npm run typecheck`、`npm run lint`、`npm run build -- --noEmit`、`npm test` 全绿；测试为 111 files / 1170 passed / 1 skipped，`git diff --check` 通过。已有 `dist/` 按工作区规则保留，未运行会覆盖它的 emit build。10–20 个真实模型任务仍属于 v0.1 beta 运行验收，不能由单元测试替代。
+实现检查（2026-08-12）：`npm run typecheck`、`npm run lint`、`npm run build -- --noEmit`、`npm test` 全绿；测试为 111 files / 1170 passed / 1 skipped，`git diff --check` 通过。已有 `dist/` 按工作区规则保留，未运行会覆盖它的 emit build。真实模型任务仍属于 v0.1 beta 运行验收，不能由单元测试替代；当前数量以 `docs/TODO-v01-evidence.md` 为准。
 
 ## 3. R0.5：写入与恢复可信性
 
@@ -85,7 +86,7 @@ Sessions 与动态恢复切片（2026-08-15）已完成：
 - [x] 根 `jarvis --cwd`、latest discovery 与 resolver 后二次读取共用同一错误分类；EACCES、EPERM、EIO 均有命令层或确定性触发测试。latest 目录枚举/条目消失、actual resume 二次读取、junction/canonical escape 与 loop 参数/map/resume/fatal 控制字符都有生产接线覆盖。
 - [x] 本切片的路径保证覆盖静态 symlink/junction/reparse 与 canonical escape。恶意同用户进程在校验和读取之间主动替换路径仍超出保证；Session 当前也没有跨进程 writer lock 或密码学真实性。hostile concurrent local writer 进入支持的威胁模型后，再评估 file-handle binding。
 
-仍待 v0.1 关键切片：A0 真实运行（runner 已于 2026-08-16 落地为 `jarvis a0 run|report`，真实 attempts 待显式 key/花费确认）、Recall 开关同形任务对照、完整 Windows 契约和 10–20 个真实任务。当前 Session 两级 Recall、typed config 与 `inspect/safe`、versioned headless JSONL agent-event v1、严格 A0 类型、六案冻结 corpus 与纯 report 已完成。当前 package bin 由锁定的 runtime `tsx@4.22.4` 启动源码；packed artifact 已在 Windows 空格路径下用 `--omit=dev` 安装，`jarvis --help`、`--version`、`status --json` 全部 exit 0。纯编译 bin 与更多 preset（如 `maintain/worktree`）属后续产品化；`stop`（2026-08-18）、review、completion、sessions mutation 均已落地。被忽略的 `dist/` 已在本轮误覆盖，现保持原样，未经授权不再清理或重建。
+v0.1 剩余门槛是 Recall 开关同形对照、10–14 个真实维护任务和 TUI 的真实 TTY 体验验收。A0 v2 真实跑分、Windows 关键合同、当前 Session Recall、typed config 与 `inspect/safe`、versioned headless JSONL、纯 TUI renderer、stop、review、completion 和 Session mutation 已进入代码基线。执行顺序、记录表和止损线只在 `docs/TODO-v01-evidence.md` 维护。
 
 - 单一 `jarvis` executable 与命令树：`run`、`goal`、`loop`、`resume`、`status`、`doctor`、`config` 为根帮助高频项；help/version/global flags 与旧入口退出码统一，版本读取 `package.json`。
 - 会话：v0.1 已交付只读 `sessions list|show` 与 `sessions search`（metadata + append-only user/assistant 文本的线性扫描，不建索引），list/search 的筛选、排序与分页已交付（list 三件套全量，search 为 session 筛选 + matches 分页）；写状态首切片 `sessions fork|rename|archive|unarchive` 已交付（fork 全量复制含 receipt + `forkedFrom` 血缘；rename = fork + 归档原会话，零删除零原地改写；archive 移动到 `data/sessions/archived/` 可逆）；实际 exact-session resume 会显示 cwd、模型、composition diff、pending effect 和停止原因。
@@ -95,31 +96,7 @@ Sessions 与动态恢复切片（2026-08-15）已完成：
 - Recall：`history_search` / `history_turn` 只读当前 Session 的 append-only 历史；普通工具输出默认排除，取回内容标记 historical，不能证明当前文件状态，也没有完成授权。
 - `doctor`、completion、Windows UTF-8/空格路径/PowerShell 验收；所有帮助和诊断无需模型 key。
 
-长期命令树（以下并非全部属于 v0.1 blocker）：
-
-```text
-jarvis
-jarvis run "<prompt>"
-jarvis goal "<objective>"
-jarvis loop <objectives-file>
-
-jarvis resume [id|--last]
-jarvis sessions list|show|search|rename|fork|archive
-
-jarvis status [--watch] [--json] [--goal ID|--loop ID]
-jarvis stop [--reason <text>] [--clear]
-jarvis review list|show|approve|reject
-jarvis finalize <loop-id> [--merge] [--cleanup]
-
-jarvis cron run|daemon|status
-jarvis config path|show|get|set|unset|validate
-jarvis config preset list|show
-jarvis doctor [--json] [--connect]
-
-jarvis inspect skills|agents|hooks
-jarvis shadow log|restore
-jarvis completion powershell|bash|zsh
-```
+已实现命令树由 `jarvis --help` 与各子命令的 `--help` 生成。路线文档不复制尚未实现的参数，避免候选设计被误当成可运行接口。
 
 现有 `npm run dev|goal|loop|cron|observe|...` 保留一个版本周期作为兼容入口。`config` 是唯一设置命令，界面文案可写“设置”。v0.1 不建独立 profile 根目录；cwd + session + preset 足够覆盖当前维护场景，多身份、多凭据或 provider 隔离出现真实需求后再评估。
 
@@ -140,11 +117,11 @@ R1 交付顺序：
 
 1. [x] 只读 `sessions list|show`；实现边界见 `docs/handoff-zcode-glm53.md`。
 2. [x] 收口 exact-session resume 的 dynamic composition/addendum 比较、来源展示和 fail-closed 提示。
-3. [x] 固定 versioned headless JSONL agent-event contract、六案 label-blind A0 corpus 与纯 report；现有人类 text 继续保留，A0 真实运行仍单列验收。
+3. [x] 固定 versioned headless JSONL agent-event contract、六案 label-blind A0 corpus、真实 runner 与纯 report；现有人类 text 继续保留。
 4. [x] 在 REPL 当前 Session 增加 `history_search` / `history_turn`，默认开启并提供 `--no-recall`；goal/loop 暂不接入。
 5. [ ] 用 Recall 开关跑同形 A0/真实任务对照。
 6. [x] 实现 typed config、有效来源展示与 `inspect` / `safe`；`maintain` / `worktree` 等 A0 后再决定。
-7. [ ] 跑 10–20 个真实同形任务，要求零 false-verified、零无限等待、零 orphan side effect。
+7. [ ] 跑 10–14 个真实同形任务，要求零 false-verified、零无限等待、零 orphan side effect。
 8. [x] `sessions search` 只读线性搜索（2026-08-17，实现检查见下）。
 9. [x] sessions list/search 的筛选、排序与分页（2026-08-17，实现检查见下）。
 10. [x] `sessions fork|rename|archive|unarchive` 写状态首切片（2026-08-18，实现检查见下）。
@@ -178,11 +155,11 @@ Stop 实现检查（2026-08-18）：`jarvis stop [--reason <text>]` / `jarvis st
 
 行模式和 TUI 共用 AgentLoop、EventBus、PermissionGate、SessionStore 与状态定义。TTY 默认可选择 TUI；`--no-tui` 和非 TTY 永远走行模式/headless，确保故障时有可靠回退。
 
-当前基础切片已完成纯 reducer、EventBus action adapter、独立 bounded TUI action audit 与 surface selector。状态覆盖 `idle/model-running/tool-running/approval-pending/stopping/needs-human/closed`；queue、redirect、approval deny、Esc、双 Ctrl-C、EOF 与 pending-effect 停止均有触发测试。`--headless` 固定 machine surface，非 TTY、`--no-tui` 或 renderer 缺失固定回退 line REPL。全屏布局、折叠、键位展示与视觉验收仍属于纯 renderer 后续切片，renderer 无权改变 reducer、Session、PermissionGate、checkpoint、AgentEvent 或完成授权。
+代码基线已包含纯 reducer、EventBus action adapter、bounded TUI action audit、surface selector 与全屏 renderer。状态覆盖 `idle/model-running/tool-running/approval-pending/stopping/needs-human/closed`；queue、redirect、approval deny、Esc、双 Ctrl-C、EOF 与 pending-effect 停止均有触发测试。`--headless` 固定 machine surface，非 TTY、`--no-tui` 或 renderer 不可用时回退 line REPL。剩余工作只有 Ludi 的真实 TTY 视觉与键位体验验收；renderer 无权改变 reducer、Session、PermissionGate、checkpoint、AgentEvent 或完成授权。
 
 全屏 TUI 首版区域：顶部运行身份与验证等级；中央对话/事件流；右侧 context、diff、预算和待审批；底部输入与快捷键。长工具输出折叠并保留耗时、退出码和日志路径。Esc 停止当前模型/工具，Ctrl-C 第一次停止、第二次退出；mid-turn 输入可排队或 redirect，动作须进入审计。
 
-首批 slash commands：`/help`、`/status`、`/context`、`/diff`、`/permissions`、`/model`、`/compact`、`/clear`、`/fork`、`/checkpoint`、`/rewind`、`/exit`。`@` 文件补全与受 PermissionGate 保护的 `!shell` 同期实现。
+当前 TUI 接受 `/exit`、`/quit`、`/checkpoint` 与 `/redirect <text>`；其余候选交互只有出现真实需求并补齐合同后才进入帮助。
 
 ## 6. Checkpoint / rewind 合同
 

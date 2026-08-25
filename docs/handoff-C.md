@@ -1,5 +1,7 @@
 # 交接：Phase C 完成（多 agent / SubagentManager，2026-06-29）
 
+> 类型：历史阶段快照。测试数量与下一步只代表 2026-06-29；当前产品路线见 `docs/cli-first-plan.md`。
+
 给接手者（人或 AI）。读完这页你应知道：Phase C 做了什么、关键决策与 gotcha、验收怎么映射到测试、安全边界、怎么运行、下一步从哪开始。完整设计见 `phase-C-plan.md`；B 阶段见 `handoff-B.md`；项目规则见根 `AGENTS.md`。
 
 ## 一句话状态
@@ -38,7 +40,7 @@
 
 - **显式委派，不自动触发**（用户拍板）：主 agent 显式调 `task`，harness 不替它判断该不该派。自动触发（model.judge）推后——可控、可预测、护栏简单。
 - **能力交集是最强护栏**（构造时不可越权 > 事后检测）：子能力 = 父∩请求，`deriveTools` 叠 capability 过滤（R1）。即使角色 tools 写了 bash，read-only 子也拿不到。
-- **子复用父 gate**：同一 `DefaultPermissionGate` 实例传子 ctx——子内 write/bash 仍每次过 gate。`sessionGrants` 按工具名共享，父 allow-session(write) 后子 write 静默放行（对 bash 无此问题，executes-code 永不进 grant）——这是**被决定的契约**（有钉死单测），不是意外；边界可控（子能力⊆父、safeResolve 锁 cwd、敏感路径先于 grant 硬 deny）。
+- **子复用父 gate**：同一 `DefaultPermissionGate` 实例传子 ctx——子内 write/bash 仍每次过 gate。`sessionGrants` 按工具名共享，父 allow-session(write) 后子 write 静默放行（对 bash 无此问题，executes-code 永不进 grant）。这是有单测固定的既定契约；边界由子能力⊆父、safeResolve 锁 cwd、敏感路径先于 grant 硬 deny共同约束。
 - **task 工具 = read-only**：委派本身无副作用（都在子内由子 gate 拦），不弹审批；成本靠 depth/budget/并发护栏，不靠 gate。
 - **depth 不进 AgentContext**：由 manager 链跟踪，零破坏既有测试。
 - **模型路由 YAGNI**：单 provider，`role.model` 作元数据 + 回退父 provider；`reasoningEffort` 已生效。第二 endpoint 出现再上路由层。

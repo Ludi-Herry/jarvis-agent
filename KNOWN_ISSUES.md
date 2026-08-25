@@ -1,17 +1,26 @@
 # Known Issues
 
-Date: 2026-08-15
+这份清单只记录当前源码仍存在的保证边界。已完成能力和历史修复进入 [Changelog](CHANGELOG.md)；v0.1 的人工验收进度进入 [收口执行手册](docs/TODO-v01-evidence.md)。
 
-- The unified `jarvis` shell, local doctor, read-only sessions surface, strict managed writes, Session v2 receipts, and dynamic-addendum resume checks are available in the current source. The v0.1 release gate still needs one headless JSONL agent-event contract, A0, current-session Recall, typed configuration with `inspect/safe`, Windows contract coverage, and 10–20 real tasks. Session mutations, stop/review, completion, extra presets, and a pure compiled bin are later productization slices; full-screen TUI and checkpoint/rewind remain for v0.2. See `docs/cli-first-plan.md`.
-- GUI UI/UX polish and Ludi section-by-section sign-off remain pending for the v0.3 Desktop control surface.
-- Cron daemon uses a single workspace lock. If a daemon is force-killed, the lock may need stale recovery before another daemon can start.
-- Human-review audit writes are local JSONL only; there is no multi-user identity, connector, team workflow, or remote notification layer.
-- `loop:finalize --cleanup` still has a LOW follow-up: add a fixture covering verified patch cleanup when a goal worktree contains the `node_modules` dependency bridge.
-- Attended bash command-level session allow still has the known scheduler-command TOCTOU limitation described in `docs/security-review-baseline.md`.
-- Token accounting remains partial because off-bus verifier and pinned-requirement derivation calls are unmeasured. `observe` labels this coverage as partial and the missing amount as unknown; loop rollups are displayed separately and no longer added to detailed goal tokens.
-- Managed file versions prevent stale updates at explicit read/write checkpoints and serialize same-process writes. Symbolic-link leaves and already multiply-linked files are rejected, but this still cannot provide a universal cross-process compare-and-swap: an external editor, another Jarvis process, an approved bash command, or a path/link/metadata mutation in the final check-to-rename window can race. Post-write disagreement is reported as unknown, while a very narrow overwritten external write can remain undetectable.
-- Session v2 rejects mixed versions, sequence gaps, invalid records, missing/multiple headers, duplicate logical executions, contradictory projections, partial base composition, incomplete/changed dynamic-addendum provenance, per-request addendum mismatch, and unresolved tool effects during operational resume. Legacy v1 sessions retain partial receipt/composition coverage and cannot support finalize merge evidence. Session append uses awaited append-only writes without a cross-process writer lock or per-record durable fsync, so power loss and concurrent writers remain outside the guarantee.
-- A v2 header now covers the active base system prompt, effective tool schemas, and the versioned dynamic Skill manifest identity. Resume can recompute current Skill addenda and compare their request hashes, while exact model-visible request reconstruction, explicit redaction receipts, provider/protocol/config/policy identity, nested subagent prompt provenance, and cryptographic authenticity of cwd-owned logs remain follow-ups.
-- `sessions show` is a read-only preflight and reports `ready-for-resume-check` when its recorded evidence is clean. Only the actual resume command can compare the current invocation composition/addendum and report exact compatibility.
-- Resume path validation rejects static symbolic-link, junction, reparse, and canonical-containment escapes. This slice does not claim protection against an adversarial same-user process replacing a checked path before the later read; Session logs also lack a cross-process writer lock and cryptographic authenticity. Revisit file-handle binding if a hostile concurrent local writer enters the supported threat model.
-- Goal/loop/cron JSONL integrity still uses shallow per-store record validation. Deep semantic relationships inside otherwise well-shaped non-session records remain an audit concern; operational loaders reject middle corruption, invalid record shapes, and missing headers.
+## 发布前仍需人工证据
+
+- **v0.1 真实使用证据仍未闭环。** Recall A/B、10–14 个真实维护任务和 TUI 的真实 TTY 体验需要 Ludi 执行。完成标准和止损线见 [docs/TODO-v01-evidence.md](docs/TODO-v01-evidence.md)。
+- **GUI 审批中继 G5 仍在决策门后。** 只有真实 attended 任务反复暴露终端审批打断，才重新评估桥接方案。决策阈值同样记录在 [docs/TODO-v01-evidence.md](docs/TODO-v01-evidence.md)。
+- **zsh completion 缺少本机实测。** 生成器有自动测试，当前 Windows 环境无法完成真实 zsh 安装与 Tab 验收。PowerShell 是已验证的本机路径。
+
+## 运行与操作边界
+
+- **Cron daemon 使用单工作区锁。** 进程被强制终止后，下一次启动可能先执行 stale-lock 恢复。锁与恢复逻辑由 `src/capabilities/goal/loop-cron.ts` 的 `FileLoopCronLock` 负责。
+- **Human review 只写本地 JSONL。** 当前没有多用户身份、远程通知、connector 或团队工作流；人工裁决入口是 `jarvis review` 与本地 GUI。
+- **Finalize cleanup 缺一项低风险 fixture。** `loop:finalize --cleanup` 仍需覆盖 goal worktree 含 `node_modules` dependency bridge 的 verified patch 清理场景。现有边界由 `src/capabilities/goal/loop-finalize.ts` 维护。
+- **Attended Bash 的 scheduler-command 仍有 TOCTOU 窗口。** 命令级 session allow 无法把检查后的命令文本与外部 scheduler 的最终执行绑定；安全严重度和接受边界见 [docs/security-review-baseline.md](docs/security-review-baseline.md)。
+- **Token 统计覆盖不完整。** Off-bus verifier 与 pinned-requirement derivation 调用未计量；`status` 会显示 `partial` 和 `unknown`，并分开呈现 loop rollup 与 goal 明细。格式化逻辑在 `src/capabilities/goal/observability.ts` 的 `formatObservationReport`。
+
+## 文件与会话完整性边界
+
+- **Managed write 无法提供通用跨进程 CAS。** `expectedVersion`、`createOnly` 和同进程串行化能阻止常见 stale write；外部编辑器、另一个 Jarvis 进程、已批准 Bash，或最终检查到 rename 之间的路径与元数据变化仍可能竞争。工具发现 post-state 无法确认时会返回 `unknown`。合同实现位于 `src/core/tools/builtins.ts`。
+- **Session append 缺少跨进程 writer lock 与逐记录 durable fsync。** Session v2 能拒绝混版、序号断裂、重复逻辑执行、composition 矛盾和未决副作用；并发写入与突然断电仍超出保证。实现位于 `src/runtime/session/session-store.ts`。
+- **Composition provenance 仍有后续范围。** 当前 header 覆盖 base prompt、有效工具 schema 和 Skill manifest identity；完整 model-visible request 重建、显式 redaction receipt、provider/protocol/config/policy identity、嵌套 subagent prompt provenance 与日志密码学真实性尚未进入合同。
+- **`sessions show` 只能做恢复前预检。** 它会报告 `ready-for-resume-check`；只有实际 `resume` 能对比本次调用的 composition 与 addendum 并给出精确兼容结论。
+- **路径检查无法抵御敌对同用户进程的校验后替换。** 静态 symlink、junction、reparse 和 canonical-containment escape 会被拒绝；同用户进程在检查后、读取前主动交换路径仍超出当前威胁模型。
+- **非 Session JSONL 只做有限语义校验。** Goal、loop 与 cron store 会拒绝中段损坏、无效记录形状和缺失 header；形状正确但跨记录关系错误的深层语义仍需要审计层或专门 loader 发现。

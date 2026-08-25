@@ -1,5 +1,7 @@
 # 交接：Phase A 完成（A0–A6，2026-06-28）
 
+> 类型：历史阶段快照。测试数量、下一步和“当前”表述只代表 2026-06-28；当前入口见 `docs/README.md`。
+
 给接手者（人或 AI）。读完这页你应知道：Phase A 整体做了什么、关键决策与 gotcha、§5 验收怎么映射到测试、怎么运行、下一步从哪开始。A0/A1 的早期细节见 `handoff-A1.md`；完整设计见 `phase-A-plan.md`；项目规则见根 `AGENTS.md`。
 
 ## 一句话状态
@@ -26,7 +28,7 @@
 - **ToolRegistry** 是模型↔副作用之间的安全漏斗：模型给的脏调用（名字不存在 / JSON 烂 / zod 校验失败 / 工具 run 抛错）四种**全归一成带 `error` 的 ToolResult，绝不抛**，循环把失败回灌给模型继续。
 - **三工具**：read、write（自动建父目录）、grep（递归、`path:line:text`、200 条上限）。裸做无权限护栏（A 阶段刻意，权限闸门是 B 阶段）。
 - **json-schema 归一**：zod→JSON-Schema 后 deref `$defs`/`$ref`、删 `$schema`、补 root `type`——严格端点（ARK）拒收带 `$defs` 的 schema。纯函数单测独立覆盖。
-- **AgentLoop**：`runAgent` 有状态回路 + 决策纯函数 `decideStop`/`withinBudget`/`decideCompact`；`maxTurns` 保险丝（防无限调工具，配「真触发」单测，不是只自增不读的死代码）。
+- **AgentLoop**：`runAgent` 有状态回路 + 决策纯函数 `decideStop`/`withinBudget`/`decideCompact`；`maxTurns` 保险丝防无限调工具，并配有真正触发的单测。
 - **round-trip 关键**：assistant 的 `tool_call.id` 与 tool 消息的 `tool_call_id` 一致性靠 wire 层 `sanitizeToolCallId`（幂等截断到 64），循环不用管。
 
 ### A3 能压缩（`src/core/context/`）
@@ -70,7 +72,7 @@
 ## gotcha / 已知小账（留给 B+，当前不影响验收）
 
 - **上一轮工具组「假完成」**：A2 接手时发现上一会话报告「工具组完成、20 测试绿」但 `registry.ts`/`builtins.ts`/`json-schema.test.ts` 从未落盘（Write 工具 "... wait" 污染）。已重建并验证。教训：别信叙述，跑真实测试核磁盘。
-- **压缩用同一个豆包模型**做摘要，不是单独配的「更便宜模型」——以后可注入更省的。
+- **压缩用同一个豆包模型**做摘要；当前没有单独配置更便宜的压缩模型，以后可按需注入。
 - **压缩中途模型调用失败会中断整轮**——未加容错（避免堆没验证需求的错误处理），留作 B 硬化。
 - **交互式 Ctrl-C** 只能人工跑 `npm run dev` 亲手按确认（管道不发 SIGINT）；abort 接线 + provider signal 透传已单测。
 - **reasoning 结构化（数组）形态**当前丢弃只取字符串（A1 遗留，`reasoning.test.ts` 有记录），接数组形态端点时补。

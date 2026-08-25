@@ -1,6 +1,6 @@
 # Checkpoint / rewind 与 TUI 状态机合同
 
-> 状态：2026-08-15 冻结并完成基础实现。Checkpoint 首版只接 `jarvis run/resume`；GoalLoop、全屏 renderer 与视觉组件保持后续切片。最终 Reviewer 与提交 SHA 以 `docs/handoff-next.md` 为准。
+> 类型：稳定行为合同。Checkpoint/rewind、TUI reducer、renderer 与 line/headless fallback 已进入代码基线；真实 TTY 的视觉与键位体验仍由 `docs/TODO-v01-evidence.md` 验收。字段或状态机变化需要同步测试和版本化审计语义。
 
 ## 1. 不变量
 

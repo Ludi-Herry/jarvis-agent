@@ -1,6 +1,7 @@
 # Phase C 方案 · SubagentManager / 多 agent
 
-> 完整设计文档（长期留存）。落地依据：知识库蓝图 §4 Cluster3 + 项目 memory `c-phase-agent-roster-two-axes`。A/B 见 `phase-A-plan.md` / `phase-B-plan.md`。
+> 类型：历史实现计划。本文保留 Phase C 的设计与任务拆分；落地结果见 `docs/handoff-C.md`，当前多 agent 产品范围见 `AGENTS.md`。
+> 落地依据：知识库蓝图 §4 Cluster3 + 项目 memory `c-phase-agent-roster-two-axes`。A/B 见 `phase-A-plan.md` / `phase-B-plan.md`。
 
 ## 一句话目标
 

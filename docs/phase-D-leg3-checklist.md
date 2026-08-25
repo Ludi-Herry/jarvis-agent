@@ -1,7 +1,7 @@
-# Phase D · 腿3（LLM 裁判）实现 checklist
+# Phase D · 腿3（LLM 裁判）实现与复核 checklist
 
 > **来源**：2026-06-29 对调研 Part7（Guardian 验收设计）的对抗式审查 + D5 实战抓到的 oracle-tamper（HIGH）。下文 F 编号对应 2026-06-29 当时的 Part7 版本；Part7 后续若修订，需重新对位。
-> **用法**：腿3 当前 deferred。动工前/中逐条对照，每条配「怎么验证满足了」。目的是让腿3 一次做对，避开 Part7 设计稿里已暴露的漏洞，省掉「做完→审出问题→返工」。
+> **类型与用法**：日期化实现 checklist。腿3 与 held-out 已落地；改动相关信任边界前，用本文逐条复核当时暴露的漏洞、现有处理和触发路径测试。
 
 > **落地状态（2026-06-29 腿3 已实现，D6–D9；held-out 腿后续补，见 #1）**：5 条全部对照执行，落地与偏差如下。
 > - **#1 held-out**：✅ **已落地**（D6–D9 之后单独补 + 经两裁判对抗复核加固）。新增真正的 held-out 腿：goal-setter 提供的**秘密**校验命令（`JARVIS_HELDOUT_CHECKS_FILE` / `deps.heldOutCommands`），builder 从不见到（不进 context/continuation/EventBus），harness 跑它采信真退出码，只在 leg1 绿后跑、失败→rejected（rationale 泛化不泄露）。缺席时 CLI 显式声明「置信偏弱、建议加权人工抽查」。`demo:d3` 活体 + 确定性双相验证（真活 verified / 伪造被抓 rejected）。**复核抓出并修的 2 个 HIGH**（两裁判收敛 + codex 独立）：① held-out 命令/输出经 cwd 内 goalStore 泄露 → 持久化前收缩为 `{passed, results:[]}`；② `JARVIS_HELDOUT_CHECKS_FILE` 留在 builder bash 环境 → 读毕即从 process.env 删除。**残留**：秘密文件须放 cwd 外（goal-setter 责任，文档已注明）。~~model-facing bash 继承密钥~~ **已硬化（2026-06-30）**：`runCommand.scrubSecretEnv`，model-facing bash 删 credential-shaped env（`isSecretEnvName`），harness 自跑命令保留全 env。
@@ -14,13 +14,13 @@
 
 ## 总原则
 
-审查价值在事前预防。这 5 条不是「将来 review 再查」，是腿3 编码时的输入约束。每条都要有**触发路径单测**——guardrail 这种「平时不触发」的代码若没有触发测试，就是「绿灯≠成功」的活样本（CodePilot doom-loop 漏写 break、CodeWhale 计数器只自增不读，都是前车之鉴）。
+审查价值在事前预防。这 5 条必须作为腿3 编码时的输入约束，不能留到后续 review 才补。每条都要有**触发路径单测**——guardrail 这种「平时不触发」的代码若没有触发测试，就是「绿灯≠成功」的活样本（CodePilot doom-loop 漏写 break、CodeWhale 计数器只自增不读，都是前车之鉴）。
 
 ---
 
 ## 1. 别用「重跑 canonical check」冒充 held-out（堵自写弱测试通道）
 
-- **风险**：Part7 把三件套里的 held-out 测试悄悄换成了「腿1 重跑既有 check」。两者不是一回事——重跑只证「既有套件过」，held-out（builder 没见过的隐藏断言）才防「builder 自己写弱测试骗过套件」。拼起来是完整捷径：写功能 + 自写 trivial 测试 → 腿1 全绿 → 腿2 没删测试干净 → 若该需求判为「客观项」则腿3 不 spawn → 直接 verified。
+- **风险**：Part7 把三件套里的 held-out 测试悄悄换成了「腿1 重跑既有 check」。重跑只能证明既有套件通过；held-out 依靠 builder 未见过的隐藏断言，才能阻止 builder 用弱测试骗过套件。拼起来是完整捷径：写功能 + 自写 trivial 测试 → 腿1 全绿 → 腿2 没删测试干净 → 若该需求判为「客观项」则腿3 不 spawn → 直接 verified。
 - **腿3 要做**：要么真加一条 harness 侧 held-out / hidden-assertion 腿（哪怕「可行处才加」也要进主流程，别只在风险登记提一句）；要么显式声明 held-out 缺位、标成已知风险，并据此加权依赖人工抽查。别再叫「三件套」却只做两件。
 - **怎么验证**：构造「功能假实现 + 自写弱测试」的 fixture，确认它**不会**被判 verified。
 - **来源**：Part7 审查 F1。

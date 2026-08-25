@@ -1,8 +1,7 @@
 # Jarvis 使用与验收指南（给 Ludi）
 
-> 这份指南面向你自己上手：按顺序把命令复制进 PowerShell、对照「期望看到」判断输出，走完就是一轮使用验收。
-> 分三层推进：**第一层零成本**（不需要模型 key，覆盖近期全部新切片：stop / review / completion / sessions 操作）→ **第二层会话操作**（仍免费）→ **第三层真模型功能**（烧 token，随时可停）。
-> 每个命令块第一行都是 `cd H:\jarvis-agent`，从任何目录打开 PowerShell 都能整段照抄。
+> 用途：在 PowerShell 中按顺序验证 Jarvis 的主要用户路径。第一、二层无需模型 key，其中 stop 和 Session 操作会改变本地状态；第三层需要模型 key，开始对话后会产生费用。
+> 每个命令块都包含工作目录，可以从任意 PowerShell 窗口整段复制。命令参数有变化时，以对应子命令的 `--help` 为准。
 
 ---
 
@@ -29,7 +28,7 @@ npm run jarvis -- --help
 npm run jarvis -- --version
 ```
 
-**期望看到**：命令清单里包含 `stop`、`review`、`completion`、`a0`、`sessions`、`checkpoints`、`rewind`；版本输出 `0.1.0`。
+**期望看到**：命令清单里包含 `stop`、`review`、`completion`、`a0`、`sessions`、`checkpoints`、`rewind`；版本值与 `package.json` 一致。
 
 ### 1.2 doctor 就绪诊断
 
@@ -61,7 +60,7 @@ npm run jarvis -- sessions search "测试"
 npm run jarvis -- sessions show <从 list 里复制的会话 id>
 ```
 
-**期望看到**：`Sessions (read-only): 27` 之类的清单（数字随你的实际会话数变）；search 只搜用户/助手文本与元数据，不碰工具输出；show 展示完整性、恢复证据。
+**期望看到**：`Sessions (read-only): <数量>` 清单；数量来自当前 `data/sessions/`。search 只搜用户/助手文本与元数据，不碰工具输出；show 展示完整性和恢复证据。
 
 **验收点**：带损坏日志的会话会被点名列出（fail-closed 可见），报告里能看到哪个会话坏了、为什么。
 
@@ -125,20 +124,20 @@ cd H:\jarvis-agent
 npm run jarvis -- review list
 ```
 
-**期望看到**：`Pending human reviews: 6`（当前仓库实际有 6 条 parked 需求）加明细。这只是查看；真正的裁决动作见 3.5。
+**期望看到**：有待裁决项时显示 `Pending human reviews: <数量>` 与明细；没有时显示 `No pending human reviews`。这个命令只查看，裁决动作见 3.5。
 
 ---
 
-## 2. 第二层：会话操作（仍不需要 key）
+## 2. 第二层：会话文件操作（仍不需要 key）
 
-### 2.1 恢复会话
+### 2.1 恢复前预检
 
 ```powershell
 cd H:\jarvis-agent
-npm run jarvis -- resume          # 恢复最近一个会话
+npm run jarvis -- sessions show <会话 id>
 ```
 
-**期望看到**：恢复摘要（会话 id、轮次、恢复模式）。恢复一个带未完成工具调用的会话时，会明确提示 pending effect 及处理方式。
+**期望看到**：会话完整性、composition、pending effect 和 `ready-for-resume-check` 等恢复建议。这个结果只做预检；实际 `resume` 还会比较本次调用的配置与 addendum。
 
 ### 2.2 会话管理（fork / rename / archive）
 
@@ -177,9 +176,11 @@ npm run jarvis -- rewind <会话 id> <检查点 id>
 ```powershell
 cd H:\jarvis-agent
 npm run jarvis -- run "看看这个仓库最近的改动"
+npm run jarvis -- resume                 # 恢复当前 cwd 最近的会话
+npm run jarvis -- resume <会话 id>        # 恢复指定会话
 ```
 
-**期望看到**：模型读文件、给结论；之后保留交互提示符可继续对话，`/exit` 退出。想固定走行模式（不开 TUI）加 `--no-tui`。
+**期望看到**：`run` 执行首条请求后保留交互提示符；`resume` 先显示恢复来源与兼容性，再进入同一交互表面。带未决工具副作用、损坏记录或 composition 漂移的 Session 会停下并给出处理方向。`/exit` 退出；想固定走行模式加 `--no-tui`。
 
 **权限闸门**：模型读文件直接放行；改源码会先征求审批；碰 `.env` 这类敏感文件直接拒绝。审批提示按 y/n 交互。
 
@@ -207,7 +208,7 @@ npm run jarvis -- finalize --loop <loop id> --merge  # 交互合并，要输入 
 
 ```powershell
 cd H:\jarvis-agent
-npm run cron:daemon -- --cron-map <计划文件绝对路径>
+npm run jarvis -- cron daemon --cron-map <计划文件绝对路径>
 ```
 
 **注意**：cron 计划文件必须放在**工作区外**（放在仓库内会被安全检查拒绝：repo-controlled cron config）。
@@ -230,7 +231,7 @@ cd H:\jarvis-agent
 npm run jarvis -- a0 report --observations data/a0/run-v2/observations.jsonl
 ```
 
-**现状**：v2 真实跑分已 GO（2026-08-17），report 只读重放不花钱，可以直接看结果。`a0 run` 会重跑 6 案 × 3 次真实模型调用，没有新需求时不必重跑。
+仓库内已有可重放的 v2 observations。`report` 只读且不调用模型；`a0 run` 会重跑 6 案 × 3 次真实模型调用，需要单独评估费用。
 
 ---
 
@@ -251,7 +252,7 @@ Set-Content "$probe\objectives.txt" "inspect the workspace"
 
 ```powershell
 cd H:\jarvis-agent
-npm run cron:daemon -- --cron-map "$env:TEMP\jarvis-stop-acceptance\cron.json"
+npm run jarvis -- cron daemon --cron-map "$env:TEMP\jarvis-stop-acceptance\cron.json"
 ```
 
 等到出现 `cron daemon - 1 tasks` 和 `sleeping until ...`。
@@ -282,7 +283,7 @@ cd H:\jarvis-agent
 npm run gui
 ```
 
-浏览器开 `http://127.0.0.1:4317`（端口被占会自动向后找）。功能：只读时间线、**急停按钮**（与 CLI `stop` 写同一个控制文件）、human-review 裁决界面。这是 GUI 第一版，只监听本机回环地址。
+打开命令输出的本地 URL。默认从 `http://127.0.0.1:4317` 开始，端口被占时会在有限范围内顺延。GUI 提供只读时间线、急停按钮、human-review 裁决、审批历史和 goal/loop 过滤，只监听本机回环地址。
 
 ---
 
@@ -344,4 +345,4 @@ npm run gui
 | 16 | 人工裁决 | `npm run jarvis -- review approve <id> --requirement r1 --note "..."` | 裁决落盘、清单减一 | ☐ |
 | 17 | GUI | `npm run gui` | 时间线 + 急停键可用 | ☐ |
 
-> 1–13 全过即完成「零成本层」验收，覆盖了 sessions / review / completion / stop 全部近期切片；14–17 视费用与时间自行决定。
+> 1–13 都不调用模型；第 6–8、11–13 项会改变本地控制或 Session 状态，其余为只读检查。14–17 按费用和验收需要执行。

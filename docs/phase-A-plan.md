@@ -1,5 +1,7 @@
 # Phase A 搭建方案 · 单 agent 能跑
 
+> 类型：历史实现计划。本文保留 Phase A 的原始任务拆分和设计依据；落地结果见 `docs/handoff-A.md`，当前架构边界见 `AGENTS.md`。
+
 > 依据蓝图 §12 的 A 阶段 + §10 技术栈 + §11 目录 + §2/§3/§7/§8 模块设计。
 > 蓝图原文：`H:\LLM本地知识库\采集\external\agent-harness-调研\agent-harness-Part2-架构蓝图.md`。
 > **首要代码参照：kimi-code**（Moonshot 官方 TS/Node coding agent，与本骨架最同构；深挖见知识库 Part8）——`kosong/src/provider.ts`（ModelProvider 形状）、`agent-core/src/loop/`（无状态 loop + host 持状态）、`agent-core/src/agent/compaction/strategy.ts`（canSplitAfter + 工具输出落盘）。次要参照 Claude Code 还原源码 / codex。
@@ -9,7 +11,7 @@
 
 ## 0. A 阶段目标（一句话）
 
-让**单个 agent 在终端里跑起来**：你输入 → 它对话 / 调工具（读写文件、检索）/ 上下文超阈值自动压缩 / 全过程在终端流式可见。事件流第一天就铺好，所以将来接 GUI 是「接订阅」不是「改架构」。
+让**单个 agent 在终端里跑起来**：你输入 → 它对话 / 调工具（读写文件、检索）/ 上下文超阈值自动压缩 / 全过程在终端流式可见。事件流第一天就铺好，将来接 GUI 只需接订阅，现有架构保持稳定。
 
 **A 阶段证明的核心命题**：有状态宿主 + 纯函数决策点这套骨架，真能让单 agent 稳定跑通对话-工具-压缩闭环，且决策逻辑可单测。
 
@@ -19,7 +21,7 @@
 
 | # | 决策 | 选了什么 | 为什么 |
 |---|---|---|---|
-| 1 | 代码位置 | 独立仓库 `H:\agent-harness`（已 git init，branch main） | 与知识库 vault 分离，harness 是产品不是笔记 |
+| 1 | 代码位置 | 独立仓库 `H:\agent-harness`（已 git init，branch main） | 与知识库 vault 分离，harness 按产品工程管理 |
 | 2 | 首个 model provider | **首发 Doubao-Seed-2.1-pro**（火山方舟 OpenAI 兼容端点 + 流式）；ModelProvider 抽象留好切换，A 阶段只实装这一家 | 三家国产对比后选它：工具调用最省心（可关思考、消息拼接最简单、无 reasoning_content 回传硬坑）、正式版，A 阶段第一目标是稳跑通工具循环而非省钱。DeepSeek（最便宜 + 1M 上下文，但 preview 期工具调用不稳）/ Kimi K2.7 Code（agent 原生、GA，但强制思考 + 输出仅 32K）将来按需切。原定「只接 Anthropic」因改用国产模型作废 |
 | 3 | 首个工具集 | **Read + Write + Grep** | 够演示对话+副作用+检索；**Bash 推迟到 B 阶段**——A 阶段没上 PermissionGate，放 Bash = 裸奔 |
 | 4 | 首个 skill | **git-commit**（写符合规范的 commit message） | 最小、贴你工作流、零额外依赖，正好演示三级渐进披露 |
@@ -101,7 +103,7 @@
 ### 3.3 ToolRegistry（core）— 工具登记处 + 入参校验
 - **职责**：登记工具（name/description/zod schema/run），校验入参，执行，返回结果。
 - **最小形态**：登记 **Read / Write / Grep** 三个内置工具；zod 校验入参；执行抛错归一成 `ToolResult.error`。
-- **⚠️ Zod→JSON-Schema 必须归一（kimi-code gotcha）**：把 zod 转成发给模型的 tool schema 时，**deref `$ref`/`$defs` 并补 `type`**——严格端点（含 Moonshot，火山方舟大概率同款）不吃 `$defs`；这是 `schemasForModel()` 的核心活，不是直接 `zodToJsonSchema` 丢出去。另：回灌工具结果时 **tool_call_id 截到 ≤64 字符**（兼容端点约束）。
+- **⚠️ Zod→JSON-Schema 必须归一（kimi-code gotcha）**：把 zod 转成发给模型的 tool schema 时，**deref `$ref`/`$defs` 并补 `type`**——严格端点（含 Moonshot，火山方舟大概率同款）不吃 `$defs`；`schemasForModel()` 负责完成归一，不能把 `zodToJsonSchema` 结果直接发送。另：回灌工具结果时 **tool_call_id 截到 ≤64 字符**（兼容端点约束）。
 - **接口草案**：
   ```ts
   export interface ToolDefinition<I = unknown> {
@@ -232,7 +234,7 @@
 
 | 项 | 处置 |
 |---|---|
-| ~~A0 装错 SDK：deps 里是 `@anthropic-ai/sdk`、不是 Doubao 要的 `openai`~~ | ✅ A1 已完成（c416eba）：`npm rm @anthropic-ai/sdk && npm i openai`，deps 现为 `openai`。 |
+| ~~A0 SDK 选型错误：deps 使用 `@anthropic-ai/sdk`，Doubao 接入需要 `openai`~~ | ✅ A1 已完成（c416eba）：`npm rm @anthropic-ai/sdk && npm i openai`，deps 现为 `openai`。 |
 | `dev` 脚本指向不存在的 `src/surfaces/cli/index.ts` | A4 建 CLI 时补；A1 可先放空占位让 `npm run dev` 不报错 |
 | ~~Doubao/OpenAI 兼容的流式 + 工具调用事件形态~~ | ✅ A1 已落（c416eba/d58b612）：流式增量 + 真实 usage（`stream_options.include_usage` + `choices[0].usage` 兜底，含终端空 choices 块单测）已通；tool_calls 按 index 缓冲拼 arguments 的通道留好（执行是 A2）。 |
 | ink 在 Windows 终端的渲染/重绘表现 | A4 先做最小渲染验证，不行退回纯 stdout 流式 |

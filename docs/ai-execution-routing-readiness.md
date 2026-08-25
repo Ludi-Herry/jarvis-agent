@@ -1,6 +1,6 @@
 # AI execution routing readiness
 
-> 状态：路线项，只记录原则、边界和重开条件。本文不新增当前实现任务，不引入本地模型、异步推理服务或自动路由器。
+> 类型：产品雷达。本文记录执行路由的原则、边界和重开条件，不直接产生实现任务，也不授权引入本地模型、异步推理服务或自动路由器。
 
 ## 结论
 
@@ -8,7 +8,7 @@ Execution routing 值得进入 Jarvis 的后续路线图。
 
 当前阶段只补架构原则：**route before model selection**。先判断任务类型、风险、验收方式、延迟要求、上下文规模，再决定 executor / model。模型选择是路由后的执行资源选择，不能藏进 prompt 或临时环境变量里。
 
-Jarvis 现在已经有安全路由和验收路由。下一步真正缺的是只读 `status / usage / audit` 观测层。没有历史成功率、失败原因、token、耗时、人工介入点这些数据，成本路由会变成拍脑袋分类器。
+Jarvis 已有安全路由、验收路由和只读 `status / usage / audit` 观测层。真实任务样本仍不足，历史成功率、失败原因、token、耗时和人工介入点尚不能支持可靠的成本路由。达到本文的重开条件前，继续积累证据，不实现自动分类器。
 
 ## Source Signal
 
@@ -37,7 +37,7 @@ Tomasz Tunguz 的 `Most AI Work Can Wait` 提出三层拆分：
 - **任务形状判据**：任务能拆成独立方案再汇总的（研究、评审、验收复核），融合有收益；必须顺序依赖上一步结果的长程执行（goal/loop 写码主场景），融合只添延迟。证据：DRACO 上多模型队伍 60.82 分 vs Fable 5 59.80 分（可并行汇总的研究任务，质量打平、账单 1/3）；同一队伍在 PinchBench 上不提分、只降本 18%；延迟中位数 535s vs 188s（约 3 倍）。融合顶替的是「研究员」身份，顶替不了「操盘手」身份——Jarvis 恰是操盘手 harness，主场景在融合的弱区。
 - **经济结构判据**：OpenRouter Fusion 与 OpenSquilla 表面同构（proposer + judge），成本结构相反。Fusion 用同档模型组 panel，默认 3 模型成本约为单模型 4-5 倍，花钱买质量；OpenSquilla 用低一个量级单价的模型组 panel，6 倍 token 换 1/3 账单（58 万 token/题 vs 9.4 万，$0.38/题 vs $1.21/题），用组织换成本。Jarvis 该学后者（首发已选便宜档 Doubao），但前提是存在量级级单价差可组织——当前单 provider（Doubao），该前提不成立。共同判据与下方 BYO 小节同源：让什么档位的智力干什么档位的活 = 单价差 × 任务可分性。
 
-证据强度标注：以上数字来自单次描述性 benchmark 对比，OpenSquilla 报告自己声明并非统计显著性研究。「比 Hermes MoA 更便宜」成立；「比 MoA 更好」（60.82 vs 59.55，差 1.27 分）在描述性研究里属于噪声，不足以支撑方案选型。引用本节做决策时按快照对待，别当定论。
+证据强度标注：以上数字来自单次描述性 benchmark 对比，OpenSquilla 报告也未提供统计显著性结论。「比 Hermes MoA 更便宜」成立；「比 MoA 更好」（60.82 vs 59.55，差 1.27 分）在描述性研究里属于噪声，不足以支撑方案选型。引用本节做决策时按快照对待，别当定论。
 
 OpenSquilla 最值得 Jarvis 借的是 harness-native evidence flywheel：每次选择记录 operation、route state、model set、execution trace、outcome、tokens / cost、latency 和 fallback。整套自动 router 暂不适合当前 Jarvis。Jarvis 已经有 JSONL、observe、verifier report、trusted requirement routes 和 GUI timeline，天然适合先把这些信号展示清楚，再谈 selector。
 
@@ -103,7 +103,7 @@ Jarvis 已经具备几类显式路由，但它们主要服务安全、验收和�
 - provider 只有 Doubao。
 - builder 模型主要来自 `ARK_MODEL`。
 - verifier 可通过 `ARK_VERIFIER_MODEL` 或 map 异构，但这是独立性和验收质量路由。
-- vision 是 opt-in 的异构工具，不是通用模型档位。
+- vision 是 opt-in 的异构工具，不属于通用模型档位。
 - JSONL 已记录状态，usage 事件已存在，但还没有稳定的 route-quality dashboard。
 
 ## Principle For Future Iterations

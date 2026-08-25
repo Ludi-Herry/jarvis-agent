@@ -1,6 +1,8 @@
 # 交接：codex 自主接手（Claude 不可用后的「接手宪法」）
 
-> 前提：实现者从 Claude 换成 **codex（GPT 系）**，且 Claude 不再可用。你（codex）此后**既是实现者又是审查者，属同一模型族**——对抗强度天然弱于跨模型（原项目正因此用「Claude 实现 → codex 审」）。本文档是补偿：把 Claude 走后无法再靠"换族挑错"守住的红线**钉死成文字**，并把「判断对错」这一环明确交回**人（Ludi）**。
+> 类型：历史接手协议。本文记录当时从 Claude 切换到 Codex 后的审查补偿；当前工程规则与子 Agent 边界以根 `AGENTS.md` 为准，本文只用于理解信任设计的来路。
+>
+> 当时前提：实现者从 Claude 换成 **codex（GPT 系）**，且 Claude 不再可用。codex 同时承担实现和审查，跨模型对抗强度下降；本文把必须保留的红线和人工判断点集中列出。
 >
 > 上手先读：`README.md`（全景）→ 本页 → `docs/handoff-next.md`（下一步 + GUI 就绪盘点）→ `docs/handoff-loop-remaining.md`（loop 重项收口记录）→ `docs/handoff-D.md`（验收架构）→ `docs/handoff-hooks.md`（Hooks）→ `docs/security-review-baseline.md`（审查方法 + 严重度尺子 + 历史元教训）。项目 memory 里 `phase-d-goalloop-deterministic-legs` / `restore-bash-session-allow` / `hooks-slice-1` / `codex-for-adversarial-review` 是配套。
 
