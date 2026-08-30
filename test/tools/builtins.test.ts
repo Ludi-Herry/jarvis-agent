@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { link, mkdtemp, rm, readFile, mkdir, writeFile, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { readTool, writeTool, grepTool } from '../../src/core/tools/builtins.js';
+import { readTool, writeTool, editTool, grepTool } from '../../src/core/tools/builtins.js';
 import type { ToolRunCtx } from '../../src/core/tools/types.js';
 
 let dir: string;
@@ -160,6 +160,65 @@ describe('writeTool', () => {
 
     expect(out.error).toMatch(/git metadata/);
     expect(await readFile(join(dir, '.git', 'config'), 'utf8')).toBe('original');
+  });
+});
+
+describe('editTool', () => {
+  it('replaces one exact match in a large file without resending the full contents', async () => {
+    const before = `${'prefix\r\n'.repeat(4_000)}TARGET\r\n${'suffix\r\n'.repeat(4_000)}`;
+    await writeFile(join(dir, 'large.txt'), before, 'utf8');
+    const read = await readTool.run({ path: 'large.txt' }, ctx);
+    const expectedVersion = read.fileReceipt?.kind === 'read' ? read.fileReceipt.version : '';
+
+    const out = await editTool.run({
+      path: 'large.txt',
+      oldText: 'TARGET\r\n',
+      newText: 'REPLACED\r\n',
+      expectedVersion,
+    }, ctx);
+
+    expect(out.error).toBeUndefined();
+    expect(out.content).toMatch(/Edited large\.txt/);
+    expect(out.fileReceipt).toMatchObject({
+      kind: 'write',
+      outcome: 'applied',
+      precondition: 'expectedVersion',
+      expectedVersion,
+    });
+    expect(await readFile(join(dir, 'large.txt'), 'utf8')).toBe(before.replace('TARGET\r\n', 'REPLACED\r\n'));
+  });
+
+  it.each([
+    ['no match', 'missing'],
+    ['more than once', 'repeat'],
+  ])('rejects when oldText occurs %s', async (_label, oldText) => {
+    await writeFile(join(dir, 'note.txt'), 'repeat and repeat', 'utf8');
+    const read = await readTool.run({ path: 'note.txt' }, ctx);
+    const expectedVersion = read.fileReceipt?.kind === 'read' ? read.fileReceipt.version : '';
+
+    const out = await editTool.run({ path: 'note.txt', oldText, newText: 'changed', expectedVersion }, ctx);
+
+    expect(out.error).toMatch(/exactly once/);
+    expect(out.fileReceipt).toMatchObject({ kind: 'write', outcome: 'conflict' });
+    expect(await readFile(join(dir, 'note.txt'), 'utf8')).toBe('repeat and repeat');
+  });
+
+  it('rejects a stale expectedVersion without changing the newer file', async () => {
+    await writeFile(join(dir, 'note.txt'), 'baseline target', 'utf8');
+    const read = await readTool.run({ path: 'note.txt' }, ctx);
+    const expectedVersion = read.fileReceipt?.kind === 'read' ? read.fileReceipt.version : '';
+    await writeFile(join(dir, 'note.txt'), 'external target', 'utf8');
+
+    const out = await editTool.run({
+      path: 'note.txt',
+      oldText: 'target',
+      newText: 'changed',
+      expectedVersion,
+    }, ctx);
+
+    expect(out.error).toMatch(/Write conflict/);
+    expect(out.fileReceipt).toMatchObject({ kind: 'write', outcome: 'conflict' });
+    expect(await readFile(join(dir, 'note.txt'), 'utf8')).toBe('external target');
   });
 });
 

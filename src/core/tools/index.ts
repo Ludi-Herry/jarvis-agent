@@ -6,11 +6,11 @@
  * defs) stay reachable for tests but callers normally only need the registry.
  */
 import { InMemoryToolRegistry } from './registry.js';
-import { readTool, writeTool, grepTool } from './builtins.js';
+import { readTool, writeTool, editTool, grepTool } from './builtins.js';
 import type { ToolRegistry } from './types.js';
 
 export { InMemoryToolRegistry, toolDefinitionSchema } from './registry.js';
-export { readTool, writeTool, grepTool } from './builtins.js';
+export { readTool, writeTool, editTool, grepTool } from './builtins.js';
 export { fileVersion, isFileVersion } from './file-version.js';
 export { createBashTool, type BashToolOptions } from './bash.js';
 export {
@@ -31,13 +31,14 @@ export type {
   ToolCapability,
 } from './types.js';
 
-/** A registry with the file built-ins (read/write/grep). The `bash` tool is deliberately NOT here:
+/** A registry with the file built-ins (read/write/edit/grep). The `bash` tool is deliberately NOT here:
  *  it executes code and must only be registered alongside a PermissionGate (see createBashTool),
  *  which the B4 REPL and the b3-demo do — never the bare default. */
 export function buildDefaultRegistry(): ToolRegistry {
   const registry = new InMemoryToolRegistry();
   registry.register(readTool);
   registry.register(writeTool);
+  registry.register(editTool);
   registry.register(grepTool);
   return registry;
 }

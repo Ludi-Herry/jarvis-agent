@@ -1,9 +1,9 @@
 /**
- * The three A-phase built-in tools: read / write / grep.
+ * The four A-phase built-in tools: read / write / edit / grep.
  *
  * Each is a plain {@link ToolDefinition} — a zod input schema plus a `run` side effect.
  * Paths resolve against `ctx.cwd` (the project root the loop injects) and are confined to it:
- * read/write/grep go through {@link safeResolve}, which rejects paths that escape cwd or resolve
+ * read/write/edit/grep go through {@link safeResolve}, which rejects paths that escape cwd or resolve
  * (following symlinks) to a sensitive file — the file-tool analogue of bash's confined cwd. The
  * PermissionGate still gates each call by capability (read=allow, write=ask); this confinement is
  * the execution-layer backstop for what the gate, seeing only the literal path arg, can't catch.
@@ -32,7 +32,7 @@ export const readTool: ToolDefinition<{ path: string }> = {
   name: 'read',
   description:
     'Read a UTF-8 text file and return its full contents plus an opaque file version. ' +
-    'Pass that version as write.expectedVersion when updating the file.',
+    'Pass that version as edit.expectedVersion for a local change or write.expectedVersion for a full replacement.',
   capability: 'read-only',
   inputSchema: z.object({
     path: z.string().describe('File path to read, relative to the project root.'),
@@ -101,6 +101,86 @@ export const writeTool: ToolDefinition<WriteInput> = {
     return withWriteLock(safe.abs, async () => {
       if (createOnly === true) return createFile(path, safe.abs, content, ctx.cwd);
       return replaceFile(path, safe.abs, content, expectedVersion as string, ctx.cwd);
+    });
+  },
+};
+
+const editInputSchema = z.object({
+  path: z.string().describe('Existing UTF-8 file path to edit, relative to the project root.'),
+  oldText: z.string().min(1).describe('Exact existing text to replace; it must occur exactly once.'),
+  newText: z.string().describe('Replacement text. Only the unique oldText match is changed.'),
+  expectedVersion: z
+    .string()
+    .refine(isFileVersion, 'expectedVersion must be an fv1 token returned by read')
+    .describe('Exact version returned by read; stale versions fail without changing the file.'),
+}).superRefine((input, ctx) => {
+  if (input.oldText === input.newText) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'oldText and newText must differ',
+    });
+  }
+});
+
+type EditInput = z.infer<typeof editInputSchema>;
+
+export const editTool: ToolDefinition<EditInput> = {
+  name: 'edit',
+  description:
+    'Make one bounded change to an existing UTF-8 file without resending the full file. ' +
+    'Read first, then pass the returned expectedVersion plus an oldText that occurs exactly once. ' +
+    'The edit reuses write confinement, concurrency checks, atomic replacement, and post-write verification.',
+  capability: 'writes-files',
+  inputSchema: editInputSchema,
+  run: async ({ path, oldText, newText, expectedVersion }, ctx) => {
+    const receipt = { kind: 'write' as const, path, precondition: 'expectedVersion' as const, expectedVersion };
+    const safe = await safeResolve(ctx.cwd, path);
+    if (!safe.ok) return { content: '', error: `Cannot edit ${path}: ${safe.reason}` };
+    if (isGitMetadataPath(ctx.cwd, safe.abs)) {
+      return { content: '', error: `Cannot edit ${path}: refusing to mutate git metadata` };
+    }
+    return withWriteLock(safe.abs, async () => {
+      let bytes: Buffer;
+      try {
+        bytes = await readFile(safe.abs);
+      } catch (err) {
+        const outcome = errorCode(err) === 'ENOENT' ? 'conflict' as const : 'unknown' as const;
+        return {
+          content: '',
+          error: outcome === 'conflict'
+            ? `Cannot edit ${path}: target does not exist`
+            : `Cannot read current version of ${path}: ${message(err)}`,
+          fileReceipt: { ...receipt, outcome },
+        };
+      }
+
+      const preVersion = fileVersion(bytes);
+      if (preVersion !== expectedVersion) {
+        return {
+          content: '',
+          error: `Write conflict for ${path}: expected ${expectedVersion}, current version is ${preVersion}; read again before retrying`,
+          fileReceipt: { ...receipt, outcome: 'conflict' as const, preVersion },
+        };
+      }
+
+      const content = bytes.toString('utf8');
+      const first = content.indexOf(oldText);
+      const second = first < 0 ? -1 : content.indexOf(oldText, first + 1);
+      if (first < 0 || second >= 0) {
+        return {
+          content: '',
+          error: `Cannot edit ${path}: oldText must occur exactly once`,
+          fileReceipt: { ...receipt, outcome: 'conflict' as const, preVersion },
+        };
+      }
+
+      const updated = content.slice(0, first) + newText + content.slice(first + oldText.length);
+      const result = await replaceFile(path, safe.abs, updated, expectedVersion, ctx.cwd);
+      if (result.error !== undefined) return result;
+      return {
+        ...result,
+        content: `Edited ${path} (${oldText.length} chars replaced with ${newText.length}); ${result.content}`,
+      };
     });
   },
 };
