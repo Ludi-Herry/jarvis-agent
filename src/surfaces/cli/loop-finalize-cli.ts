@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { appendFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { appendFile, lstat, mkdir, mkdtemp, readFile, realpath, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -580,18 +580,34 @@ async function applyCleanupCandidates(opts: { cwd: string; shellPath: string; cl
   }
 
   for (const candidate of opts.cleanupReport.candidates) {
-    const removed = await runGitWrite(opts.shellPath, `git worktree remove ${shellQuote(candidate.worktreePath)}`, opts.cwd);
-    if (removed.code !== 0) {
+    try {
+      await detachDependencyBridge(opts.cwd, candidate.worktreePath);
+    } catch (err) {
+      const detail = `dependency bridge check failed: ${message(err)}`;
       await appendAudit(opts.auditPath, {
         t: 'finalize-stopped',
         loopId: opts.cleanupReport.loopId,
         reason: 'cleanup-remove-failed',
         index: candidate.index,
         goalId: candidate.goalId,
-        detail: compactGitOutput(removed),
+        detail,
         at: new Date().toISOString(),
       });
-      throw new Error(`cleanup-remove-failed: ${compactGitOutput(removed)}`);
+      throw new Error(`cleanup-remove-failed: ${detail}`, { cause: err });
+    }
+    const removed = await runGitWrite(opts.shellPath, `git worktree remove ${shellQuote(candidate.worktreePath)}`, opts.cwd);
+    if (removed.code !== 0) {
+      const detail = compactGitOutput(removed);
+      await appendAudit(opts.auditPath, {
+        t: 'finalize-stopped',
+        loopId: opts.cleanupReport.loopId,
+        reason: 'cleanup-remove-failed',
+        index: candidate.index,
+        goalId: candidate.goalId,
+        detail,
+        at: new Date().toISOString(),
+      });
+      throw new Error(`cleanup-remove-failed: ${detail}`);
     }
     await appendAudit(opts.auditPath, {
       t: 'cleanup-removed',
@@ -604,6 +620,46 @@ async function applyCleanupCandidates(opts: { cwd: string; shellPath: string; cl
     console.log(`[loop finalize] cleanup-removed [${candidate.index}] ${safeInline(candidate.goalId)}`);
   }
   await appendAudit(opts.auditPath, { t: 'finalize-stopped', loopId: opts.cleanupReport.loopId, reason: 'cleanup', at: new Date().toISOString() });
+}
+
+async function detachDependencyBridge(cwd: string, worktreePath: string): Promise<void> {
+  const linkPath = join(worktreePath, 'node_modules');
+  const linkInfo = await lstatIfExists(linkPath);
+  if (linkInfo === undefined || !linkInfo.isSymbolicLink()) return;
+
+  const hostPath = join(cwd, 'node_modules');
+  const [linkTarget, hostTarget] = await Promise.all([realpath(linkPath), realpath(hostPath)]);
+  if (!samePath(linkTarget, hostTarget)) {
+    throw new Error(`node_modules link points outside the host dependency directory: ${linkTarget}`);
+  }
+
+  await unlink(linkPath);
+  const remaining = await lstatIfExists(linkPath);
+  if (remaining !== undefined) throw new Error('node_modules dependency bridge still exists after unlink');
+  await stat(hostPath);
+}
+
+async function lstatIfExists(path: string) {
+  try {
+    return await lstat(path);
+  } catch (err) {
+    if (errorCode(err) === 'ENOENT') return undefined;
+    throw err;
+  }
+}
+
+function samePath(left: string, right: string): boolean {
+  return process.platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right;
+}
+
+function errorCode(err: unknown): string | undefined {
+  return typeof err === 'object' && err !== null && 'code' in err
+    ? String((err as NodeJS.ErrnoException).code)
+    : undefined;
+}
+
+function message(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 async function assertMainCwdClean(cwd: string, shellPath: string): Promise<void> {

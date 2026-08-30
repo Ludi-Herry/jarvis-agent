@@ -473,6 +473,110 @@ describe('loop finalize CLI smoke', () => {
     }
   });
 
+  it('removes an audited worktree that has a node_modules dependency bridge without harming the host node_modules', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'jarvis-finalize-cwd-'));
+    const worktreeRoot = await mkdtemp(join(tmpdir(), 'jarvis-finalize-worktrees-'));
+    const loopId = 'L-cleanup-node-modules-bridge';
+    const worktreePath = join(worktreeRoot, loopId, 'g0');
+    try {
+      await runGit(cwd, ['init']);
+      await runGit(cwd, ['config', 'user.name', 'Jarvis Test']);
+      await runGit(cwd, ['config', 'user.email', 'jarvis@example.test']);
+      await runGit(cwd, ['config', 'core.autocrlf', 'false']);
+      await mkdir(join(cwd, 'node_modules'), { recursive: true });
+      const markerPath = join(cwd, 'node_modules', 'jarvis-host-marker.txt');
+      await writeFile(markerPath, `host-marker:${loopId}\n`, 'utf8');
+      await writeFile(join(cwd, '.gitignore'), '/data/\n/node_modules/\n', 'utf8');
+      await writeFile(join(cwd, 'file.txt'), 'base\n', 'utf8');
+      await runGit(cwd, ['add', '.gitignore', 'file.txt']);
+      await runGit(cwd, ['commit', '-m', 'init']);
+
+      await mkdir(dirname(worktreePath), { recursive: true });
+      await runGit(cwd, ['worktree', 'add', '--detach', worktreePath, 'HEAD']);
+      await symlink(join(cwd, 'node_modules'), join(worktreePath, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
+      // Sanity: bridge resolves back to host and marker is visible from the worktree.
+      await expect(readFile(join(worktreePath, 'node_modules', 'jarvis-host-marker.txt'), 'utf8')).resolves.toBe(`host-marker:${loopId}\n`);
+
+      await writeLoopLog(cwd, loopId, worktreePath);
+      await writeFinalizeAudit(cwd, loopId, [
+        { t: 'merge-applied', loopId, index: 0, goalId: 'g0', worktreePath, at: 't3' },
+      ]);
+
+      // Confirm both main cwd and worktree are clean before finalize.
+      expect((await runGitOutput(cwd, ['status', '--porcelain=v1', '--untracked-files=all'])).trim()).toBe('');
+      expect((await runGitOutput(worktreePath, ['status', '--porcelain=v1', '--untracked-files=all'])).trim()).toBe('');
+
+      const result = await runFinalizeCli(
+        ['--loop', loopId, '--worktree-root', worktreeRoot, '--cleanup'],
+        cwd,
+        `cleanup ${loopId}\n`,
+      );
+
+      expect(result.code, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(result.stdout).toContain('cleanup-removed');
+      // The worktree must be fully removed.
+      await expect(stat(worktreePath)).rejects.toThrow();
+      // The host node_modules and its marker must remain intact (bridge symlink/junction
+      // removal must not traverse into the host).
+      await expect(stat(join(cwd, 'node_modules'))).resolves.toMatchObject({ isDirectory: expect.any(Function) });
+      await expect(readFile(markerPath, 'utf8')).resolves.toBe(`host-marker:${loopId}\n`);
+
+      const audit = await readFile(join(cwd, 'data', 'loops', `${loopId}.finalize.jsonl`), 'utf8');
+      expect(audit).toContain('"t":"merge-applied"');
+      expect(audit).toContain('"t":"cleanup-confirmed"');
+      expect(audit).toContain('"t":"cleanup-removed"');
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+      await rm(worktreeRoot, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it('refuses cleanup when the node_modules link does not target the host dependency directory', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'jarvis-finalize-cwd-'));
+    const worktreeRoot = await mkdtemp(join(tmpdir(), 'jarvis-finalize-worktrees-'));
+    const externalDependencies = await mkdtemp(join(tmpdir(), 'jarvis-external-node-modules-'));
+    const loopId = 'L-cleanup-untrusted-node-modules-link';
+    const worktreePath = join(worktreeRoot, loopId, 'g0');
+    const externalMarker = join(externalDependencies, 'external-marker.txt');
+    try {
+      await runGit(cwd, ['init']);
+      await runGit(cwd, ['config', 'user.name', 'Jarvis Test']);
+      await runGit(cwd, ['config', 'user.email', 'jarvis@example.test']);
+      await runGit(cwd, ['config', 'core.autocrlf', 'false']);
+      await mkdir(join(cwd, 'node_modules'), { recursive: true });
+      await writeFile(externalMarker, 'keep\n', 'utf8');
+      await writeFile(join(cwd, '.gitignore'), '/data/\n/node_modules/\n', 'utf8');
+      await writeFile(join(cwd, 'file.txt'), 'base\n', 'utf8');
+      await runGit(cwd, ['add', '.gitignore', 'file.txt']);
+      await runGit(cwd, ['commit', '-m', 'init']);
+
+      await mkdir(dirname(worktreePath), { recursive: true });
+      await runGit(cwd, ['worktree', 'add', '--detach', worktreePath, 'HEAD']);
+      await symlink(externalDependencies, join(worktreePath, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
+      await writeLoopLog(cwd, loopId, worktreePath);
+      await writeFinalizeAudit(cwd, loopId, [
+        { t: 'merge-applied', loopId, index: 0, goalId: 'g0', worktreePath, at: 't3' },
+      ]);
+
+      const result = await runFinalizeCli(
+        ['--loop', loopId, '--worktree-root', worktreeRoot, '--cleanup'],
+        cwd,
+        `cleanup ${loopId}\n`,
+      );
+
+      expect(result.code).toBe(1);
+      expect(`${result.stdout}\n${result.stderr}`).toContain('dependency bridge check failed');
+      await expect(stat(worktreePath)).resolves.toMatchObject({ isDirectory: expect.any(Function) });
+      await expect(readFile(externalMarker, 'utf8')).resolves.toBe('keep\n');
+      const audit = await readFile(join(cwd, 'data', 'loops', `${loopId}.finalize.jsonl`), 'utf8');
+      expect(audit).toContain('"reason":"cleanup-remove-failed"');
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+      await rm(worktreeRoot, { recursive: true, force: true });
+      await rm(externalDependencies, { recursive: true, force: true });
+    }
+  }, 30_000);
+
   it('fails closed when a goal worktree path resolves back inside cwd', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'jarvis-finalize-cwd-'));
     const worktreeRoot = await mkdtemp(join(tmpdir(), 'jarvis-finalize-worktrees-'));
