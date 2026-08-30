@@ -69,6 +69,7 @@ import { initialRenderState, renderEvent } from './render.js';
 import { CLI_EXIT } from './exit-codes.js';
 import { decideGitTrust } from './git-trust.js';
 import { JARVIS_VERSION } from './package-info.js';
+import { createProcessInterruptSignal, persistInterruptedGoal } from './process-interrupt.js';
 import {
   createProcessAgentEventWriter,
   goalRunFinished,
@@ -376,7 +377,14 @@ async function main(): Promise<void> {
       : 'shadow-git: 未启用(设 JARVIS_SHADOW_GIT=1 开启改动审计 + 回滚)\n',
   );
 
-  await runAdvisoryHook(hooks?.sessionStart);
+  const processInterrupt = createProcessInterruptSignal({
+    ...(rl === undefined ? {} : { input: rl }),
+    onInterrupt: (signal) => {
+      console.error(`\n[goal] ${signal} received; stopping the active run...`);
+      rl?.close();
+    },
+  });
+  const goalSignal = AbortSignal.any([emergencyStop.signal, processInterrupt.signal]);
   let result;
   const sandboxedRequirementCommands = goalSetterRequirements
     ? goalSetterRequirements.commands.length > 0
@@ -384,6 +392,7 @@ async function main(): Promise<void> {
       : undefined
     : sandboxCheckPlan?.commands;
   try {
+    await runAdvisoryHook(hooks?.sessionStart);
     result = await runGoal(
       { id, objective, sessionId, budget: { maxRounds: 8, maxWallClockMs: GOAL_MAX_WALL_CLOCK_MS }, baseline, worktreeBaseline, pinned },
       {
@@ -407,10 +416,27 @@ async function main(): Promise<void> {
         goalSetterRequirementRoutes: goalSetterRequirements?.routes,
         sandboxRunner: sandboxedRequirementCommands && sandboxedRequirementCommands.length > 0 ? builderSandboxRunner : undefined,
         shadowGit,
-        signal: emergencyStop.signal,
+        signal: goalSignal,
       },
     );
   } catch (err) {
+    if (processInterrupt.signal.aborted) {
+      const signal = processInterrupt.received() ?? 'SIGINT';
+      const goalInitialized = existsSync(goalLogPath);
+      if (goalInitialized) await persistInterruptedGoal({ goalId: id, store: goalStore, bus });
+      console.error(
+        goalInitialized
+          ? `[goal] interrupted by ${signal}; goal recorded as blocked and JSONL logs were preserved.`
+          : `[goal] interrupted by ${signal} before goal state initialization; existing JSONL logs were preserved.`,
+      );
+      process.exitCode = CLI_EXIT.INTERRUPTED;
+      agentEvents?.runFinished({
+        status: 'interrupted',
+        exitCode: CLI_EXIT.INTERRUPTED,
+        completion: { granted: false, authority: 'none' },
+      });
+      return;
+    }
     if (emergencyStop.signal.aborted) {
       bus.emit({ type: 'halt', reason: 'emergency-stop' });
       console.error('\n[goal] emergency stop requested; run aborted and JSONL logs were left in place.');
@@ -429,6 +455,7 @@ async function main(): Promise<void> {
     });
     throw err;
   } finally {
+    processInterrupt.dispose();
     emergencyStop.dispose();
     await runAdvisoryHook(hooks?.sessionEnd);
     rl?.close();
