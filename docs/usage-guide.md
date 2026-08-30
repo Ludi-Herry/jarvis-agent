@@ -40,6 +40,16 @@ npm run jarvis -- doctor --json
 
 **期望看到**：Node 版本、当前目录、凭据来源（只说「来自 .env / 环境变量」，不显示值）、数据目录状态。`--json` 输出带 `schemaVersion: 1`。
 
+#### 配置生效值与校验
+
+```powershell
+cd H:\jarvis-agent
+npm run jarvis -- config show
+npm run jarvis -- config validate
+```
+
+`config show` 显示不含凭据的生效配置，包括 provider、model、baseURL、preset、权限和三层配置文件状态；用它确认当前运行会采用什么值。`config validate` 解析被选中的配置层并在错误时 fail-closed；配置干净时输出 `config valid (<n> file(s) loaded)`。两条命令都不调用模型、不修改配置。
+
 ### 1.3 status 工作区观测
 
 ```powershell
@@ -330,20 +340,21 @@ npm run gui
 |---|---|---|---|---|
 | 1 | 帮助发现 | `npm run jarvis -- --help` | 命令清单含 stop / review / completion | ☐ |
 | 2 | 就绪诊断 | `npm run jarvis -- doctor` | 输出就绪项、不回显 key | ☐ |
-| 3 | 工作区观测 | `npm run jarvis -- status` | 只读汇总、authority: none | ☐ |
-| 4 | 会话清单 | `npm run jarvis -- sessions list` | 列出会话与完整性 | ☐ |
-| 5 | 会话搜索 | `npm run jarvis -- sessions search "任意词"` | 命中摘要、损坏会话点名 | ☐ |
-| 6 | 急停写入 | `npm run jarvis -- stop` | Emergency stop requested + reason | ☐ |
-| 7 | 急停清除 | `npm run jarvis -- stop --clear`（×2） | cleared → No stop in effect | ☐ |
-| 8 | 急停用法错误 | `npm run jarvis -- stop some-id` | exit 2 + 全局语义解释 | ☐ |
-| 9 | 待裁决清单 | `npm run jarvis -- review list` | 列出 parked 需求 | ☐ |
-| 10 | 补全生成 | `npm run jarvis -- completion powershell` | 输出脚本；装上后 Tab 生效 | ☐ |
-| 11 | 会话 fork/archive | `npm run jarvis -- sessions fork / archive <id>` | 原会话完好、归档可查 | ☐ |
-| 12 | 检查点只读 | `npm run jarvis -- checkpoints list <id>` | 列出 checkpoint 审计 | ☐ |
-| 13 | 急停端到端 | 见第 4 节双终端实验 | daemon 打出 [emergency-stop] 并退出 | ☐ |
-| 14 | 真实对话 | `npm run jarvis -- run "..."` | 权限闸门按预期审批 | ☐ |
-| 15 | 单目标 | `npm run jarvis -- goal "..."` | 跑到达标自停或如实报告未达标 | ☐ |
-| 16 | 人工裁决 | `npm run jarvis -- review approve <id> --requirement r1 --note "..."` | 裁决落盘、清单减一 | ☐ |
-| 17 | GUI | `npm run gui` | 时间线 + 急停键可用 | ☐ |
+| 3 | 配置检查 | `config show` + `config validate` | 生效值可见、校验通过且无凭据输出 | ☐ |
+| 4 | 工作区观测 | `npm run jarvis -- status` | 只读汇总、authority: none | ☐ |
+| 5 | 会话清单 | `npm run jarvis -- sessions list` | 列出会话与完整性 | ☐ |
+| 6 | 会话搜索 | `npm run jarvis -- sessions search "任意词"` | 命中摘要、损坏会话点名 | ☐ |
+| 7 | 急停写入 | `npm run jarvis -- stop` | Emergency stop requested + reason | ☐ |
+| 8 | 急停清除 | `npm run jarvis -- stop --clear`（×2） | cleared → No stop in effect | ☐ |
+| 9 | 急停用法错误 | `npm run jarvis -- stop some-id` | exit 2 + 全局语义解释 | ☐ |
+| 10 | 待裁决清单 | `npm run jarvis -- review list` | 列出 parked 需求 | ☐ |
+| 11 | 补全生成 | `npm run jarvis -- completion powershell` | 输出脚本；装上后 Tab 生效 | ☐ |
+| 12 | 会话 fork/archive | `npm run jarvis -- sessions fork / archive <id>` | 原会话完好、归档可查 | ☐ |
+| 13 | 检查点只读 | `npm run jarvis -- checkpoints list <id>` | 列出 checkpoint 审计 | ☐ |
+| 14 | 急停端到端 | 见第 4 节双终端实验 | daemon 打出 [emergency-stop] 并退出 | ☐ |
+| 15 | 真实对话 | `npm run jarvis -- run "..."` | 权限闸门按预期审批 | ☐ |
+| 16 | 单目标 | `npm run jarvis -- goal "..."` | 跑到达标自停或如实报告未达标 | ☐ |
+| 17 | 人工裁决 | `npm run jarvis -- review approve <id> --requirement r1 --note "..."` | 裁决落盘、清单减一 | ☐ |
+| 18 | GUI | `npm run gui` | 时间线 + 急停键可用 | ☐ |
 
-> 1–13 都不调用模型；第 6–8、11–13 项会改变本地控制或 Session 状态，其余为只读检查。14–17 按费用和验收需要执行。
+> 1–14 都不调用模型；第 7–9、12–14 项会改变本地控制或 Session 状态，其余为只读检查。15–18 按费用和验收需要执行。

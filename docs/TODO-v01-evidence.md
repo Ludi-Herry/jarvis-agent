@@ -1,6 +1,6 @@
 # v0.1 MVP dogfood 手册（Ludi 执行版）
 
-> 状态（2026-08-31）：Ludi 已批准范围收缩。当前只跑 3 个原本就需要完成的真实任务；TUI 视觉验收暂停，Recall A/B 降为次级实验，G5 与所有 post-real-use 扩展继续冻结。项目状态统一写作「工程完成，产品验证中」。
+> 阶段结论（2026-08-31）：三个真实任务已全部执行，阶段 verdict 为 **NO-GO**。交付物均由主线程收口，Jarvis 0/3 自然完成；零 false-verified、零孤儿副作用成立，无进展/长等待门槛失败。TUI、Recall、G5 与所有 post-real-use 扩展继续冻结，项目状态保持「工程完成，产品验证中」。
 > 所有命令都从 `H:\jarvis-agent` 跑；每段可整段复制进 PowerShell。
 > 前置确认：火山方舟账户有余额（`npm run jarvis -- doctor` 会显示凭据来源）。
 
@@ -13,8 +13,8 @@
 | # | 类型 | 当前真实任务 | 状态 |
 |---|---|---|---|
 | D1 | 代码 + 测试 | 补齐 finalize cleanup 的 `node_modules` dependency bridge fixture；失败时只修真实暴露的根因 | PARTIAL，见文末证据 |
-| D2 | 文档修改 | 给 `docs/usage-guide.md` 的 doctor 小节补 `config show / validate` 零成本检查，并同步验收表 | 待跑 |
-| D3 | 只读审计 | 对照当前源码复核 `KNOWN_ISSUES.md`，只报告仍成立、已过期和缺证据三类 | 待跑 |
+| D2 | 文档修改 | 给 `docs/usage-guide.md` 的 doctor 小节补 `config show / validate` 零成本检查，并同步验收表 | PARTIAL，goal blocked；主线程完成 |
+| D3 | 只读审计 | 对照当前源码复核 `KNOWN_ISSUES.md`，只报告仍成立、已过期和缺证据三类 | PARTIAL，run 中断；主线程完成 |
 
 剩余任务按交付物选 primitive：D2 有明确文件改动与检查条件，使用 `goal`；D3 只交付一份当前事实清单，使用 `run + inspect`，人工读完后 `/exit`。
 
@@ -77,13 +77,20 @@ Ludi 拍板开启 G5（GUI 审批中继）。这碰运行进程与 GUI 的桥接
 | D1-3 | 审批期间 Ctrl-C 回归 | goal | blocked；`LASTEXITCODE=130` | 2,114 | 0 允许 / 1 拒绝 | 一次中断；1 request / 1 result；零第二次工具申请 |
 | D1-4 | 连续拒绝熔断 | goal | blocked/couldNotVerify；`permissionDenied` | 6,660 | 0 允许 / 3 拒绝 | 第三次拒绝后停止；零第四次模型请求 |
 | D1-5 | 错误 primitive 重放 | goal | 正确用 `read` 回答；后被无关全量测试 flake 拒绝并中断 | 11,842 | 0 允许 / 1 拒绝 | 只读清单误用 goal；应改走 `run + inspect` |
-| D2 | usage guide 实际更新 | goal | | | | |
-| D3 | Known Issues 只读复核 | goal | | | | |
+| D2 | usage guide 实际更新 | goal | blocked/couldNotVerify；主线程按实跑输出完成 | 25,015 | 0 允许 / 3 拒绝 | 错误草稿原样重提，取证命令含无效 Windows Bash 路径与 `npx` fallback |
+| D3 | Known Issues 只读复核 | run + inspect | 5 分钟无结果后中断；主线程完成 14 条复核 | ≥4,837，researcher 未计量 | 0 | read 后自动委派 researcher，长等待无输出 |
 
 D1 促成四个已验证修复：`268c4ed` 增加 bounded `edit`；`7663cb9` 在 worktree cleanup 前安全解绑已验证的 dependency bridge，并拒绝异常 link 目标；`d85e694` 让进程/readline SIGINT 关闭审批、写入 deny、持久化 blocked 并退出 130；`f8979a6` 让只读定位优先使用免审批工具，并在连续三次拒绝后 fail-closed。D1 的产品结论仍是 PARTIAL，代码修好不代表 goal 自己已经收敛。
 
-**三条门槛自检**：☐ 零 false-verified　☐ 零自然等待/无进展　☐ 零孤儿副作用（每个任务后 `git status`）
+D3 由主线程逐条复核后的分类为：仍成立 14、已过期 0、缺少当前证据 0。证据覆盖 cron lock、human-review 本地 JSONL、Bash session grant、usage coverage、managed write、Session composition/path、goal/loop/cron loader 与 completion 测试；具体实现入口继续由 `KNOWN_ISSUES.md` 每条末尾的路径负责。
 
-三任务跑完后只做一次判断：通过则确认本地 v0.1 可用；出现可修的核心缺口则修复并重放同一任务；仍无法收敛则保持「产品验证中」。只有观察到任务类型差异、结果波动，或需要更高发布置信度时，才扩到 6–10 个任务。
+**三条门槛自检**：☑ 零 false-verified　☒ 零自然等待/无进展　☑ 零孤儿副作用（每个任务后 `git status`）
 
-**止损线**：单个 goal token 超过预期上限 3 倍、同类审批连续重复、或出现第二个核心失败信号时立即停止；保留 goal/session/approval 原始记录，修复或裁决后再进入下一个任务。
+### 阶段 verdict：NO-GO
+
+- 产品结果：三个真实交付物都已完成，完成者为主线程；Jarvis 没有自然完成任一任务。
+- 安全结果：没有 false-verified，没有无关文件或未决副作用。
+- 体验结果：D1 高 token 与多审批，D2 无法从无理由拒绝中纠正文案，D3 只读 researcher 长时间无输出。
+- 下一阶段只处理收敛与成本：优先解决只读委派长等待、拒绝反馈信息不足和大文件读取成本。未关闭前不扩样、不启 TUI/Recall/G5、不新增产品能力。
+
+**止损线**：下一阶段若同一核心质量信号再次失败，停止逐点补丁，先写共同 Owner 与一次性修复提案。

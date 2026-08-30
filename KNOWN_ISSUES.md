@@ -4,8 +4,8 @@
 
 ## 发布前仍需人工证据
 
-- **v0.1 真实使用证据仍未闭环。** 当前只跑只读、文档修改、代码+测试三个真实任务；TUI 真实 TTY 体验暂停，Recall A/B 移到三任务之后。完成标准和止损线见 [docs/TODO-v01-evidence.md](docs/TODO-v01-evidence.md)。
-- **首个真实 goal 暴露高成本与审批收敛问题。** 两次同形任务分别消耗 160,975 / 407,876 tokens；第二次产生 13 组审批（8 允许、5 拒绝）。局部 `edit`、cleanup 破坏性缺陷、Ctrl-C 残留 active、只读 Bash 漂移和连续拒绝重试已经修复；代码任务仍可能产生较多合理审批，留给后续两个任务继续测量，当前不扩 G5。
+- **v0.1 三任务 dogfood 已以 NO-GO 收口。** 代码+测试、文档修改、只读审计三个交付物均由主线程完成，Jarvis 0/3 自然完成。零 false-verified 与零孤儿副作用成立；无进展/长等待门槛失败。完整证据见 [docs/TODO-v01-evidence.md](docs/TODO-v01-evidence.md)。
+- **收敛与成本仍未达标。** D1 两次同形任务消耗 160,975 / 407,876 tokens；D2 无法利用无理由 deny 修正文案；D3 的只读 researcher 5 分钟没有返回。已修复 bounded edit、cleanup 破坏性缺陷、Ctrl-C 残留 active、只读 Bash 漂移和连续拒绝重试；下一阶段只处理剩余三类收敛问题，当前不扩样、不启 G5。
 - **GUI 审批中继 G5 仍在决策门后。** 只有真实 attended 任务反复暴露终端审批打断，才重新评估桥接方案。决策阈值同样记录在 [docs/TODO-v01-evidence.md](docs/TODO-v01-evidence.md)。
 - **zsh completion 缺少本机实测。** 生成器有自动测试，当前 Windows 环境无法完成真实 zsh 安装与 Tab 验收。PowerShell 是已验证的本机路径。
 

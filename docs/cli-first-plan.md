@@ -3,6 +3,7 @@
 > 类型：持续维护的产品路线与验收合同。版本定位、信任边界和发布门槛以本文为准；每个切片的测试数字与 commit 属日期化证据。
 > 仍开放的人工门槛集中在 `docs/TODO-v01-evidence.md`。GPT-5.6 Sol Pro 的日期化复核见 `docs/sol-pro-cli-trust-review.md`；GUI-first 历史证据见 `docs/handoff-release.md`。
 > 2026-08-31，Ludi 批准 MVP 范围收缩：先跑 3 个真实任务，TUI 视觉验收暂停，Recall A/B 降为次级实验；G5 与 post-real-use 扩展继续冻结。三个任务结束后再决定是否扩到 6–10 个样本。
+> 三任务阶段已于 2026-08-31 以 NO-GO 收口：0/3 由 Jarvis 自然完成，零 false-verified、零孤儿副作用，无进展/长等待门槛失败。下阶段只处理收敛与成本，不扩样。
 
 ## 1. 成功标准
 
