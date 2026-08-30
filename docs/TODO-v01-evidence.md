@@ -74,10 +74,11 @@ Ludi 拍板开启 G5（GUI 审批中继）。这碰运行进程与 GUI 的桥接
 |---|---|---|---|---|---|---|
 | D1-1 | cleanup fixture 首次尝试 | goal | blocked/truncated；任务未改盘 | 160,975 | 6 允许 / 0 拒绝 | 10 turns 后撞输出截断；促成 bounded `edit` 工具 |
 | D1-2 | 同一任务重放 | goal | 人工中断；新增 fixture 抓到生产缺陷 | 407,876 | 8 允许 / 5 拒绝 | `edit` 可用；审批噪音高，拒绝后仍继续申请命令 |
+| D1-3 | 审批期间 Ctrl-C 回归 | goal | blocked；`LASTEXITCODE=130` | 2,114 | 0 允许 / 1 拒绝 | 一次中断；1 request / 1 result；零第二次工具申请 |
 | D2 | usage guide 实际更新 | goal | | | | |
 | D3 | Known Issues 只读复核 | goal | | | | |
 
-D1 促成两个已验证修复：`268c4ed` 增加 bounded `edit`，`7663cb9` 在 worktree cleanup 前安全解绑已验证的 dependency bridge，并拒绝异常 link 目标。D1 的产品结论仍是 PARTIAL，代码修好不代表 goal 自己已经收敛。
+D1 促成三个已验证修复：`268c4ed` 增加 bounded `edit`；`7663cb9` 在 worktree cleanup 前安全解绑已验证的 dependency bridge，并拒绝异常 link 目标；`d85e694` 让进程/readline SIGINT 关闭审批、写入 deny、持久化 blocked 并退出 130。D1 的产品结论仍是 PARTIAL，代码修好不代表 goal 自己已经收敛。
 
 **三条门槛自检**：☐ 零 false-verified　☐ 零自然等待/无进展　☐ 零孤儿副作用（每个任务后 `git status`）
 
