@@ -22,6 +22,8 @@
 4. **任务来自时间或外部系统吗？** 单次扫描用 `jarvis cron run`；需要本机前台持续调度用 `jarvis cron daemon`。
 5. **已经产生多个 worktree 结果了吗？** 先用 `jarvis finalize --loop <id>` 只读看 report；确认后再走 `--merge`；合入审计存在且 worktree clean 后再走 `--cleanup`。
 
+只需要一份清单、解释或人工审阅结论时，用 `run`；这类任务没有可交给 canonical checks 的 stop condition。需要锁死只读边界时叠加 `--preset inspect`，需要强制读取当前仓库事实时再加 `--no-recall`。
+
 **objective 拆多细的量化依据（2026-08-17）**：单步成功率沿链路连乘衰减——单步 90% 的五步链路整体只剩约 59%（0.9⁵ ≈ 0.59）。所以 objective 拆小、每条独立可验收，长链任务靠 loop 逐条验收串联，别塞进单条 goal 硬扛。
 
 ## 什么时候别上 loop

@@ -6,7 +6,6 @@
 
 - **v0.1 真实使用证据仍未闭环。** 当前只跑只读、文档修改、代码+测试三个真实任务；TUI 真实 TTY 体验暂停，Recall A/B 移到三任务之后。完成标准和止损线见 [docs/TODO-v01-evidence.md](docs/TODO-v01-evidence.md)。
 - **首个真实 goal 暴露高成本与审批收敛问题。** 两次同形任务分别消耗 160,975 / 407,876 tokens；第二次产生 13 组审批（8 允许、5 拒绝）。局部 `edit`、cleanup 破坏性缺陷、Ctrl-C 残留 active、只读 Bash 漂移和连续拒绝重试已经修复；代码任务仍可能产生较多合理审批，留给后续两个任务继续测量，当前不扩 G5。
-- **只读 goal 仍复用整套 canonical gates。** 实测读取 `package.json` 已零审批正确完成，但随后全量 `npm test` 的 `sessions-selection` 20 秒超时 flake 将 verdict 改为 rejected，并把 builder 拉向无关测试修复。聚焦复跑 9/9 通过。只读验收路由需要单独收窄，当前不以放宽检查或提高超时掩盖。
 - **GUI 审批中继 G5 仍在决策门后。** 只有真实 attended 任务反复暴露终端审批打断，才重新评估桥接方案。决策阈值同样记录在 [docs/TODO-v01-evidence.md](docs/TODO-v01-evidence.md)。
 - **zsh completion 缺少本机实测。** 生成器有自动测试，当前 Windows 环境无法完成真实 zsh 安装与 Tab 验收。PowerShell 是已验证的本机路径。
 

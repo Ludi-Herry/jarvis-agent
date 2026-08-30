@@ -176,22 +176,23 @@ npm run jarvis -- rewind <会话 id> <检查点 id>
 ```powershell
 cd H:\jarvis-agent
 npm run jarvis -- run "看看这个仓库最近的改动"
+npm run jarvis -- --preset inspect --no-tui run --no-recall "只读复核 KNOWN_ISSUES.md，并按仍成立、已过期、缺证据分类"
 npm run jarvis -- resume                 # 恢复当前 cwd 最近的会话
 npm run jarvis -- resume <会话 id>        # 恢复指定会话
 ```
 
 **期望看到**：`run` 执行首条请求后保留交互提示符；`resume` 先显示恢复来源与兼容性，再进入同一交互表面。带未决工具副作用、损坏记录或 composition 漂移的 Session 会停下并给出处理方向。`/exit` 退出；想固定走行模式加 `--no-tui`。
 
-**权限闸门**：模型读文件直接放行；改源码会先征求审批；碰 `.env` 这类敏感文件直接拒绝。审批提示按 y/n 交互。
+**权限闸门**：模型读文件直接放行；改源码会先征求审批；碰 `.env` 这类敏感文件直接拒绝。审批使用 `a`（本次允许）/ `d`（拒绝）；Bash 额外支持 `s`（同一命令本会话允许）。只读审计可用 `--preset inspect` 固定拒绝写入、执行、网络。
 
 ### 3.2 goal 单目标
 
 ```powershell
 cd H:\jarvis-agent
-npm run jarvis -- goal "给 README 的快速开始部分挑 3 处表述问题并列出来"
+npm run jarvis -- goal "修复当前失败的单元测试；完成条件是该测试、typecheck 和 lint 全部通过"
 ```
 
-**语义**：跑到达标自停；默认要求 Git baseline（防篡改），无 Git 时只能 `--allow-no-git` 且结果上限为 checks-only（不会被标成 verified）。
+**语义**：跑到达标自停，适合能写出可重跑检查或可信验收条件的任务；默认要求 Git baseline（防篡改），无 Git 时只能 `--allow-no-git` 且结果上限为 checks-only。只需要回复清单或人工判断的探索任务继续用 `run`。
 
 ### 3.3 loop 多目标 + finalize
 

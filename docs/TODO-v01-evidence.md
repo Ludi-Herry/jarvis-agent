@@ -16,7 +16,7 @@
 | D2 | 文档修改 | 给 `docs/usage-guide.md` 的 doctor 小节补 `config show / validate` 零成本检查，并同步验收表 | 待跑 |
 | D3 | 只读审计 | 对照当前源码复核 `KNOWN_ISSUES.md`，只报告仍成立、已过期和缺证据三类 | 待跑 |
 
-剩余两个任务继续使用真实 `goal`：
+剩余任务按交付物选 primitive：D2 有明确文件改动与检查条件，使用 `goal`；D3 只交付一份当前事实清单，使用 `run + inspect`，人工读完后 `/exit`。
 
 ```powershell
 cd H:\jarvis-agent
@@ -24,7 +24,7 @@ cd H:\jarvis-agent
 npm run jarvis -- goal "给 docs/usage-guide.md 的 doctor 小节补一段 config show / config validate 的零成本检查，说明前者看生效值、后者查配置错误；同步更新文末验收清单"
 
 # D3 只读审计
-npm run jarvis -- goal "逐条复核 KNOWN_ISSUES.md：对照当前源码与测试，只在回复中分成仍成立、已过期、缺少当前证据三类；给出文件和行号，不修改任何文件"
+npm run jarvis -- --preset inspect --no-tui run --no-recall "逐条复核 KNOWN_ISSUES.md：对照当前源码与测试，只在回复中分成仍成立、已过期、缺少当前证据三类；给出文件和行号，不修改任何文件"
 ```
 
 每个任务只记六项：实际产出、Jarvis 终态、turn/token、允许/拒绝审批数、`git diff` 范围、摩擦一句话。`verified` 仍需人工抽查；`blocked` 也要判断任务是否实际完成，保留系统状态与产品结果两套字段。
@@ -76,7 +76,7 @@ Ludi 拍板开启 G5（GUI 审批中继）。这碰运行进程与 GUI 的桥接
 | D1-2 | 同一任务重放 | goal | 人工中断；新增 fixture 抓到生产缺陷 | 407,876 | 8 允许 / 5 拒绝 | `edit` 可用；审批噪音高，拒绝后仍继续申请命令 |
 | D1-3 | 审批期间 Ctrl-C 回归 | goal | blocked；`LASTEXITCODE=130` | 2,114 | 0 允许 / 1 拒绝 | 一次中断；1 request / 1 result；零第二次工具申请 |
 | D1-4 | 连续拒绝熔断 | goal | blocked/couldNotVerify；`permissionDenied` | 6,660 | 0 允许 / 3 拒绝 | 第三次拒绝后停止；零第四次模型请求 |
-| D1-5 | 只读工具路由 | goal | 正确用 `read` 回答；后被无关全量测试 flake 拒绝并中断 | 11,842 | 0 允许 / 1 拒绝 | 初始读取零审批；暴露只读目标验收路由过重 |
+| D1-5 | 错误 primitive 重放 | goal | 正确用 `read` 回答；后被无关全量测试 flake 拒绝并中断 | 11,842 | 0 允许 / 1 拒绝 | 只读清单误用 goal；应改走 `run + inspect` |
 | D2 | usage guide 实际更新 | goal | | | | |
 | D3 | Known Issues 只读复核 | goal | | | | |
 
