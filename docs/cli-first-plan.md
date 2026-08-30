@@ -2,6 +2,7 @@
 
 > 类型：持续维护的产品路线与验收合同。版本定位、信任边界和发布门槛以本文为准；每个切片的测试数字与 commit 属日期化证据。
 > 仍开放的人工门槛集中在 `docs/TODO-v01-evidence.md`。GPT-5.6 Sol Pro 的日期化复核见 `docs/sol-pro-cli-trust-review.md`；GUI-first 历史证据见 `docs/handoff-release.md`。
+> 2026-08-31，Ludi 批准 MVP 范围收缩：先跑 3 个真实任务，TUI 视觉验收暂停，Recall A/B 降为次级实验；G5 与 post-real-use 扩展继续冻结。三个任务结束后再决定是否扩到 6–10 个样本。
 
 ## 1. 成功标准
 
@@ -11,7 +12,7 @@ Jarvis 先成为维护者可日常依赖的本地 CLI。用户需要随时看清
 
 | 版本 | 定位 | 发布门槛 |
 |---|---|---|
-| v0.1 CLI beta | 本地、私有、面向项目维护者 | R0 可信结果 + R0.5 写入/恢复可信性 + R1 CLI 产品外壳；真实任务零假绿、零无限等待 |
+| v0.1 CLI beta | 本地、私有、面向项目维护者 | R0 可信结果 + R0.5 写入/恢复可信性 + R1 CLI 产品外壳；三类真实任务零假绿、零无进展、零孤儿副作用 |
 | v0.2 CLI workspace | 日常主力终端工作区 | R2 增强交互 + 全屏 TUI + checkpoint/rewind；行模式与 headless 保留 |
 | v0.3 Desktop control surface | 观测、急停、human review、可视化审阅 | 原 R6 UI/UX 打磨与 Ludi 逐节验收；复用 CLI 稳定后的事件、配置和状态协议 |
 
@@ -40,7 +41,7 @@ Jarvis 先成为维护者可日常依赖的本地 CLI。用户需要随时看清
 
 R0 首轮先覆盖 `goal`、`loop`、`cron`、`cron:daemon` 与 `observe` 的可信结果路径；统一 `jarvis` 外壳随后收口版本来源与兼容入口。当前命令及退出码以对应子命令的 `--help` 为准。
 
-R0 验收：所有 guardrail 有真实触发路径测试；text 与 JSONL 都不能把非完成状态着成绿色；10–14 个真实任务中要求 0 假绿、0 无限等待，每个 blocked 都给原因、下一步和日志路径。
+R0 验收：所有 guardrail 有真实触发路径测试；text 与 JSONL 都不能把非完成状态着成绿色；首轮三个真实任务覆盖只读、文档修改和代码+测试，要求 0 假绿、0 无进展、0 孤儿副作用。任务类型或结果出现明显波动后再扩到 6–10 个样本。
 
 实现检查（2026-08-12）：`npm run typecheck`、`npm run lint`、`npm run build -- --noEmit`、`npm test` 全绿；测试为 111 files / 1170 passed / 1 skipped，`git diff --check` 通过。已有 `dist/` 按工作区规则保留，未运行会覆盖它的 emit build。真实模型任务仍属于 v0.1 beta 运行验收，不能由单元测试替代；当前数量以 `docs/TODO-v01-evidence.md` 为准。
 
@@ -86,7 +87,7 @@ Sessions 与动态恢复切片（2026-08-15）已完成：
 - [x] 根 `jarvis --cwd`、latest discovery 与 resolver 后二次读取共用同一错误分类；EACCES、EPERM、EIO 均有命令层或确定性触发测试。latest 目录枚举/条目消失、actual resume 二次读取、junction/canonical escape 与 loop 参数/map/resume/fatal 控制字符都有生产接线覆盖。
 - [x] 本切片的路径保证覆盖静态 symlink/junction/reparse 与 canonical escape。恶意同用户进程在校验和读取之间主动替换路径仍超出保证；Session 当前也没有跨进程 writer lock 或密码学真实性。hostile concurrent local writer 进入支持的威胁模型后，再评估 file-handle binding。
 
-v0.1 剩余门槛是 Recall 开关同形对照、10–14 个真实维护任务和 TUI 的真实 TTY 体验验收。A0 v2 真实跑分、Windows 关键合同、当前 Session Recall、typed config 与 `inspect/safe`、versioned headless JSONL、纯 TUI renderer、stop、review、completion 和 Session mutation 已进入代码基线。执行顺序、记录表和止损线只在 `docs/TODO-v01-evidence.md` 维护。
+v0.1 当前只开放三个真实维护任务。TUI 的真实 TTY 体验验收暂停，Recall 开关同形对照移到三任务之后；A0 v2、Windows 关键合同、Recall 基础、typed config、headless JSONL、TUI renderer、stop、review、completion 和 Session mutation 已进入代码基线。执行顺序、记录表和止损线只在 `docs/TODO-v01-evidence.md` 维护。
 
 - 单一 `jarvis` executable 与命令树：`run`、`goal`、`loop`、`resume`、`status`、`doctor`、`config` 为根帮助高频项；help/version/global flags 与旧入口退出码统一，版本读取 `package.json`。
 - 会话：v0.1 已交付只读 `sessions list|show` 与 `sessions search`（metadata + append-only user/assistant 文本的线性扫描，不建索引），list/search 的筛选、排序与分页已交付（list 三件套全量，search 为 session 筛选 + matches 分页）；写状态首切片 `sessions fork|rename|archive|unarchive` 已交付（fork 全量复制含 receipt + `forkedFrom` 血缘；rename = fork + 归档原会话，零删除零原地改写；archive 移动到 `data/sessions/archived/` 可逆）；实际 exact-session resume 会显示 cwd、模型、composition diff、pending effect 和停止原因。
@@ -119,9 +120,9 @@ R1 交付顺序：
 2. [x] 收口 exact-session resume 的 dynamic composition/addendum 比较、来源展示和 fail-closed 提示。
 3. [x] 固定 versioned headless JSONL agent-event contract、六案 label-blind A0 corpus、真实 runner 与纯 report；现有人类 text 继续保留。
 4. [x] 在 REPL 当前 Session 增加 `history_search` / `history_turn`，默认开启并提供 `--no-recall`；goal/loop 暂不接入。
-5. [ ] 用 Recall 开关跑同形 A0/真实任务对照。
+5. [ ] 三任务通过后，按真实历史检索需求决定是否跑 Recall 开关同形对照。
 6. [x] 实现 typed config、有效来源展示与 `inspect` / `safe`；`maintain` / `worktree` 等 A0 后再决定。
-7. [ ] 跑 10–14 个真实同形任务，要求零 false-verified、零无限等待、零 orphan side effect。
+7. [ ] 跑只读、文档修改、代码+测试三个真实任务；出现样本差异或需要发布置信度时再扩到 6–10 个。
 8. [x] `sessions search` 只读线性搜索（2026-08-17，实现检查见下）。
 9. [x] sessions list/search 的筛选、排序与分页（2026-08-17，实现检查见下）。
 10. [x] `sessions fork|rename|archive|unarchive` 写状态首切片（2026-08-18，实现检查见下）。
@@ -155,7 +156,7 @@ Stop 实现检查（2026-08-18）：`jarvis stop [--reason <text>]` / `jarvis st
 
 行模式和 TUI 共用 AgentLoop、EventBus、PermissionGate、SessionStore 与状态定义。TTY 默认可选择 TUI；`--no-tui` 和非 TTY 永远走行模式/headless，确保故障时有可靠回退。
 
-代码基线已包含纯 reducer、EventBus action adapter、bounded TUI action audit、surface selector 与全屏 renderer。状态覆盖 `idle/model-running/tool-running/approval-pending/stopping/needs-human/closed`；queue、redirect、approval deny、Esc、双 Ctrl-C、EOF 与 pending-effect 停止均有触发测试。`--headless` 固定 machine surface，非 TTY、`--no-tui` 或 renderer 不可用时回退 line REPL。剩余工作只有 Ludi 的真实 TTY 视觉与键位体验验收；renderer 无权改变 reducer、Session、PermissionGate、checkpoint、AgentEvent 或完成授权。
+代码基线已包含纯 reducer、EventBus action adapter、bounded TUI action audit、surface selector 与全屏 renderer。状态覆盖 `idle/model-running/tool-running/approval-pending/stopping/needs-human/closed`；queue、redirect、approval deny、Esc、双 Ctrl-C、EOF 与 pending-effect 停止均有触发测试。`--headless` 固定 machine surface，非 TTY、`--no-tui` 或 renderer 不可用时回退 line REPL。Ludi 的真实 TTY 视觉与键位体验验收暂缓；renderer 无权改变 reducer、Session、PermissionGate、checkpoint、AgentEvent 或完成授权。
 
 全屏 TUI 首版区域：顶部运行身份与验证等级；中央对话/事件流；右侧 context、diff、预算和待审批；底部输入与快捷键。长工具输出折叠并保留耗时、退出码和日志路径。Esc 停止当前模型/工具，Ctrl-C 第一次停止、第二次退出；mid-turn 输入可排队或 redirect，动作须进入审计。
 

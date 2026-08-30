@@ -82,7 +82,7 @@ npm run build
 - [产品定义](PRODUCT.md)：用户、目标、体验原则和范围。
 - [使用与验收指南](docs/usage-guide.md)：从零成本检查到真实模型任务的操作路径。
 - [CLI-first 路线与验收合同](docs/cli-first-plan.md)：版本线、信任边界和发布门槛。
-- [v0.1 收口执行手册](docs/TODO-v01-evidence.md)：仍需人工完成的 Recall A/B、真实任务与体验验收。
+- [v0.1 MVP dogfood 手册](docs/TODO-v01-evidence.md)：三个真实任务、当前证据、停止线与扩样条件。
 - [Changelog](CHANGELOG.md)：实现变更与发布历史。
 - [Known Issues](KNOWN_ISSUES.md)：仍成立的产品限制和风险。
 

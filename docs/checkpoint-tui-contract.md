@@ -1,6 +1,6 @@
 # Checkpoint / rewind 与 TUI 状态机合同
 
-> 类型：稳定行为合同。Checkpoint/rewind、TUI reducer、renderer 与 line/headless fallback 已进入代码基线；真实 TTY 的视觉与键位体验仍由 `docs/TODO-v01-evidence.md` 验收。字段或状态机变化需要同步测试和版本化审计语义。
+> 类型：稳定行为合同。Checkpoint/rewind、TUI reducer、renderer 与 line/headless fallback 已进入代码基线；2026-08-31 起真实 TTY 视觉与键位体验暂停验收，当前可用 `--no-tui` 行模式继续 dogfood。字段或状态机变化需要同步测试和版本化审计语义。
 
 ## 1. 不变量
 

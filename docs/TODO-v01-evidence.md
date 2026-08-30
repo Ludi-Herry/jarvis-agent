@@ -1,114 +1,61 @@
-# v0.1 收口待办手册（Ludi 执行版）
+# v0.1 MVP dogfood 手册（Ludi 执行版）
 
-> 状态（2026-08-24）：Recall A/B 与真实任务已获 Ludi 放行。本手册是唯一执行入口：按 Part B（便宜）→ Part A 试点 2 个 → 全量的顺序推进，边做边在文末证据表打勾。
+> 状态（2026-08-31）：Ludi 已批准范围收缩。当前只跑 3 个原本就需要完成的真实任务；TUI 视觉验收暂停，Recall A/B 降为次级实验，G5 与所有 post-real-use 扩展继续冻结。项目状态统一写作「工程完成，产品验证中」。
 > 所有命令都从 `H:\jarvis-agent` 跑；每段可整段复制进 PowerShell。
 > 前置确认：火山方舟账户有余额（`npm run jarvis -- doctor` 会显示凭据来源）。
 
 ---
 
-## Part A · 真实任务证据（goal 模式，10–14 个）
+## Part A · 三个真实任务
 
-**跑法**：每个任务一条命令，跑完把 goal 结果（verified / parked / rejected）记进文末证据表。终端里改文件的请求会弹审批（y/n）——**这就是 G5 的体感采样，顺便记下审批打断的感受**。跑歪了随时另开终端 `npm run jarvis -- stop`，或点 GUI 急停。
+任务必须满足一个条件：即使没有这次验收，项目今天也需要完成它。禁止为了跑 agent 制造 inventory、索引、Changelog 占位或随机断言。
 
-**成绩单口径**（v0.1 门槛，全量跑完必须三条全零）：
+| # | 类型 | 当前真实任务 | 状态 |
+|---|---|---|---|
+| D1 | 代码 + 测试 | 补齐 finalize cleanup 的 `node_modules` dependency bridge fixture；失败时只修真实暴露的根因 | PARTIAL，见文末证据 |
+| D2 | 文档修改 | 给 `docs/usage-guide.md` 的 doctor 小节补 `config show / validate` 零成本检查，并同步验收表 | 待跑 |
+| D3 | 只读审计 | 对照当前源码复核 `KNOWN_ISSUES.md`，只报告仍成立、已过期和缺证据三类 | 待跑 |
 
-- 零 false-verified：标了 complete/verified 的任务，产出实际是对的（你抽查）；
-- 零无限等待：每个任务都正常收尾或明确停下，没有挂死；
-- 零孤儿副作用：跑完 `git status`，改动只属于该任务，没有多余文件。
-
-任务清单（已按真实维护需求拟好，前 2 个是试点）：
+剩余两个任务继续使用真实 `goal`：
 
 ```powershell
 cd H:\jarvis-agent
-# A1（试点）只读统计：goal 会读 data/goals/ 并报告状态分布
-npm run jarvis -- goal "统计 data/goals/ 下所有 goal 记录的最终状态分布（complete/blocked/parked 等各多少个），只在回复里给出数字清单，不写任何文件"
-
-# A2（试点）小写入：goal 会请求写一个新文档（弹审批）
-npm run jarvis -- goal "统计 test/ 目录每个子目录的测试文件数，把结果写成 markdown 表保存到 docs/test-inventory.md，表外不要加多余内容"
-
-# A3 只读审计
-npm run jarvis -- goal "审查 KNOWN_ISSUES.md 的每一条，对照当前仓库状态判断仍然成立还是已过期，回复里输出两栏清单，不改文件"
-
-# A4 只读审计
-npm run jarvis -- goal "对照 AGENTS.md 的命令清单与 package.json 的 scripts，找出两者口径不一致的地方，回复里列清单，不改文件"
-
-# A5 文档补全（写 + 审批）
+# D2 文档修改
 npm run jarvis -- goal "给 docs/usage-guide.md 的 doctor 小节补一段 config show / config validate 的零成本检查，说明前者看生效值、后者查配置错误；同步更新文末验收清单"
 
-# A6 只读
-npm run jarvis -- goal "找出 docs/ 中所有引用 data/a0/run/（v1 旧产物）的段落，回复里列文件与行号清单，不改文件"
-
-# A7 小写入
-npm run jarvis -- goal "如果 A2 已生成 docs/test-inventory.md，把它作为日期化生成快照加入 docs/README.md 的正确分类；只改 docs/README.md"
-
-# A8 只读
-npm run jarvis -- goal "扫描 src/ 中超过 300 行的 .ts 文件，按行数从大到小列出文件与行数，不改文件"
-
-# A9 文档更新（写 + 审批）
-npm run jarvis -- goal "如果 A2 与 A7 都完成，在 CHANGELOG.md 的 Unreleased 中补一条 test inventory 与文档地图入口；只改 CHANGELOG.md"
-
-# A10 只读交叉核对
-npm run jarvis -- goal "列出 package.json scripts 中从未被 docs/ 任何文档提及的脚本，回复里给清单，不改文件"
-
-# A11 只读审计
-npm run jarvis -- goal "检查 docs/handoff-*.md 每篇的顶部状态行，找出声称未完成但实际已完成的切片，回复里列清单，不改文件"
-
-# A12 小代码改动（改源码，审批会更严）
-npm run jarvis -- goal "给 test/cli/stop-cli.test.ts 补一条断言：stop --json 输出包含 auditPath 字段，先跑该测试文件确认通过"
-
-# A13/A14（可选，从上面换个类型再加）
-npm run jarvis -- goal "把 docs/usage-guide.md 第 8 节验收清单按需要模型 key 与不需要分成两组，在表里加一列标注"
+# D3 只读审计
+npm run jarvis -- goal "逐条复核 KNOWN_ISSUES.md：对照当前源码与测试，只在回复中分成仍成立、已过期、缺少当前证据三类；给出文件和行号，不修改任何文件"
 ```
 
-**每个任务跑完记四样**：goal 状态、token 数（goal 输出或 `npm run jarvis -- status` 里看）、审批次数、你的体感一句话。
+每个任务只记六项：实际产出、Jarvis 终态、turn/token、允许/拒绝审批数、`git diff` 范围、摩擦一句话。`verified` 仍需人工抽查；`blocked` 也要判断任务是否实际完成，保留系统状态与产品结果两套字段。
 
 ---
 
-## Part B · Recall A/B 对照（run 模式，4 对 8 个小会话，便宜，先跑这个）
+## Part B · Recall A/B（次级实验，三任务后再决定）
 
 **原理**：Recall 给 agent 搜索过往会话的能力（默认开；`--no-recall` 关掉）。A/B = 同一个提问，A 组能翻历史、B 组只能靠读仓库文档，比较答案质量与成本。
 
-**跑法**：每条都是一个独立短会话，问完 `/exit` 退出。先跑全部 A 组，再跑全部 B 组（或交替）。判断答案对不对，你对着 `docs/handoff-next.md` 相应条目看即可。
+三任务未证明 `run / goal` 的基础价值前，本节不阻塞 v0.1 MVP 判断。只有真实任务反复需要翻历史，或三任务通过后需要评估 Recall 的额外成本，再执行原同形对照。
 
-```powershell
-cd H:\jarvis-agent
-# A 组（Recall 默认开）
-npm run jarvis -- run "GA 两项故障注入测试分别防的是上游哪两个事故？一句话各说清"
-npm run jarvis -- run "stop 切片的 P2（默认 reason 与 help 不一致）最终是怎么修的？"
-npm run jarvis -- run "G3 验证时发现的 textarea 问题是什么、怎么修的？"
-npm run jarvis -- run "本仓库 stop 切片一共几个 commit，各自做了什么？"
-
-# B 组（关 Recall）
-npm run jarvis -- run --no-recall "GA 两项故障注入测试分别防的是上游哪两个事故？一句话各说清"
-npm run jarvis -- run --no-recall "stop 切片的 P2（默认 reason 与 help 不一致）最终是怎么修的？"
-npm run jarvis -- run --no-recall "G3 验证时发现的 textarea 问题是什么、怎么修的？"
-npm run jarvis -- run --no-recall "本仓库 stop 切片一共几个 commit，各自做了什么？"
-```
-
-**每组记三样**：答案正确性（对/半对/错）、耗时体感、token（`npm run jarvis -- status` 的 usage 区）。跑完把表发给你的主会话（ZCode），我来出对照结论。
+若重开，先选一个真实需要历史上下文的问题跑一对 `run` / `run --no-recall`。只有答案质量或成本出现值得追踪的差异，再扩到第二对。
 
 ---
 
-## Part C · 你的两项验收（零成本）
+## Part C · 人工边界
 
-**C1 · CLI 零成本验收**：照 `docs/usage-guide.md` 第 8 节清单跑 1–13 项，每项对上「通过标准」就打勾。约半小时，不需要模型 key。
+**C1 · CLI 零成本检查：按需。** 当前 typecheck、lint、build 与全量测试有独立门禁证据；三任务期间不再把 `usage-guide` 的 1–13 项整套重跑当成仪式。发生 help、doctor、status、Session 或 stop 相关改动时，只复跑受影响项。
 
-**C2 · TUI renderer 的 TTY 视觉验收**（需要 key，配合任一 Part B 会话一起看）：
+**C2 · TUI renderer 的 TTY 视觉验收：暂停。** 日常继续可用 `--no-tui` 行模式；三任务期间不为布局、键位或视觉细节阻塞开发。
 
-```powershell
-cd H:\jarvis-agent
-npm run jarvis -- run
-```
-
-进 TUI 后检查五点：① 全屏布局与信息层级；② 折叠/展开行为；③ 键位提示是否可见可懂；④ 发一条消息看 model-running/tool-running 状态流转；⑤ Esc 与双 Ctrl-C 的停止路径。你的观感（布局、字号密度、键位手感）直接记成一句话清单，交回主会话。
+需要恢复验收时，再检查全屏层级、折叠、键位提示、状态流转、Esc 与双 Ctrl-C。恢复前保持「实现完成，体验未验收」。
 
 ---
 
-## Part D · G5 决策门（跑完 Part A 后填）
+## Part D · G5 决策门（三任务后填）
 
 G5 = GUI 审批中继（把终端审批搬到 GUI 弹窗），全计划最重的一片。**默认不开**，用 Part A 的体感数据决策：
 
-- 开的信号：Part A 里你 ≥3 次觉得「跑去终端按 y 打断了我在做的事」，或你开始因为怕审批打断而回避跑 attended 任务。
+- 开的信号：三个真实任务中累计 ≥3 次出现明确的终端审批打断感，或你开始因为怕打断而回避 attended 任务。
 - 不开的信号：审批频率低（每个任务 1–2 次）、你在 GUI 时间线上看到运行状态已经足够安心。
 
 你的决策：☐ 开　☐ 不开　依据一句话：＿＿＿＿
@@ -121,18 +68,19 @@ Ludi 拍板开启 G5（GUI 审批中继）。这碰运行进程与 GUI 的桥接
 
 ---
 
-## Part E · 证据表（边跑边填，跑完交回主会话）
+## Part E · 证据表与停止线
 
 | # | 任务/提问 | 模式 | 状态/答案 | tokens | 审批次数 | 体感一句话 |
 |---|---|---|---|---|---|---|
-| A1 | goal 状态分布 | goal | | | | |
-| A2 | test-inventory | goal | | | | |
-| … | | | | | | |
-| B1-A | GA 注入测试 | run | | | | |
-| B1-B | 同上 no-recall | run | | | | |
+| D1-1 | cleanup fixture 首次尝试 | goal | blocked/truncated；任务未改盘 | 160,975 | 6 允许 / 0 拒绝 | 10 turns 后撞输出截断；促成 bounded `edit` 工具 |
+| D1-2 | 同一任务重放 | goal | 人工中断；新增 fixture 抓到生产缺陷 | 407,876 | 8 允许 / 5 拒绝 | `edit` 可用；审批噪音高，拒绝后仍继续申请命令 |
+| D2 | usage guide 实际更新 | goal | | | | |
+| D3 | Known Issues 只读复核 | goal | | | | |
 
-**三条门槛自检**：☐ 零 false-verified　☐ 零无限等待　☐ 零孤儿副作用（每个任务后 `git status`）
+D1 促成两个已验证修复：`268c4ed` 增加 bounded `edit`，`7663cb9` 在 worktree cleanup 前安全解绑已验证的 dependency bridge，并拒绝异常 link 目标。D1 的产品结论仍是 PARTIAL，代码修好不代表 goal 自己已经收敛。
 
-**跑完之后**：把本文件交回 ZCode 主会话——我出 Recall A/B 对照分析 + 真实任务成绩单（park 率、人工接管率、token/任务），连同 v0.1 门槛判定一起收口进 handoff 文档；发现问题就转修复切片交 Codex。
+**三条门槛自检**：☐ 零 false-verified　☐ 零自然等待/无进展　☐ 零孤儿副作用（每个任务后 `git status`）
 
-**止损线**：单个 goal 任务 token 超过你预期上限的 3 倍仍没收敛 → `stop`，记入证据表，先交回分析再继续。
+三任务跑完后只做一次判断：通过则确认本地 v0.1 可用；出现可修的核心缺口则修复并重放同一任务；仍无法收敛则保持「产品验证中」。只有观察到任务类型差异、结果波动，或需要更高发布置信度时，才扩到 6–10 个任务。
+
+**止损线**：单个 goal token 超过预期上限 3 倍、同类审批连续重复、或出现第二个核心失败信号时立即停止；保留 goal/session/approval 原始记录，修复或裁决后再进入下一个任务。

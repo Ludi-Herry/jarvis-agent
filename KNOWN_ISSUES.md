@@ -4,7 +4,8 @@
 
 ## 发布前仍需人工证据
 
-- **v0.1 真实使用证据仍未闭环。** Recall A/B、10–14 个真实维护任务和 TUI 的真实 TTY 体验需要 Ludi 执行。完成标准和止损线见 [docs/TODO-v01-evidence.md](docs/TODO-v01-evidence.md)。
+- **v0.1 真实使用证据仍未闭环。** 当前只跑只读、文档修改、代码+测试三个真实任务；TUI 真实 TTY 体验暂停，Recall A/B 移到三任务之后。完成标准和止损线见 [docs/TODO-v01-evidence.md](docs/TODO-v01-evidence.md)。
+- **首个真实 goal 暴露高成本与审批收敛问题。** 两次同形任务分别消耗 160,975 / 407,876 tokens；第二次产生 13 组审批（8 允许、5 拒绝），拒绝后模型仍继续申请命令，最终由用户中断且 goal 记录保持 active。局部 `edit` 缺口与 cleanup 破坏性缺陷已修；审批噪音、拒绝后的无进展和中断终态留给后续两个任务继续验证，当前不扩 G5 或新路由。
 - **GUI 审批中继 G5 仍在决策门后。** 只有真实 attended 任务反复暴露终端审批打断，才重新评估桥接方案。决策阈值同样记录在 [docs/TODO-v01-evidence.md](docs/TODO-v01-evidence.md)。
 - **zsh completion 缺少本机实测。** 生成器有自动测试，当前 Windows 环境无法完成真实 zsh 安装与 Tab 验收。PowerShell 是已验证的本机路径。
 
@@ -12,7 +13,6 @@
 
 - **Cron daemon 使用单工作区锁。** 进程被强制终止后，下一次启动可能先执行 stale-lock 恢复。锁与恢复逻辑由 `src/capabilities/goal/loop-cron.ts` 的 `FileLoopCronLock` 负责。
 - **Human review 只写本地 JSONL。** 当前没有多用户身份、远程通知、connector 或团队工作流；人工裁决入口是 `jarvis review` 与本地 GUI。
-- **Finalize cleanup 缺一项低风险 fixture。** `loop:finalize --cleanup` 仍需覆盖 goal worktree 含 `node_modules` dependency bridge 的 verified patch 清理场景。现有边界由 `src/capabilities/goal/loop-finalize.ts` 维护。
 - **Attended Bash 的 scheduler-command 仍有 TOCTOU 窗口。** 命令级 session allow 无法把检查后的命令文本与外部 scheduler 的最终执行绑定；安全严重度和接受边界见 [docs/security-review-baseline.md](docs/security-review-baseline.md)。
 - **Token 统计覆盖不完整。** Off-bus verifier 与 pinned-requirement derivation 调用未计量；`status` 会显示 `partial` 和 `unknown`，并分开呈现 loop rollup 与 goal 明细。格式化逻辑在 `src/capabilities/goal/observability.ts` 的 `formatObservationReport`。
 

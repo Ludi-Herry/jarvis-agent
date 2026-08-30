@@ -11,7 +11,7 @@
 | 复制命令完成使用验收 | [使用与验收指南](usage-guide.md) | 从零成本检查到真实模型任务的操作步骤 |
 | 选择 run / goal / loop / cron | [Loop primitive 选择指南](loop-primitives-guide.md) | 按交付物和停止条件选择入口 |
 | 判断版本路线与发布门槛 | [CLI-first 路线](cli-first-plan.md) | 版本定位、信任合同和验收门槛 |
-| 执行当前 v0.1 收口 | [v0.1 收口手册](TODO-v01-evidence.md) | Recall A/B、真实任务、TTY 体验和 G5 决策 |
+| 执行当前 v0.1 收口 | [v0.1 MVP dogfood 手册](TODO-v01-evidence.md) | 三个真实任务、停止线、扩样条件和 G5 决策 |
 | 查看已实现变更 | [Changelog](../CHANGELOG.md) | Unreleased 与已发布版本的变化 |
 | 查看仍成立的风险 | [Known Issues](../KNOWN_ISSUES.md) | 当前限制、影响和处理方向 |
 | 修改仓库 | [AGENTS](../AGENTS.md) | 工程规范、架构来源和硬边界 |
@@ -37,7 +37,7 @@
 
 ## 当前工作单与产品雷达
 
-- [TODO-v01-evidence.md](TODO-v01-evidence.md)：v0.1 剩余人工验收的唯一执行入口。
+- [TODO-v01-evidence.md](TODO-v01-evidence.md)：v0.1 三任务 dogfood 的唯一执行入口，包含首个真实任务证据。
 - [v03-gui-plan.md](v03-gui-plan.md)：已完成 G1–G4 的日期化工作单，以及 G5 的重开条件。
 - [ai-execution-routing-readiness.md](ai-execution-routing-readiness.md)：执行路由的现有边界和重开条件。
 - [ai-coworker-readiness.md](ai-coworker-readiness.md)：AI coworker 相关能力的候选、排除项与触发条件。
