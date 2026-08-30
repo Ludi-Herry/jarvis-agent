@@ -88,6 +88,7 @@ export type Event =
         | 'refused'
         | 'unknown'
         | 'turnTimeout'
+        | 'permissionDenied'
         | 'toolExecutionUnknown'
         | 'goalTimeout'
         | 'guardrail'

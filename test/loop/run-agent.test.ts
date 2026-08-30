@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { runAgent } from '../../src/core/loop/run-agent.js';
+import { MAX_CONSECUTIVE_PERMISSION_DENIALS, runAgent } from '../../src/core/loop/run-agent.js';
 import { InMemoryToolRegistry } from '../../src/core/tools/registry.js';
 import { readTool, writeTool } from '../../src/core/tools/builtins.js';
 import { createBashTool, defaultShellPath } from '../../src/core/tools/bash.js';
@@ -890,6 +890,86 @@ describe('runAgent — permission gate (B1)', () => {
     await expect(readFile(join(dir, 'blocked.txt'), 'utf8')).rejects.toThrow(); // never created
     const toolResult = events.find((e) => e.type === 'tool_result');
     expect(toolResult?.type === 'tool_result' && toolResult.out.error).toMatch(/Permission denied/);
+  });
+
+  it('halts after three consecutive permission denials instead of requesting a fourth action', async () => {
+    expect(MAX_CONSECUTIVE_PERMISSION_DENIALS).toBe(3);
+    const tools = new InMemoryToolRegistry();
+    let executions = 0;
+    tools.register({
+      name: 'approval_required',
+      description: 'test only',
+      capability: 'writes-files',
+      inputSchema: z.object({}),
+      run: async () => {
+        executions++;
+        return { content: 'must not run' };
+      },
+    });
+    const deniedCall = (id: string): ToolCall => ({ id, name: 'approval_required', arguments: '{}' });
+    const { provider, calls } = scriptedModel([
+      { toolCalls: [deniedCall('d1')] },
+      { toolCalls: [deniedCall('d2')] },
+      { toolCalls: [deniedCall('d3')] },
+      { text: 'must not reach a fourth model turn' },
+    ]);
+    const bus = new InMemoryEventBus();
+    const events = record(bus);
+
+    const outcome = await runAgent({
+      model: provider,
+      tools,
+      bus,
+      messages: [{ role: 'user', content: 'keep retrying denied actions' }],
+      toolCtx: { cwd: dir },
+      budget: { maxTurns: 6 },
+      gate: new DefaultPermissionGate({ approver: async () => 'deny' }),
+    });
+
+    expect(outcome).toEqual({ halted: 'permissionDenied', turns: 3 });
+    expect(calls()).toBe(3);
+    expect(executions).toBe(0);
+    expect(events).toContainEqual({ type: 'halt', reason: 'permissionDenied' });
+    expect(events.filter((event) => event.type === 'tool_result')).toHaveLength(3);
+  });
+
+  it('resets the denial streak after a permitted tool call makes progress', async () => {
+    const tools = new InMemoryToolRegistry();
+    tools.register({
+      name: 'approval_required',
+      description: 'test only',
+      capability: 'writes-files',
+      inputSchema: z.object({}),
+      run: async () => ({ content: 'must not run' }),
+    });
+    tools.register({
+      name: 'safe_progress',
+      description: 'test only',
+      capability: 'read-only',
+      inputSchema: z.object({}),
+      run: async () => ({ content: 'current evidence' }),
+    });
+    const call = (id: string, name: string): ToolCall => ({ id, name, arguments: '{}' });
+    const { provider, calls } = scriptedModel([
+      { toolCalls: [call('d1', 'approval_required')] },
+      { toolCalls: [call('r1', 'safe_progress')] },
+      { toolCalls: [call('d2', 'approval_required')] },
+      { toolCalls: [call('d3', 'approval_required')] },
+      { text: 'recovered after using safe evidence' },
+    ]);
+
+    const outcome = await runAgent({
+      model: provider,
+      tools,
+      bus: new InMemoryEventBus(),
+      messages: [{ role: 'user', content: 'adapt after denial' }],
+      toolCtx: { cwd: dir },
+      budget: { maxTurns: 6 },
+      gate: new DefaultPermissionGate({ approver: async () => 'deny' }),
+    });
+
+    expect(outcome).toEqual({ finalText: 'recovered after using safe evidence', turns: 5 });
+    expect(calls()).toBe(5);
   });
 
   it('allows a worktree-scoped write with no approver when the goal gate injects a write root', async () => {

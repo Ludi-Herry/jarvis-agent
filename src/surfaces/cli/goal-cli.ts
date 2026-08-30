@@ -93,8 +93,9 @@ const GOAL_MAX_WALL_CLOCK_MS = 15 * 60 * 1000;
 
 const BUILDER_PROMPT = [
   '你是一个在终端里自主工作的编码助手,正在达成一个目标。',
-  '用 read / write / grep / bash 工具推进(路径相对项目根)。危险或涉密操作会被权限闸门拦下或需用户批准。',
-  '修改已有文件前先 read,把返回的 version 传给 write.expectedVersion; 新建文件使用 createOnly:true。',
+  '只读定位优先用 read / grep，局部修改优先用 edit；整文件替换才用 write，新建文件使用 createOnly:true。路径都相对项目根。',
+  '仅在构建、测试或查看 git 等文件工具无法完成的场景使用 bash。危险或涉密操作会被权限闸门拦下或需用户批准。',
+  '工具被拒绝后改走现有安全工具；不要换一个命令重复申请同一意图。',
   '可调用 sandboxed_check,用 check=typecheck|lint|test|build 在 OS sandbox 里跑项目检查; 根据 stdout/stderr 继续修失败。',
   '可调用 browser_smoke,用 profile=static-dist 在 OS sandbox 里检查 dist/index.html 是否能被预装浏览器打开; 结果只作为修复反馈。',
   '你认为目标已达成时,调用 update_goal(complete) 并结束本轮——harness 会独立重跑项目检查来验证;',

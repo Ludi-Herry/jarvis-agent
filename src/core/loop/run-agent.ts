@@ -31,6 +31,8 @@ import { type Budget, decideStop, projectedNextInput, withinBudget } from './dec
 /** A model turn must never be able to hold the host forever. The timer is a hard
  * race, not merely an AbortSignal, because a provider can ignore cancellation. */
 export const DEFAULT_MODEL_TURN_TIMEOUT_MS = 120_000;
+/** Three denied actions without an allowed tool in between means the model is not finding a safe route. */
+export const MAX_CONSECUTIVE_PERMISSION_DENIALS = 3;
 
 /** Machine-readable abnormal outcomes from one builder/verifier run. */
 export type RunHaltReason =
@@ -41,6 +43,7 @@ export type RunHaltReason =
   | 'refused'
   | 'unknown'
   | 'turnTimeout'
+  | 'permissionDenied'
   | 'toolExecutionUnknown';
 
 /** Everything the loop needs, injected so the loop owns no globals and stays testable. */
@@ -112,6 +115,7 @@ export interface RunOutcome {
 
 export async function runAgent(ctx: AgentContext): Promise<RunOutcome> {
   let turn = 0;
+  let consecutivePermissionDenials = 0;
   const receiptMode = ctx.store?.receiptFormat === 'v2';
   const runId = receiptMode ? randomUUID() : undefined;
 
@@ -259,6 +263,7 @@ export async function runAgent(ctx: AgentContext): Promise<RunOutcome> {
           const gated = await gatedRun(ctx, call);
           ran = gated.result;
           denied = gated.denied;
+          consecutivePermissionDenials = denied ? consecutivePermissionDenials + 1 : 0;
           throwIfAborted(ctx.signal);
         } catch (err) {
           if (plan) await recordUnknownBestEffort(ctx.store, plan, err);
@@ -331,6 +336,13 @@ export async function runAgent(ctx: AgentContext): Promise<RunOutcome> {
         await ctx.store?.sync(ctx.messages);
         throwIfAborted(ctx.signal);
         ctx.bus.emit({ type: 'tool_result', out });
+        if (denied && consecutivePermissionDenials >= MAX_CONSECUTIVE_PERMISSION_DENIALS) {
+          roundEndStarted = true;
+          await runAdvisoryHook(ctx.hooks?.roundEnd, ctx.signal);
+          throwIfAborted(ctx.signal);
+          ctx.bus.emit({ type: 'halt', reason: 'permissionDenied' });
+          return { halted: 'permissionDenied', turns: turn + 1 };
+        }
       }
 
       // PostToolUse hook feedback (slice-2): folded in AFTER every tool result so the assistant
