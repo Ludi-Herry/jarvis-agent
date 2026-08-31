@@ -5,7 +5,7 @@
 ## 发布前仍需人工证据
 
 - **v0.1 三任务 dogfood 已以 NO-GO 收口。** 代码+测试、文档修改、只读审计三个交付物均由主线程完成，Jarvis 0/3 自然完成。零 false-verified 与零孤儿副作用成立；无进展/长等待门槛失败。完整证据见 [docs/TODO-v01-evidence.md](docs/TODO-v01-evidence.md)。
-- **Inspect 最小系统修复降低成本，产品复验仍 NO-GO。** inspect 已缩为 read/grep、默认 8 回合，grep 输出有字符硬上限；canary 降至 76.542 秒与 243,370 tokens，仍以 `maxTurns` blocked 且没有最终分类。按 [Inspect 收敛修复提案](docs/PLAN-inspect-convergence.md) 的预定停止线，不再追加同类修复或重放。
+- **DeepSeek 模型 Spike 通过单个只读任务，产品仍 NO-GO。** `deepseek-v4-pro-ga-260813` 在冻结 canary 中约 45 秒自然返回 14/0/0，耗用 181,819 tokens 与 16 次工具；原三任务 0/3 尚未复验。中间流还会展示取证思路与 `</think>`，因此默认模型采用保持 hold，详见 [收口执行手册](docs/TODO-v01-evidence.md) Part I。
 - **GUI 审批中继 G5 仍在决策门后。** 只有真实 attended 任务反复暴露终端审批打断，才重新评估桥接方案。决策阈值同样记录在 [docs/TODO-v01-evidence.md](docs/TODO-v01-evidence.md)。
 - **zsh completion 缺少本机实测。** 生成器有自动测试，当前 Windows 环境无法完成真实 zsh 安装与 Tab 验收。PowerShell 是已验证的本机路径。
 

@@ -75,3 +75,7 @@
 唯一 canary Session 为 `2026-08-31T13-10-36-797Z`。76.542 秒内完成 8 回合，父模型可见用量 241,341 input + 2,029 output = 243,370 tokens；工具 30 次（read 15、grep 15），零 denied tool、零审批、零 offload、零项目写入，Session integrity 完整且 pending tool effects 为 0。
 
 时间、token、拒绝、offload 与副作用门槛通过；模型在最后一回合继续取证，最终以 `maxTurns` blocked，没有输出三类清单，工具数也超过 20。相较前次 canary，tokens 下降约 71%，工具调用下降约 36%，3.1MB offload 清零；核心产品结果仍失败，因此本提案关闭为 **ENGINEERING GO / PRODUCT NO-GO**。
+
+## 8. 后续模型对照
+
+Ludi 另行批准只替换模型的冻结 Spike。`deepseek-v4-pro-ga-260813` 在相同 commit/prompt/工具/阈值下，以约 45 秒、7 回合、181,819 tokens、16 次工具自然返回 14/0/0，全部硬线通过。该结果支持“模型能力是重要变量”的推断；中间流暴露取证思路与 `</think>`，默认模型采用继续 hold。完整证据见 `docs/TODO-v01-evidence.md` Part I。

@@ -182,3 +182,17 @@ Ludi 批准后只实施提案约定的三项：inspect 只暴露 read/grep；证
 ### 阶段 verdict：ENGINEERING GO / PRODUCT NO-GO
 
 相较前次 canary，tokens 下降约 71%，工具调用下降约 36%，多 MB offload 清零。模型仍在第 8 回合选择继续取证，最终 `maxTurns` blocked，没有返回分类答案，同时超过 20 次工具门槛。按预先合同停止同类修复和再次重放；原 v0.1 产品 NO-GO 保持有效。
+
+---
+
+## Part I · 冻结模型对照 Spike
+
+Ludi 于 2026-09-01 指定 `deepseek-v4-pro-ga-260813`。实验冻结 commit `63e53cb`、同一 prompt、inspect 的 read/grep 工具表、8 回合和 Part H 阈值；只通过 CLI `--model` 覆盖，继续使用现有 ARK baseURL 与凭据路径，没有修改配置文件或代码。
+
+Session `2026-08-31T19-36-02-590Z` 在约 45 秒、7 回合后自然完成：179,705 input + 2,114 output = 181,819 tokens；16 次工具（grep 11 / read 5）；零 denied、零审批、零 offload、零项目写入。Session v2 integrity 完整，pending tool effects 为 0，Git 工作区无漂移。
+
+最终回复为 2463 字符，逐条给出 14 条“仍成立”、0 条“已过期”、0 条“缺少当前证据”，与前期主线程复核一致。Cron lock、usage partial、managed write、Session append、resume precheck、non-Session JSONL、review 入口与 completion 等抽查引用均能在当前源码/测试定位。
+
+### 阶段 verdict：MODEL TASK FEASIBILITY GO / PRODUCT NO-GO / ADOPTION HOLD
+
+冻结阈值全部通过，说明同一 harness 下模型能力是前两次收敛失败的重要变量。单个只读任务仍不足以改写原三任务 0/3 和 v0.1 产品 NO-GO。运行中多次把取证思路及 `</think>` 作为普通文本流显示；在解决或接受该模型协议/体验边界前，不把 DeepSeek 改成默认模型，也不继续写任务复验。
