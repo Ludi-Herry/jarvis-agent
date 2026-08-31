@@ -296,6 +296,24 @@ describe('grepTool', () => {
     expect(out.content).not.toContain('huge.txt'); // the oversized file is skipped, not scanned
     expect(out.content).toContain('skipped'); // and the skip is reported, not silent
   });
+
+  it('bounds matching-line previews, total output chars, and the existing match count', async () => {
+    await writeFile(join(dir, 'long-line.txt'), `needle-${'x'.repeat(100_000)}`, 'utf8');
+    const longLine = await grepTool.run({ pattern: 'needle', path: 'long-line.txt' }, ctx);
+    expect(longLine.content.length).toBeLessThan(1_200);
+    expect(longLine.content).toContain('line truncated');
+
+    const wideLines = Array.from({ length: 100 }, (_, i) => `needle-${i}-${'x'.repeat(900)}`).join('\n');
+    await writeFile(join(dir, 'wide.txt'), wideLines, 'utf8');
+    const wide = await grepTool.run({ pattern: 'needle', path: 'wide.txt' }, ctx);
+    expect(wide.content.length).toBeLessThanOrEqual(32_000);
+    expect(wide.content).toContain('grep output truncated');
+
+    await writeFile(join(dir, 'many.txt'), Array.from({ length: 250 }, () => 'needle').join('\n'), 'utf8');
+    const many = await grepTool.run({ pattern: 'needle', path: 'many.txt' }, ctx);
+    expect(many.content).toContain('showing first 200 matches');
+    expect(many.content.split('\n').filter((line) => line.startsWith('many.txt:'))).toHaveLength(200);
+  });
 });
 
 describe('path confinement (codex P1: cwd escape + symlink can dodge the secret check)', () => {

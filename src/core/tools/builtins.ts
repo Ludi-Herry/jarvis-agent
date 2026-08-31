@@ -23,6 +23,8 @@ import type { ToolDefinition } from './types.js';
 
 /** Cap grep output so a broad pattern over a big tree can't blow up the context window. */
 const GREP_MAX_MATCHES = 200;
+const GREP_MAX_LINE_CHARS = 1_000;
+const GREP_MAX_OUTPUT_CHARS = 32_000;
 /** A ranged read stays small enough to be useful after grep without becoming another full-file read. */
 const READ_MAX_LINES = 1_000;
 /** Skip files larger than this (bytes): one huge or binary blob shouldn't be slurped into memory. */
@@ -433,7 +435,9 @@ async function replaceFile(path: string, abs: string, content: string, expectedV
 export const grepTool: ToolDefinition<{ pattern: string; path?: string }> = {
   name: 'grep',
   description:
-    'Search files for a JavaScript regular expression and return matching lines as "path:line:text". Searches a single file or recursively under a directory (default: project root).',
+    'Search files for a JavaScript regular expression and return matching lines as "path:line:text". ' +
+    'Searches a single file or recursively under a directory (default: project root). ' +
+    'Matching lines and total output are bounded; narrow path/pattern when a truncation marker appears.',
   capability: 'read-only',
   inputSchema: z.object({
     pattern: z.string().describe('A JavaScript regular expression to match against each line.'),
@@ -459,6 +463,9 @@ export const grepTool: ToolDefinition<{ pattern: string; path?: string }> = {
       signal: ctx.signal,
       matches: [],
       truncated: false,
+      truncation: undefined,
+      truncatedLines: 0,
+      outputChars: 0,
       aborted: false,
       skippedLarge: 0,
     };
@@ -471,7 +478,11 @@ export const grepTool: ToolDefinition<{ pattern: string; path?: string }> = {
 
     const notes: string[] = [];
     if (state.aborted) notes.push('[aborted]');
-    if (state.truncated) notes.push(`(showing first ${GREP_MAX_MATCHES} matches)`);
+    if (state.truncation === 'matches') notes.push(`(showing first ${GREP_MAX_MATCHES} matches)`);
+    if (state.truncation === 'output') notes.push(`(output limited to ${GREP_MAX_OUTPUT_CHARS} chars)`);
+    if (state.truncatedLines > 0) {
+      notes.push(`[truncated ${state.truncatedLines} matching line(s) to ${GREP_MAX_LINE_CHARS} chars]`);
+    }
     if (state.skippedLarge > 0) {
       notes.push(`[skipped ${state.skippedLarge} file(s) over ${GREP_MAX_FILE_BYTES} bytes]`);
     }
@@ -479,7 +490,7 @@ export const grepTool: ToolDefinition<{ pattern: string; path?: string }> = {
       return { content: notes.length > 0 ? notes.join(' ') : `No matches for /${pattern}/ under ${path ?? '.'}` };
     }
     const header = notes.length > 0 ? `${notes.join(' ')}\n` : '';
-    return { content: header + state.matches.join('\n') };
+    return { content: boundGrepOutput(header + state.matches.join('\n')) };
   },
 };
 
@@ -490,7 +501,10 @@ interface GrepState {
   cwd: string;
   signal?: AbortSignal;
   matches: string[];
-  truncated: boolean; // hit GREP_MAX_MATCHES — stop searching
+  truncated: boolean; // hit a match/output cap — stop searching
+  truncation?: 'matches' | 'output';
+  truncatedLines: number;
+  outputChars: number;
   aborted: boolean; // the turn's signal fired mid-search
   skippedLarge: number; // files skipped for exceeding GREP_MAX_FILE_BYTES
 }
@@ -556,13 +570,38 @@ async function searchFile(file: string, knownSize: number | undefined, state: Gr
       return;
     }
     if (state.regex.test(lines[i])) {
-      state.matches.push(`${rel}:${i + 1}:${lines[i]}`);
+      const sourceLine = lines[i];
+      const shownLine = sourceLine.length > GREP_MAX_LINE_CHARS
+        ? `${sourceLine.slice(0, GREP_MAX_LINE_CHARS)}… [line truncated]`
+        : sourceLine;
+      if (shownLine !== sourceLine) state.truncatedLines++;
+      const entry = `${rel}:${i + 1}:${shownLine}`;
+      const separatorChars = state.matches.length > 0 ? 1 : 0;
+      const remaining = GREP_MAX_OUTPUT_CHARS - state.outputChars - separatorChars;
+      if (entry.length > remaining) {
+        if (remaining > 0) {
+          state.matches.push(entry.slice(0, remaining));
+          state.outputChars += separatorChars + remaining;
+        }
+        state.truncated = true;
+        state.truncation = 'output';
+        return;
+      }
+      state.matches.push(entry);
+      state.outputChars += separatorChars + entry.length;
       if (state.matches.length >= GREP_MAX_MATCHES) {
         state.truncated = true;
+        state.truncation = 'matches';
         return;
       }
     }
   }
+}
+
+function boundGrepOutput(content: string): string {
+  if (content.length <= GREP_MAX_OUTPUT_CHARS) return content;
+  const marker = `\n[grep output truncated at ${GREP_MAX_OUTPUT_CHARS} chars]`;
+  return `${content.slice(0, GREP_MAX_OUTPUT_CHARS - marker.length)}${marker}`;
 }
 
 function message(err: unknown): string {
