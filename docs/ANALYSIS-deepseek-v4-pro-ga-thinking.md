@@ -1,6 +1,6 @@
 # DeepSeek V4 Pro GA 思考流协议诊断
 
-> 日期：2026-09-01。范围：只读诊断；未修改 provider、渲染、配置或默认模型。
+> 日期：2026-09-01。范围：协议诊断与一次批准的 run+inspect 策略实验；失败代码已 revert，未修改配置或默认模型。
 
 ## 结论
 
@@ -26,6 +26,21 @@
 
 ## 建议
 
-若要采用 DeepSeek，最小可靠方向是模型族 thinking 策略：DeepSeek V4 使用 `enabled/high`，Doubao 继续 `off`。先限定 `run + inspect`，用同一冻结 canary 验证 UI 无思路泄露、reasoning 能随 tool-call 历史正确回传、成本与最终答案仍达标；通过后再决定 goal/loop 是否同步。不要添加内容正则清洗、兼容 shim 或新 provider 抽象。
+若要采用 DeepSeek，候选方向曾是模型族 thinking 策略：DeepSeek V4 使用 `enabled/high`，Doubao 继续 `off`。不要添加内容正则清洗、兼容 shim 或新 provider 抽象。
 
-该方向会改变请求合同和 Session system/tool trajectory，需要 Ludi 另行批准后写计划与代码。当前状态保持 **MODEL TASK FEASIBILITY GO / PRODUCT NO-GO / ADOPTION HOLD**。
+## 批准实验与回退
+
+Ludi 批准后，`46a95a9` 只在 DeepSeek V4 + run + inspect 启用 thinking；safe/default 与 goal/loop 继续 off。151 个测试文件、1740 passed / 2 skipped，typecheck、lint、build 全绿。
+
+冻结 canary Session `2026-08-31T20-13-36-607Z` 验证了协议侧：8 个 assistant 回合都有独立 reasoning，共 4466 字符；普通 content 为 0，think 标签为 0，说明 UI 分离与多轮 reasoning replay 生效。任务侧失败：约 56.5 秒后 `maxTurns` blocked，没有最终分类；可见用量 253,504 input + 3,260 output = 256,764 tokens；工具 30 次（grep 18 / read 12），超过 token 与工具门槛。零审批、零 offload、零项目写入，Session 完整且 pending effect 为 0。
+
+该策略改善显示却丢失已通过的任务可行性，提交已由 `88b9c29` revert。最终代码与 `46a95a9^` 在两个受影响文件上字节一致，typecheck 通过。
+
+## 最终判断
+
+| 模式 | 任务结果 | UI/协议 | 判定 |
+|---|---|---|---|
+| disabled | 约 45 秒自然 final，14/0/0 | 规划文字与 `</think>` 进入 content | 任务 GO，采用 HOLD |
+| enabled | 8 回合无 final，256,764 tokens / 30 tools | reasoning 完全独立，零 think 标签 | 协议 GO，任务 NO-GO |
+
+两个模式都未同时满足任务完成、成本与 CLI 体验。默认模型采用继续 hold，不再重放同一 canary 或尝试内容清洗。后续若继续，只考虑更换能够遵守合同的 endpoint/model，或由 Ludi 重定义产品验收线。

@@ -196,3 +196,15 @@ Session `2026-08-31T19-36-02-590Z` 在约 45 秒、7 回合后自然完成：179
 ### 阶段 verdict：MODEL TASK FEASIBILITY GO / PRODUCT NO-GO / ADOPTION HOLD
 
 冻结阈值全部通过，说明同一 harness 下模型能力是前两次收敛失败的重要变量。单个只读任务仍不足以改写原三任务 0/3 和 v0.1 产品 NO-GO。协议诊断确认：ARK GA 在 `thinking=disabled + tools` 时把取证思路及 `</think>` 放进 content；单次 `thinking=enabled` 探针则返回独立 reasoning、零正文与正常 tool call。详见 [DeepSeek 思考流协议诊断](ANALYSIS-deepseek-v4-pro-ga-thinking.md)。在 thinking 模式策略通过完整 canary 前，不改默认模型，也不继续写任务复验。
+
+---
+
+## Part J · DeepSeek thinking-enabled 实验
+
+Ludi 批准只在 DeepSeek V4 + run + inspect 启用 thinking，Doubao、safe/default、goal/loop 均保持 off。代码提交 `46a95a9` 通过 151 files / 1740 passed / 2 skipped 与全部静态门禁。
+
+唯一 canary Session `2026-08-31T20-13-36-607Z` 的协议结果通过：8 个 reasoning 消息、4466 reasoning chars、普通 content 0、think 标签 0。产品结果失败：约 56.5 秒、256,764 tokens、30 次工具后 `maxTurns` blocked，没有最终分类；token 与工具门槛同时超线。
+
+### 阶段 verdict：PROTOCOL GO / PRODUCT NO-GO / REVERTED
+
+thinking enabled 修复了 UI 泄露，却破坏 disabled 模式已证明的任务完成。`88b9c29` 已 revert 该策略，两个受影响文件恢复到实验前字节状态；不再重放、调参或加入内容清洗。

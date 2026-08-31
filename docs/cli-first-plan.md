@@ -3,7 +3,7 @@
 > 类型：持续维护的产品路线与验收合同。版本定位、信任边界和发布门槛以本文为准；每个切片的测试数字与 commit 属日期化证据。
 > 仍开放的人工门槛集中在 `docs/TODO-v01-evidence.md`。GPT-5.6 Sol Pro 的日期化复核见 `docs/sol-pro-cli-trust-review.md`；GUI-first 历史证据见 `docs/handoff-release.md`。
 > 2026-08-31，Ludi 批准 MVP 范围收缩：先跑 3 个真实任务，TUI 视觉验收暂停，Recall A/B 降为次级实验；G5 与 post-real-use 扩展继续冻结。三个任务结束后再决定是否扩到 6–10 个样本。
-> 三任务阶段已于 2026-08-31 以 NO-GO 收口。Inspect 工程收窄后，冻结模型对照显示 `deepseek-v4-pro-ga-260813` 能在约 45 秒、181,819 tokens、16 次工具内自然完成同一只读 canary。单任务模型可行性 GO；原三任务 0/3 与产品 NO-GO 保持，DeepSeek 中间思路流的采用边界待裁决。
+> 三任务阶段已于 2026-08-31 以 NO-GO 收口。DeepSeek disabled 能完成冻结只读 canary，但泄露规划文字；enabled 能正确分离 reasoning，却在 8 回合后无 final 并超过 token/工具线。实验代码已 revert，原三任务 0/3、默认模型与产品 NO-GO 均保持。
 
 ## 1. 成功标准
 

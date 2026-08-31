@@ -5,7 +5,7 @@
 ## 发布前仍需人工证据
 
 - **v0.1 三任务 dogfood 已以 NO-GO 收口。** 代码+测试、文档修改、只读审计三个交付物均由主线程完成，Jarvis 0/3 自然完成。零 false-verified 与零孤儿副作用成立；无进展/长等待门槛失败。完整证据见 [docs/TODO-v01-evidence.md](docs/TODO-v01-evidence.md)。
-- **DeepSeek 模型 Spike 通过，thinking 模式采用仍 hold。** `deepseek-v4-pro-ga-260813` 在冻结 canary 中约 45 秒自然返回 14/0/0；协议诊断确认 ARK GA 的 `thinking=disabled + tools` 把思路与 `</think>` 放进 content，`thinking=enabled` 能正确分离 reasoning。默认模型与写任务复验继续暂停，详见 [协议诊断](docs/ANALYSIS-deepseek-v4-pro-ga-thinking.md)。
+- **DeepSeek 两种 thinking 模式均未达到采用线。** disabled 可完成任务，但规划文字与 `</think>` 泄入 content；enabled 能正确分离 reasoning，却在冻结 canary 中 8 回合无 final、256,764 tokens / 30 tools。策略代码已 revert，默认模型与写任务复验继续暂停，详见 [协议诊断](docs/ANALYSIS-deepseek-v4-pro-ga-thinking.md)。
 - **GUI 审批中继 G5 仍在决策门后。** 只有真实 attended 任务反复暴露终端审批打断，才重新评估桥接方案。决策阈值同样记录在 [docs/TODO-v01-evidence.md](docs/TODO-v01-evidence.md)。
 - **zsh completion 缺少本机实测。** 生成器有自动测试，当前 Windows 环境无法完成真实 zsh 安装与 Tab 验收。PowerShell 是已验证的本机路径。
 
