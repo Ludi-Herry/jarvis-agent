@@ -4,6 +4,8 @@ Jarvis-Agent 是一个本地、CLI-first 的 TypeScript/Node 编码 agent harnes
 
 项目面向 Ludi 的个人项目维护场景。核心目标是让长任务持续推进，同时让失败、阻塞、权限和可信证据始终可见。
 
+> **项目状态：FROZEN（2026-09-01）**。工程基线与现有命令保留，v0.1 产品验收为 NO-GO。停止新增功能、模型调参和真实任务重放；重开条件见 [收口执行手册](docs/TODO-v01-evidence.md) Part K。
+
 ## 快速开始
 
 前置条件：Node.js 20 或更高版本。

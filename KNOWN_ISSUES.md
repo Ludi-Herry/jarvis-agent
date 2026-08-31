@@ -4,6 +4,7 @@
 
 ## 发布前仍需人工证据
 
+- **当前路线已冻结。** Ludi 于 2026-09-01 保留工程基线并停止新增功能、模型调参和真实任务重放；v0.1 不发布为 beta。重开条件见 [收口执行手册](docs/TODO-v01-evidence.md) Part K。
 - **v0.1 三任务 dogfood 已以 NO-GO 收口。** 代码+测试、文档修改、只读审计三个交付物均由主线程完成，Jarvis 0/3 自然完成。零 false-verified 与零孤儿副作用成立；无进展/长等待门槛失败。完整证据见 [docs/TODO-v01-evidence.md](docs/TODO-v01-evidence.md)。
 - **DeepSeek 两种 thinking 模式均未达到采用线。** disabled 可完成任务，但规划文字与 `</think>` 泄入 content；enabled 能正确分离 reasoning，却在冻结 canary 中 8 回合无 final、256,764 tokens / 30 tools。策略代码已 revert，默认模型与写任务复验继续暂停，详见 [协议诊断](docs/ANALYSIS-deepseek-v4-pro-ga-thinking.md)。
 - **GUI 审批中继 G5 仍在决策门后。** 只有真实 attended 任务反复暴露终端审批打断，才重新评估桥接方案。决策阈值同样记录在 [docs/TODO-v01-evidence.md](docs/TODO-v01-evidence.md)。

@@ -208,3 +208,20 @@ Ludi 批准只在 DeepSeek V4 + run + inspect 启用 thinking，Doubao、safe/de
 ### 阶段 verdict：PROTOCOL GO / PRODUCT NO-GO / REVERTED
 
 thinking enabled 修复了 UI 泄露，却破坏 disabled 模式已证明的任务完成。`88b9c29` 已 revert 该策略，两个受影响文件恢复到实验前字节状态；不再重放、调参或加入内容清洗。
+
+---
+
+## Part K · 当前路线冻结
+
+Ludi 于 2026-09-01 选择“冻结当前路线”。最终状态为：工程门禁 GO；v0.1 产品 NO-GO；DeepSeek disabled 任务 GO / 协议 HOLD；DeepSeek enabled 协议 GO / 任务 NO-GO；实验代码已 revert。
+
+### 冻结范围
+
+- 不新增产品能力、抽象、工具、路由、模型兼容层或验收样本。
+- 不再重放三任务、Inspect canary、Recall A/B 或其他模型对照；不推进 G5、TUI 真人验收与 post-v1 候选。
+- 保留源码、提交、Session、tool-results 和全部历史 verdict；不做清理、改写或“整理成通过”。
+- 现有命令仍可用于只读查看、学习和明确授权的单次操作；它们不构成 beta 发布声明。
+
+### 重开条件
+
+仅在 Ludi 明确选择以下任一方向后重开：提供新的 endpoint/model 并批准一份新的冻结实验合同；重新定义 MVP 与成功门槛；出现该 ARK GA 模型协议已修复的权威证据。宽泛的“继续优化”或新增功能需求不解除冻结。
