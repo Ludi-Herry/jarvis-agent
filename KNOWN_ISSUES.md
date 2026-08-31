@@ -5,7 +5,7 @@
 ## 发布前仍需人工证据
 
 - **v0.1 三任务 dogfood 已以 NO-GO 收口。** 代码+测试、文档修改、只读审计三个交付物均由主线程完成，Jarvis 0/3 自然完成。零 false-verified 与零孤儿副作用成立；无进展/长等待门槛失败。完整证据见 [docs/TODO-v01-evidence.md](docs/TODO-v01-evidence.md)。
-- **收敛与成本仍未达标。** D1 两次同形任务消耗 160,975 / 407,876 tokens；D2 无法利用无理由 deny 修正文案；D3 的只读 researcher 5 分钟没有返回。已修复 bounded edit、cleanup 破坏性缺陷、Ctrl-C 残留 active、只读 Bash 漂移和连续拒绝重试；下一阶段只处理剩余三类收敛问题，当前不扩样、不启 G5。
+- **收敛与成本已完成工程收口，仍缺真实任务复验。** `task` 现在有 120 秒总墙钟期限，行模式支持 `d 理由` 回传模型与审批日志，`read` 支持有界行范围。原三任务 0/3 自然完成的产品结论保持有效；下一次真实维护任务先观察这些修复能否让 agent 自然收敛，当前不扩样、不启 G5。
 - **GUI 审批中继 G5 仍在决策门后。** 只有真实 attended 任务反复暴露终端审批打断，才重新评估桥接方案。决策阈值同样记录在 [docs/TODO-v01-evidence.md](docs/TODO-v01-evidence.md)。
 - **zsh completion 缺少本机实测。** 生成器有自动测试，当前 Windows 环境无法完成真实 zsh 安装与 Tab 验收。PowerShell 是已验证的本机路径。
 

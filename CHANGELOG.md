@@ -14,6 +14,7 @@
 - Made attended `goal` interruption terminal and auditable: process or readline SIGINT closes the pending approval, records a deny pair, persists the goal as blocked, preserves JSONL, and exits 130.
 - Added a three-denial runtime guardrail and tightened the goal prompt so read-only inspection prefers `read`/`grep`, local changes prefer `edit`, and repeated command-shaped approval retries halt as `permissionDenied`.
 - Closed the first three-task dogfood stage with an evidence-backed NO-GO: all deliverables were recovered by the main thread, while Jarvis completed 0/3 naturally; safety stayed fail-closed with no false verification or orphan side effects.
+- Closed the follow-up convergence/cost engineering stage: delegated tasks now have a whole-run deadline, line-mode denials can return bounded human feedback to the model and audit log, and `read` supports bounded line ranges with continuation hints.
 - Added Session JSONL v2 with contiguous sequence numbers, full base composition identity, hashed request receipts, durable tool intent/terminal receipts, pending-effect resume blocking, and legacy v1 read compatibility.
 - Added read-only `jarvis sessions list|show` text/JSON reports with integrity, composition, pending-effect, and resume guidance.
 - Added dynamic-addendum provenance and resume validation: Skill manifest/source hashes in v2 headers, explicit no-addendum identity for goal/loop, per-run request receipt replay, and fail-closed drift/ambiguity handling.

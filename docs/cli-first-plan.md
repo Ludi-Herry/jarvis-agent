@@ -3,7 +3,7 @@
 > 类型：持续维护的产品路线与验收合同。版本定位、信任边界和发布门槛以本文为准；每个切片的测试数字与 commit 属日期化证据。
 > 仍开放的人工门槛集中在 `docs/TODO-v01-evidence.md`。GPT-5.6 Sol Pro 的日期化复核见 `docs/sol-pro-cli-trust-review.md`；GUI-first 历史证据见 `docs/handoff-release.md`。
 > 2026-08-31，Ludi 批准 MVP 范围收缩：先跑 3 个真实任务，TUI 视觉验收暂停，Recall A/B 降为次级实验；G5 与 post-real-use 扩展继续冻结。三个任务结束后再决定是否扩到 6–10 个样本。
-> 三任务阶段已于 2026-08-31 以 NO-GO 收口：0/3 由 Jarvis 自然完成，零 false-verified、零孤儿副作用，无进展/长等待门槛失败。下阶段只处理收敛与成本，不扩样。
+> 三任务阶段已于 2026-08-31 以 NO-GO 收口：0/3 由 Jarvis 自然完成，零 false-verified、零孤儿副作用，无进展/长等待门槛失败。收敛与成本工程阶段随后完成；真实任务复验尚未执行，产品结论保持 NO-GO，不扩样。
 
 ## 1. 成功标准
 
@@ -22,7 +22,7 @@ Jarvis 先成为维护者可日常依赖的本地 CLI。用户需要随时看清
 - [x] routine checks 缺少可信目标证据时返回 `checksOnly`，目标保持 `blocked`。
 - [x] 缺少 Git tamper baseline 时默认拒绝 goal/loop；`--allow-no-git` 只开放 serial checks-only 运行。
 - [x] loop 排空后只要有 blocked goal，就记录 `blocked-goals`；`queue-empty` 只代表全部必要目标完成。
-- [x] builder 每轮 120 秒硬时限、每个 goal 默认 15 分钟硬时限；超时写 EventBus 与 JSONL。
+- [x] builder 每轮 120 秒硬时限、每次 `task` 委派 120 秒总硬时限、每个 goal 默认 15 分钟硬时限；builder/goal 超时写 EventBus 与 JSONL，`task` 超时向父模型返回错误或不确定状态。
 - [x] `refused`、未知或缺失 `finish_reason` 全部 halt；只有明确完成状态可以产生 final。
 - [x] JSONL 坏行和不可读文件进入 `integrity: partial`，列出数量、路径、行号；observe 退出 7；resume、human review、finalize、cron/daemon 状态恢复遇到中段损坏时 fail-closed。
 - [x] cron 将 child loop 非零结果汇总为失败，不能记录假绿。
@@ -50,7 +50,7 @@ R0 验收：所有 guardrail 有真实触发路径测试；text 与 JSONL 都不
 
 R0.5 处理两个新的信任问题：文件在“读完到写入”之间可能变化；工具已经产生副作用时，进程可能在结果落盘前崩溃。它不重开 R0 的 verdict、deadline 或退出语义。
 
-- [x] `read` 返回基于原始字节的 opaque `fv1` version；`write` 必须二选一：更新已有文件传 `expectedVersion`，创建新文件传 `createOnly:true`。成功写入返回 `postVersion`。
+- [x] `read` 返回基于原始字节的 opaque `fv1` version；大文件可用 `startLine` + `maxLines` 有界读取并获得下一段提示，默认完整输出保持兼容。`write` 必须二选一：更新已有文件传 `expectedVersion`，创建新文件传 `createOnly:true`。成功写入返回 `postVersion`。
 - [x] managed write 按目标路径做进程内串行化；创建使用 exclusive create；替换前再次检查路径与版本，并在同目录写临时文件后 rename。版本冲突保留原文件并给出重新读取提示。
 - [x] Session JSONL v2 增加 `schemaVersion=2`、连续 `seq`、composition、请求哈希收据和工具 `planned / committed / unknown` 收据；原有 v1 日志继续只读兼容。
 - [x] assistant tool call 在 gate 或工具执行前持久化；runner 返回可确认的终态后立即写 committed 收据，再生成模型可见 tool message。工具体抛错、子 agent 传回不确定执行结果、file receipt 标记 `unknown` 或取消时写 unknown，并立即 halt；收据落盘失败仍由未完成的 assistant intent / planned 记录触发阻断。
