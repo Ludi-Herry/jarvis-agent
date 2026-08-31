@@ -143,7 +143,7 @@ export class SubagentManager {
     const deadlineMs = resolveDeadlineMs(this.deps.deadlineMs);
     const deadline = new AbortController();
     const childSignal = signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal;
-    const pending = run({
+    const pending = Promise.resolve().then(() => run({
       model: this.providerFor(role),
       tools: childRegistry,
       bus: childBus, // independent bus — child events never reach the parent's rendered stream
@@ -154,7 +154,7 @@ export class SubagentManager {
       gate: this.deps.gate, // REUSE the parent gate — write/bash inside the child still gets approved
       // store: deliberately omitted — a child must not append to the parent's session log (R3)
       signal: childSignal, // parent interruption + the whole-task deadline both cancel child work
-    });
+    }));
     void pending.catch(() => undefined);
     const timedOut = Symbol('subagent-timeout');
     let timer: ReturnType<typeof setTimeout> | undefined;
