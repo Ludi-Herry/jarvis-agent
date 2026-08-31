@@ -161,3 +161,12 @@ npm run jarvis -- --headless --preset inspect run --no-recall "逐条复核 KNOW
 - 零审批、零写入、零工作区漂移；最终分类可由主线程抽查。
 - 记录 turns、tokens、工具序列、终态与一条摩擦，不扩到第二项。
 - 若再次出现同类长等待或无进展，停止重放和局部补丁，写共同 Owner、同构绑定与一次性解耦提案后交回裁决。
+
+### 复验结果：NO-GO，停止线已触发
+
+- Session：`2026-08-31T09-30-46-404Z`。五分钟停止线时仍无最终分类；中断在第 14 个请求开始后，Session v2 integrity 完整且 pending tool effects 为 0。
+- researcher 按新合同在 120 秒自动超时，父模型无需人工解除委派；随后父模型继续取证。F1 的有界返回有效，整体任务仍未收敛。
+- 父模型完成 13 个回合，可见用量至少 837,438 input + 2,913 output = 840,351 tokens；researcher 未计量。
+- 工具调用 47 次：read 18、grep 27、task 1、bash 1。Bash 被 inspect preset 拒绝；没有人工审批，没有项目文件写入，Git 工作区无漂移。
+- 分段 read 被自然使用，F3 有效；两次宽泛 grep 仍生成合计 3,117,496 字节的 `data/tool-results` 运行期证据。
+- 同类“无最终结果 + 高成本取证”再次出现，按停止线不重放、不加局部补丁。系统性方案见 [Inspect 收敛修复提案](PLAN-inspect-convergence.md)，等待 Ludi 裁决。
