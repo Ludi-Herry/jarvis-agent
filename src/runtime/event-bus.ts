@@ -165,6 +165,7 @@ export type Event =
       sessionId?: string;
       toolName: string;
       decision: Approval | 'error';
+      reason?: string;
       error?: string;
       at: string;
     };

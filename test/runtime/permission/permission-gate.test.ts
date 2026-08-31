@@ -49,11 +49,13 @@ describe('PermissionGate — the ask lane', () => {
     expect(a.asks()).toBe(1);
   });
 
-  it('denies when the user says deny', async () => {
-    const a = fixedApprover('deny');
-    const gate = new DefaultPermissionGate({ approver: a.approver });
+  it('feeds a user denial reason into the gate outcome', async () => {
+    const gate = new DefaultPermissionGate({
+      approver: async () => ({ decision: 'deny', reason: 'use the existing section' }),
+    });
     const out = await gate.check(call('write', { path: 'src/a.ts' }), 'writes-files');
     expect(out).toMatchObject({ allowed: false, source: 'user' });
+    expect(out.reason).toContain('use the existing section');
   });
 
   it('allow-once does NOT persist — the next same-tool call asks again', async () => {

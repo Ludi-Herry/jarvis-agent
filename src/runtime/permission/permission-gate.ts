@@ -25,6 +25,15 @@ import { evaluateGoalWorktreeWrite } from './worktree-write-policy.js';
 /** A human's answer to an `ask`. `allow-session` also grants the tool for the rest of the run. */
 export type Approval = 'allow-once' | 'allow-session' | 'deny';
 
+/** A line-mode denial may carry bounded human feedback for the model and approval audit. */
+export interface ApprovalDenial {
+  decision: 'deny';
+  reason: string;
+}
+
+/** Existing string answers stay valid; only a denial can carry feedback. */
+export type ApprovalResponse = Approval | ApprovalDenial;
+
 /** What an approver is shown when a call needs review. */
 export interface ApprovalRequest {
   toolName: string;
@@ -35,7 +44,7 @@ export interface ApprovalRequest {
 }
 
 /** The injected approval callback. B1 ships scripted/absent approvers; B4 ships the REPL one. */
-export type Approver = (req: ApprovalRequest) => Promise<Approval>;
+export type Approver = (req: ApprovalRequest) => Promise<ApprovalResponse>;
 
 /** The gate's verdict for one call. `allowed` drives the loop; `reason`/`source` explain it. */
 export interface GateOutcome {
@@ -140,16 +149,24 @@ export class DefaultPermissionGate implements PermissionGate {
       };
     }
 
-    let verdict: Approval;
+    let response: ApprovalResponse;
     try {
-      verdict = await this.approver({ toolName: call.name, capability, args, reason: decision.reason });
+      response = await this.approver({ toolName: call.name, capability, args, reason: decision.reason });
     } catch (err) {
       // An approver that throws (or a timeout, later) is a non-answer → fail closed.
       return { allowed: false, reason: `approver failed — ${message(err)}`, source: 'fail-closed' };
     }
 
+    const verdict = typeof response === 'string' ? response : response.decision;
+    if (verdict !== 'allow-once' && verdict !== 'allow-session' && verdict !== 'deny') {
+      return { allowed: false, reason: 'approver returned an invalid answer', source: 'fail-closed' };
+    }
     if (verdict === 'deny') {
-      return { allowed: false, reason: `denied by user — ${decision.reason}`, source: 'user' };
+      const feedback = typeof response === 'string' ? undefined : response.reason;
+      const reason = feedback
+        ? `denied by user: ${feedback} — ${decision.reason}`
+        : `denied by user — ${decision.reason}`;
+      return { allowed: false, reason, source: 'user' };
     }
     if (verdict === 'allow-session') {
       // bash → remember the exact command (command-scoped); other tools → remember the tool name.

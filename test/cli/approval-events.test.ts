@@ -95,7 +95,7 @@ describe('createApprovalEventApprover', () => {
     const auditPath = join(dir, 'goal-2.jsonl');
 
     const approver = createApprovalEventApprover({
-      approver: async () => 'deny',
+      approver: async () => ({ decision: 'deny', reason: 'use the existing section' }),
       bus,
       store: new FileApprovalAuditStore(auditPath),
       sessionId: 'goal-2',
@@ -116,5 +116,14 @@ describe('createApprovalEventApprover', () => {
     expect(events.find((event) => event.type === 'approval_request')).toMatchObject({
       detail: '路径: src/app.ts',
     });
+    expect(events.find((event) => event.type === 'approval_result')).toMatchObject({
+      decision: 'deny',
+      reason: 'use the existing section',
+    });
+    expect(parseApprovalAuditLog(auditText)).toContainEqual(expect.objectContaining({
+      t: 'approval-result',
+      decision: 'deny',
+      reason: 'use the existing section',
+    }));
   });
 });

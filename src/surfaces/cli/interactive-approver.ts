@@ -61,8 +61,8 @@ export function createInteractiveApprover(io: ApproverIo): Approver {
     const sessionAllowed = isSessionGrantAllowed(req.capability);
     io.write(renderApprovalRequest(req, { sessionAllowed }));
     const hint = sessionAllowed
-      ? '    请输入 a(本次) / s(本会话) / d(拒绝)\n'
-      : '    请输入 a(本次) / d(拒绝)\n';
+      ? '    请输入 a(本次) / s(本会话) / d [理由](拒绝)\n'
+      : '    请输入 a(本次) / d [理由](拒绝)\n';
     for (let attempt = 0; attempt < MAX_APPROVAL_RETRIES; attempt++) {
       const line = await io.readLine('    › ');
       if (line === null) return 'deny'; // EOF/closed → no human answer → fail closed

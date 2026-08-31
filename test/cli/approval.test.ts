@@ -113,6 +113,10 @@ describe('parseApprovalChoice', () => {
 
   it('maps deny forms', () => {
     for (const s of ['d', 'n', 'no', 'deny', 'DENY']) expect(parseApprovalChoice(s)).toBe('deny');
+    expect(parseApprovalChoice(`d wording is inaccurate\n${'x'.repeat(300)}`)).toEqual({
+      decision: 'deny',
+      reason: `wording is inaccurate ${'x'.repeat(218)}`,
+    });
   });
 
   it('returns undefined (re-ask) for blank or unrecognized — never a silent allow/deny', () => {

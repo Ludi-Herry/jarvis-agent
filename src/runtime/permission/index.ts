@@ -13,6 +13,8 @@ export {
   type GateOutcome,
   type Approver,
   type Approval,
+  type ApprovalDenial,
+  type ApprovalResponse,
   type ApprovalRequest,
 } from './permission-gate.js';
 export {

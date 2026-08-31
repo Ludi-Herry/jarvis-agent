@@ -324,7 +324,7 @@ export async function startRepl(deps: ReplDeps): Promise<CliExitCode | undefined
         if (line === null) return 'deny';
         const choice = parseApprovalChoice(line);
         if (choice) return choice;
-        out.write('    请输入 a(本次) / s(本会话) / d(拒绝)\n');
+        out.write('    请输入 a(本次) / s(本会话) / d [理由](拒绝)\n');
       }
       return 'deny';
     };

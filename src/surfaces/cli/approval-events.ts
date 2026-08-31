@@ -1,6 +1,6 @@
 import type { EventBus } from '../../runtime/event-bus.js';
 import type { ApprovalAuditStore, Approver } from '../../runtime/permission/index.js';
-import { detailOf } from './approval.js';
+import { detailOf, safeInline, MAX_DENIAL_REASON_CHARS } from './approval.js';
 
 export {
   FileApprovalAuditStore,
@@ -39,18 +39,23 @@ export function createApprovalEventApprover(options: ApprovalEventApproverOption
     await options.store?.append({ t: 'approval-request', ...request });
 
     try {
-      const decision = await options.approver(req);
+      const response = await options.approver(req);
+      const decision = typeof response === 'string' ? response : response.decision;
+      const denialReason = typeof response === 'string'
+        ? undefined
+        : Array.from(safeInline(response.reason)).slice(0, MAX_DENIAL_REASON_CHARS).join('');
       const resultAt = now().toISOString();
       const result = {
         requestId,
         ...optional('sessionId', options.sessionId),
         toolName: req.toolName,
         decision,
+        ...(denialReason ? { reason: denialReason } : {}),
         at: resultAt,
       };
       options.bus.emit({ type: 'approval_result', ...result });
       await options.store?.append({ t: 'approval-result', ...result });
-      return decision;
+      return denialReason ? { decision: 'deny', reason: denialReason } : decision;
     } catch (err) {
       const resultAt = now().toISOString();
       const result = {

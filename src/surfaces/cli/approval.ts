@@ -7,7 +7,10 @@
  * one line, mapping it to allow-once / allow-session / deny. A blank or unrecognized line is
  * NOT a silent yes — it re-asks; only an explicit deny (or Ctrl-C / EOF in repl.ts) denies.
  */
-import type { ApprovalRequest } from '../../runtime/permission/index.js';
+import type { ApprovalRequest, ApprovalResponse } from '../../runtime/permission/index.js';
+
+/** Human feedback stays compact enough for one tool result and one audit line. */
+export const MAX_DENIAL_REASON_CHARS = 240;
 
 /** Format the approval prompt: what's being asked, its key detail, and WHY (the gate's reason). */
 export function renderApprovalRequest(req: ApprovalRequest, opts: { sessionAllowed?: boolean } = {}): string {
@@ -17,8 +20,8 @@ export function renderApprovalRequest(req: ApprovalRequest, opts: { sessionAllow
   // — a run/queue-wide write/vision exemption), so only [a]/[d] are shown there.
   const options =
     (opts.sessionAllowed ?? true)
-      ? `    [a] 本次允许   [s] 本会话允许   [d] 拒绝\n`
-      : `    [a] 本次允许   [d] 拒绝\n`;
+      ? `    [a] 本次允许   [s] 本会话允许   [d] 拒绝（可写理由）\n`
+      : `    [a] 本次允许   [d] 拒绝（可写理由）\n`;
   return (
     `\n  ⚠ 需要批准: ${req.toolName} (${req.capability})\n` +
     `    ${detailOf(req)}\n` +
@@ -97,13 +100,21 @@ export function detailOf(req: ApprovalRequest): string {
 }
 
 /** The three choices the gate understands. */
-export type ApprovalChoice = 'allow-once' | 'allow-session' | 'deny';
+export type ApprovalChoice = ApprovalResponse;
 
 /** Map a typed line to a choice, or `undefined` when it's blank/unrecognized (→ re-ask). Case-
  *  and whitespace-insensitive; accepts short keys and a few natural words. A blank line is
  *  deliberately undefined (re-ask), never a silent allow OR a silent deny. */
 export function parseApprovalChoice(input: string): ApprovalChoice | undefined {
-  switch (input.trim().toLowerCase()) {
+  const trimmed = input.trim();
+  const reasonedDeny = /^(?:d|deny)\s+(.+)$/is.exec(trimmed);
+  if (reasonedDeny) {
+    const reason = Array.from(safeInline(reasonedDeny[1] ?? ''))
+      .slice(0, MAX_DENIAL_REASON_CHARS)
+      .join('');
+    return reason === '' ? 'deny' : { decision: 'deny', reason };
+  }
+  switch (trimmed.toLowerCase()) {
     case 'a':
     case 'o':
     case 'allow':

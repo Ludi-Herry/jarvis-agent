@@ -22,6 +22,7 @@ export type ApprovalAuditRecord =
       sessionId?: string;
       toolName: string;
       decision: ApprovalAuditDecision;
+      reason?: string;
       error?: string;
       at: string;
     };
@@ -45,6 +46,7 @@ export function isApprovalAuditRecord(value: unknown): value is ApprovalAuditRec
         || value.decision === 'allow-session'
         || value.decision === 'deny'
         || value.decision === 'error')
+      && (value.reason === undefined || typeof value.reason === 'string')
       && (value.error === undefined || typeof value.error === 'string');
   }
   return false;

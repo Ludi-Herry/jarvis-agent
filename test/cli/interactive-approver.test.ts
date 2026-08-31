@@ -35,9 +35,13 @@ function scriptedIo(lines: (string | null)[]): { io: ApproverIo; written: string
 }
 
 describe('createInteractiveApprover', () => {
-  it('maps a → allow-once and d → deny', async () => {
+  it('maps a → allow-once, plain d → deny, and d with a reason → bounded feedback', async () => {
     expect(await createInteractiveApprover(scriptedIo(['a']).io)(req())).toBe('allow-once');
     expect(await createInteractiveApprover(scriptedIo(['d']).io)(req())).toBe('deny');
+    expect(await createInteractiveApprover(scriptedIo(['d use the existing section']).io)(req())).toEqual({
+      decision: 'deny',
+      reason: 'use the existing section',
+    });
   });
 
   it('exposes s → allow-session — the whole point, so the command-scoped bash grant reaches goal/loop', async () => {
