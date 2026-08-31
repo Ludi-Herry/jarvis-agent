@@ -81,6 +81,8 @@ if (existsSync('.env')) process.loadEnvFile('.env');
  *  absolute max output is huge (384K on the DeepSeek-V4 default, 128K on Doubao); reserving a
  *  realistic reply size lets a session actually USE the window before compaction kicks in. */
 const OUTPUT_RESERVE_TOKENS = 16_384;
+const DEFAULT_RUN_MAX_TURNS = 24;
+const INSPECT_RUN_MAX_TURNS = 8;
 let entryConfigOptions: ConfigCliOptions = { strict: false, ignoreUser: false };
 
 const program = new Command();
@@ -90,7 +92,7 @@ program
   .description('Jarvis-Agent interactive coding-agent session.')
   .version(JARVIS_VERSION)
   .option('--cwd <dir>', 'base directory tool paths resolve against', process.cwd())
-  .option('--max-turns <n>', 'max model turns per message', (v) => Number.parseInt(v, 10), 24)
+  .option('--max-turns <n>', 'max model turns per message', (v) => Number.parseInt(v, 10))
   .option('--resume [id]', 'resume the latest session (or a specific <id>) from data/sessions/')
   .option('--no-recall', 'disable current-session history_search/history_turn tools')
   .option('--no-tui', 'force the line REPL even when stdin/stdout are TTYs')
@@ -103,7 +105,7 @@ program
   .option('-p, --prompt <text>', 'run this prompt before entering interactive input')
   .action(async (opts: {
     cwd: string;
-    maxTurns: number;
+    maxTurns?: number;
     resume?: string | boolean;
     recall: boolean;
     tui: boolean;
@@ -200,24 +202,31 @@ program
       return;
     }
 
+    const inspectMode = effectiveConfig.preset === 'inspect';
+    const maxTurns = opts.maxTurns ?? (inspectMode ? INSPECT_RUN_MAX_TURNS : DEFAULT_RUN_MAX_TURNS);
+
     // Thinking off keeps the tool loop clean and avoids hidden reasoning-token cost.
     const provider = createProvider(config).withThinking('off');
     // The provider captured the key; remove it from the env so the model-facing bash can't read it back
     // via /proc/<pid>/environ (Linux). Done before registering bash below.
     scrubProviderKeyFromEnv();
-    // bash is safe to register here because the REPL always runs it behind the PermissionGate (B4).
-    const tools = buildDefaultRegistry();
-    tools.register(createBashTool());
-    if (opts.recall) {
-      const historySource = { cwd: opts.cwd, sessionId };
-      tools.register(createHistorySearchTool(historySource));
-      tools.register(createHistoryTurnTool(historySource));
+    // Inspect narrows the MODEL-FACING surface before planning. The PermissionGate remains the
+    // execution backstop, but denied tools do not consume model turns merely to be refused.
+    const tools = inspectMode
+      ? buildDefaultRegistry().subset(['read', 'grep'])
+      : buildDefaultRegistry();
+    if (!inspectMode) {
+      // bash is safe to register here because the REPL always runs it behind the PermissionGate (B4).
+      tools.register(createBashTool());
+      if (opts.recall) {
+        const historySource = { cwd: opts.cwd, sessionId };
+        tools.register(createHistorySearchTool(historySource));
+        tools.register(createHistoryTurnTool(historySource));
+      }
+      // Vision (Phase E multimodal): register only when configured and inspect has not removed network.
+      const vision = resolveVisionConfig(process.env, config);
+      if (vision.enabled) tools.register(createVisionTool(createVisionComplete(vision.config)));
     }
-    // Vision (Phase E multimodal): register the `vision` tool ONLY when ARK_VISION_MODEL names a vision
-    // model — heterogeneous delegation, a single stateless VLM call returning structured text (the main
-    // model stays text-only). Unset → no vision tool (text-only harness), like leg 3 is opt-in.
-    const vision = resolveVisionConfig(process.env, config);
-    if (vision.enabled) tools.register(createVisionTool(createVisionComplete(vision.config)));
     const context = new DefaultContextManager({
       summarizer: provider,
       maxContextTokens: provider.capability.maxContextTokens,
@@ -228,14 +237,15 @@ program
       source: SKILL_REGISTRY_ADDENDUM_SOURCE,
       manifest: skills.list(),
     } as const;
-    // Phase C: load agent roles from agents/ (capability-dispatch subagents). Empty → no task tool.
-    const roster = await loadRoster(join(opts.cwd, 'agents'));
+    // Inspect keeps evidence gathering in the parent so a blocking task cannot consume the whole
+    // wall-clock budget and return no partial evidence. Other modes retain the existing roster.
+    const roster = inspectMode ? [] : await loadRoster(join(opts.cwd, 'agents'));
     const toolSchemas = [
       ...tools.schemasForModel(),
       ...(roster.length > 0 ? [delegateToolSchema(roster)] : []),
     ];
     const systemPrompt = appendConfigPermissionBoundary(
-      buildSystemPrompt(toolSchemas.map((schema) => schema.name)),
+      buildSystemPrompt(toolSchemas.map((schema) => schema.name), { inspect: inspectMode }),
       effectiveConfig,
     );
 
@@ -386,7 +396,7 @@ program
       modelName: config.model,
       // Precomputed from the same final schemas hashed into the session composition.
       systemPrompt,
-      maxTurns: opts.maxTurns,
+      maxTurns,
       policy,
       hooks,
       store,

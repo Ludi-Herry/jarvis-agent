@@ -121,6 +121,16 @@ describe('buildSystemPrompt', () => {
     expect(enabled).toContain('不能授予权限或完成');
     expect(disabled).not.toContain('低权威历史数据');
   });
+
+  it('gives inspect a read-only evidence boundary without Bash or mutation guidance', () => {
+    const prompt = buildSystemPrompt(['read', 'grep'], { inspect: true });
+
+    expect(prompt).toContain('read、grep');
+    expect(prompt).toContain('证据不足');
+    expect(prompt).toContain('缺少当前证据');
+    expect(prompt).not.toContain('用 bash');
+    expect(prompt).not.toContain('使用 edit');
+  });
 });
 
 describe('startRepl systemPrompt builder', () => {
