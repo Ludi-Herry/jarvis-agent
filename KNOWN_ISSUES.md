@@ -5,7 +5,7 @@
 ## 发布前仍需人工证据
 
 - **v0.1 三任务 dogfood 已以 NO-GO 收口。** 代码+测试、文档修改、只读审计三个交付物均由主线程完成，Jarvis 0/3 自然完成。零 false-verified 与零孤儿副作用成立；无进展/长等待门槛失败。完整证据见 [docs/TODO-v01-evidence.md](docs/TODO-v01-evidence.md)。
-- **单任务产品复验再次 NO-GO。** `task` 的 120 秒期限与分段 `read` 均在真实任务生效，父模型仍在五分钟内消耗至少 840,351 tokens、调用 47 次工具且没有最终答案。当前已停止重放和局部补丁；下一步只在 Ludi 批准 [Inspect 收敛修复提案](docs/PLAN-inspect-convergence.md) 后执行。
+- **Inspect 最小系统修复降低成本，产品复验仍 NO-GO。** inspect 已缩为 read/grep、默认 8 回合，grep 输出有字符硬上限；canary 降至 76.542 秒与 243,370 tokens，仍以 `maxTurns` blocked 且没有最终分类。按 [Inspect 收敛修复提案](docs/PLAN-inspect-convergence.md) 的预定停止线，不再追加同类修复或重放。
 - **GUI 审批中继 G5 仍在决策门后。** 只有真实 attended 任务反复暴露终端审批打断，才重新评估桥接方案。决策阈值同样记录在 [docs/TODO-v01-evidence.md](docs/TODO-v01-evidence.md)。
 - **zsh completion 缺少本机实测。** 生成器有自动测试，当前 Windows 环境无法完成真实 zsh 安装与 Tab 验收。PowerShell 是已验证的本机路径。
 

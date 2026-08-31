@@ -170,3 +170,15 @@ npm run jarvis -- --headless --preset inspect run --no-recall "逐条复核 KNOW
 - 工具调用 47 次：read 18、grep 27、task 1、bash 1。Bash 被 inspect preset 拒绝；没有人工审批，没有项目文件写入，Git 工作区无漂移。
 - 分段 read 被自然使用，F3 有效；两次宽泛 grep 仍生成合计 3,117,496 字节的 `data/tool-results` 运行期证据。
 - 同类“无最终结果 + 高成本取证”再次出现，按停止线不重放、不加局部补丁。系统性方案见 [Inspect 收敛修复提案](PLAN-inspect-convergence.md)，等待 Ludi 裁决。
+
+---
+
+## Part H · Inspect 最小系统修复
+
+Ludi 批准后只实施提案约定的三项：inspect 只暴露 read/grep；证据不足直接分类且默认 8 回合；grep 增加 1000 字符单行预览与 32,000 字符总输出上限。代码提交为 `4db4d3f`、`5c78930`，没有新增 route/map/manager 或产品表面。
+
+最终工程门禁为 151 files / 1740 passed / 2 skipped，typecheck、lint、build 与 diff check 全绿。唯一重放 Session `2026-08-31T13-10-36-797Z` 的结果：76.542 秒、243,370 tokens、30 次工具（read 15 / grep 15）、零 denied、零审批、零 offload、零项目写入；Session 无 pending effect，Git 工作区无漂移。
+
+### 阶段 verdict：ENGINEERING GO / PRODUCT NO-GO
+
+相较前次 canary，tokens 下降约 71%，工具调用下降约 36%，多 MB offload 清零。模型仍在第 8 回合选择继续取证，最终 `maxTurns` blocked，没有返回分类答案，同时超过 20 次工具门槛。按预先合同停止同类修复和再次重放；原 v0.1 产品 NO-GO 保持有效。

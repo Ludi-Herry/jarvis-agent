@@ -1,6 +1,6 @@
 # Inspect 收敛系统修复提案
 
-> 状态：Ludi 于 2026-08-31 批准执行最小修复。严格按第 4 节三项范围实施；验证通过前不重放 canary。
+> 状态：已实施并停止。工程门禁通过；唯一一次 canary 仍未产生 final，产品 verdict 保持 NO-GO。按第 6 节停止线不继续追加同类修复。
 
 ## 1. 真正要解决的问题
 
@@ -65,3 +65,13 @@
 - 旧 inspect Session 出现预期 composition drift，默认 Session 仍可按原合同恢复。
 
 实现后只重跑同一 canary 一次。通过线：四分钟内自然 final、父级总 tokens 不超过 250,000、工具调用不超过 20、零 denied tool、零 tool-result offload、零项目写入，分类经主线程抽查无明显事实错误。任一核心线失败即保持产品 NO-GO，停止继续修同类问题。
+
+## 7. 实施与最终结果
+
+- `4db4d3f`：inspect 模型工具表固定为 read/grep，移除 roster/task、Bash、写入、Vision 与 Recall；提示改为证据不足直接分类；未显式传参时默认 8 回合。safe/default 与 goal/loop 保持原行为。
+- `5c78930`：grep 每条匹配最多预览 1000 字符，最终结果最多 32,000 字符；保留 200 matches、2MB 单文件、敏感路径、confinement 与 abort 合同。
+- 最终门禁：151 个测试文件，1740 passed / 2 skipped；typecheck、lint、build、diff check 全绿。
+
+唯一 canary Session 为 `2026-08-31T13-10-36-797Z`。76.542 秒内完成 8 回合，父模型可见用量 241,341 input + 2,029 output = 243,370 tokens；工具 30 次（read 15、grep 15），零 denied tool、零审批、零 offload、零项目写入，Session integrity 完整且 pending tool effects 为 0。
+
+时间、token、拒绝、offload 与副作用门槛通过；模型在最后一回合继续取证，最终以 `maxTurns` blocked，没有输出三类清单，工具数也超过 20。相较前次 canary，tokens 下降约 71%，工具调用下降约 36%，3.1MB offload 清零；核心产品结果仍失败，因此本提案关闭为 **ENGINEERING GO / PRODUCT NO-GO**。
