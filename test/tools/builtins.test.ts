@@ -28,6 +28,29 @@ describe('readTool', () => {
     expect(out.fileReceipt?.kind === 'read' ? out.fileReceipt.version : '').toMatch(/^fv1\./);
   });
 
+  it('reads a bounded line range, preserves line endings, and points to the next range', async () => {
+    await writeFile(join(dir, 'large.txt'), 'one\r\ntwo\r\nthree\r\nfour\r\nfive', 'utf8');
+
+    const out = await readTool.run({ path: 'large.txt', startLine: 2, maxLines: 2 }, ctx);
+
+    expect(out.error).toBeUndefined();
+    expect(out.content).toBe(
+      '[lines 2-3 of 5]\n' +
+      'two\r\nthree\r\n' +
+      '[next: startLine=4, maxLines=2]',
+    );
+    expect(out.fileReceipt).toMatchObject({ kind: 'read', path: 'large.txt' });
+  });
+
+  it('returns an actionable error when startLine is past the file end', async () => {
+    await writeFile(join(dir, 'short.txt'), 'one\ntwo', 'utf8');
+
+    const out = await readTool.run({ path: 'short.txt', startLine: 3, maxLines: 2 }, ctx);
+
+    expect(out.content).toBe('');
+    expect(out.error).toBe('Cannot read short.txt: startLine 3 is past the end of the file (2 lines)');
+  });
+
   it('returns a clean error (not a throw) for a missing file', async () => {
     const out = await readTool.run({ path: 'nope.txt' }, ctx);
     expect(out.content).toBe('');

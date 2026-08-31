@@ -23,27 +23,66 @@ import type { ToolDefinition } from './types.js';
 
 /** Cap grep output so a broad pattern over a big tree can't blow up the context window. */
 const GREP_MAX_MATCHES = 200;
+/** A ranged read stays small enough to be useful after grep without becoming another full-file read. */
+const READ_MAX_LINES = 1_000;
 /** Skip files larger than this (bytes): one huge or binary blob shouldn't be slurped into memory. */
 const GREP_MAX_FILE_BYTES = 2_000_000;
 /** Directories never worth walking for a code grep. */
 const GREP_SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'coverage']);
 
-export const readTool: ToolDefinition<{ path: string }> = {
+const readInputSchema = z.object({
+  path: z.string().describe('File path to read, relative to the project root.'),
+  startLine: z
+    .number()
+    .int()
+    .min(1)
+    .optional()
+    .describe('First 1-based line to return. Provide together with maxLines for a ranged read.'),
+  maxLines: z
+    .number()
+    .int()
+    .min(1)
+    .max(READ_MAX_LINES)
+    .optional()
+    .describe(`Maximum lines to return (1-${READ_MAX_LINES}). Provide together with startLine.`),
+}).superRefine((input, ctx) => {
+  if ((input.startLine === undefined) !== (input.maxLines === undefined)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'startLine and maxLines must be provided together',
+    });
+  }
+});
+
+type ReadInput = z.infer<typeof readInputSchema>;
+
+export const readTool: ToolDefinition<ReadInput> = {
   name: 'read',
   description:
-    'Read a UTF-8 text file and return its full contents plus an opaque file version. ' +
+    'Read a UTF-8 text file and return an opaque full-file version. Default: return the full contents. ' +
+    'For a large file, use grep first, then pass startLine and maxLines to return a bounded range with a continuation hint. ' +
     'Pass that version as edit.expectedVersion for a local change or write.expectedVersion for a full replacement.',
   capability: 'read-only',
-  inputSchema: z.object({
-    path: z.string().describe('File path to read, relative to the project root.'),
-  }),
-  run: async ({ path }, ctx) => {
+  inputSchema: readInputSchema,
+  run: async ({ path, startLine, maxLines }, ctx) => {
+    if ((startLine === undefined) !== (maxLines === undefined)) {
+      return { content: '', error: `Cannot read ${path}: startLine and maxLines must be provided together` };
+    }
     const safe = await safeResolve(ctx.cwd, path);
     if (!safe.ok) return { content: '', error: `Cannot read ${path}: ${safe.reason}` };
     try {
       const bytes = await readFile(safe.abs);
+      const text = bytes.toString('utf8');
+      if (startLine !== undefined && maxLines !== undefined) {
+        const range = readLineRange(text, startLine, maxLines);
+        if (!range.ok) return { content: '', error: `Cannot read ${path}: ${range.reason}` };
+        return {
+          content: range.content,
+          fileReceipt: { kind: 'read', path, version: fileVersion(bytes) },
+        };
+      }
       return {
-        content: bytes.toString('utf8'),
+        content: text,
         fileReceipt: { kind: 'read', path, version: fileVersion(bytes) },
       };
     } catch (err) {
@@ -51,6 +90,37 @@ export const readTool: ToolDefinition<{ path: string }> = {
     }
   },
 };
+
+function readLineRange(
+  text: string,
+  startLine: number,
+  maxLines: number,
+): { ok: true; content: string } | { ok: false; reason: string } {
+  const lines = text === ''
+    ? []
+    : (text.match(/[^\r\n]*(?:\r\n|\n|\r|$)/gu) ?? []).filter((line) => line !== '');
+  if (startLine > lines.length) {
+    if (lines.length === 0 && startLine === 1) {
+      return { ok: true, content: '[lines 0 of 0]\n[end of file]' };
+    }
+    return {
+      ok: false,
+      reason: `startLine ${startLine} is past the end of the file (${lines.length} lines)`,
+    };
+  }
+
+  const selected = lines.slice(startLine - 1, startLine - 1 + maxLines);
+  const endLine = startLine + selected.length - 1;
+  const body = selected.join('');
+  const separator = /[\r\n]$/u.test(body) ? '' : '\n';
+  const tail = endLine < lines.length
+    ? `[next: startLine=${endLine + 1}, maxLines=${maxLines}]`
+    : '[end of file]';
+  return {
+    ok: true,
+    content: `[lines ${startLine}-${endLine} of ${lines.length}]\n${body}${separator}${tail}`,
+  };
+}
 
 const writeInputSchema = z.object({
   path: z.string().describe('File path to write, relative to the project root.'),
