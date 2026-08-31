@@ -5,7 +5,8 @@
  * a self-contained subtask to a specialist subagent and gets back a condensed summary. The tool is
  * `read-only` — it produces no direct side effect (every effect happens INSIDE the child, gated by
  * the same PermissionGate), so the main agent isn't prompted to approve the delegation itself; cost
- * is bounded by the depth / budget / (panel) concurrency guardrails, not the gate.
+ * is bounded by depth / turn budget / the manager's whole-task deadline / (panel) concurrency,
+ * not the gate.
  *
  * It is an ordinary registered tool, so the parent loop already emits tool_call/tool_result for it —
  * the UI renders `⏺ task(role=…)` + `↳ summary` with no new event type (plan decision 1).

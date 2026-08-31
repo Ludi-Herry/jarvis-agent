@@ -119,6 +119,7 @@ function makeManager(opts: {
   roster?: AgentRole[];
   cwd?: string;
   remainingDepth?: number;
+  deadlineMs?: number;
   run?: RunAgent;
 } = {}): SubagentManager {
   return new SubagentManager({
@@ -129,6 +130,7 @@ function makeManager(opts: {
     roster: opts.roster ?? ROSTER,
     cwd: opts.cwd ?? process.cwd(),
     remainingDepth: opts.remainingDepth ?? 2,
+    deadlineMs: opts.deadlineMs,
     run: opts.run,
   });
 }
@@ -168,7 +170,7 @@ describe('SubagentManager.spawn — closed loop (real runAgent)', () => {
 });
 
 describe('SubagentManager.spawn — four hard child-context invariants', () => {
-  it('child ctx: no store, gate reused, independent bus, signal passed through', async () => {
+  it('child ctx: no store, gate reused, independent bus, parent abort passed through', async () => {
     const cap = capturingRun();
     const gate = new DefaultPermissionGate({});
     const ac = new AbortController();
@@ -179,7 +181,9 @@ describe('SubagentManager.spawn — four hard child-context invariants', () => {
     expect(ctx).toBeDefined();
     expect(ctx?.store).toBeUndefined(); // R3: a child never appends to the parent's session log
     expect(ctx?.gate).toBe(gate); // the SAME gate is reused (R2/R6)
-    expect(ctx?.signal).toBe(ac.signal); // R8: parent abort reaches the child
+    expect(ctx?.signal?.aborted).toBe(false);
+    ac.abort();
+    expect(ctx?.signal?.aborted).toBe(true); // R8: parent abort reaches the composed child signal
     expect(ctx?.bus).toBeInstanceOf(InMemoryEventBus); // independent bus, not the parent's stream
   });
 
@@ -199,6 +203,34 @@ describe('SubagentManager.spawn — four hard child-context invariants', () => {
     const mgr = makeManager({ gate: new DefaultPermissionGate({}), budget: { maxTurns: 8 }, run: cap.run });
     await mgr.spawn('reader', 'go');
     expect(cap.ctx()?.budget.maxTurns).toBeLessThan(8);
+  });
+});
+
+describe('SubagentManager.spawn — wall-clock deadline', () => {
+  it('returns a clear timeout and aborts the child when the injected runner ignores cancellation', async () => {
+    let childSignal: AbortSignal | undefined;
+    const run: RunAgent = async (ctx) => {
+      childSignal = ctx.signal;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      return { finalText: 'late answer', turns: 1 };
+    };
+    const mgr = makeManager({
+      gate: new DefaultPermissionGate({}),
+      deadlineMs: 20,
+      run,
+    });
+
+    const startedAt = Date.now();
+    const result = await mgr.spawn('reader', 'go');
+
+    expect(Date.now() - startedAt).toBeLessThan(150);
+    expect(result).toMatchObject({
+      role: 'reader',
+      ok: false,
+      summary: 'subagent timed out after 20ms',
+      turns: 0,
+    });
+    expect(childSignal?.aborted).toBe(true);
   });
 });
 

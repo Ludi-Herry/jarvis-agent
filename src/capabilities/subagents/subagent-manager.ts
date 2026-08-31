@@ -4,8 +4,9 @@
  * The core insight: a subagent is not a new loop. It is `runAgent` again, on a child
  * {@link AgentContext} that is a pure narrowing of the parent's — fewer tools (parent ∩ requested),
  * a strictly smaller budget, an independent event bus, the SAME permission gate, the parent's abort
- * signal, and DELIBERATELY no session store. The manager holds the stateful parts (remaining nesting
- * depth, the parent resource snapshot); derive.ts computes the narrowing.
+ * signal plus a whole-task deadline, and DELIBERATELY no session store. The manager holds the
+ * stateful parts (remaining nesting depth, the parent resource snapshot); derive.ts computes the
+ * narrowing.
  *
  * Four hard invariants on every child context (each has a guardrail trigger test):
  *  - **no store**: a child's internal messages must NOT append to the parent's JSONL (it would
@@ -15,7 +16,7 @@
  *    ungated (run-agent.ts: no gate ⇒ tools run unchecked) — that is the single worst bypass, so
  *    such a spawn is refused fail-closed.
  *  - **independent bus**: the child's deltas/final must not bleed into the parent's rendered stream.
- *  - **signal passed through**: Ctrl-C on the parent must kill a bash running inside the child.
+ *  - **bounded signal**: Ctrl-C on the parent and the task deadline must kill work inside the child.
  *
  * Blocking `spawn` (await the child to completion, return its `finalText` as a condensed summary) —
  * the coding-style choice; async fire-and-forget is a later product fork (blueprint §4).
@@ -36,6 +37,9 @@ import {
   type ToolMeta,
 } from './derive.js';
 import { type AgentRole, findRole } from './roster.js';
+
+/** One delegated task gets a single wall-clock budget across all of its model turns. */
+const DEFAULT_SUBAGENT_WALL_CLOCK_MS = 120_000;
 
 /** The agent loop runner. Injected so a test can capture the child {@link AgentContext} and assert
  *  the four hard invariants (no store, gate present, independent bus, signal passed through) without
@@ -80,6 +84,8 @@ export interface SubagentManagerDeps {
   delegateToolName?: string;
   /** The loop runner, injected so a test can capture the child context; defaults to {@link runAgent}. */
   run?: RunAgent;
+  /** Whole-task wall-clock deadline. Exposed only for focused tests/callers. */
+  deadlineMs?: number;
 }
 
 export class SubagentManager {
@@ -134,24 +140,45 @@ export class SubagentManager {
     ];
 
     const run = this.deps.run ?? runAgent;
+    const deadlineMs = resolveDeadlineMs(this.deps.deadlineMs);
+    const deadline = new AbortController();
+    const childSignal = signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal;
+    const pending = run({
+      model: this.providerFor(role),
+      tools: childRegistry,
+      bus: childBus, // independent bus — child events never reach the parent's rendered stream
+      messages: childMessages,
+      toolCtx: { cwd: this.deps.cwd },
+      budget: childBudget, // strictly smaller than the parent (R5); also the basis a grandchild narrows from
+      context: this.deps.context,
+      gate: this.deps.gate, // REUSE the parent gate — write/bash inside the child still gets approved
+      // store: deliberately omitted — a child must not append to the parent's session log (R3)
+      signal: childSignal, // parent interruption + the whole-task deadline both cancel child work
+    });
+    void pending.catch(() => undefined);
+    const timedOut = Symbol('subagent-timeout');
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<typeof timedOut>((resolve) => {
+      timer = setTimeout(() => {
+        resolve(timedOut);
+        deadline.abort();
+      }, deadlineMs);
+    });
     try {
-      const outcome = await run({
-        model: this.providerFor(role),
-        tools: childRegistry,
-        bus: childBus, // independent bus — child events never reach the parent's rendered stream
-        messages: childMessages,
-        toolCtx: { cwd: this.deps.cwd },
-        budget: childBudget, // strictly smaller than the parent (R5); also the basis a grandchild narrows from
-        context: this.deps.context,
-        gate: this.deps.gate, // REUSE the parent gate — write/bash inside the child still gets approved
-        // store: deliberately omitted — a child must not append to the parent's session log (R3)
-        signal, // pass the parent's abort signal through so Ctrl-C kills a bash inside the child (R8)
-      });
+      const outcome = await Promise.race([pending, timeout]);
+      if (outcome === timedOut) {
+        return {
+          ...fail(role.name, `subagent timed out after ${deadlineMs}ms`),
+          ...(hasSideEffect(parentMeta, derivedNames) ? { executionUnknown: true as const } : {}),
+        };
+      }
       return summarize(outcome, role.name);
     } catch (err) {
       // A child loop throw may follow a side effect. Preserve that uncertainty through
       // the delegate tool so the parent task halts instead of treating it as recoverable text.
       return { ...fail(role.name, `subagent errored: ${message(err)}`), executionUnknown: true };
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   }
 
@@ -231,4 +258,9 @@ function fail(role: string, reason: string): SpawnResult {
 
 function message(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function resolveDeadlineMs(value: number | undefined): number {
+  if (value === undefined || !Number.isFinite(value)) return DEFAULT_SUBAGENT_WALL_CLOCK_MS;
+  return Math.max(0, Math.floor(value));
 }
