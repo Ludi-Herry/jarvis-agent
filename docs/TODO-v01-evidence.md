@@ -195,4 +195,4 @@ Session `2026-08-31T19-36-02-590Z` 在约 45 秒、7 回合后自然完成：179
 
 ### 阶段 verdict：MODEL TASK FEASIBILITY GO / PRODUCT NO-GO / ADOPTION HOLD
 
-冻结阈值全部通过，说明同一 harness 下模型能力是前两次收敛失败的重要变量。单个只读任务仍不足以改写原三任务 0/3 和 v0.1 产品 NO-GO。运行中多次把取证思路及 `</think>` 作为普通文本流显示；在解决或接受该模型协议/体验边界前，不把 DeepSeek 改成默认模型，也不继续写任务复验。
+冻结阈值全部通过，说明同一 harness 下模型能力是前两次收敛失败的重要变量。单个只读任务仍不足以改写原三任务 0/3 和 v0.1 产品 NO-GO。协议诊断确认：ARK GA 在 `thinking=disabled + tools` 时把取证思路及 `</think>` 放进 content；单次 `thinking=enabled` 探针则返回独立 reasoning、零正文与正常 tool call。详见 [DeepSeek 思考流协议诊断](ANALYSIS-deepseek-v4-pro-ga-thinking.md)。在 thinking 模式策略通过完整 canary 前，不改默认模型，也不继续写任务复验。
