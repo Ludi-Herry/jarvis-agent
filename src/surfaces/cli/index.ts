@@ -205,10 +205,8 @@ program
     const inspectMode = effectiveConfig.preset === 'inspect';
     const maxTurns = opts.maxTurns ?? (inspectMode ? INSPECT_RUN_MAX_TURNS : DEFAULT_RUN_MAX_TURNS);
 
-    // ARK's DeepSeek V4 GA tool mode leaks planning text into `content` when thinking is disabled;
-    // enabled mode returns a separate reasoning field that the loop already keeps off the UI stream.
-    const thinking = inspectMode && config.model.startsWith('deepseek-v4-') ? 'high' : 'off';
-    const provider = createProvider(config).withThinking(thinking);
+    // Thinking off keeps the tool loop clean and avoids hidden reasoning-token cost.
+    const provider = createProvider(config).withThinking('off');
     // The provider captured the key; remove it from the env so the model-facing bash can't read it back
     // via /proc/<pid>/environ (Linux). Done before registering bash below.
     scrubProviderKeyFromEnv();

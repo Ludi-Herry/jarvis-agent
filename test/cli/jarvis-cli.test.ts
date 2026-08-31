@@ -177,17 +177,11 @@ describe('jarvis root CLI', () => {
         ARK_VISION_MODEL: 'fixture-vision',
       };
       inspectResult = await runJarvis(
-        [
-          '--headless', '--cwd', workspace, '--preset', 'inspect',
-          '--model', 'deepseek-v4-pro-ga-260813', 'run', 'inspect files',
-        ],
+        ['--headless', '--cwd', workspace, '--preset', 'inspect', 'run', 'inspect files'],
         env,
       );
       safeResult = await runJarvis(
-        [
-          '--headless', '--cwd', workspace, '--safe',
-          '--model', 'deepseek-v4-pro-ga-260813', 'run', 'inspect files',
-        ],
+        ['--headless', '--cwd', workspace, '--safe', 'run', 'inspect files'],
         env,
       );
     } finally {
@@ -199,11 +193,9 @@ describe('jarvis root CLI', () => {
     expect(requestToolNames(requests[0])).toEqual(['read', 'grep']);
     expect(requestSystemText(requests[0])).toContain('缺少当前证据');
     expect(requestSystemText(requests[0])).not.toContain('用 bash');
-    expect(requests[0]?.thinking).toEqual({ type: 'enabled' });
     expect(requestToolNames(requests[1])).toEqual(expect.arrayContaining([
       'read', 'write', 'edit', 'grep', 'bash', 'history_search', 'history_turn', 'vision', 'task',
     ]));
-    expect(requests[1]?.thinking).toEqual({ type: 'disabled' });
   }, 20_000);
 
   it('uses 8 turns by default for inspect and honors an explicit max-turns override', async () => {
