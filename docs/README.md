@@ -11,7 +11,8 @@
 | 复制命令完成使用验收 | [使用与验收指南](usage-guide.md) | 从零成本检查到真实模型任务的操作步骤 |
 | 选择 run / goal / loop / cron | [Loop primitive 选择指南](loop-primitives-guide.md) | 按交付物和停止条件选择入口 |
 | 判断版本路线与发布门槛 | [CLI-first 路线](cli-first-plan.md) | 版本定位、信任合同和验收门槛 |
-| 执行当前 v0.1 收口 | [v0.1 MVP dogfood 手册](TODO-v01-evidence.md) | 三个真实任务、停止线、扩样条件和 G5 决策 |
+| 回查冻结的 v0.1 证据 | [v0.1 MVP dogfood 手册](TODO-v01-evidence.md) | 三个真实任务、停止线、NO-GO 与历史 G5 决策 |
+| 开始下一阶段 GUI 工作 | [GUI MVP 重启交接](handoff-gui-mvp-reboot.md) | 已批准方向、参考对象、复用边界与 P0-P1 开工合同 |
 | 查看已实现变更 | [Changelog](../CHANGELOG.md) | Unreleased 与已发布版本的变化 |
 | 查看仍成立的风险 | [Known Issues](../KNOWN_ISSUES.md) | 当前限制、影响和处理方向 |
 | 修改仓库 | [AGENTS](../AGENTS.md) | 工程规范、架构来源和硬边界 |
@@ -37,8 +38,9 @@
 
 ## 当前工作单与产品雷达
 
-- [TODO-v01-evidence.md](TODO-v01-evidence.md)：v0.1 三任务 dogfood 的唯一执行入口，包含首个真实任务证据。
-- [v03-gui-plan.md](v03-gui-plan.md)：已完成 G1–G4 的日期化工作单，以及 G5 的重开条件。
+- [handoff-gui-mvp-reboot.md](handoff-gui-mvp-reboot.md)：当前 GUI 产品路线、前端选型、三稿原型要求和新会话停止条件。
+- [TODO-v01-evidence.md](TODO-v01-evidence.md)：冻结的 v0.1 三任务 dogfood 合同与 NO-GO 证据；当前不继续执行。
+- [v03-gui-plan.md](v03-gui-plan.md)：已完成 G1-G4 的日期化历史工作单；G5 与未来路线已被 GUI MVP 重启交接取代。
 - [ai-execution-routing-readiness.md](ai-execution-routing-readiness.md)：执行路由的现有边界和重开条件。
 - [ai-coworker-readiness.md](ai-coworker-readiness.md)：AI coworker 相关能力的候选、排除项与触发条件。
 - [analysis-openhanako-increments.md](analysis-openhanako-increments.md)：OpenHanako/HanaAgent 外部材料的证据分级和增量裁决。

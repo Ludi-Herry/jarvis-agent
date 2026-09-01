@@ -4,7 +4,7 @@ Jarvis-Agent 是一个本地、CLI-first 的 TypeScript/Node 编码 agent harnes
 
 项目面向 Ludi 的个人项目维护场景。核心目标是让长任务持续推进，同时让失败、阻塞、权限和可信证据始终可见。
 
-> **项目状态：FROZEN（2026-09-01）**。工程基线与现有命令保留，v0.1 产品验收为 NO-GO。停止新增功能、模型调参和真实任务重放；重开条件见 [收口执行手册](docs/TODO-v01-evidence.md) Part K。
+> **项目状态：GUI MVP REBOOT（2026-09-01）**。v0.1 CLI-first 产品验收仍为 NO-GO，工程基线与历史失败继续保留。Ludi 已重开新的 GUI 产品路线：先刷新参考并交付三份静态 HTML 原型，选定方向后再进入 React + assistant-ui、真实 Web 闭环和桌面壳。当前开工合同见 [GUI MVP 重启交接](docs/handoff-gui-mvp-reboot.md)。
 
 ## 快速开始
 
@@ -85,6 +85,7 @@ npm run build
 - [使用与验收指南](docs/usage-guide.md)：从零成本检查到真实模型任务的操作路径。
 - [CLI-first 路线与验收合同](docs/cli-first-plan.md)：版本线、信任边界和发布门槛。
 - [v0.1 MVP dogfood 手册](docs/TODO-v01-evidence.md)：三个真实任务、当前证据、停止线与扩样条件。
+- [GUI MVP 重启交接](docs/handoff-gui-mvp-reboot.md)：当前产品方向、复用边界、参考对象、技术选择和新会话 P0-P1 开工合同。
 - [Changelog](CHANGELOG.md)：实现变更与发布历史。
 - [Known Issues](KNOWN_ISSUES.md)：仍成立的产品限制和风险。
 

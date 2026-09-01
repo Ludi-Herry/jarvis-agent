@@ -2,7 +2,9 @@
 
 > 类型：截至 2026-08-24 的日期化交接快照。本文保留逐切片验证、Reviewer 结论、截图与 commit，方便审计和恢复上下文；测试数字和“当前”表述只对各自日期成立。
 >
-> 当前入口：版本线与信任合同见 `docs/cli-first-plan.md`；仍开放的 Recall A/B、真实任务、TTY 体验与 G5 决策见 `docs/TODO-v01-evidence.md`；命令能力以 `jarvis --help` 为准；实现变化见 `CHANGELOG.md`。历史 GUI-first 路线见 `docs/handoff-release.md`。
+> **当前下一步已于 2026-09-01 改为 GUI MVP 重启。新会话从 `docs/handoff-gui-mvp-reboot.md` 开工；本页只用于回查 CLI-first 与 G1-G4 历史证据。**
+>
+> 本快照当时的入口：版本线与信任合同见 `docs/cli-first-plan.md`；当时仍开放的 Recall A/B、真实任务、TTY 体验与 G5 决策见 `docs/TODO-v01-evidence.md`；命令能力以 `jarvis --help` 为准；实现变化见 `CHANGELOG.md`。历史 GUI-first 路线见 `docs/handoff-release.md`。
 >
 > 本快照的收口结论：A0 v2 真实跑分、checkpoint/rewind、TUI renderer、sessions search/mutation、terminal review、completion、stop 与 GUI G1–G4 已进入代码基线。GUI G5 保持条件触发。
 
