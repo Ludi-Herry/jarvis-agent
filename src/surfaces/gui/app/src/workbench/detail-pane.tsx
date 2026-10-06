@@ -24,6 +24,7 @@ export function DetailPane({
   onToggleExpanded,
   onClose,
   onContextScroll,
+  getGit,
 }: {
   readonly overview: GuiLiveOverview | null;
   readonly snapshot: GuiLiveSnapshot | null;
@@ -37,6 +38,7 @@ export function DetailPane({
   readonly onToggleExpanded: () => void;
   readonly onClose: () => void;
   readonly onContextScroll: (event: { readonly currentTarget: HTMLElement }) => void;
+  readonly getGit?: (id: string) => Promise<import('../../../live-types.js').GuiGitStatus>;
 }) {
   return (
     <aside
@@ -77,7 +79,7 @@ export function DetailPane({
         </div>
         {evidenceTab === 'diff' ? <DiffEvidence snapshot={snapshot} selectedTool={selectedTool} /> : null}
         {evidenceTab === 'verification' ? <VerificationEvidence snapshot={snapshot} selectedTool={selectedTool} /> : null}
-        {evidenceTab === 'context' ? <ContextEvidence overview={overview} snapshot={snapshot} streamWarning={streamWarning} /> : null}
+        {evidenceTab === 'context' ? <ContextEvidence overview={overview} snapshot={snapshot} streamWarning={streamWarning} getGit={getGit} /> : null}
       </section>
     </aside>
   );

@@ -36,6 +36,8 @@ export function useFixtureSession(fixtureId: string | null): FixtureSession {
   const [actionError, setActionError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(initial.snapshot === null ? null : initial.snapshot.id);
   const timers = useRef<number[]>([]);
+  const snapshotRef = useRef<GuiLiveSnapshot | null>(initial.snapshot);
+  useEffect(() => { snapshotRef.current = snapshot; }, [snapshot]);
 
   useEffect(() => () => { for (const timer of timers.current) window.clearTimeout(timer); }, []);
 
@@ -107,6 +109,7 @@ export function useFixtureSession(fixtureId: string | null): FixtureSession {
     };
     setOverview((current) => ({ ...current, sessions: [row, ...current.sessions] }));
     setSelectedId(id);
+    snapshotRef.current = created;
     setSnapshot(created);
     return created;
   }, [overview, snapshot]);
@@ -120,14 +123,28 @@ export function useFixtureSession(fixtureId: string | null): FixtureSession {
     start: async (text) => {
       const running = findFixture('running');
       const base = structuredClone(running?.snapshot ?? requireSnapshot());
-      base.id = 'gui-fixture-started';
+      const current = snapshotRef.current;
+      // An empty text means "start the currently selected contract" (batch 2 per-task start).
+      base.id = current?.id ?? 'gui-fixture-started';
       base.sessionId = base.id;
       base.goalId = base.id;
-      base.objective = text;
-      base.messages = [{ id: 'fixture-start', role: 'user', text, at: nowIso(), status: 'complete', toolIds: [] }, ...base.messages.slice(1)];
+      if (text.trim() !== '') {
+        base.objective = text;
+        base.messages = [{ id: 'fixture-start', role: 'user', text, at: nowIso(), status: 'complete', toolIds: [] }, ...base.messages.slice(1)];
+      } else if (current !== null) {
+        base.objective = current.objective;
+        base.messages = current.messages.length > 0 ? base.messages.map((item, index) => index === 0 ? { ...item, text: current.objective } : item) : base.messages;
+      }
       setSelectedId(base.id);
+      snapshotRef.current = base;
       setSnapshot(base);
-      setOverview((current) => ({ ...current, sessions: [{ id: base.id, title: text.slice(0, 60), objective: text, status: base.status, workspaceId: current.workspaces[0]?.id ?? 'ws-fixture-main', pinned: false, archived: false, updatedAt: nowIso(), lastMessage: '' }], activeId: base.id }));
+      setOverview((current) => ({
+        ...current,
+        sessions: current.sessions.some((session) => session.id === base.id)
+          ? current.sessions.map((session) => session.id === base.id ? { ...session, status: base.status, updatedAt: nowIso() } : session)
+          : [{ id: base.id, title: base.objective.slice(0, 60), objective: base.objective, status: base.status, workspaceId: current.workspaces[0]?.id ?? 'ws-fixture-main', pinned: false, archived: false, updatedAt: nowIso(), lastMessage: '' }, ...current.sessions],
+        activeId: base.id,
+      }));
     },
     submitInput: async (text) => {
       requireSnapshot();

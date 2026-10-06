@@ -3,7 +3,7 @@ import { MessagePrimitive, type EnrichedPartState, type MessageState } from '@as
 import type { GuiTool } from '../../../live-types.js';
 import type { EvidenceTab } from './prefs.js';
 import { formatTimestamp, stringValue, toolStatusLabels } from './format.js';
-import { ChevronIcon, CopyIcon } from './icons.js';
+import { BranchIcon, ChevronIcon, CopyIcon } from './icons.js';
 
 type ToolPartState = Extract<EnrichedPartState, { type: 'tool-call' }>;
 
@@ -79,11 +79,13 @@ export function MessageView({
   isLatestAssistant,
   assistantSubline,
   onEvidence,
+  onBranch,
 }: {
   readonly message: MessageState;
   readonly isLatestAssistant: boolean;
   readonly assistantSubline?: string | null;
   readonly onEvidence: (toolId: string, tab: EvidenceTab) => void;
+  readonly onBranch?: (messageId: string) => void;
 }) {
   const [copied, setCopied] = useState(false);
   const isUser = message.role === 'user';
@@ -157,6 +159,17 @@ export function MessageView({
           >
             <CopyIcon />
           </button>
+          {onBranch !== undefined ? (
+            <button
+              type="button"
+              className="wb-action"
+              onClick={() => onBranch(message.id)}
+              title="从此处创建讨论分支"
+              aria-label="从此处创建讨论分支"
+            >
+              <BranchIcon />
+            </button>
+          ) : null}
           <time className="wb-time" dateTime={timeValue}>{time}</time>
         </div>
       </div>

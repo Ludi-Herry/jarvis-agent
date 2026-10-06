@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
-import type { GuiTool } from '../../../live-types.js';
+import type { GuiLiveSnapshot, GuiTool } from '../../../live-types.js';
 import { LiveJarvisExternalStoreProvider } from '../adapter/jarvis-external-store.js';
+import type { GuiFreeTaskInput } from '../live/api.js';
 import type { HumanReviewDecision } from '../live/use-live-session.js';
 import { ConversationPane } from './conversation-pane.js';
 import {
@@ -44,6 +45,8 @@ export function Workbench({ input }: { readonly input: WorkbenchInput }) {
   const [draftRecoveryToken, setDraftRecoveryToken] = useState(0);
   const [stopAttempted, setStopAttempted] = useState(false);
   const [stopPending, setStopPending] = useState(false);
+  const [branchFor, setBranchFor] = useState<string | null>(null);
+  const [branchPending, setBranchPending] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
   const composerRef = useRef<HTMLTextAreaElement>(null);
@@ -51,6 +54,7 @@ export function Workbench({ input }: { readonly input: WorkbenchInput }) {
   const detailRef = useRef<HTMLElement>(null);
   const evidenceRef = useRef<HTMLElement>(null);
   const stopDialogRef = useRef<HTMLDialogElement>(null);
+  const branchDialogRef = useRef<HTMLDialogElement>(null);
   const toastTimer = useRef<number | null>(null);
 
   const messages = snapshot?.messages ?? [];
@@ -67,6 +71,13 @@ export function Workbench({ input }: { readonly input: WorkbenchInput }) {
   const composerState = useMemo(
     () => resolveComposer(snapshot, gate, pending, composerIntent, canStart),
     [snapshot, gate, pending, composerIntent, canStart],
+  );
+  // With the create panel owning task creation, the composer under an empty view never starts tasks.
+  const effectiveComposerState = useMemo(
+    () => (snapshot === null && selectedId === null
+      ? { available: false, reason: '在上方创建面板确认任务合同后启动' }
+      : composerState),
+    [snapshot, selectedId, composerState],
   );
   const decideState = useMemo(() => resolveDecide(snapshot, gate, pending), [snapshot, gate, pending]);
   const selectedTool = snapshot?.tools.find((tool) => tool.id === selectedToolId) ?? null;
@@ -190,6 +201,36 @@ export function Workbench({ input }: { readonly input: WorkbenchInput }) {
     storageSet(composerStorageKey, event.currentTarget.value);
   };
 
+  const onStart = useCallback(() => {
+    runAction(() => commands.start(''), '任务已启动。');
+  }, [commands, runAction]);
+
+  const handleCreateAndStart = useCallback(async (input: GuiFreeTaskInput): Promise<GuiLiveSnapshot> => {
+    const created = await commands.createTask(input);
+    await commands.start('');
+    return created;
+  }, [commands]);
+
+  const openBranch = useCallback((messageId: string) => {
+    setBranchFor(messageId);
+    branchDialogRef.current?.showModal();
+  }, []);
+
+  const confirmBranch = useCallback(async () => {
+    if (branchFor === null) return;
+    setBranchPending(true);
+    try {
+      await commands.createBranch(branchFor);
+      branchDialogRef.current?.close();
+      setBranchFor(null);
+      announce('讨论分支已创建；前情已写入新任务，审批与验收不继承。');
+    } catch (error) {
+      announce(error instanceof Error && error.message.trim() !== '' ? error.message : '分支创建失败。');
+    } finally {
+      setBranchPending(false);
+    }
+  }, [branchFor, commands, announce]);
+
   const badge = connectionBadge(overview, connection, notices.overviewLoading, notices.overviewError !== null);
   const shownBadge = provenance === 'fixture'
     ? { ...badge, label: badge.state === 'danger' ? '试件连接中断' : '试件已连接', detail: '构造数据驱动，不代表真实事件流' }
@@ -224,7 +265,7 @@ export function Workbench({ input }: { readonly input: WorkbenchInput }) {
           tools={snapshot?.tools ?? []}
           onAppend={handleAppend}
           isRunning={isActuallyRunning(snapshot?.status)}
-          isSendDisabled={!composerState.available}
+          isSendDisabled={!effectiveComposerState.available}
           composerKey={composerKey}
           restoredDraft={restoredDraft}
           draftRecoveryToken={draftRecoveryToken}
@@ -236,11 +277,12 @@ export function Workbench({ input }: { readonly input: WorkbenchInput }) {
             connection={connection}
             actionPending={actionPending}
             provenance={provenance}
+            models={input.models}
             gate={gate}
             canStart={canStart}
             controls={controls}
             decideState={decideState}
-            composerState={composerState}
+            composerState={effectiveComposerState}
             composerIntent={composerIntent}
             composerRef={composerRef}
             historyRef={historyScroll.attach}
@@ -259,6 +301,11 @@ export function Workbench({ input }: { readonly input: WorkbenchInput }) {
             onAllow={allowOnce}
             onSubmitReview={submitReview}
             onToggleDetail={() => setDetailOpen((current) => !current)}
+            onValidateTask={commands.validateTask}
+            onCreateTask={commands.createTask}
+            onCreateAndStart={handleCreateAndStart}
+            onStart={onStart}
+            onBranch={snapshot === null ? undefined : openBranch}
           />
         </LiveJarvisExternalStoreProvider>
 
@@ -276,6 +323,7 @@ export function Workbench({ input }: { readonly input: WorkbenchInput }) {
             onToggleExpanded={() => setExpanded(!expanded)}
             onClose={() => setDetailOpen(false)}
             onContextScroll={detailScroll.onScroll}
+            getGit={commands.getGit}
           />
         ) : null}
       </div>
@@ -286,6 +334,17 @@ export function Workbench({ input }: { readonly input: WorkbenchInput }) {
         error={stopAttempted ? notices.actionError : null}
         onConfirm={confirmStop}
       />
+
+      <dialog ref={branchDialogRef} className="wb-branch-dialog" aria-label="创建讨论分支">
+        <h3>从此处创建讨论分支？</h3>
+        <p>复制这条回复之前的对话为前情，写入新任务；新任务独立预算与基线，不继承审批与验收。</p>
+        <div className="wb-branch-actions">
+          <button type="button" onClick={() => { branchDialogRef.current?.close(); setBranchFor(null); }}>取消</button>
+          <button type="button" className="wb-commit" disabled={branchPending} onClick={() => { void confirmBranch(); }}>
+            {branchPending ? '创建中…' : '创建分支'}
+          </button>
+        </div>
+      </dialog>
 
       <div className="prototype-toast live-toast wb-toast" data-open={toast !== null} role="status" aria-live="polite">
         {toast}

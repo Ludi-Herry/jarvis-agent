@@ -262,15 +262,17 @@ export function useLiveSession() {
     return `/api/live/${encodeURIComponent(id)}/${suffix}`;
   }, []);
 
-  const start = useCallback(async (_text: string) => {
+  // The text argument stays for the pinned-contract legacy call sites; starts now target a task id.
+  const start = useCallback(async (text: string) => {
+    void text;
     if (overview === null || !overview.enabled) {
       throw new Error('真实运行入口当前未启用。');
     }
     const id = selectedIdRef.current;
     if (id === null) throw new Error('请先选择要启动的任务；新建任务请在任务创建面板确认合同。');
-    if (connection !== 'connected') throw new Error('连接尚未就绪。');
+    // The server is the authority on start readiness; the SSE stream may still be reconnecting.
     return runMutation('正在启动', () => startLiveTask(id), true);
-  }, [connection, overview, runMutation]);
+  }, [overview, runMutation]);
 
   const submitInput = useCallback(async (text: string) => {
     if (overview?.enabled !== true) throw new Error('真实运行入口当前未启用。');

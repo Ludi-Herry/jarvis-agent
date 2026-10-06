@@ -90,6 +90,17 @@ export function CopyIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+export function BranchIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <Icon {...props}>
+      <circle cx="4" cy="3.4" r="1.6" />
+      <circle cx="4" cy="12.6" r="1.6" />
+      <circle cx="12" cy="5.6" r="1.6" />
+      <path d="M4 5v6M4 8.4c0 2 1.8 2.6 3.6 2.8l2.6.3" />
+    </Icon>
+  );
+}
+
 export function ArrowDownIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <Icon {...props}>

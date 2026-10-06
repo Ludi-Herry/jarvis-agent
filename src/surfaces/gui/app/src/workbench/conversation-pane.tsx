@@ -1,11 +1,12 @@
 import { useState, type ChangeEvent, type FormEvent, type RefObject } from 'react';
 import { ComposerPrimitive, ThreadPrimitive } from '@assistant-ui/react';
-import type { GuiLiveOverview, GuiLiveSnapshot } from '../../../live-types.js';
+import type { GuiLiveOverview, GuiLiveSnapshot, GuiModelsResponse } from '../../../live-types.js';
+import type { GuiFreeTaskInput } from '../live/api.js';
 import { DecisionBar, type DecisionKind } from './active-stage.js';
 import type { ControlState, ComposerIntent, RunControls as RunControlState } from './controls.js';
-import { EmptyTaskState } from './empty-state.js';
+import { CreateTaskPanel } from './create-task-panel.js';
 import { shortObjective, statusPresentation, workspaceName } from './format.js';
-import { ArrowDownIcon, FolderIcon, PanelIcon, StopIcon, TerminalIcon } from './icons.js';
+import { ArrowDownIcon, FolderIcon, PanelIcon, StopIcon } from './icons.js';
 import { MessageView } from './message-item.js';
 import type { EvidenceTab } from './prefs.js';
 import type { WorkbenchNotices, WorkbenchProvenance, HumanReviewDecision } from './types.js';
@@ -62,6 +63,7 @@ export interface ConversationPaneProps {
   readonly connection: string;
   readonly actionPending: string | null;
   readonly provenance: WorkbenchProvenance;
+  readonly models: GuiModelsResponse | null;
   readonly gate: ControlState;
   readonly canStart: ControlState;
   readonly controls: RunControlState;
@@ -85,14 +87,20 @@ export interface ConversationPaneProps {
   readonly onAllow: () => void;
   readonly onSubmitReview: (decisions: readonly HumanReviewDecision[]) => void;
   readonly onToggleDetail: () => void;
+  readonly onValidateTask: (input: GuiFreeTaskInput) => Promise<{ ok: boolean; errors: Array<{ field: string; message: string }> }>;
+  readonly onCreateTask: (input: GuiFreeTaskInput) => Promise<GuiLiveSnapshot>;
+  readonly onCreateAndStart: (input: GuiFreeTaskInput) => Promise<unknown>;
+  readonly onStart: () => void;
+  readonly onBranch?: (messageId: string) => void;
 }
 
 export function ConversationPane(props: ConversationPaneProps) {
   const {
-    overview, snapshot, notices, connection, actionPending, provenance, gate, canStart, controls,
+    overview, snapshot, notices, connection, actionPending, provenance, models, gate, canStart, controls,
     decideState, composerState, composerIntent, composerRef, historyRef, geometry, composerStorageKey,
     detailOpen, latestAssistantId, onComposerChange, onEvidence, onOpenEvidence, onPause, onContinue,
     onResume, onStop, onPrepareDecision, onAllow, onSubmitReview, onToggleDetail,
+    onValidateTask, onCreateTask, onCreateAndStart, onStart, onBranch,
   } = props;
   const [hoveredTick, setHoveredTick] = useState<number | null>(null);
 
@@ -188,10 +196,32 @@ export function ConversationPane(props: ConversationPaneProps) {
               ) : null}
 
               {snapshot === null ? (
-                <>
-                  <TerminalIcon className="wb-empty-icon" aria-hidden="true" />
-                  <EmptyTaskState overview={overview} canStart={canStart} />
-                </>
+                <CreateTaskPanel
+                  overview={overview}
+                  models={models}
+                  canStart={canStart}
+                  pending={actionPending !== null}
+                  onValidate={onValidateTask}
+                  onCreate={onCreateTask}
+                  onCreateAndStart={onCreateAndStart}
+                />
+              ) : null}
+
+              {snapshot === null ? null : snapshot.status === 'idle' ? (
+                <section className="wb-idle-card" aria-label="待启动任务">
+                  {snapshot.sourceRef !== undefined ? (
+                    <p className="wb-source-ref">来源：来自另一条任务第若干轮的讨论分支；前情已写入新会话，审批与验收不继承。</p>
+                  ) : null}
+                  <p>{snapshot.objective}</p>
+                  <button type="button" className="wb-commit" disabled={actionPending !== null} onClick={onStart}>
+                    启动任务
+                  </button>
+                  <small>启动会捕获当前工作区基线并开始消耗模型；已有运行中任务时会如实提示。</small>
+                </section>
+              ) : null}
+
+              {snapshot !== null && snapshot.status !== 'idle' && snapshot.sourceRef !== undefined ? (
+                <p className="wb-source-ref" role="note">该任务来自另一条任务的讨论分支；审批与验收不继承父任务。</p>
               ) : null}
 
               {notices.overviewLoading ? <Notice>正在读取本地任务。</Notice> : null}
@@ -217,6 +247,7 @@ export function ConversationPane(props: ConversationPaneProps) {
                         isLatestAssistant={message.role === 'assistant' && message.id === latestAssistantId}
                         assistantSubline={snapshot?.model ?? null}
                         onEvidence={onEvidence}
+                        onBranch={onBranch}
                       />
                     </div>
                   )}
@@ -310,7 +341,15 @@ export function ConversationPane(props: ConversationPaneProps) {
               onInput={growComposer}
               data-draft-key={composerStorageKey}
             />
-            <ComposerPrimitive.Send>{sendLabel}</ComposerPrimitive.Send>
+            <div className="wb-composer-tools">
+              <span className="wb-model-pill" title="模型与思考档在任务创建时确定，由 provider 真实配置生成">
+                {snapshot?.model ?? models?.defaultModel ?? '模型加载中'}
+              </span>
+              <span className="wb-model-pill" title="当前任务的思考档">
+                思考：{snapshot?.thinking ?? 'off'}
+              </span>
+              <ComposerPrimitive.Send>{sendLabel}</ComposerPrimitive.Send>
+            </div>
           </div>
           <div className="composer-meta wb-composer-meta">
             {connection !== 'connected' ? <span data-tone="danger">连接未就绪：可继续编辑，发送与控制暂不可用</span> : null}

@@ -1,6 +1,28 @@
-import type { GuiLiveOverview, GuiLiveSnapshot, GuiTool } from '../../../live-types.js';
+import { useEffect, useState } from 'react';
+import type { GuiGitStatus, GuiLiveOverview, GuiLiveSnapshot, GuiTool } from '../../../live-types.js';
 import { diffSummary, parseUnifiedDiff } from './diff.js';
 import { formatCost, formatDuration, formatTimestamp, formatTokens, toolStatusLabels } from './format.js';
+
+/** Read-only git observation rows for the context tab; fetched once per task open, never polled. */
+function GitRows({ id, getGit }: {
+  readonly id: string;
+  readonly getGit: (taskId: string) => Promise<GuiGitStatus>;
+}) {
+  const [git, setGit] = useState<GuiGitStatus | null>(null);
+  useEffect(() => {
+    let disposed = false;
+    getGit(id).then((value) => { if (!disposed) setGit(value); }).catch(() => { if (!disposed) setGit(null); });
+    return () => { disposed = true; };
+  }, [id, getGit]);
+  if (git === null) return <div><dt>Git</dt><dd>读取中…</dd></div>;
+  if ('unavailable' in git) return <div><dt>Git</dt><dd>不可用：{git.unavailable}</dd></div>;
+  return (
+    <div>
+      <dt>Git</dt>
+      <dd>分支 {git.branch} · 未提交 {git.uncommitted} 项{git.ahead > 0 ? ` · 领先 ${git.ahead}` : ''}{git.behind > 0 ? ` · 落后 ${git.behind}` : ''} · {git.worktree === 'dirty' ? '有未提交改动' : '干净'}（只读）</dd>
+    </div>
+  );
+}
 
 export function SelectedToolEvidence({ tool }: { readonly tool: GuiTool | null }) {
   if (tool === null) return null;
@@ -92,10 +114,11 @@ export function VerificationEvidence({ snapshot, selectedTool }: {
   );
 }
 
-export function ContextEvidence({ overview, snapshot, streamWarning }: {
+export function ContextEvidence({ overview, snapshot, streamWarning, getGit }: {
   readonly overview: GuiLiveOverview | null;
   readonly snapshot: GuiLiveSnapshot | null;
   readonly streamWarning: string | null;
+  readonly getGit?: (id: string) => Promise<import('../../../live-types.js').GuiGitStatus>;
 }) {
   if (snapshot === null) {
     return (
@@ -121,6 +144,7 @@ export function ContextEvidence({ overview, snapshot, streamWarning }: {
         <div><dt>Goal</dt><dd>{snapshot.goalId}</dd></div>
         <div><dt>序列</dt><dd>{snapshot.sequence}</dd></div>
         <div><dt>工作区</dt><dd>{snapshot.cwd}</dd></div>
+        {getGit !== undefined ? <GitRows id={snapshot.id} getGit={getGit} /> : null}
         <div><dt>Session 来源</dt><dd>{snapshot.sources.session}</dd></div>
         <div><dt>Goal 来源</dt><dd>{snapshot.sources.goal}</dd></div>
         <div><dt>审批来源</dt><dd>{snapshot.sources.approvals}</dd></div>

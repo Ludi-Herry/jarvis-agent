@@ -393,6 +393,44 @@ export const workbenchFixtures: readonly WorkbenchFixture[] = [
       capabilities: { submit: false, pause: false, continue: false, stop: false, resume: false },
     }),
   }),
+  fixture('multi', '多任务与工作区', '两个工作区、置顶、已归档与运行中任务并存；左栏分组与菜单可试。', {
+    snapshot: snapshot({ status: 'running', messages: RUNNING_MESSAGES, tools: READ_TOOLS, capabilities: runningCaps }),
+    overview: overview({
+      activeId: 'gui-fixture-0001',
+      workspaces: [
+        ...FIXTURE_WORKSPACES,
+        { id: 'ws-fixture-demo', name: 'demo-standby', cwd: 'H:\\demo-standby', createdAt: '2026-09-26T08:30:00.000Z', archived: false, sort: 1 },
+      ],
+      sessions: [
+        overviewSession({ id: 'gui-fixture-pin-1', title: '置顶：GUI 文案巡检', status: 'complete', pinned: true, updatedAt: '2026-09-26T09:12:00.000Z', lastMessage: '已交付，验收已完成。' }),
+        overviewSession({ id: 'gui-fixture-0001', status: 'running', updatedAt: '2026-09-26T09:11:00.000Z' }),
+        overviewSession({ id: 'gui-fixture-arch-1', title: '旧文档迁移（归档）', status: 'blocked', archived: true, updatedAt: '2026-09-25T17:40:00.000Z', lastMessage: '预算用尽，已保留现场。' }),
+        overviewSession({ id: 'gui-fixture-demo-1', title: 'demo-standby 的首个任务', workspaceId: 'ws-fixture-demo', status: 'idle', objective: '演示第二个工作区里的待启动任务', updatedAt: '2026-09-26T09:02:00.000Z', lastMessage: '' }),
+      ],
+    }),
+    models: FIXTURE_MODELS_DEMO,
+  }),
+  fixture('branch', '讨论分支来源', '新任务携带来源链与前情，待启动；审批与验收不继承。', {
+    snapshot: snapshot({
+      id: 'gui-fixture-fork-1',
+      sessionId: 'gui-fixture-fork-1',
+      goalId: 'gui-fixture-fork-1',
+      status: 'idle',
+      phase: '任务已创建，待启动',
+      objective: '承接「确定性试件任务：把 fixture/answer.mjs 的说明文字改清楚」第 2 轮的讨论分支',
+      sourceRef: { parentId: 'gui-fixture-0001', turnId: 'call_fx_m2', summary: '承接「确定性试件任务」第 2 轮的讨论分支（试件示意）' },
+      messages: [
+        message('fx-fork-u1', 'user', '[前情 · 来自任务 gui-fixture-0001 第 2 轮] 确定性试件任务：把 fixture/answer.mjs 的说明文字改清楚。', '2026-09-26T09:20:00.000Z'),
+        message('fx-fork-a1', 'assistant', '[前情 · 助手] 收到。我会把 label 改成一句可直接使用的引导。', '2026-09-26T09:20:02.000Z'),
+      ],
+      capabilities: { submit: false, pause: false, continue: false, stop: false, resume: false },
+    }),
+    overview: overview({
+      sessions: [
+        overviewSession({ id: 'gui-fixture-fork-1', title: '分支 · 承接「确定性试件任务」第 2 轮', status: 'idle', objective: '承接「确定性试件任务：把 fixture/answer.mjs 的说明文字改清楚」第 2 轮的讨论分支', sourceRef: { parentId: 'gui-fixture-0001', turnId: 'call_fx_m2', summary: '承接「确定性试件任务」第 2 轮的讨论分支（试件示意）' } }),
+      ],
+    }),
+  }),
 ];
 
 export function findFixture(id: string | null): WorkbenchFixture | undefined {

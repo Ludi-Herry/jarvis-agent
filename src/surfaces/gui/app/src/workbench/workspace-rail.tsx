@@ -287,7 +287,7 @@ export function WorkspaceRail({
                   >
                     <span className={`session-state is-${session.status}`} aria-hidden="true" />
                     <span>
-                      <strong>{session.sourceRef !== undefined ? '分支 · ' : ''}{session.title}</strong>
+                      <strong>{session.sourceRef !== undefined && !session.title.startsWith('分支') ? '分支 · ' : ''}{session.title}</strong>
                       <small>{statusPresentation[session.status].label}</small>
                     </span>
                     {session.pinned ? <span className="wb-pin" aria-label="已置顶" title="已置顶">●</span> : null}

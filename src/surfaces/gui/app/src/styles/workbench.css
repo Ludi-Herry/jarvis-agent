@@ -1983,3 +1983,173 @@ html[data-surface="fixture"] .wb-shell {
   opacity: 0.5;
   cursor: default;
 }
+
+/* Batch 2: composer tools row, create form, idle card, branch dialog */
+.wb-composer .composer-surface {
+  display: flex;
+  flex-direction: column;
+}
+.wb-composer-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  padding: 3px 9px 1px 12px;
+}
+.wb-model-pill {
+  font-size: 10px;
+  color: var(--faint);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 3px 8px;
+  background: var(--well);
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wb-composer-tools > :last-child {
+  margin-left: auto;
+}
+.wb-create-form {
+  width: min(640px, 100%);
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+}
+.wb-field {
+  display: grid;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.wb-field textarea,
+.wb-field input,
+.wb-field select {
+  font: inherit;
+  font-size: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--ink);
+  outline: none;
+  resize: vertical;
+}
+.wb-field textarea:focus-visible,
+.wb-field input:focus-visible,
+.wb-field select:focus-visible {
+  outline: 2px solid var(--accent);
+}
+.wb-field-row {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr 1fr;
+  gap: 10px;
+}
+.wb-field-row .wb-field:has(select) {
+  min-width: 0;
+}
+.wb-field-static {
+  font-style: normal;
+  font-size: 12px;
+  color: var(--ink-soft);
+  padding: 8px 10px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: var(--well);
+}
+.wb-field-note {
+  font-size: 10.5px;
+  color: var(--faint);
+}
+.wb-field-error {
+  font-size: 10.5px;
+  color: var(--red);
+  margin: 0;
+}
+.wb-create-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.wb-ghost,
+.wb-commit {
+  padding: 7px 14px;
+  border-radius: 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.wb-ghost {
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--ink-soft);
+}
+.wb-commit {
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--primary-foreground);
+}
+.wb-ghost:disabled,
+.wb-commit:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.wb-idle-card {
+  width: min(560px, 100%);
+  margin: 24px auto;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--well);
+  display: grid;
+  gap: 8px;
+}
+.wb-idle-card .wb-commit {
+  justify-self: start;
+}
+.wb-source-ref {
+  font-size: 11px;
+  color: var(--muted);
+  border-left: 2px solid var(--accent-line);
+  padding-left: 8px;
+  margin: 4px auto;
+  width: min(730px, 100%);
+}
+.wb-branch-dialog {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 16px 18px;
+  width: min(420px, calc(100vw - 32px));
+  box-shadow: 0 18px 50px rgba(24, 24, 27, 0.14);
+}
+.wb-branch-dialog::backdrop {
+  background: rgba(24, 24, 27, 0.24);
+}
+.wb-branch-dialog h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+.wb-branch-dialog p {
+  margin: 0 0 14px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.wb-branch-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.wb-branch-actions button {
+  padding: 6px 14px;
+  border-radius: 8px;
+  font-size: 12px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+.wb-branch-actions .wb-commit {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--primary-foreground);
+}
