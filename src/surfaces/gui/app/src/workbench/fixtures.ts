@@ -114,10 +114,14 @@ function overview(patch: Partial<GuiLiveOverview> = {}): GuiLiveOverview {
     task: { objective: FIXTURE_TASK, requirements: FIXTURE_REQUIREMENTS },
     sessions: [],
     activeId: null,
+    activeIds: [],
     workspaces: FIXTURE_WORKSPACES,
     ...patch,
   };
 }
+
+/** Batch 3 §A4: run-state session statuses populate activeIds; terminal/idle rows contribute none. */
+const RUNNING_SESSION_STATUSES: ReadonlySet<string> = new Set(['starting', 'running', 'approval', 'pausing', 'paused', 'checking', 'stopping']);
 
 const runningCaps = { submit: true, pause: true, continue: false, stop: true, resume: false };
 
@@ -146,11 +150,18 @@ export interface WorkbenchFixture {
 }
 
 function fixture(id: string, label: string, hint: string, patch: Partial<WorkbenchFixture> & { snapshot?: GuiLiveSnapshot | null }): WorkbenchFixture {
+  const snapshotStatus = patch.snapshot?.status ?? 'running';
   return {
     id,
     label,
     hint,
-    overview: patch.overview ?? overview(id === 'empty' ? { sessions: [], activeId: null } : { sessions: [overviewSession({ status: (patch.snapshot?.status ?? 'running') })], activeId: null }),
+    overview: patch.overview ?? overview(id === 'empty'
+      ? { sessions: [], activeId: null, activeIds: [] }
+      : {
+          sessions: [overviewSession({ status: snapshotStatus })],
+          activeId: null,
+          activeIds: RUNNING_SESSION_STATUSES.has(snapshotStatus) ? ['gui-fixture-0001'] : [],
+        }),
     snapshot: patch.snapshot === undefined ? snapshot({ status: 'running' }) : patch.snapshot,
     connection: patch.connection ?? 'connected',
     actionPending: patch.actionPending ?? null,
@@ -185,7 +196,10 @@ export const workbenchFixtures: readonly WorkbenchFixture[] = [
       phase: '模型正在生成回复',
       nextAction: '观察执行过程；需要时补充指令或终止',
       messages: RUNNING_MESSAGES,
-      tools: READ_TOOLS,
+      tools: [
+        ...READ_TOOLS,
+        tool('call_fx_task_1', 'task', 'committed', { role: 'researcher', task: '核对说明文字调整涉及的既有验收口径与历史结论，给出不超过 200 字的摘要。' }, { output: '（试件）委派结果：既有口径要求确定性检查与人工验收同时通过才授予完成；本次说明文字调整不改变该口径。' }),
+      ],
       usage: { inputTokens: 4210, outputTokens: 318, costCny: 0.0348, costNote: '试件按构造值估算，不产生真实费用' },
       capabilities: runningCaps,
     }),
@@ -394,9 +408,19 @@ export const workbenchFixtures: readonly WorkbenchFixture[] = [
     }),
   }),
   fixture('multi', '多任务与工作区', '两个工作区、置顶、已归档与运行中任务并存；左栏分组与菜单可试。', {
-    snapshot: snapshot({ status: 'running', messages: RUNNING_MESSAGES, tools: READ_TOOLS, capabilities: runningCaps }),
+    snapshot: snapshot({
+      status: 'running',
+      messages: RUNNING_MESSAGES,
+      tools: READ_TOOLS,
+      capabilities: runningCaps,
+      terminal: {
+        running: null,
+        history: [{ command: 'node --version', code: 0, output: 'v22.12.0\n（试件构造输出，非真实执行）', canceled: false, at: '2026-09-26T09:08:00.000Z' }],
+      },
+    }),
     overview: overview({
       activeId: 'gui-fixture-0001',
+      activeIds: ['gui-fixture-0001'],
       workspaces: [
         ...FIXTURE_WORKSPACES,
         { id: 'ws-fixture-demo', name: 'demo-standby', cwd: 'H:\\demo-standby', createdAt: '2026-09-26T08:30:00.000Z', archived: false, sort: 1 },
@@ -409,6 +433,21 @@ export const workbenchFixtures: readonly WorkbenchFixture[] = [
       ],
     }),
     models: FIXTURE_MODELS_DEMO,
+  }),
+  fixture('concurrent', '双任务并发', '两个工作区各一个运行中任务；切换查看不加锁，急停仍按所选任务分派。', {
+    snapshot: snapshot({ status: 'running', messages: RUNNING_MESSAGES, tools: READ_TOOLS, capabilities: runningCaps }),
+    overview: overview({
+      activeId: 'gui-fixture-0001',
+      activeIds: ['gui-fixture-0001', 'gui-fixture-par-1'],
+      workspaces: [
+        ...FIXTURE_WORKSPACES,
+        { id: 'ws-fixture-lab', name: 'demo-parallel', cwd: 'H:\\demo-parallel', createdAt: '2026-09-26T08:30:00.000Z', archived: false, sort: 1 },
+      ],
+      sessions: [
+        overviewSession({ id: 'gui-fixture-0001', status: 'running', updatedAt: '2026-09-26T09:11:00.000Z' }),
+        overviewSession({ id: 'gui-fixture-par-1', title: '并行：demo-parallel 的重构巡检', workspaceId: 'ws-fixture-lab', status: 'running', objective: '并行演示：在 demo-parallel 工作区运行一次重构巡检', updatedAt: '2026-09-26T09:10:30.000Z', lastMessage: '正在读取 src 目录结构…' }),
+      ],
+    }),
   }),
   fixture('branch', '讨论分支来源', '新任务携带来源链与前情，待启动；审批与验收不继承。', {
     snapshot: snapshot({

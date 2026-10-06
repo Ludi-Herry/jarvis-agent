@@ -1,14 +1,48 @@
 import { type RefObject } from 'react';
 import type { GuiLiveOverview, GuiLiveSnapshot, GuiTool } from '../../../live-types.js';
 import { ContextEvidence, DiffEvidence, VerificationEvidence } from './evidence.js';
+import { toolStatusLabels } from './format.js';
 import { ChevronIcon } from './icons.js';
 import type { EvidenceTab } from './prefs.js';
+import { PreviewPane } from './preview-pane.js';
+import { deriveSubagents } from './subagents.js';
+import { TerminalPane } from './terminal-pane.js';
 
 const EVIDENCE_TABS = [
   ['diff', 'Diff / 产物'],
   ['verification', '验证'],
   ['context', '上下文'],
+  ['subagents', '子智能体'],
+  ['preview', '预览'],
+  ['terminal', '终端'],
 ] as const;
+
+/** Batch 3 §B7: subagent delegations derived from task tool calls; honest empty state otherwise. */
+function SubagentsEvidence({ snapshot }: { readonly snapshot: GuiLiveSnapshot | null }) {
+  if (snapshot === null) {
+    return <div className="live-evidence-pane"><p className="live-muted">启动任务后显示子智能体委派。</p></div>;
+  }
+  const subagents = deriveSubagents(snapshot.tools);
+  if (subagents.length === 0) {
+    return <div className="live-evidence-pane"><p className="live-muted">本次运行还没有委派子智能体。</p></div>;
+  }
+  return (
+    <div className="live-evidence-pane">
+      <ul className="wb-subagent-list">
+        {subagents.map((agent) => (
+          <li key={agent.id}>
+            <div className="wb-subagent-head">
+              <strong>{agent.role}</strong>
+              <em data-status={agent.status}>{toolStatusLabels[agent.status]}</em>
+            </div>
+            <p>{agent.taskSummary}</p>
+            {agent.resultPreview !== '' ? <pre>{agent.resultPreview}</pre> : null}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
 
 /** Evidence drawer: closed by default, opened by clicking a tool, a file or a diff link. */
 export function DetailPane({
@@ -20,6 +54,10 @@ export function DetailPane({
   detailRef,
   evidenceRef,
   expanded,
+  taskId,
+  actionPending,
+  runTerminal,
+  cancelTerminal,
   onTab,
   onToggleExpanded,
   onClose,
@@ -34,6 +72,10 @@ export function DetailPane({
   readonly detailRef: (node: HTMLElement | null) => void;
   readonly evidenceRef: RefObject<HTMLElement | null>;
   readonly expanded: boolean;
+  readonly taskId: string | null;
+  readonly actionPending: boolean;
+  readonly runTerminal: (command: string) => Promise<unknown>;
+  readonly cancelTerminal: () => Promise<unknown>;
   readonly onTab: (tab: EvidenceTab) => void;
   readonly onToggleExpanded: () => void;
   readonly onClose: () => void;
@@ -80,6 +122,11 @@ export function DetailPane({
         {evidenceTab === 'diff' ? <DiffEvidence snapshot={snapshot} selectedTool={selectedTool} /> : null}
         {evidenceTab === 'verification' ? <VerificationEvidence snapshot={snapshot} selectedTool={selectedTool} /> : null}
         {evidenceTab === 'context' ? <ContextEvidence overview={overview} snapshot={snapshot} streamWarning={streamWarning} getGit={getGit} /> : null}
+        {evidenceTab === 'subagents' ? <SubagentsEvidence snapshot={snapshot} /> : null}
+        {evidenceTab === 'preview' ? <PreviewPane scope={taskId} /> : null}
+        {evidenceTab === 'terminal' ? (
+          <TerminalPane snapshot={snapshot} pending={actionPending} runTerminal={runTerminal} cancelTerminal={cancelTerminal} />
+        ) : null}
       </section>
     </aside>
   );

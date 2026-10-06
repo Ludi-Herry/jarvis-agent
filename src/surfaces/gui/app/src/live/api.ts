@@ -146,6 +146,16 @@ export async function getLiveGitStatus(id: string, signal?: AbortSignal): Promis
   return readJson<GuiGitStatus>(response);
 }
 
+/** Batch 3 §D14: attended desk-side terminal; server spawns in the task cwd. */
+export async function postTerminalCommand(id: string, command: string, signal?: AbortSignal): Promise<GuiLiveSnapshot> {
+  return postLiveJson<GuiLiveSnapshot>(`/api/live/${encodeURIComponent(id)}/terminal`, { command }, signal);
+}
+
+/** Batch 3 §D16: cancel the in-flight desk-side command (409 when none runs). */
+export async function postTerminalCancel(id: string, signal?: AbortSignal): Promise<GuiLiveSnapshot> {
+  return postLiveJson<GuiLiveSnapshot>(`/api/live/${encodeURIComponent(id)}/terminal/cancel`, {}, signal);
+}
+
 export async function getLiveModels(signal?: AbortSignal): Promise<GuiModelsResponse> {
   const response = await fetch('/api/live/models', {
     headers: { accept: 'application/json' },

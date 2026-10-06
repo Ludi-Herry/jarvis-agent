@@ -1,9 +1,25 @@
-import type { GuiLiveSnapshot, GuiMessage } from './live-types.js';
+import type { GuiLiveSnapshot, GuiMessage, GuiTerminalEntry } from './live-types.js';
 
 /** Journal records are display observations, never a source of completion authority. */
 export interface GuiObservedEvent {
   type: string;
   [key: string]: unknown;
+}
+
+/** Desk-side terminal projection caps (batch 3 §D17): merged output per history entry and the
+ *  number of kept entries. */
+export const GUI_TERMINAL_OUTPUT_CAP = 4_000;
+export const GUI_TERMINAL_HISTORY_CAP = 20;
+
+const TERMINAL_TRUNCATION_MARKER = '\n…[中间输出已截断]…\n';
+
+/** Append a chunk, keeping the FIRST and LAST halves when the merged text exceeds the cap
+ *  (首尾截断, contract §D14). Pure; replay-safe. */
+export function appendTerminalOutput(existing: string, chunk: string, cap = GUI_TERMINAL_OUTPUT_CAP): string {
+  const merged = existing + chunk;
+  if (merged.length <= cap) return merged;
+  const keep = Math.max(0, Math.floor((cap - TERMINAL_TRUNCATION_MARKER.length) / 2));
+  return merged.slice(0, keep) + TERMINAL_TRUNCATION_MARKER + merged.slice(merged.length - keep);
 }
 
 export function applyGuiEvent(state: GuiLiveSnapshot, event: GuiObservedEvent): void {
@@ -102,6 +118,42 @@ export function applyGuiEvent(state: GuiLiveSnapshot, event: GuiObservedEvent): 
     case 'gui_diff':
       state.diff = String(event.diff);
       break;
+    case 'gui_terminal': {
+      // Batch 3 §D14: start → open a running row; out → merge into the latest row; exit/cancel
+      // → close it. Rows stay ordered oldest-first, capped at GUI_TERMINAL_HISTORY_CAP.
+      state.terminal ??= { running: null, history: [] };
+      const terminal = state.terminal;
+      const entry = terminal.history.at(-1);
+      switch (String(event.phase)) {
+        case 'start': {
+          const command = String(event.command ?? '');
+          const at = String(event.at ?? '');
+          terminal.running = { command, startedAt: at };
+          const opened: GuiTerminalEntry = { command, code: null, output: '', canceled: false, at };
+          terminal.history.push(opened);
+          if (terminal.history.length > GUI_TERMINAL_HISTORY_CAP) terminal.history.splice(0, terminal.history.length - GUI_TERMINAL_HISTORY_CAP);
+          break;
+        }
+        case 'out':
+          if (entry) entry.output = appendTerminalOutput(entry.output, String(event.chunk ?? ''));
+          break;
+        case 'exit':
+          if (entry && entry.code === null && !entry.canceled) {
+            entry.code = typeof event.code === 'number' ? event.code : null;
+            entry.at = String(event.at ?? entry.at);
+          }
+          terminal.running = null;
+          break;
+        case 'cancel':
+          if (entry && entry.code === null) {
+            entry.canceled = true;
+            entry.at = String(event.at ?? entry.at);
+          }
+          terminal.running = null;
+          break;
+      }
+      break;
+    }
     case 'gui_warning':
       if (!state.warnings.includes(String(event.message))) state.warnings.push(String(event.message));
       break;

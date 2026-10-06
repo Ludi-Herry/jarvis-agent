@@ -1,6 +1,7 @@
+import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { appendFile, lstat, mkdir, readFile, readdir, realpath, rename, writeFile } from 'node:fs/promises';
+import { appendFile, lstat, mkdir, readFile, readdir, realpath, rename, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import {
   buildDefaultRegistry, createBashTool, createProvider, DefaultContextManager, defaultShellPath,
@@ -19,6 +20,10 @@ import {
   snapshotWorktreeStatus, updateGoalToolSchema, runDeterministicChecks,
   type GoalResumeState, type HumanReviewDecisionInput, type TestBaseline,
 } from '../../capabilities/goal/index.js';
+import {
+  createDelegateTool, delegateToolSchema, loadRoster, SubagentManager, TASK_TOOL_NAME,
+  type AgentRole,
+} from '../../capabilities/subagents/index.js';
 import { createApprovalEventApprover, FileApprovalAuditStore } from '../cli/approval-events.js';
 import { appendConfigPermissionBoundary, loadCliConfig } from '../cli/config.js';
 import { JARVIS_VERSION } from '../cli/package-info.js';
@@ -38,8 +43,43 @@ export const GUI_DERIVED_REQUIREMENT = '完成本轮对话中你确认的目标'
 export const FORK_MESSAGE_CAP = 4_000;
 export const FORK_TOTAL_CAP = 24_000;
 
+/** Batch 3 §A1: at most this many tasks run at once; a single workspace still runs strictly one. */
+export const MAX_CONCURRENT_RUNS = 2;
+
+/** CLI repl pins MAX_SUBAGENT_DEPTH = 2 locally and capabilities/subagents does not export the
+ *  constant, so per the batch-3 dispatch fallback the GUI host pins 1 (main → child, no
+ *  grandchildren) until the constant is lifted into a shared module. */
+const MAX_SUBAGENT_DEPTH = 1;
+
 const ALL_THINKING_LEVELS: ThinkingEffort[] = ['off', 'low', 'medium', 'high'];
 const GIT_CACHE_MS = 5_000;
+
+/** Desk-side terminal bounds (batch 3 §D14–§D17). */
+const TERMINAL_COMMAND_MAX = 2_000;
+const TERMINAL_FLUSH_MS = 400;
+const TERMINAL_FLUSH_BYTES = 2_048;
+const TERMINAL_OUTPUT_CAP_BYTES = 64 * 1_024;
+const TERMINAL_TIMEOUT_MS = 120_000;
+const TERMINAL_KILL_GRACE_MS = 3_000;
+
+/** The conservative desk-side denylist (§D15), matched case-insensitively against the whole
+ *  command; a hit refuses the spawn and reports the matched rule. */
+const TERMINAL_DENYLIST: ReadonlyArray<{ pattern: RegExp; rule: string }> = [
+  { pattern: /\brm\s+-rf\s+\//iu, rule: 'rm -rf /（根路径递归删除）' },
+  { pattern: /\brm\s+-rf\s+~(?=$|[\s/])/iu, rule: 'rm -rf ~（用户目录递归删除）' },
+  { pattern: /\bdel\s+\/s\s+\/q\b/iu, rule: 'del /s /q（批量静默删除）' },
+  { pattern: /(^|[^\w.-])format(?=[\s:;/]|$)/iu, rule: 'format（磁盘格式化）' },
+  { pattern: /\bshutdown\b/iu, rule: 'shutdown（关机或重启）' },
+  { pattern: /\bmkfs\b/iu, rule: 'mkfs（创建文件系统）' },
+  { pattern: /\bdd\s+if=/iu, rule: 'dd if=（裸设备写入）' },
+  { pattern: /\bdiskpart\b/iu, rule: 'diskpart（磁盘分区操作）' },
+  { pattern: /\breg\s+delete\b/iu, rule: 'reg delete（注册表删除）' },
+  { pattern: /\bsudo\b/iu, rule: 'sudo（提权执行，含 | sudo 管道）' },
+  { pattern: />\s*\/dev\/sd/iu, rule: '> /dev/sd（写入裸磁盘设备）' },
+  { pattern: /\bpowershell\b[^|;&\n]*\s-enc\b/iu, rule: 'powershell -enc（编码载荷执行）' },
+  { pattern: /\bcurl\b[^|]*\|\s*(?:sudo\s+)?(?:ba)?sh\b/iu, rule: 'curl … | sh（下载即执行）' },
+  { pattern: /\bwget\b[^|]*\|\s*(?:sudo\s+)?bash\b/iu, rule: 'wget … | bash（下载即执行）' },
+];
 
 interface ForkRecord {
   parentId: string;
@@ -70,6 +110,25 @@ interface CreatedRecord {
   fork?: ForkRecord;
 }
 interface EventRecord { type: 'gui_event'; sequence: number; event: GuiObservedEvent; at: string }
+/** One in-flight desk-side terminal command per task (batch 3 §D16: strictly one at a time). */
+interface LiveTerminal {
+  child: ChildProcess;
+  command: string;
+  startedAt: string;
+  /** Journal-side bytes accepted so far (64 KiB cap). */
+  buffered: number;
+  /** 120 s per-command timeout. */
+  timer?: NodeJS.Timeout;
+  /** Coalesced output not yet journaled (~400 ms / 2 KiB flush). */
+  pending: string;
+  flushTimer?: NodeJS.Timeout;
+  /** Set once a cancel has been journaled; the close handler then records no exit. */
+  canceling?: boolean;
+  /** Set in the close handler so the kill fallback never re-kills a reused pid. */
+  exited?: boolean;
+  /** One 64 KiB truncation per command (warns exactly once). */
+  truncated?: boolean;
+}
 interface LiveTask {
   created: CreatedRecord;
   snapshot: GuiLiveSnapshot;
@@ -95,6 +154,12 @@ interface LiveTask {
   forkMessages?: Message[];
   forkInjected?: boolean;
   gitCache?: { at: number; payload: GuiGitStatus };
+  /** In-flight desk-side terminal command, mirrored by gui_terminal journal events (§D). */
+  terminal?: LiveTerminal;
+  /** Subagent roster resolved for the current run (§B5); cached so start/resume reuse it. */
+  roster?: AgentRole[];
+  /** Lazily resolved realpath workspace key used by the §A1 run gate. */
+  workspaceKey?: string;
 }
 
 export class GuiLiveError extends Error {
@@ -291,12 +356,15 @@ export class GuiSessionHost {
       Number(a.archived) - Number(b.archived)
       || Number(b.pinned) - Number(a.pinned)
       || Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+    // §A4: activeIds lists every running task; activeId stays the most recently active one.
+    const running = [...this.tasks.values()].filter((task) => task.run);
     return {
       cwd: this.task?.cwd ?? this.options.cwd, enabled: this.task !== undefined,
       task: this.task ? { objective: this.task.objective, requirements: this.task.requirements } : null,
       sessions,
-      activeId: [...this.tasks.values()].find((task) => task.run)?.snapshot.id
+      activeId: running.sort((a, b) => Date.parse(b.lastEventAt) - Date.parse(a.lastEventAt))[0]?.snapshot.id
         ?? sessions.find((session) => !session.archived)?.id ?? sessions[0]?.id ?? null,
+      activeIds: running.map((task) => task.snapshot.id),
       workspaces: structuredClone(this.workspaces ?? []),
     };
   }
@@ -374,14 +442,17 @@ export class GuiSessionHost {
     await task.queue;
     if (task.journalError) throw new GuiLiveError(503, '事件持久化失败；执行已停止，等待检查保留的 Session');
     if (task.run || task.started) throw new GuiLiveError(409, '任务已有运行记录；请恢复或审阅该记录，不自动重复消耗');
-    if (this.launching || [...this.tasks.values()].some((item) => item.run)) throw new GuiLiveError(409, '已有运行中的任务');
+    this.assertLaunchGate(await this.launchGateSnapshot(task));
     this.launching = true;
     try {
       const identity = await this.resolveIdentity(task.created.task);
       if (identity.modelName !== task.created.model) throw new GuiLiveError(409, '任务或模型配置已变化，拒绝启动');
       task.identity = identity;
+      // §B5: the roster must load BEFORE the composition freezes so a task with a roster hashes
+      // the `task` delegate schema into gui_task_started (resume validates the frozen payload).
+      const roster = await this.loadRosterFor(task);
       const baseline = await this.captureBaseline(id, task.created.task);
-      const composition = this.compositionFor(task.created.task);
+      const composition = this.compositionFor(task.created.task, roster);
       const started: TaskStarted = { baseline, composition, model: identity.modelName, at: new Date().toISOString() };
       // journaled verbatim (see record()): replay and resume both fold this exact payload.
       await this.record(task, { type: 'gui_task_started', baseline, composition, model: started.model });
@@ -549,8 +620,105 @@ export class GuiSessionHost {
     } finally { task.reviewing = false; }
   }
 
+  /** Batch 3 §D14–§D18: the attended desk-side terminal. Spawn one operator command in the task
+   *  cwd with the host shell, stream output as gui_terminal journal events. Output stays an
+   *  observation — it never enters evidence/checks/diff authority (§D18). */
+  async startTerminal(id: string, value: unknown): Promise<GuiLiveSnapshot> {
+    await this.initialize();
+    const task = this.requireTask(id);
+    const command = typeof value === 'string' ? value.trim() : '';
+    if (!command || command.length > TERMINAL_COMMAND_MAX) {
+      throw new GuiLiveError(400, `终端命令必须是 1–${TERMINAL_COMMAND_MAX} 字的非空文本`);
+    }
+    const denied = terminalDenyReason(command);
+    if (denied) throw new GuiLiveError(400, `终端命令已拒绝：命中 denylist 规则「${denied}」`);
+    if (task.terminal) throw new GuiLiveError(409, '该任务已有运行中的终端命令；等待其结束或先取消');
+    const startedAt = new Date().toISOString();
+    const child = spawn(defaultShellPath(), ['-c', command], {
+      cwd: task.created.task.cwd, windowsHide: true, env: terminalEnv(), detached: process.platform !== 'win32',
+    });
+    const terminal: LiveTerminal = { child, command, startedAt, buffered: 0, pending: '' };
+    task.terminal = terminal;
+    terminal.timer = setTimeout(() => { void this.cancelTerminalProcess(task, terminal, 'timeout'); }, TERMINAL_TIMEOUT_MS);
+    const onData = (chunk: Buffer): void => this.bufferTerminalChunk(task, terminal, chunk);
+    child.stdout?.on('data', onData);
+    child.stderr?.on('data', onData);
+    child.on('error', (error) => { void this.finishTerminal(task, terminal, null, null, `终端进程启动失败：${redactSecrets(error.message)}`); });
+    child.on('close', (code, signal) => { void this.finishTerminal(task, terminal, code, signal); });
+    await this.record(task, { type: 'gui_terminal', phase: 'start', command, at: startedAt });
+    return this.snapshot(id);
+  }
+
+  /** §D16: cancel the one in-flight desk-side command (SIGTERM/tree-kill) and journal the cancel. */
+  async cancelTerminal(id: string): Promise<GuiLiveSnapshot> {
+    await this.initialize();
+    const task = this.requireTask(id);
+    if (!task.terminal) throw new GuiLiveError(409, '当前没有运行中的终端命令');
+    await this.cancelTerminalProcess(task, task.terminal, 'user');
+    return this.snapshot(id);
+  }
+
+  private async cancelTerminalProcess(task: LiveTask, terminal: LiveTerminal, reason: 'user' | 'timeout' | 'interrupted'): Promise<void> {
+    if (terminal.canceling || terminal.exited) return;
+    terminal.canceling = true;
+    // The cancel is REGISTERED immediately: the row folds canceled, this slot frees for a new
+    // command, and a repeated cancel honestly 409s — even though the OS kill lands a beat later.
+    if (task.terminal === terminal) task.terminal = undefined;
+    if (terminal.timer) { clearTimeout(terminal.timer); terminal.timer = undefined; }
+    this.flushTerminal(task, terminal);
+    try {
+      await this.record(task, { type: 'gui_terminal', phase: 'cancel', command: terminal.command, reason });
+    } finally {
+      killTerminalProcess(terminal.child);
+      const watchdog = setTimeout(() => { if (!terminal.exited) forceKillTerminalProcess(terminal.child); }, TERMINAL_KILL_GRACE_MS);
+      watchdog.unref();
+    }
+  }
+
+  private async finishTerminal(task: LiveTask, terminal: LiveTerminal, code: number | null, signal: string | null, spawnError?: string): Promise<void> {
+    if (terminal.exited) return;
+    terminal.exited = true;
+    if (terminal.timer) { clearTimeout(terminal.timer); terminal.timer = undefined; }
+    if (task.terminal === terminal) task.terminal = undefined;
+    this.flushTerminal(task, terminal);
+    if (spawnError) await this.record(task, { type: 'gui_warning', message: spawnError });
+    if (!terminal.canceling) {
+      await this.record(task, { type: 'gui_terminal', phase: 'exit', command: terminal.command, code, signal });
+    }
+  }
+
+  private bufferTerminalChunk(task: LiveTask, terminal: LiveTerminal, chunk: Buffer): void {
+    if (task.terminal !== terminal || terminal.truncated) return; // keep draining a truncated pipe
+    terminal.pending += chunk.toString('utf8');
+    if (Buffer.byteLength(terminal.pending, 'utf8') >= TERMINAL_FLUSH_BYTES) {
+      this.flushTerminal(task, terminal);
+    } else if (!terminal.flushTimer) {
+      terminal.flushTimer = setTimeout(() => { terminal.flushTimer = undefined; this.flushTerminal(task, terminal); }, TERMINAL_FLUSH_MS);
+    }
+  }
+
+  private flushTerminal(task: LiveTask, terminal: LiveTerminal): void {
+    if (terminal.flushTimer) { clearTimeout(terminal.flushTimer); terminal.flushTimer = undefined; }
+    if (!terminal.pending || terminal.truncated) { terminal.pending = ''; return; }
+    let chunk = terminal.pending;
+    terminal.pending = '';
+    if (terminal.buffered + Buffer.byteLength(chunk, 'utf8') > TERMINAL_OUTPUT_CAP_BYTES) {
+      const remaining = Math.max(0, TERMINAL_OUTPUT_CAP_BYTES - terminal.buffered);
+      chunk = Buffer.from(chunk, 'utf8').subarray(0, remaining).toString('utf8');
+      terminal.truncated = true;
+    }
+    terminal.buffered += Buffer.byteLength(chunk, 'utf8');
+    if (chunk) void this.record(task, { type: 'gui_terminal', phase: 'out', command: terminal.command, chunk }).catch(() => undefined);
+    if (terminal.truncated) {
+      void this.record(task, { type: 'gui_warning', message: '终端输出累计超过 64 KiB，已截断；后续输出如实省略' }).catch(() => undefined);
+    }
+  }
+
   async dispose(): Promise<void> {
     for (const task of this.tasks.values()) { task.abort.abort(new Error('GUI server closing')); task.wake?.(); }
+    for (const task of this.tasks.values()) {
+      if (task.terminal) await this.cancelTerminalProcess(task, task.terminal, 'interrupted').catch(() => undefined);
+    }
     await Promise.all([...this.tasks.values()].map((task) => task.run));
   }
 
@@ -623,6 +791,62 @@ export class GuiSessionHost {
   private defaultWorkspace(): GuiWorkspaceInfo {
     const matched = this.workspaces!.find((workspace) => workspace.cwd === this.defaultCwd);
     return matched ?? [...this.workspaces!].sort((a, b) => a.sort - b.sort)[0];
+  }
+
+  /** Batch 3 §A1: the async half of the run gate — resolve the target's workspace key and every
+   *  running task's. A workspaceId is only an alias for its bound cwd (resolveWorkspace pins
+   *  id↔cwd at creation), so mixed workspaceId/cwd bindings still collide on the SAME directory. */
+  private async launchGateSnapshot(target: LiveTask): Promise<{ targetKey: string; runningKeys: string[] }> {
+    await this.ensureWorkspaces();
+    const targetKey = await this.workspaceKeyOf(target);
+    const runningKeys: string[] = [];
+    for (const item of this.tasks.values()) {
+      if (item.run) runningKeys.push(await this.workspaceKeyOf(item));
+    }
+    return { targetKey, runningKeys };
+  }
+
+  /** The synchronous half of the §A1 gate. The caller sets `launching = true` immediately after,
+   *  so no other start/resume can interleave between this check and the flag set (a settle may
+   *  interleave — its 409 is conservative and retry-safe). */
+  private assertLaunchGate(gate: { targetKey: string; runningKeys: string[] }): void {
+    if (this.launching) throw new GuiLiveError(409, '已有运行中的任务');
+    if (gate.runningKeys.includes(gate.targetKey)) throw new GuiLiveError(409, '该工作区已有运行中的任务');
+    if (gate.runningKeys.length >= MAX_CONCURRENT_RUNS) throw new GuiLiveError(409, `并发上限已满（${MAX_CONCURRENT_RUNS}）`);
+  }
+
+  private async workspaceKeyOf(task: LiveTask): Promise<string> {
+    if (task.workspaceKey === undefined) {
+      const contract = task.created.task;
+      const bound = contract.workspaceId ? this.workspaces?.find((workspace) => workspace.id === contract.workspaceId)?.cwd : undefined;
+      task.workspaceKey = await realpath(bound ?? contract.cwd).catch(() => resolve(bound ?? contract.cwd));
+    }
+    return task.workspaceKey;
+  }
+
+  /** Batch 3 §B5: roster load for one task run. A missing `agents/` dir is NOT an error (no
+   *  roster, no delegate tool); a corrupted/unreadable roster dir is journaled as an honest
+   *  warning and the run continues with an empty roster (contract: roster 按 [] 继续). */
+  private async loadRosterFor(task: LiveTask): Promise<AgentRole[]> {
+    if (task.roster !== undefined) return task.roster;
+    const dir = join(task.created.task.cwd, 'agents');
+    let roster: AgentRole[] = [];
+    try {
+      const info = await stat(dir).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return null;
+        throw error;
+      });
+      if (info !== null && !info.isDirectory()) {
+        await this.record(task, { type: 'gui_warning', message: '子智能体 roster 目录损坏（agents 不是目录）；本次运行不注册 task 委派工具' });
+      } else {
+        roster = await loadRoster(dir);
+      }
+    } catch (error) {
+      await this.record(task, { type: 'gui_warning', message: `子智能体 roster 读取失败：${redactSecrets(error instanceof Error ? error.message : String(error))}；本次运行不注册 task 委派工具` });
+      roster = [];
+    }
+    task.roster = roster;
+    return roster;
   }
 
   private overviewItem(task: LiveTask, defaultWorkspaceId: string): GuiLiveOverviewSession {
@@ -783,9 +1007,9 @@ export class GuiSessionHost {
     return tools;
   }
 
-  private compositionFor(contract: GuiTaskDefinition): SessionComposition {
+  private compositionFor(contract: GuiTaskDefinition, roster: readonly AgentRole[] = []): SessionComposition {
     return createSessionComposition({ root: 'goal', runtimeVersion: JARVIS_VERSION, permissionMode: 'interactive',
-      toolSchemas: [...this.toolsFor(contract).schemasForModel(), updateGoalToolSchema()], systemPrompt: this.builderPrompt, dynamicAddendum: NO_DYNAMIC_ADDENDUM });
+      toolSchemas: [...this.toolsFor(contract).schemasForModel(), ...(roster.length ? [delegateToolSchema(roster)] : []), updateGoalToolSchema()], systemPrompt: this.builderPrompt, dynamicAddendum: NO_DYNAMIC_ADDENDUM });
   }
 
   private async execute(task: LiveTask, resume?: GoalResumeState): Promise<void> {
@@ -883,13 +1107,25 @@ export class GuiSessionHost {
         return existing.check(call, capability);
       } };
       const pinned = contract.requirements.map((text, index) => ({ id: `R${index + 1}`, text, route: 'human' as const }));
+      const tools = this.toolsFor(contract);
+      const context = new DefaultContextManager({ summarizer: provider, maxContextTokens: provider.capability.maxContextTokens, maxOutputTokens: 16_384 });
+      // §B5: same wiring as the CLI repl — the delegate tool reuses this task's provider, registry,
+      // gate and context; children run on a strictly smaller budget and depth under the same gate.
+      const roster = await this.loadRosterFor(task);
+      if (roster.length > 0) {
+        const manager = new SubagentManager({ provider, registry: tools, gate,
+          budget: { maxTurns: contract.maxTurns }, roster, cwd: contract.cwd, context,
+          remainingDepth: MAX_SUBAGENT_DEPTH,
+          makeDelegateTool: (mgr) => createDelegateTool(mgr), delegateToolName: TASK_TOOL_NAME });
+        tools.register(createDelegateTool(manager));
+      }
       await hooks?.sessionStart();
       const result = await runGoal({ id: created.id, sessionId: created.id, objective: contract.objective,
         budget: { maxRounds: contract.maxRounds, maxTotalTurns: contract.maxRounds * contract.maxTurns, maxWallClockMs: contract.wallClockMs },
         baseline: task.started.baseline, worktreeBaseline: resume?.goal.worktreeBaseline ?? await snapshotWorktreeStatus(defaultShellPath(), contract.cwd, signal), pinned, resume }, {
-        model: provider, tools: this.toolsFor(contract), bus, gate, hooks, store, goalStore, cwd: contract.cwd, shellPath: defaultShellPath(),
+        model: provider, tools, bus, gate, hooks, store, goalStore, cwd: contract.cwd, shellPath: defaultShellPath(),
         builderSystemPrompt: this.builderPrompt, perRoundMaxTurns: contract.maxTurns,
-        context: new DefaultContextManager({ summarizer: provider, maxContextTokens: provider.capability.maxContextTokens, maxOutputTokens: 16_384 }),
+        context,
         checkCommands: contract.checkCommands, goalSetterRequirementRoutes: new Map(pinned.map((item) => [item.id, 'human' as const])), signal,
         check: async (deps, baseline) => {
           const before = await this.evidenceFingerprint(task, signal);
@@ -995,7 +1231,8 @@ export class GuiSessionHost {
   }
 
   private async resume(task: LiveTask): Promise<GuiLiveSnapshot> {
-    if (this.launching || [...this.tasks.values()].some((item) => item.run)) throw new GuiLiveError(409, '已有运行中的任务');
+    // §A1: resume shares the exact start gate (one run per workspace, MAX_CONCURRENT_RUNS cap).
+    this.assertLaunchGate(await this.launchGateSnapshot(task));
     this.launching = true;
     try {
     await this.refreshAuthority(task);
@@ -1134,6 +1371,13 @@ export class GuiSessionHost {
         }
         for (const message of task.snapshot.messages) if (message.status === 'running') message.status = 'incomplete';
         task.snapshot.approval = null;
+        // §D14: a gui_terminal start without exit/cancel means the host died mid-command; the
+        // process is gone, so replay marks the row canceled instead of showing it running.
+        if (task.snapshot.terminal?.running) {
+          const last = task.snapshot.terminal.history.at(-1);
+          if (last && last.code === null && !last.canceled) last.canceled = true;
+          task.snapshot.terminal.running = null;
+        }
         await this.restoreSessionProjection(task);
         await this.refreshAuthority(task);
         updateGuiCapabilities(task.snapshot, false);
@@ -1247,6 +1491,47 @@ export class GuiSessionHost {
   }
 
   private notify(id: string): void { for (const listener of this.listeners) listener(id); }
+}
+
+/** First matching denylist rule text, or undefined. Case-insensitive over the whole command. */
+function terminalDenyReason(command: string): string | undefined {
+  return TERMINAL_DENYLIST.find(({ pattern }) => pattern.test(command))?.rule;
+}
+
+/** Host env for the desk-side shell: startup hooks stripped (run-command.ts posture) and the
+ *  provider key removed even though prepareProvider already scrubbed it (defense in depth,
+ *  mirroring scrubProviderKeyFromEnv). */
+function terminalEnv(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  delete env.BASH_ENV;
+  delete env.ENV;
+  delete env.ARK_API_KEY;
+  return env;
+}
+
+/** Terminate the desk-side command. Windows goes straight to taskkill /T /F (run-command.ts
+ *  precedent): a bare child.kill would TerminateProcess only the shell and orphan its children. */
+function killTerminalProcess(child: ChildProcess): void {
+  if (child.pid === undefined) return;
+  if (process.platform === 'win32') {
+    spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true }).on('error', () => {});
+    return;
+  }
+  try { process.kill(-child.pid, 'SIGTERM'); } catch {
+    try { child.kill('SIGTERM'); } catch { /* already gone */ }
+  }
+}
+
+/** The 3 s fallback after a SIGTERM that did not take (POSIX: SIGKILL the process group). */
+function forceKillTerminalProcess(child: ChildProcess): void {
+  if (child.pid === undefined) return;
+  if (process.platform === 'win32') {
+    spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true }).on('error', () => {});
+    return;
+  }
+  try { process.kill(-child.pid, 'SIGKILL'); } catch {
+    try { process.kill(child.pid, 'SIGKILL'); } catch { /* already gone */ }
+  }
 }
 
 function shellQuote(value: string): string { return `'${value.replaceAll("'", "'\\''")}'`; }

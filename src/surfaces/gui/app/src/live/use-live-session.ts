@@ -13,6 +13,8 @@ import {
   getLiveSnapshot,
   postLiveMeta,
   postLiveSnapshot,
+  postTerminalCancel,
+  postTerminalCommand,
   startLiveTask,
   validateLiveTask,
   type GuiCreateTaskInput,
@@ -262,6 +264,13 @@ export function useLiveSession() {
     return `/api/live/${encodeURIComponent(id)}/${suffix}`;
   }, []);
 
+  /** Ref-read so mutations always target the task the operator is actually viewing. */
+  const selectedTaskId = useCallback(() => {
+    const id = selectedIdRef.current;
+    if (id === null) throw new Error('请先选择一个会话。');
+    return id;
+  }, []);
+
   // The text argument stays for the pinned-contract legacy call sites; starts now target a task id.
   const start = useCallback(async (text: string) => {
     void text;
@@ -374,6 +383,20 @@ export function useLiveSession() {
 
   const getGit = useCallback(async (id: string) => getLiveGitStatus(id), []);
 
+  const runTerminal = useCallback(async (command: string) => {
+    if (overview?.enabled !== true) throw new Error('真实运行入口当前未启用。');
+    if (connection !== 'connected') throw new Error('连接已中断，命令尚未发送。');
+    const normalized = command.trim();
+    if (normalized === '') throw new Error('请输入要运行的命令。');
+    return runMutation('正在运行命令', () => postTerminalCommand(selectedTaskId(), normalized));
+  }, [connection, overview?.enabled, runMutation, selectedTaskId]);
+
+  const cancelTerminal = useCallback(async () => {
+    if (overview?.enabled !== true) throw new Error('真实运行入口当前未启用。');
+    if (connection !== 'connected') throw new Error('连接已中断，无法取消终端命令。');
+    return runMutation('正在取消命令', () => postTerminalCancel(selectedTaskId()));
+  }, [connection, overview?.enabled, runMutation, selectedTaskId]);
+
   return {
     overview,
     overviewLoading,
@@ -401,5 +424,7 @@ export function useLiveSession() {
     createTask,
     createBranch,
     getGit,
+    runTerminal,
+    cancelTerminal,
   };
 }

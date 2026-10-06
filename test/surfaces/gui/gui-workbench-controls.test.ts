@@ -36,7 +36,7 @@ function snapshot(patch: Partial<GuiLiveSnapshot> = {}): GuiLiveSnapshot {
 function overview(patch: Partial<GuiLiveOverview> = {}): GuiLiveOverview {
   return {
     cwd: 'H:\\jarvis-agent', enabled: true,
-    task: { objective: '测试目标', requirements: ['要求一'] }, sessions: [], activeId: null, workspaces: [],
+    task: { objective: '测试目标', requirements: ['要求一'] }, sessions: [], activeId: null, activeIds: [], workspaces: [],
     ...patch,
   };
 }
@@ -125,10 +125,13 @@ describe('GUI workbench control availability', () => {
     expect(resolveCanStart(null, overview({ task: null })).available).toBe(false);
   });
 
-  it('locks session switching to the running scene', () => {
+  it('allows viewing and switching at any time, including away from a running scene', () => {
+    // Batch 3 §A3: observation is read-only; controls keep targeting the selected task, so the
+    // rail never locks — emergency stop is dispatched by task id on the host.
     const busy = overview({ sessions: [session({ id: 'gui-run', objective: '正在跑', status: 'running' }), session({ id: 'gui-old', objective: '旧的' })] });
-    expect(resolveSessionSwitch('gui-old', busy).available).toBe(false);
+    expect(resolveSessionSwitch('gui-old', busy).available).toBe(true);
     expect(resolveSessionSwitch('gui-run', busy).available).toBe(true);
+    expect(resolveSessionSwitch(null, busy).available).toBe(true);
     expect(resolveSessionSwitch('gui-old', overview({ sessions: [session({ id: 'gui-old', objective: '旧的' })] })).available).toBe(true);
   });
 });

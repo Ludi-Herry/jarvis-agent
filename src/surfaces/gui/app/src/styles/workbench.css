@@ -2153,3 +2153,257 @@ html[data-surface="fixture"] .wb-shell {
   background: var(--accent);
   color: var(--primary-foreground);
 }
+
+/* ---------------------------------------------------- batch 3 drawer tabs --- */
+
+.wb-subagent-list {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.wb-subagent-list li {
+  display: grid;
+  gap: 5px;
+  padding: 8px 0;
+  border-top: 1px solid var(--line-soft);
+}
+
+.wb-subagent-list li:first-child {
+  border-top: 0;
+}
+
+.wb-subagent-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.wb-subagent-head strong {
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.wb-subagent-head em {
+  color: var(--muted);
+  font-size: 11px;
+  font-style: normal;
+}
+
+.wb-subagent-list p {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+
+.wb-subagent-list pre {
+  max-height: 140px;
+  margin: 0;
+  padding: 8px 10px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--code-surface);
+  color: var(--code-text);
+  font-family: Consolas, monospace;
+  font-size: 10.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.wb-preview-pane,
+.wb-terminal-pane {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+}
+
+.wb-preview-bar,
+.wb-terminal-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.wb-preview-nav {
+  display: flex;
+  gap: 2px;
+}
+
+.wb-preview-bar input,
+.wb-terminal-bar input {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+}
+
+.wb-preview-bar input:focus-visible,
+.wb-terminal-bar input:focus-visible {
+  border-color: var(--ring);
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+}
+
+.wb-preview-bar button,
+.wb-terminal-bar button {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--paper);
+  color: var(--ink-soft);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.wb-preview-bar button:disabled,
+.wb-terminal-bar button:disabled {
+  color: var(--faint);
+  cursor: default;
+}
+
+.wb-preview-bar .wb-preview-open:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--primary-foreground);
+}
+
+.wb-preview-reject,
+.wb-preview-fail,
+.wb-terminal-error {
+  margin: 0;
+  color: var(--red);
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+
+.wb-preview-confirm {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--muted-surface);
+  color: var(--ink-soft);
+  font-size: 11.5px;
+}
+
+.wb-preview-confirm button {
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.wb-preview-status {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.wb-preview-frame {
+  width: 100%;
+  height: 340px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper);
+}
+
+.wb-terminal-running {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.wb-terminal-running code {
+  color: var(--ink-soft);
+  font-family: Consolas, monospace;
+}
+
+.wb-terminal-list {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.wb-terminal-list li {
+  display: grid;
+  gap: 5px;
+  padding: 8px 0;
+  border-top: 1px solid var(--line-soft);
+}
+
+.wb-terminal-list li:first-child {
+  border-top: 0;
+}
+
+.wb-terminal-row-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.wb-terminal-row-head code {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-soft);
+  font-family: Consolas, monospace;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wb-terminal-row-head strong {
+  color: var(--ink-soft);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.wb-terminal-list li[data-open="true"] .wb-terminal-row-head strong {
+  color: var(--amber);
+}
+
+.wb-terminal-row-head time {
+  color: var(--faint);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+.wb-terminal-list pre {
+  max-height: 160px;
+  margin: 0;
+  padding: 8px 10px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--code-surface);
+  color: var(--code-text);
+  font-family: Consolas, monospace;
+  font-size: 10.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

@@ -1,6 +1,6 @@
 # GUI 重启总计划：V13 黑白灰精准还原与功能补齐（2026-10-05）
 
-> **进度**：批 0 ✅ 已收口（基线 `1375374`、计划与门禁 `7e18aa0`、样稿 45 文件哈希冻结）；批 1 ✅ 完成（`cde7a15`，证据包 `docs/evidence/gui-v13-batch1/`，视觉由 Owner 目检，9 处裁点开放）；批 2 ✅ 完成（`PLAN-gui-v13-batch2-architecture.md` 全合同落地：服务端 17 条新测试、GUI 多任务工作台/创建流/分支/Git/模型、全量 1777 绿；证据包 `docs/evidence/gui-v13-batch2/`，**待 Owner 视觉签收**）。后续：P3 真实任务真人验收窗口（Owner 安排）、暂做清单另行立项。
+> **进度**：批 0 ✅ 收口（`1375374`/`7e18aa0`）；批 1 ✅（`cde7a15`，证据 `docs/evidence/gui-v13-batch1/`）；批 2 ✅（`c367f27`/`2502804`/`0f9dc8a`，证据 `docs/evidence/gui-v13-batch2/`）；批 3 ✅ 并发/子智能体/预览/终端（合同 `PLAN-gui-v13-batch3-architecture.md`，证据 `docs/evidence/gui-v13-batch3/`，全量 1803 绿）。均**待 Owner 视觉签收**。后续：P3 真实任务真人验收窗口（Owner 安排）；批 1/2/3 开放裁点见各证据包 README。
 
 > Owner 立项（2026-10-05）：重启 Jarvis GUI 设计与开发，最终目标**精准还原 H:\Ludi-design-studio 内 V13 样稿（黑白灰色系，不要绿色系）**，并补齐样稿有设计、Jarvis 没有的功能。
 >

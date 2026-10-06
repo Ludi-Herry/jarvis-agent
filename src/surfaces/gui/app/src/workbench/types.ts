@@ -30,6 +30,8 @@ export interface WorkbenchCommands {
   readonly createTask: (input: GuiCreateTaskInput) => Promise<GuiLiveSnapshot>;
   readonly createBranch: (turnId: string) => Promise<GuiLiveSnapshot>;
   readonly getGit: (id: string) => Promise<GuiGitStatus>;
+  readonly runTerminal: (command: string) => Promise<unknown>;
+  readonly cancelTerminal: () => Promise<unknown>;
 }
 
 export interface WorkbenchNotices {

@@ -14,7 +14,7 @@ export function LiveJarvisApp() {
     overview, snapshot, selectedId, connection, actionPending, overviewLoading, overviewError,
     connectionNotice, streamWarning, actionError, chooseSession, start, submitInput, pause,
     continueRun, stop, resume, decide, submitReview, updateMeta, createWorkspace, validateTask,
-    createTask, createBranch, getGit,
+    createTask, createBranch, getGit, runTerminal, cancelTerminal,
   } = useLiveSession();
 
   const [models, setModels] = useState<GuiModelsResponse | null>(null);
@@ -26,10 +26,12 @@ export function LiveJarvisApp() {
 
   const commands = useMemo<WorkbenchCommands>(() => ({
     chooseSession, start, submitInput, pause, continueRun, stop, resume, decide, submitReview,
-    updateMeta, createWorkspace, validateTask, createTask, createBranch, getGit,
+    updateMeta, createWorkspace, validateTask, createTask, createBranch, getGit, runTerminal,
+    cancelTerminal,
   }), [
     chooseSession, start, submitInput, pause, continueRun, stop, resume, decide, submitReview,
-    updateMeta, createWorkspace, validateTask, createTask, createBranch, getGit,
+    updateMeta, createWorkspace, validateTask, createTask, createBranch, getGit, runTerminal,
+    cancelTerminal,
   ]);
 
   const input = useMemo<WorkbenchInput>(() => ({

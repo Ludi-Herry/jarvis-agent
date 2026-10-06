@@ -11,8 +11,11 @@ const EVIDENCE_TAB_KEY = 'jarvis.gui.live.evidence-tab';
 const REVIEW_EXPANDED_KEY = 'jarvis.gui.live.review-expanded';
 const RAIL_COLLAPSED_KEY = 'jarvis.gui.workbench.rail-collapsed';
 const MONITOR_OPEN_KEY = 'jarvis.gui.workbench.monitor-open';
+const PREVIEW_HISTORY_PREFIX = 'jarvis.gui.live.previewHistory:';
 
-export type EvidenceTab = 'diff' | 'verification' | 'context';
+export type EvidenceTab = 'diff' | 'verification' | 'context' | 'subagents' | 'preview' | 'terminal';
+
+const EVIDENCE_TABS: readonly EvidenceTab[] = ['diff', 'verification', 'context', 'subagents', 'preview', 'terminal'];
 
 export function storageGet(key: string): string | null {
   try {
@@ -42,9 +45,14 @@ export function draftKey(scope: string): string {
   return `${DRAFT_PREFIX}${scope}`;
 }
 
+/** Preview panel history per task (batch 3 §C13): a view preference, never a runtime fact. */
+export function previewHistoryKey(taskId: string): string {
+  return `${PREVIEW_HISTORY_PREFIX}${taskId}`;
+}
+
 export function initialEvidenceTab(): EvidenceTab {
   const saved = storageGet(EVIDENCE_TAB_KEY);
-  return saved === 'verification' || saved === 'context' ? saved : 'diff';
+  return (EVIDENCE_TABS as readonly string[]).includes(saved ?? '') ? saved as EvidenceTab : 'diff';
 }
 
 export function usePersistentFlag(key: string, initial: () => boolean) {

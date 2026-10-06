@@ -92,6 +92,22 @@ export interface GuiApproval {
   arguments: string;
 }
 
+/** One desk-side terminal command, folded from gui_terminal events (contract §D14). Observation
+ *  only — terminal output never enters evidence/checks/diff authority (§D18). */
+export interface GuiTerminalEntry {
+  command: string;
+  code: number | null;
+  /** Merged out chunks, head+tail truncated to the cap when oversized. */
+  output: string;
+  canceled: boolean;
+  at: string;
+}
+
+export interface GuiTerminalState {
+  running: { command: string; startedAt: string } | null;
+  history: GuiTerminalEntry[];
+}
+
 export interface GuiLiveSnapshot {
   id: string;
   sequence: number;
@@ -129,6 +145,8 @@ export interface GuiLiveSnapshot {
   sources: { session: string; goal: string; approvals: string; events: string };
   warnings: string[];
   capabilities: { submit: boolean; pause: boolean; continue: boolean; stop: boolean; resume: boolean };
+  /** Desk-side terminal state (batch 3 §D); absent when the journal carries no gui_terminal event. */
+  terminal?: GuiTerminalState;
 }
 
 export interface GuiLiveOverviewSession {
@@ -149,7 +167,10 @@ export interface GuiLiveOverview {
   enabled: boolean;
   task: { objective: string; requirements: string[] } | null;
   sessions: GuiLiveOverviewSession[];
+  /** The most recently active running task (legacy single-activity pointer). */
   activeId: string | null;
+  /** Every running task id (batch 3 §A4); reproducible from sessions' run state. */
+  activeIds: string[];
   workspaces: GuiWorkspaceInfo[];
 }
 

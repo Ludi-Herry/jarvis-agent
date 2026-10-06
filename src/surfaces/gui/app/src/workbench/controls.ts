@@ -17,8 +17,6 @@ export interface ComposerIntent {
   readonly requestId: string;
 }
 
-const RUNNING_STATUSES = ['starting', 'running', 'approval', 'pausing', 'paused', 'checking', 'stopping'];
-
 const AVAILABLE: ControlState = { available: true, reason: '' };
 const OFFLINE: ControlState = { available: false, reason: '连接已中断，控制暂时停用；恢复连接后会按持久事实重建。' };
 const NOT_STARTED: ControlState = { available: false, reason: '当前没有运行现场。' };
@@ -122,13 +120,16 @@ export function resolveDecide(snapshot: GuiLiveSnapshot | null, gate: ControlSta
   return gate;
 }
 
-/** A running task keeps the rail locked to it; switching away would hide the only live scene. */
+/**
+ * Batch 3 §A3: viewing and switching is always allowed — observation is read-only and carries no
+ * misoperation space. Control buttons keep targeting the selected task's own capabilities, and the
+ * host dispatches emergency stop by task id, so switching never endangers another running task.
+ */
 export function resolveSessionSwitch(
   targetId: string | null,
   overview: GuiLiveOverview | null,
 ): ControlState {
-  const running = overview?.sessions.find((session) => RUNNING_STATUSES.includes(session.status));
-  if (running === undefined) return AVAILABLE;
-  if (targetId === running.id) return AVAILABLE;
-  return blocked(`「${running.id.slice(0, 12)}…」仍在运行，先暂停或终止后再切换。`);
+  void targetId;
+  void overview;
+  return AVAILABLE;
 }

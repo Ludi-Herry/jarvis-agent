@@ -76,6 +76,20 @@ export function useFixtureSession(fixtureId: string | null): FixtureSession {
     return snapshot;
   }, [snapshot]);
 
+  /** Streams one chunk into the open terminal row, mirroring the gui_terminal 'out' fold. */
+  const appendTerminalChunk = useCallback((chunk: string) => {
+    setSnapshot((current) => {
+      if (current === null) return current;
+      const draft = structuredClone(current);
+      draft.sequence += 1;
+      const entry = draft.terminal?.history.at(-1);
+      if (draft.terminal?.running != null && entry !== undefined && entry.code === null && !entry.canceled) {
+        entry.output += chunk;
+      }
+      return draft;
+    });
+  }, []);
+
   const createFixtureTask = useCallback(async (input: GuiCreateTaskInput): Promise<GuiLiveSnapshot> => {
     const id = `gui-fixture-created-${Math.abs(Date.now() % 100_000)}`;
     const isFork = 'forkFrom' in input;
@@ -118,7 +132,7 @@ export function useFixtureSession(fixtureId: string | null): FixtureSession {
     chooseSession: (id) => {
       setSelectedId(id);
       setSnapshot(id === null ? null : fixture.snapshot);
-      setOverview(id === null ? { ...fixture.overview, sessions: [], activeId: null } : fixture.overview);
+      setOverview(id === null ? { ...fixture.overview, sessions: [], activeId: null, activeIds: [] } : fixture.overview);
     },
     start: async (text) => {
       const running = findFixture('running');
@@ -144,6 +158,7 @@ export function useFixtureSession(fixtureId: string | null): FixtureSession {
           ? current.sessions.map((session) => session.id === base.id ? { ...session, status: base.status, updatedAt: nowIso() } : session)
           : [{ id: base.id, title: base.objective.slice(0, 60), objective: base.objective, status: base.status, workspaceId: current.workspaces[0]?.id ?? 'ws-fixture-main', pinned: false, archived: false, updatedAt: nowIso(), lastMessage: '' }, ...current.sessions],
         activeId: base.id,
+        activeIds: [base.id],
       }));
     },
     submitInput: async (text) => {
@@ -280,7 +295,42 @@ export function useFixtureSession(fixtureId: string | null): FixtureSession {
     getGit: async (): Promise<GuiGitStatus> => ({
       at: nowIso(), branch: 'main', ahead: 1, behind: 0, uncommitted: 2, worktree: 'dirty',
     }),
-  }), [advance, createFixtureTask, fixture, requireSnapshot]);
+    runTerminal: async (command: string) => {
+      requireSnapshot();
+      advance('正在运行命令', (draft) => {
+        const history = draft.terminal?.history ?? [];
+        draft.terminal = {
+          running: { command, startedAt: nowIso() },
+          history: [...history, { command, code: null, output: '', canceled: false, at: nowIso() }],
+        };
+      }, (draft) => {
+        const entry = draft.terminal?.history.at(-1);
+        if (draft.terminal !== undefined && entry !== undefined && entry.code === null && !entry.canceled) {
+          entry.code = 0;
+          entry.at = nowIso();
+          draft.terminal.running = null;
+        }
+      });
+      later(300, () => appendTerminalChunk('（试件）第一段输出：模拟 node -e 逐行打印的前半。\n'));
+      later(600, () => appendTerminalChunk('（试件）第二段输出：模拟 node -e 逐行打印的后半，进程将以 exit 0 结束。\n'));
+    },
+    cancelTerminal: async () => {
+      const current = requireSnapshot();
+      if (current.terminal?.running == null) {
+        setActionError('当前没有运行中的终端命令。');
+        throw new Error('当前没有运行中的终端命令');
+      }
+      advance('正在取消命令', (draft) => {
+        const entry = draft.terminal?.history.at(-1);
+        if (draft.terminal !== undefined && entry !== undefined && entry.code === null && !entry.canceled) {
+          entry.canceled = true;
+          entry.at = nowIso();
+          entry.output += '（试件）命令已被取消，进程终止。\n';
+          draft.terminal.running = null;
+        }
+      });
+    },
+  }), [advance, appendTerminalChunk, createFixtureTask, fixture, later, requireSnapshot]);
 
   const selectFixture = useCallback((id: string) => {
     const next = findFixture(id);

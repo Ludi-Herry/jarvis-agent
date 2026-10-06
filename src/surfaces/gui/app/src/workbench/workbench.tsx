@@ -319,6 +319,10 @@ export function Workbench({ input }: { readonly input: WorkbenchInput }) {
             detailRef={detailScroll.attach}
             evidenceRef={evidenceRef}
             expanded={expanded}
+            taskId={selectedId}
+            actionPending={pending}
+            runTerminal={commands.runTerminal}
+            cancelTerminal={commands.cancelTerminal}
             onTab={(tab) => { setEvidenceTab(tab); storageSet(prefKeys.evidenceTab, tab); }}
             onToggleExpanded={() => setExpanded(!expanded)}
             onClose={() => setDetailOpen(false)}
