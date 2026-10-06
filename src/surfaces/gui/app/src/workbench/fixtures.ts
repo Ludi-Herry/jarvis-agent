@@ -1,4 +1,4 @@
-import type { GuiLiveOverview, GuiLiveSnapshot, GuiMessage, GuiTool } from '../../../live-types.js';
+import type { GuiLiveOverview, GuiLiveOverviewSession, GuiLiveSnapshot, GuiMessage, GuiTool, GuiWorkspaceInfo } from '../../../live-types.js';
 import type { LiveConnectionState } from '../live/use-live-session.js';
 import type { WorkbenchNotices } from './types.js';
 
@@ -73,6 +73,25 @@ function snapshot(patch: SnapshotPatch): GuiLiveSnapshot {
   };
 }
 
+const FIXTURE_WORKSPACES: GuiWorkspaceInfo[] = [
+  { id: 'ws-fixture-main', name: 'jarvis-agent', cwd: FIXTURE_CWD, createdAt: '2026-09-26T08:00:00.000Z', archived: false, sort: 0 },
+];
+
+function overviewSession(patch: Partial<GuiLiveOverviewSession> = {}): GuiLiveOverviewSession {
+  return {
+    id: 'gui-fixture-0001',
+    title: FIXTURE_TASK.slice(0, 60),
+    objective: FIXTURE_TASK,
+    status: 'running',
+    workspaceId: 'ws-fixture-main',
+    pinned: false,
+    archived: false,
+    updatedAt: '2026-09-26T09:10:00.000Z',
+    lastMessage: '收到。我会把 label 改成一句可直接使用的引导…',
+    ...patch,
+  };
+}
+
 function overview(patch: Partial<GuiLiveOverview> = {}): GuiLiveOverview {
   return {
     cwd: FIXTURE_CWD,
@@ -80,6 +99,7 @@ function overview(patch: Partial<GuiLiveOverview> = {}): GuiLiveOverview {
     task: { objective: FIXTURE_TASK, requirements: FIXTURE_REQUIREMENTS },
     sessions: [],
     activeId: null,
+    workspaces: FIXTURE_WORKSPACES,
     ...patch,
   };
 }
@@ -114,7 +134,7 @@ function fixture(id: string, label: string, hint: string, patch: Partial<Workben
     id,
     label,
     hint,
-    overview: patch.overview ?? overview(id === 'empty' ? { sessions: [], activeId: null } : { sessions: [{ id: 'gui-fixture-0001', objective: FIXTURE_TASK, status: (patch.snapshot?.status ?? 'running') }], activeId: null }),
+    overview: patch.overview ?? overview(id === 'empty' ? { sessions: [], activeId: null } : { sessions: [overviewSession({ status: (patch.snapshot?.status ?? 'running') })], activeId: null }),
     snapshot: patch.snapshot === undefined ? snapshot({ status: 'running' }) : patch.snapshot,
     connection: patch.connection ?? 'connected',
     actionPending: patch.actionPending ?? null,

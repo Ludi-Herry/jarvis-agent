@@ -9,6 +9,7 @@ import {
   getLiveOverview,
   getLiveSnapshot,
   postLiveSnapshot,
+  startLiveTask,
 } from './api.js';
 
 export type LiveConnectionState = GuiConnectionState;
@@ -72,9 +73,13 @@ export function useLiveSession() {
       const existing = current.sessions.some((session) => session.id === next.id);
       const sessions = existing
         ? current.sessions.map((session) => session.id === next.id
-            ? { ...session, objective: next.objective, status: next.status }
+            ? { ...session, objective: next.objective, status: next.status,
+                title: next.title ?? session.title, pinned: next.pinned ?? session.pinned,
+                archived: next.archived ?? session.archived, updatedAt: new Date().toISOString() }
             : session)
-        : [{ id: next.id, objective: next.objective, status: next.status }, ...current.sessions];
+        : [{ id: next.id, title: next.title ?? next.objective.slice(0, 60), objective: next.objective,
+             status: next.status, workspaceId: current.workspaces[0]?.id ?? '', pinned: false,
+             archived: false, updatedAt: new Date().toISOString(), lastMessage: '' }, ...current.sessions];
       return {
         ...current,
         sessions,
@@ -249,12 +254,14 @@ export function useLiveSession() {
     return `/api/live/${encodeURIComponent(id)}/${suffix}`;
   }, []);
 
-  const start = useCallback(async (text: string) => {
-    if (overview === null || !overview.enabled || overview.task === null) {
-      throw new Error('当前没有可启动的真实待办。');
+  const start = useCallback(async (_text: string) => {
+    if (overview === null || !overview.enabled) {
+      throw new Error('真实运行入口当前未启用。');
     }
+    const id = selectedIdRef.current;
+    if (id === null) throw new Error('请先选择要启动的任务；新建任务请在任务创建面板确认合同。');
     if (connection !== 'connected') throw new Error('连接尚未就绪。');
-    return runMutation('正在启动', () => postLiveSnapshot('/api/live/start', { text }), true);
+    return runMutation('正在启动', () => startLiveTask(id), true);
   }, [connection, overview, runMutation]);
 
   const submitInput = useCallback(async (text: string) => {

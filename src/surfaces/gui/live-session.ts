@@ -1,11 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { appendFile, lstat, mkdir, readFile, readdir, realpath, writeFile } from 'node:fs/promises';
-import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { appendFile, lstat, mkdir, readFile, readdir, realpath, rename, writeFile } from 'node:fs/promises';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import {
   buildDefaultRegistry, createBashTool, createProvider, DefaultContextManager, defaultShellPath,
   loadDoubaoConfig, runAgent, runCommand, scrubProviderKeyFromEnv,
-  type ModelProvider, type Message,
+  type DoubaoConfig, type ModelProvider, type Message, type ThinkingEffort,
 } from '../../core/index.js';
 import { redactSecrets } from '../../core/model/errors.js';
 import {
@@ -24,20 +24,36 @@ import { appendConfigPermissionBoundary, loadCliConfig } from '../cli/config.js'
 import { JARVIS_VERSION } from '../cli/package-info.js';
 import { resolveHooks, type HookRunner } from '../../capabilities/hooks/index.js';
 import { applyGuiEvent, updateGuiCapabilities, type GuiObservedEvent } from './live-projection.js';
-import type { GuiLiveOverview, GuiLiveSnapshot, GuiMessage } from './live-types.js';
+import type {
+  GuiGitStatus, GuiLiveOverview, GuiLiveOverviewSession, GuiLiveSnapshot, GuiMessage,
+  GuiModelsResponse, GuiTaskContract, GuiTaskFieldError, GuiTaskValidateResponse, GuiWorkspaceInfo,
+} from './live-types.js';
 
 /** Operator-owned task contract. The browser/model cannot edit checks, paths or budgets. */
-export interface GuiTaskDefinition {
-  objective: string;
-  cwd: string;
-  requirements: string[];
-  writePaths: string[];
-  checkCommands: string[];
-  shellCommands?: string[];
-  maxRounds: number;
-  maxTurns: number;
-  wallClockMs: number;
-  pricing?: { inputCnyPerMillion: number; outputCnyPerMillion: number; source: string };
+export type GuiTaskDefinition = GuiTaskContract;
+
+/** Requirement auto-derived when a free/branch task omits an explicit list (contract §D10/§E13). */
+export const GUI_DERIVED_REQUIREMENT = '完成本轮对话中你确认的目标';
+
+export const FORK_MESSAGE_CAP = 4_000;
+export const FORK_TOTAL_CAP = 24_000;
+
+const ALL_THINKING_LEVELS: ThinkingEffort[] = ['off', 'low', 'medium', 'high'];
+const GIT_CACHE_MS = 5_000;
+
+interface ForkRecord {
+  parentId: string;
+  turnId: string;
+  round: number;
+  omitted: boolean;
+  messages: Array<{ role: 'user' | 'assistant'; text: string }>;
+}
+
+interface TaskStarted {
+  baseline: TestBaseline;
+  composition: SessionComposition;
+  model: string;
+  at: string;
 }
 
 interface CreatedRecord {
@@ -47,8 +63,11 @@ interface CreatedRecord {
   task: GuiTaskDefinition;
   model: string;
   at: string;
-  composition: SessionComposition;
-  baseline: TestBaseline;
+  /** Pre-batch-2 journals captured baseline/composition inside the created record; batch-2 tasks
+   *  write them as a gui_task_started event at actual start time. */
+  composition?: SessionComposition;
+  baseline?: TestBaseline;
+  fork?: ForkRecord;
 }
 interface EventRecord { type: 'gui_event'; sequence: number; event: GuiObservedEvent; at: string }
 interface LiveTask {
@@ -64,6 +83,18 @@ interface LiveTask {
   modelStarts: number;
   checkedEvidence?: string;
   reviewing?: boolean;
+  /** True when this task came from the CLI-pinned --task-file contract (resume re-checks it). */
+  pinned: boolean;
+  /** Timestamp of the latest journaled record (created record or last gui_event). */
+  lastEventAt: string;
+  /** Baseline/composition frozen at start (folded from created record or gui_task_started). */
+  started?: TaskStarted;
+  /** Per-task provider identity resolved at start/resume. */
+  identity?: { provider: ModelProvider; modelName: string };
+  /** Branch context injected into the new Session ahead of the first model call. */
+  forkMessages?: Message[];
+  forkInjected?: boolean;
+  gitCache?: { at: number; payload: GuiGitStatus };
 }
 
 export class GuiLiveError extends Error {
@@ -90,29 +121,139 @@ const BUILDER_PROMPT = [
   '模型的完成声明不代表验证通过；遇到无法继续的阻塞则 update_goal(blocked)。',
 ].join('\n');
 
-export function validateGuiTask(value: unknown): GuiTaskDefinition {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new GuiLiveError(400, 'task contract must be an object');
+/** Structured per-field contract inspection; validateGuiTask keeps the throwing form. */
+export function inspectGuiTask(value: unknown): { ok: boolean; errors: GuiTaskFieldError[]; task?: GuiTaskDefinition } {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { ok: false, errors: [{ field: 'contract', message: '任务合同必须是一个对象' }] };
+  }
   const task = value as GuiTaskDefinition;
-  if (typeof task.objective !== 'string' || !task.objective.trim() || task.objective.length > 3500
-    || typeof task.cwd !== 'string' || !isAbsolute(task.cwd)
-    || !Array.isArray(task.requirements) || !task.requirements.length || task.requirements.length > 8
-    || !task.requirements.every((item) => typeof item === 'string' && item.trim() && item.length <= 1000)
-    || !Array.isArray(task.writePaths) || !task.writePaths.length
+  const errors: GuiTaskFieldError[] = [];
+  if (typeof task.objective !== 'string' || !task.objective.trim() || task.objective.length > 3500) {
+    errors.push({ field: 'objective', message: 'objective 必须是 1–3500 字的非空文本' });
+  }
+  if (typeof task.cwd !== 'string' || !isAbsolute(task.cwd)) {
+    errors.push({ field: 'cwd', message: 'cwd 必须是绝对路径' });
+  }
+  if (!Array.isArray(task.requirements) || !task.requirements.length || task.requirements.length > 8
+    || !task.requirements.every((item) => typeof item === 'string' && item.trim() && item.length <= 1000)) {
+    errors.push({ field: 'requirements', message: 'requirements 必须是 1–8 条、每条 1–1000 字的文本' });
+  }
+  if (!Array.isArray(task.writePaths) || !task.writePaths.length
     || !task.writePaths.every((path) => typeof path === 'string' && path !== '' && !isAbsolute(path)
-      && !path.split(/[\\/]/u).some((part) => part === '..' || part === '.' || part === '') && !/[*?]/u.test(path))
-    || !Array.isArray(task.checkCommands) || !task.checkCommands.length
-    || !task.checkCommands.every((item) => typeof item === 'string' && item.trim())
-    || !Number.isInteger(task.maxRounds) || task.maxRounds < 1 || task.maxRounds > 8
-    || !Number.isInteger(task.maxTurns) || task.maxTurns < 1 || task.maxTurns > 16
-    || !Number.isInteger(task.wallClockMs) || task.wallClockMs < 100 || task.wallClockMs > 900_000
-    || (task.shellCommands !== undefined && (!Array.isArray(task.shellCommands) || !task.shellCommands.every((item) => typeof item === 'string' && item.trim())))) {
-    throw new GuiLiveError(400, 'invalid task contract: explicit objective, cwd, requirements, write paths, checks and bounded limits are required');
+      && !path.split(/[\\/]/u).some((part) => part === '..' || part === '.' || part === '') && !/[*?]/u.test(path))) {
+    errors.push({ field: 'writePaths', message: 'writePaths 必须是非空数组，每项为不含 ..、通配符的相对路径' });
+  }
+  if (!Array.isArray(task.checkCommands) || !task.checkCommands.length
+    || !task.checkCommands.every((item) => typeof item === 'string' && item.trim())) {
+    errors.push({ field: 'checkCommands', message: 'checkCommands 必须是非空的命令数组' });
+  }
+  if (!Number.isInteger(task.maxRounds) || task.maxRounds < 1 || task.maxRounds > 8) {
+    errors.push({ field: 'maxRounds', message: 'maxRounds 必须是 1–8 的整数' });
+  }
+  if (!Number.isInteger(task.maxTurns) || task.maxTurns < 1 || task.maxTurns > 16) {
+    errors.push({ field: 'maxTurns', message: 'maxTurns 必须是 1–16 的整数' });
+  }
+  if (!Number.isInteger(task.wallClockMs) || task.wallClockMs < 100 || task.wallClockMs > 900_000) {
+    errors.push({ field: 'wallClockMs', message: 'wallClockMs 必须是 100–900000 的整数' });
+  }
+  if (task.shellCommands !== undefined && (!Array.isArray(task.shellCommands)
+    || !task.shellCommands.every((item) => typeof item === 'string' && item.trim()))) {
+    errors.push({ field: 'shellCommands', message: 'shellCommands 如给出必须是非空字符串数组' });
+  }
+  if (task.model !== undefined && (typeof task.model !== 'string' || !task.model.trim() || task.model.length > 200)) {
+    errors.push({ field: 'model', message: 'model 如给出必须是 1–200 字的模型 id' });
+  }
+  if (task.thinking !== undefined && (typeof task.thinking !== 'string' || !ALL_THINKING_LEVELS.includes(task.thinking as ThinkingEffort))) {
+    errors.push({ field: 'thinking', message: `thinking 必须是 ${ALL_THINKING_LEVELS.join(' / ')} 之一` });
+  }
+  if (task.workspaceId !== undefined && (typeof task.workspaceId !== 'string' || !task.workspaceId.trim() || task.workspaceId.length > 200)) {
+    errors.push({ field: 'workspaceId', message: 'workspaceId 如给出必须是 1–200 字的非空字符串' });
+  }
+  if (task.sourceRef !== undefined) {
+    const ref = task.sourceRef;
+    if (!ref || typeof ref !== 'object' || typeof ref.parentId !== 'string' || !ref.parentId.trim()
+      || typeof ref.turnId !== 'string' || !ref.turnId.trim()
+      || typeof ref.summary !== 'string' || ref.summary.length > 500) {
+      errors.push({ field: 'sourceRef', message: 'sourceRef 必须是 {parentId, turnId, summary≤500字}' });
+    }
   }
   if (task.pricing && (!Number.isFinite(task.pricing.inputCnyPerMillion) || task.pricing.inputCnyPerMillion < 0
     || !Number.isFinite(task.pricing.outputCnyPerMillion) || task.pricing.outputCnyPerMillion < 0 || !task.pricing.source)) {
-    throw new GuiLiveError(400, 'invalid pricing');
+    errors.push({ field: 'pricing', message: 'pricing 单价必须是非负数字且注明来源' });
   }
-  return structuredClone(task);
+  if (errors.length) return { ok: false, errors };
+  return { ok: true, errors: [], task: structuredClone(task) };
+}
+
+export function validateGuiTask(value: unknown): GuiTaskDefinition {
+  const result = inspectGuiTask(value);
+  if (!result.ok || !result.task) {
+    throw new GuiLiveError(400, `invalid task contract: ${result.errors.map((error) => `${error.field}: ${error.message}`).join('；')}`);
+  }
+  return result.task;
+}
+
+/** Cut the parent conversation up to and including turnId into a bounded, redacted excerpt. */
+export function buildForkExcerpt(
+  messages: GuiMessage[],
+  turnId: string,
+): { round: number; omitted: boolean; messages: Array<{ role: 'user' | 'assistant'; text: string }> } | null {
+  const dialog = messages.filter((message) => message.role === 'user' || message.role === 'assistant');
+  const index = dialog.findIndex((message) => message.id === turnId);
+  if (index < 0) return null;
+  const upto = dialog.slice(0, index + 1);
+  const round = Math.max(1, upto.filter((message) => message.role === 'user').length);
+  const trimmed = upto.map((message) => ({ role: message.role, text: redactSecrets(message.text).slice(0, FORK_MESSAGE_CAP) }));
+  const kept: typeof trimmed = [];
+  let total = 0;
+  for (let i = trimmed.length - 1; i >= 0; i--) {
+    const message = trimmed[i];
+    if (total + message.text.length > FORK_TOTAL_CAP) {
+      if (kept.length === 0) kept.unshift({ ...message, text: message.text.slice(0, FORK_TOTAL_CAP) });
+      break;
+    }
+    kept.unshift(message);
+    total += message.text.length;
+  }
+  return { round, omitted: kept.length < trimmed.length, messages: kept };
+}
+
+/** The `[前情 · …]` user-message chain written into a branch Session before the first model call. */
+function forkInjectionMessages(fork: ForkRecord): Message[] {
+  const header = `[前情 · 来自任务 ${fork.parentId} 第 ${fork.round} 轮]${fork.omitted ? '（更早上下文已省略）' : ''}`;
+  return [
+    { role: 'user', content: header },
+    ...fork.messages.map((message): Message => ({
+      role: 'user',
+      content: `[前情 · ${message.role === 'user' ? '用户' : '助手'}]\n${message.text}`,
+    })),
+  ];
+}
+
+/** First whitespace-delimited token of a check command, honoring a quoted program path. */
+function firstCommandToken(command: string): string {
+  const text = command.trim();
+  const quoted = /^(["'])([^"']+)\1/u.exec(text);
+  if (quoted) return quoted[2];
+  return text.split(/\s+/u)[0] ?? '';
+}
+
+/** Resolve a program token against cwd (path-like) or PATH (bare name, PATHEXT on Windows). */
+function resolveExecutable(token: string, cwd: string): boolean {
+  if (!token) return false;
+  if (token.includes('/') || token.includes('\\')) {
+    return existsSync(isAbsolute(token) ? token : resolve(cwd, token));
+  }
+  // The harness's own runtime interpreter is always available to check commands.
+  if (token.toLowerCase() === basename(process.execPath).replace(/\.exe$/iu, '').toLowerCase()) return existsSync(process.execPath);
+  const extensions = new Set(process.platform === 'win32'
+    ? ['', ...(process.env.PATHEXT ?? '.EXE;.CMD;.BAT;.COM').split(';').flatMap((ext) => [ext, ext.toLowerCase()])]
+    : ['']);
+  for (const dir of (process.env.PATH ?? '').split(process.platform === 'win32' ? ';' : ':')) {
+    if (!dir) continue;
+    for (const ext of extensions) if (existsSync(join(dir, token + ext))) return true;
+  }
+  return false;
 }
 
 /** A surface host, not an agent loop: every run delegates to runGoal/runAgent. */
@@ -123,9 +264,13 @@ export class GuiSessionHost {
   private launching = false;
   private provider?: ModelProvider;
   private modelName = '';
+  /** Captured before scrubProviderKeyFromEnv so per-task providers can be cloned at start. */
+  private doubaoConfig?: DoubaoConfig;
   private builderPrompt = BUILDER_PROMPT;
   private readonly launchHooksPath = process.env.JARVIS_HOOKS;
   private policy?: Awaited<ReturnType<typeof loadCliConfig>>;
+  private workspaces?: GuiWorkspaceInfo[];
+  private defaultCwd = '';
   readonly task?: GuiTaskDefinition;
 
   constructor(private readonly options: GuiSessionHostOptions) {
@@ -139,11 +284,20 @@ export class GuiSessionHost {
 
   async overview(): Promise<GuiLiveOverview> {
     await this.initialize();
+    await this.ensureWorkspaces();
+    const fallback = this.defaultWorkspace().id;
+    const sessions = [...this.tasks.values()].map((task) => this.overviewItem(task, fallback));
+    sessions.sort((a, b) =>
+      Number(a.archived) - Number(b.archived)
+      || Number(b.pinned) - Number(a.pinned)
+      || Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
     return {
       cwd: this.task?.cwd ?? this.options.cwd, enabled: this.task !== undefined,
       task: this.task ? { objective: this.task.objective, requirements: this.task.requirements } : null,
-      sessions: [...this.tasks.values()].reverse().map(({ snapshot: s }) => ({ id: s.id, objective: s.objective, status: s.status })),
-      activeId: [...this.tasks.values()].find((task) => task.run)?.snapshot.id ?? [...this.tasks.keys()].at(-1) ?? null,
+      sessions,
+      activeId: [...this.tasks.values()].find((task) => task.run)?.snapshot.id
+        ?? sessions.find((session) => !session.archived)?.id ?? sessions[0]?.id ?? null,
+      workspaces: structuredClone(this.workspaces ?? []),
     };
   }
 
@@ -161,29 +315,170 @@ export class GuiSessionHost {
     return snapshot;
   }
 
-  async start(text: string): Promise<GuiLiveSnapshot> {
+  /** Dry-run a task contract: per-field errors plus workspace/git, writePaths and check-command probes.
+   *  Never persists anything, never touches the model. */
+  async validateTask(value: unknown): Promise<GuiTaskValidateResponse> {
     await this.initialize();
-    if (!this.task) throw new GuiLiveError(409, '尚未配置真实任务合同');
-    if (text.trim() !== this.task.objective.trim()) throw new GuiLiveError(400, '任务目标已固定，请先启动该任务，再补充指令');
-    if (this.launching || [...this.tasks.values()].some((task) => task.run)) throw new GuiLiveError(409, '已有运行中的任务');
-    if ([...this.tasks.values()].some((task) => task.created.task.objective === this.task!.objective)) {
-      throw new GuiLiveError(409, '本次真实任务已有运行记录；请恢复或审阅该记录，不自动重复消耗');
+    await this.ensureWorkspaces();
+    const built = await this.buildContract(value);
+    if (built.errors.length || !built.contract) return { ok: false, errors: built.errors };
+    const contract = built.contract;
+    const errors: GuiTaskFieldError[] = [];
+    const workspace = await this.resolveWorkspace(contract, errors);
+    if (workspace) {
+      const git = await runCommand(defaultShellPath(), 'git -c core.fsmonitor=false rev-parse --is-inside-work-tree',
+        workspace.cwd, 15_000, 4_000, undefined, { scrubGitEnv: true });
+      if (git.code !== 0 || !git.output.includes('true')) {
+        errors.push({ field: 'workspaceId', message: `工作区不可运行 git rev-parse（真实任务需要基线）：${redactSecrets(git.output.slice(0, 200)) || '非 Git 仓库'}` });
+      }
     }
+    contract.checkCommands.forEach((command, index) => {
+      const token = firstCommandToken(command);
+      if (!resolveExecutable(token, workspace?.cwd ?? contract.cwd)) {
+        errors.push({ field: 'checkCommands', message: `第 ${index + 1} 条命令的首个 token 不是可执行程序：${token || '(空)'}` });
+      }
+    });
+    if (!(await this.availableThinkingLevels()).includes(contract.thinking ?? 'off')) {
+      errors.push({ field: 'thinking', message: '当前模型不支持该思考档位' });
+    }
+    if (errors.length) return { ok: false, errors };
+    return { ok: true, errors: [], task: { ...contract, workspaceId: workspace?.id } };
+  }
+
+  /** Register a free task or discussion branch as 待启动: journal the created record, consume no model. */
+  async createTask(value: unknown): Promise<GuiLiveSnapshot> {
+    await this.initialize();
+    await this.ensureWorkspaces();
+    const built = await this.buildContract(value);
+    if (built.errors.length || !built.contract) {
+      throw new GuiLiveError(400, `任务合同无效：${built.errors.map((error) => `${error.field}: ${error.message}`).join('；')}`);
+    }
+    const contract = built.contract;
+    const errors: GuiTaskFieldError[] = [];
+    const workspace = await this.resolveWorkspace(contract, errors);
+    if (!workspace) {
+      throw new GuiLiveError(409, `工作区无效：${errors.map((error) => `${error.field}: ${error.message}`).join('；')}`);
+    }
+    contract.workspaceId = workspace.id;
+    if (!(await this.availableThinkingLevels()).includes(contract.thinking ?? 'off')) {
+      throw new GuiLiveError(400, 'thinking: 当前模型不支持该思考档位');
+    }
+    const task = await this.registerTask(contract, { fork: built.fork });
+    return this.snapshot(task.created.id);
+  }
+
+  /** Start a registered 待启动 task: capture baseline, freeze composition, then runGoal. */
+  async startTask(id: string): Promise<GuiLiveSnapshot> {
+    await this.initialize();
+    const task = this.requireTask(id);
+    await task.queue;
+    if (task.journalError) throw new GuiLiveError(503, '事件持久化失败；执行已停止，等待检查保留的 Session');
+    if (task.run || task.started) throw new GuiLiveError(409, '任务已有运行记录；请恢复或审阅该记录，不自动重复消耗');
+    if (this.launching || [...this.tasks.values()].some((item) => item.run)) throw new GuiLiveError(409, '已有运行中的任务');
     this.launching = true;
     try {
-      await this.prepareProvider();
-      const id = `gui-${randomUUID()}`;
-      const baseline = await this.captureBaseline(id, this.task);
-      const composition = this.composition();
-      const created: CreatedRecord = { type: 'gui_created', sequence: 0, id, task: this.task, model: this.modelName, at: new Date().toISOString(), composition, baseline };
-      const task = this.makeTask(created);
-      await this.safeJournalPath(id, true);
-      await writeFile(task.snapshot.sources.events, `${JSON.stringify(created)}\n`, { encoding: 'utf8', flag: 'wx' });
-      this.tasks.set(id, task);
+      const identity = await this.resolveIdentity(task.created.task);
+      if (identity.modelName !== task.created.model) throw new GuiLiveError(409, '任务或模型配置已变化，拒绝启动');
+      task.identity = identity;
+      const baseline = await this.captureBaseline(id, task.created.task);
+      const composition = this.compositionFor(task.created.task);
+      const started: TaskStarted = { baseline, composition, model: identity.modelName, at: new Date().toISOString() };
+      // journaled verbatim (see record()): replay and resume both fold this exact payload.
+      await this.record(task, { type: 'gui_task_started', baseline, composition, model: started.model });
       await this.record(task, { type: 'gui_status', status: 'starting', phase: '准备 Session 与运行合同' });
       this.launch(task);
       return this.snapshot(id);
     } finally { this.launching = false; }
+  }
+
+  /** Rename/pin/archive: append a gui_meta event into the task's own journal and fold it. */
+  async setMeta(id: string, patch: Record<string, unknown>): Promise<GuiLiveSnapshot> {
+    await this.initialize();
+    const task = this.requireTask(id);
+    const event: GuiObservedEvent = { type: 'gui_meta' };
+    let fields = 0;
+    if ('title' in patch) {
+      if (typeof patch.title !== 'string' || !patch.title.trim() || patch.title.trim().length > 120) {
+        throw new GuiLiveError(400, 'title 必须是 1–120 字的非空文本');
+      }
+      event.title = patch.title.trim();
+      fields++;
+    }
+    if ('pinned' in patch) {
+      if (typeof patch.pinned !== 'boolean') throw new GuiLiveError(400, 'pinned 必须是布尔值');
+      event.pinned = patch.pinned;
+      fields++;
+    }
+    if ('archived' in patch) {
+      if (typeof patch.archived !== 'boolean') throw new GuiLiveError(400, 'archived 必须是布尔值');
+      event.archived = patch.archived;
+      fields++;
+    }
+    if (fields === 0) throw new GuiLiveError(400, '没有可更新的元数据字段（支持 title/pinned/archived）');
+    await this.record(task, event);
+    return this.snapshot(id);
+  }
+
+  /** Read-only git status with a 5s per-task cache; failures degrade to an honest unavailable. */
+  async gitStatus(id: string): Promise<GuiGitStatus> {
+    await this.initialize();
+    const task = this.requireTask(id);
+    const cached = task.gitCache;
+    if (cached && Date.now() - cached.at < GIT_CACHE_MS) return cached.payload;
+    const payload = await this.queryGitStatus(task.created.task.cwd);
+    task.gitCache = { at: Date.now(), payload };
+    return payload;
+  }
+
+  /** Models honestly derived from the real provider/config: single entry, never fabricated. */
+  async listModels(): Promise<GuiModelsResponse> {
+    await this.initialize();
+    await this.prepareProvider();
+    const thinkingLevels = await this.availableThinkingLevels();
+    return {
+      models: [{ id: this.modelName, label: this.modelName, maxContextTokens: this.provider!.capability.maxContextTokens, thinkingLevels }],
+      defaultModel: this.modelName,
+    };
+  }
+
+  /** Register a new workspace after path/git validation; failures list every field problem. */
+  async createWorkspace(value: unknown): Promise<{ workspaces: GuiWorkspaceInfo[] }> {
+    await this.initialize();
+    await this.ensureWorkspaces();
+    const input = (value && typeof value === 'object' && !Array.isArray(value) ? value : {}) as Record<string, unknown>;
+    const errors: string[] = [];
+    const cwdRaw = typeof input.cwd === 'string' ? input.cwd.trim() : '';
+    const nameRaw = typeof input.name === 'string' ? input.name.trim() : '';
+    let cwd = '';
+    if (!cwdRaw || !isAbsolute(cwdRaw)) {
+      errors.push('cwd: 必须是绝对路径');
+    } else {
+      let info;
+      try { info = await lstat(cwdRaw); } catch { errors.push('cwd: 路径不存在'); }
+      if (info) {
+        if (info.isSymbolicLink()) errors.push('cwd: 不允许符号链接或 Junction');
+        else if (!info.isDirectory()) errors.push('cwd: 不是目录');
+        else {
+          cwd = await realpath(cwdRaw);
+          const git = await runCommand(defaultShellPath(), 'git -c core.fsmonitor=false rev-parse --is-inside-work-tree',
+            cwd, 15_000, 4_000, undefined, { scrubGitEnv: true });
+          if (git.code !== 0 || !git.output.includes('true')) {
+            errors.push(`cwd: 工作区必须可运行 git rev-parse（真实任务需要基线）：${redactSecrets(git.output.slice(0, 200)) || '非 Git 仓库'}`);
+          }
+        }
+      }
+    }
+    if (input.name !== undefined && (!nameRaw || nameRaw.length > 80)) errors.push('name: 必须是 1–80 字的文本');
+    if (cwd && this.workspaces!.some((workspace) => workspace.cwd === cwd)) errors.push('cwd: 该工作区已注册');
+    if (errors.length) throw new GuiLiveError(409, `无法创建工作区：${errors.join('；')}`);
+    const workspace: GuiWorkspaceInfo = {
+      id: `ws-${randomUUID()}`, name: nameRaw || basename(cwd) || 'workspace', cwd,
+      createdAt: new Date().toISOString(), archived: false,
+      sort: Math.max(-1, ...this.workspaces!.map((item) => item.sort)) + 1,
+    };
+    this.workspaces!.push(workspace);
+    await this.persistWorkspaces();
+    return { workspaces: structuredClone(this.workspaces!) };
   }
 
   async input(id: string, text: string): Promise<GuiLiveSnapshot> {
@@ -259,6 +554,211 @@ export class GuiSessionHost {
     await Promise.all([...this.tasks.values()].map((task) => task.run));
   }
 
+  /** Normalize a free/branch request body into a contract: forkFrom clones the parent contract
+   *  (writePaths/checkCommands/budgets), derives objective/requirements per contract §D10/§E13. */
+  private async buildContract(value: unknown): Promise<{ contract?: GuiTaskDefinition; fork?: ForkRecord; errors: GuiTaskFieldError[] }> {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return { errors: [{ field: 'contract', message: '请求必须是一个对象' }] };
+    }
+    const input = value as Record<string, unknown>;
+    let base: Partial<GuiTaskDefinition> = {};
+    let fork: ForkRecord | undefined;
+    if (input.forkFrom !== undefined) {
+      const forkFrom = input.forkFrom as Record<string, unknown>;
+      if (!forkFrom || typeof forkFrom !== 'object' || typeof forkFrom.parentId !== 'string' || typeof forkFrom.turnId !== 'string') {
+        return { errors: [{ field: 'forkFrom', message: 'forkFrom 必须是 {parentId, turnId}' }] };
+      }
+      const parent = this.tasks.get(forkFrom.parentId);
+      if (!parent) return { errors: [{ field: 'forkFrom.parentId', message: '父任务不存在' }] };
+      await parent.queue;
+      const excerpt = buildForkExcerpt(parent.snapshot.messages, forkFrom.turnId);
+      if (!excerpt) return { errors: [{ field: 'forkFrom.turnId', message: 'turnId 不在父任务消息中' }] };
+      const parentTask = parent.created.task;
+      const summary = `承接「${redactSecrets(parentTask.objective).slice(0, 80)}」第 ${excerpt.round} 轮的讨论分支`;
+      fork = { parentId: forkFrom.parentId, turnId: forkFrom.turnId, round: excerpt.round, omitted: excerpt.omitted, messages: excerpt.messages };
+      base = {
+        cwd: parentTask.cwd, writePaths: parentTask.writePaths, checkCommands: parentTask.checkCommands,
+        maxRounds: parentTask.maxRounds, maxTurns: parentTask.maxTurns, wallClockMs: parentTask.wallClockMs,
+        ...(parentTask.shellCommands ? { shellCommands: parentTask.shellCommands } : {}),
+        ...(parentTask.pricing ? { pricing: parentTask.pricing } : {}),
+        ...(parentTask.model ? { model: parentTask.model } : {}),
+        ...(parentTask.thinking ? { thinking: parentTask.thinking } : {}),
+        ...(parentTask.workspaceId ? { workspaceId: parentTask.workspaceId } : {}),
+      };
+      input.objective ??= summary;
+      input.sourceRef = { parentId: fork.parentId, turnId: fork.turnId, summary };
+    } else {
+      delete input.sourceRef; // sourceRef is server-assigned at fork creation only
+    }
+    const merged: Record<string, unknown> = { ...base };
+    for (const key of ['objective', 'cwd', 'requirements', 'writePaths', 'checkCommands', 'shellCommands',
+      'maxRounds', 'maxTurns', 'wallClockMs', 'pricing', 'model', 'thinking', 'workspaceId', 'sourceRef'] as const) {
+      if (input[key] !== undefined) merged[key] = input[key];
+    }
+    if (typeof merged.objective === 'string' && merged.objective.trim() && merged.requirements === undefined) {
+      merged.requirements = [GUI_DERIVED_REQUIREMENT];
+    }
+    const inspected = inspectGuiTask(merged);
+    return { contract: inspected.task, fork, errors: inspected.errors };
+  }
+
+  /** Bind the contract to a registered workspace; task↔workspace binding is fixed at creation. */
+  private async resolveWorkspace(contract: GuiTaskDefinition, errors: GuiTaskFieldError[]): Promise<GuiWorkspaceInfo | undefined> {
+    const cwd = await realpath(contract.cwd).catch(() => resolve(contract.cwd));
+    if (contract.workspaceId !== undefined) {
+      const workspace = this.workspaces!.find((item) => item.id === contract.workspaceId);
+      if (!workspace) { errors.push({ field: 'workspaceId', message: '工作区未注册' }); return undefined; }
+      if (workspace.archived) { errors.push({ field: 'workspaceId', message: '工作区已归档' }); return undefined; }
+      if (workspace.cwd !== cwd) { errors.push({ field: 'cwd', message: 'cwd 与指定工作区不一致' }); return undefined; }
+      return workspace;
+    }
+    const matched = this.workspaces!.find((item) => item.cwd === cwd);
+    if (matched) return matched;
+    const fallback = this.defaultWorkspace();
+    if (fallback.cwd === cwd) return fallback;
+    errors.push({ field: 'cwd', message: 'cwd 未注册为工作区，请先创建工作区' });
+    return undefined;
+  }
+
+  private defaultWorkspace(): GuiWorkspaceInfo {
+    const matched = this.workspaces!.find((workspace) => workspace.cwd === this.defaultCwd);
+    return matched ?? [...this.workspaces!].sort((a, b) => a.sort - b.sort)[0];
+  }
+
+  private overviewItem(task: LiveTask, defaultWorkspaceId: string): GuiLiveOverviewSession {
+    const snapshot = task.snapshot;
+    const last = [...snapshot.messages].reverse().find((message) => message.text.trim());
+    return {
+      id: snapshot.id,
+      title: snapshot.title ?? snapshot.objective.slice(0, 80),
+      objective: snapshot.objective,
+      status: snapshot.status,
+      workspaceId: task.created.task.workspaceId ?? defaultWorkspaceId,
+      pinned: snapshot.pinned ?? false,
+      archived: snapshot.archived ?? false,
+      updatedAt: task.lastEventAt,
+      lastMessage: last ? last.text.slice(0, 120) : '',
+      ...(snapshot.sourceRef ? { sourceRef: snapshot.sourceRef } : {}),
+    };
+  }
+
+  private async availableThinkingLevels(): Promise<string[]> {
+    await this.prepareProvider();
+    return this.provider!.capability.thinking ? [...ALL_THINKING_LEVELS] : ['off'];
+  }
+
+  private async resolveModelName(contract: GuiTaskDefinition): Promise<string> {
+    await this.prepareProvider();
+    return contract.model ?? this.modelName;
+  }
+
+  /** Per-task provider identity at start/resume: contract.model ?? policy.model, contract.thinking ?? 'off'. */
+  private async resolveIdentity(contract: GuiTaskDefinition): Promise<{ provider: ModelProvider; modelName: string }> {
+    const thinking = (contract.thinking ?? 'off') as ThinkingEffort;
+    await this.prepareProvider();
+    if (this.options.provider) {
+      return { provider: this.options.provider.withThinking(thinking), modelName: contract.model ?? this.modelName };
+    }
+    const config: DoubaoConfig = { ...this.doubaoConfig!, model: contract.model ?? this.doubaoConfig!.model };
+    return { provider: createProvider(config).withThinking(thinking), modelName: config.model };
+  }
+
+  private async registerTask(contract: GuiTaskDefinition, opts: { fork?: ForkRecord; pinned?: boolean } = {}): Promise<LiveTask> {
+    const id = `gui-${randomUUID()}`;
+    const created: CreatedRecord = {
+      type: 'gui_created', sequence: 0, id, task: contract, model: await this.resolveModelName(contract),
+      at: new Date().toISOString(), ...(opts.fork ? { fork: opts.fork } : {}),
+    };
+    const task = this.makeTask(created);
+    task.pinned = opts.pinned === true;
+    await this.safeJournalPath(id, true);
+    await writeFile(task.snapshot.sources.events, `${JSON.stringify(created)}\n`, { encoding: 'utf8', flag: 'wx' });
+    this.tasks.set(id, task);
+    this.notify(id);
+    return task;
+  }
+
+  private async ensureWorkspaces(): Promise<void> {
+    if (this.workspaces) return;
+    this.defaultCwd = await realpath(this.options.cwd).catch(() => resolve(this.options.cwd));
+    const loaded = await this.loadWorkspaces();
+    if (loaded.length > 0) {
+      this.workspaces = loaded;
+      return;
+    }
+    // The host cwd is the implicit default workspace, registered on first access (contract §C8).
+    this.workspaces = [{
+      id: `ws-${randomUUID()}`, name: basename(this.defaultCwd) || 'workspace', cwd: this.defaultCwd,
+      createdAt: new Date().toISOString(), archived: false, sort: 0,
+    }];
+    await this.persistWorkspaces();
+  }
+
+  private async loadWorkspaces(): Promise<GuiWorkspaceInfo[]> {
+    const path = await this.safeWorkspacesPath();
+    let raw: string;
+    try { raw = await readFile(path, 'utf8'); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error; }
+    const parsed = JSON.parse(raw) as { version?: unknown; workspaces?: unknown };
+    if (parsed.version !== 1 || !Array.isArray(parsed.workspaces)
+      || !parsed.workspaces.every((item) => item && typeof item === 'object'
+        && typeof (item as GuiWorkspaceInfo).id === 'string' && (item as GuiWorkspaceInfo).id
+        && typeof (item as GuiWorkspaceInfo).name === 'string'
+        && typeof (item as GuiWorkspaceInfo).cwd === 'string' && isAbsolute((item as GuiWorkspaceInfo).cwd)
+        && typeof (item as GuiWorkspaceInfo).createdAt === 'string'
+        && typeof (item as GuiWorkspaceInfo).archived === 'boolean'
+        && Number.isInteger((item as GuiWorkspaceInfo).sort))) {
+      throw new GuiLiveError(409, 'workspaces.json 格式无效');
+    }
+    return structuredClone(parsed.workspaces) as GuiWorkspaceInfo[];
+  }
+
+  private async persistWorkspaces(): Promise<void> {
+    const path = await this.safeWorkspacesPath();
+    const tmp = join(dirname(path), `workspaces.json.tmp-${process.pid}-${randomUUID()}`);
+    await writeFile(tmp, `${JSON.stringify({ version: 1, workspaces: this.workspaces }, null, 2)}\n`, 'utf8');
+    await rename(tmp, path);
+  }
+
+  /** Same symlink/escape posture as safeJournalPath, applied to dataDir/gui/workspaces.json (§C7). */
+  private async safeWorkspacesPath(): Promise<string> {
+    const root = resolve(this.options.dataDir);
+    const dir = join(root, 'gui');
+    await mkdir(dir, { recursive: true });
+    for (const path of [root, dir, join(dir, 'workspaces.json')]) {
+      let info;
+      try { info = await lstat(path); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue; throw error; }
+      if (info.isSymbolicLink() || (path.endsWith('.json') ? !info.isFile() || info.nlink !== 1 : !info.isDirectory())) {
+        throw new GuiLiveError(409, 'unsafe GUI workspaces path');
+      }
+      const local = relative(await realpath(root), await realpath(path));
+      if (local === '..' || local.startsWith(`..${sep}`) || isAbsolute(local)) throw new GuiLiveError(409, 'GUI workspaces file escapes data directory');
+    }
+    return join(dir, 'workspaces.json');
+  }
+
+  private async queryGitStatus(cwd: string): Promise<GuiGitStatus> {
+    const at = new Date().toISOString();
+    const result = await runCommand(defaultShellPath(), 'git -c core.fsmonitor=false status --porcelain=v2 --branch',
+      cwd, 15_000, 200_000, undefined, { scrubGitEnv: true });
+    if (result.code !== 0) {
+      const detail = redactSecrets((result.spawnError ?? result.output).slice(0, 300));
+      return { at, unavailable: detail || (result.timedOut ? 'git status 超时' : 'git 不可用或当前目录不是仓库') };
+    }
+    let branch = '';
+    let ahead = 0;
+    let behind = 0;
+    let uncommitted = 0;
+    for (const line of result.output.split(/\r?\n/u)) {
+      if (line.startsWith('# branch.head ')) branch = line.slice('# branch.head '.length).trim();
+      else if (line.startsWith('# branch.ab ')) {
+        const match = /^# branch\.ab \+(\d+) -(\d+)$/u.exec(line);
+        if (match) { ahead = Number(match[1]); behind = Number(match[2]); }
+      } else if (/^[12u?] /u.test(line)) uncommitted++;
+    }
+    return { at, branch: branch || '(unknown)', ahead, behind, uncommitted, worktree: uncommitted > 0 ? 'dirty' : 'clean' };
+  }
+
   private async prepareProvider(): Promise<void> {
     if (this.provider) return;
     if (this.options.provider) {
@@ -269,29 +769,31 @@ export class GuiSessionHost {
     // Same runtime-only key loading as the CLI; never return the env/config object to the GUI.
     const envPath = join(this.options.cwd, '.env');
     if (existsSync(envPath)) process.loadEnvFile(envPath);
-    this.policy = await loadCliConfig({ cwd: this.task!.cwd, options: { strict: false, ignoreUser: false } });
-    const config = loadDoubaoConfig(process.env, { model: this.policy.model, baseURL: this.policy.baseURL });
-    this.provider = createProvider(config).withThinking('off');
-    this.modelName = config.model;
+    this.policy = await loadCliConfig({ cwd: this.task?.cwd ?? this.options.cwd, options: { strict: false, ignoreUser: false } });
+    this.doubaoConfig = loadDoubaoConfig(process.env, { model: this.policy.model, baseURL: this.policy.baseURL });
+    this.provider = createProvider(this.doubaoConfig).withThinking('off');
+    this.modelName = this.doubaoConfig.model;
     scrubProviderKeyFromEnv();
     this.builderPrompt = appendConfigPermissionBoundary(BUILDER_PROMPT, this.policy);
   }
 
-  private tools() {
+  private toolsFor(contract: GuiTaskDefinition) {
     const tools = buildDefaultRegistry();
-    if (this.task?.shellCommands?.length) tools.register(createBashTool());
+    if (contract.shellCommands?.length) tools.register(createBashTool());
     return tools;
   }
 
-  private composition(): SessionComposition {
+  private compositionFor(contract: GuiTaskDefinition): SessionComposition {
     return createSessionComposition({ root: 'goal', runtimeVersion: JARVIS_VERSION, permissionMode: 'interactive',
-      toolSchemas: [...this.tools().schemasForModel(), updateGoalToolSchema()], systemPrompt: this.builderPrompt, dynamicAddendum: NO_DYNAMIC_ADDENDUM });
+      toolSchemas: [...this.toolsFor(contract).schemasForModel(), updateGoalToolSchema()], systemPrompt: this.builderPrompt, dynamicAddendum: NO_DYNAMIC_ADDENDUM });
   }
 
   private async execute(task: LiveTask, resume?: GoalResumeState): Promise<void> {
     const { created } = task;
     const contract = created.task;
     const snapshot = task.snapshot;
+    const provider = task.identity?.provider;
+    if (!provider || !task.started) throw new Error('任务缺少启动身份（provider/baseline/composition）');
     const emergency = createEmergencyStopSignal({ cwd: contract.cwd });
     const deadline = new AbortController();
     const remainingMs = Math.max(0, Date.parse(created.at) + contract.wallClockMs - Date.now());
@@ -327,7 +829,7 @@ export class GuiSessionHost {
         lastMessageSequence = loaded.loaded.lastSequence;
       } else {
         rawStore = new FileSessionStore(snapshot.sources.session);
-        await rawStore.writeHeader({ id: created.id, model: created.model, cwd: contract.cwd, startedAt: created.at, composition: created.composition });
+        await rawStore.writeHeader({ id: created.id, model: created.model, cwd: contract.cwd, startedAt: created.at, composition: task.started.composition });
       }
       const store: SessionStore = {
         receiptFormat: 'v2',
@@ -384,10 +886,10 @@ export class GuiSessionHost {
       await hooks?.sessionStart();
       const result = await runGoal({ id: created.id, sessionId: created.id, objective: contract.objective,
         budget: { maxRounds: contract.maxRounds, maxTotalTurns: contract.maxRounds * contract.maxTurns, maxWallClockMs: contract.wallClockMs },
-        baseline: created.baseline, worktreeBaseline: resume?.goal.worktreeBaseline ?? await snapshotWorktreeStatus(defaultShellPath(), contract.cwd, signal), pinned, resume }, {
-        model: this.provider!, tools: this.tools(), bus, gate, hooks, store, goalStore, cwd: contract.cwd, shellPath: defaultShellPath(),
+        baseline: task.started.baseline, worktreeBaseline: resume?.goal.worktreeBaseline ?? await snapshotWorktreeStatus(defaultShellPath(), contract.cwd, signal), pinned, resume }, {
+        model: provider, tools: this.toolsFor(contract), bus, gate, hooks, store, goalStore, cwd: contract.cwd, shellPath: defaultShellPath(),
         builderSystemPrompt: this.builderPrompt, perRoundMaxTurns: contract.maxTurns,
-        context: new DefaultContextManager({ summarizer: this.provider!, maxContextTokens: this.provider!.capability.maxContextTokens, maxOutputTokens: 16_384 }),
+        context: new DefaultContextManager({ summarizer: provider, maxContextTokens: provider.capability.maxContextTokens, maxOutputTokens: 16_384 }),
         checkCommands: contract.checkCommands, goalSetterRequirementRoutes: new Map(pinned.map((item) => [item.id, 'human' as const])), signal,
         check: async (deps, baseline) => {
           const before = await this.evidenceFingerprint(task, signal);
@@ -401,6 +903,13 @@ export class GuiSessionHost {
           return checks;
         },
         run: async (ctx) => {
+          // Branch tasks prepend the parent's truncated conversation chain ahead of the new
+          // objective (contract §E14); a resumed session already carries it in the log.
+          if (!resume && task.forkMessages?.length && !task.forkInjected) {
+            task.forkInjected = true;
+            const at = ctx.messages.findIndex((message) => message.role !== 'system');
+            ctx.messages.splice(at < 0 ? ctx.messages.length : at, 0, ...task.forkMessages);
+          }
           const outcome = await runAgent({ ...ctx, beforeModelWave: async () => {
           signal.throwIfAborted();
           await task.queue;
@@ -479,25 +988,30 @@ export class GuiSessionHost {
 
   private async refreshDiff(task: LiveTask): Promise<void> {
     const paths = task.created.task.writePaths.map(shellQuote).join(' ');
-    const result = await runCommand(defaultShellPath(), `git -c core.fsmonitor=false diff --no-ext-diff --no-textconv --no-color ${task.created.baseline.headSha} -- ${paths}`,
+    const result = await runCommand(defaultShellPath(), `git -c core.fsmonitor=false diff --no-ext-diff --no-textconv --no-color ${task.started!.baseline.headSha} -- ${paths}`,
       task.created.task.cwd, 15_000, 80_000, undefined, { scrubGitEnv: true, extraEnv: { GIT_INDEX_FILE: join(this.options.dataDir, 'gui-baselines', `${task.created.id}.index`).replaceAll('\\', '/') } });
     await this.record(task, { type: 'gui_diff', diff: result.code === 0 ? result.output : `Diff 读取失败：${result.output}` });
     if (result.truncated) await this.record(task, { type: 'gui_warning', message: 'Diff 预览已截断，请检查工作区原文件' });
   }
 
   private async resume(task: LiveTask): Promise<GuiLiveSnapshot> {
-    if (this.launching || [...this.tasks.values()].some((item) => item.run)) throw new GuiLiveError(409, '已有启动或恢复正在执行');
+    if (this.launching || [...this.tasks.values()].some((item) => item.run)) throw new GuiLiveError(409, '已有运行中的任务');
     this.launching = true;
     try {
     await this.refreshAuthority(task);
     if (task.run || task.snapshot.status !== 'recoverable') throw new GuiLiveError(409, '只有原 active 的任务可恢复执行；终态只恢复查看');
     if (task.snapshot.pendingInputs.length) throw new GuiLiveError(409, '崩溃现场含待确认输入；为避免重复执行，须人工核对后另行决定');
-    await this.prepareProvider();
-    if (task.created.model !== this.modelName || JSON.stringify(task.created.task) !== JSON.stringify(this.task)) throw new GuiLiveError(409, '任务或模型配置已变化，拒绝恢复');
+    if (!task.started) throw new GuiLiveError(409, '任务尚未启动，无法恢复；请使用启动');
+    const identity = await this.resolveIdentity(task.created.task);
+    if (task.created.model !== identity.modelName) throw new GuiLiveError(409, '任务或模型配置已变化，拒绝恢复');
+    if (task.pinned && this.task && JSON.stringify(task.created.task) !== JSON.stringify(validateGuiTask(this.task))) {
+      throw new GuiLiveError(409, '任务或模型配置已变化，拒绝恢复');
+    }
+    task.identity = identity;
     const loaded = await loadSessionLog(task.snapshot.sources.session, { requireHeader: true, validateIntegrity: true, expectedSessionId: task.created.id,
-      resume: { expectedComposition: this.composition(), resolveDynamicAddendum: resolveNoDynamicAddendum } });
+      resume: { expectedComposition: task.started.composition, resolveDynamicAddendum: resolveNoDynamicAddendum } });
     if (loaded.loaded.pendingTools.length) throw new GuiLiveError(409, '存在未决工具副作用，不能自动恢复');
-    if (loaded.loaded.header?.cwd !== task.created.task.cwd || loaded.loaded.header?.model !== this.modelName) throw new GuiLiveError(409, 'Session cwd/model 不匹配');
+    if (loaded.loaded.header?.cwd !== task.created.task.cwd || loaded.loaded.header?.model !== identity.modelName) throw new GuiLiveError(409, 'Session cwd/model 不匹配');
     const goal = await loadGoal(task.snapshot.sources.goal);
     if (!goal.goal || goal.goal.state !== 'active') throw new GuiLiveError(409, 'Goal 已不是 active');
     task.abort = new AbortController();
@@ -530,14 +1044,15 @@ export class GuiSessionHost {
   }
 
   private record(task: LiveTask, event: GuiObservedEvent): Promise<void> {
-    const safe = redactValue({ ...event, at: event.at ?? new Date().toISOString() }) as GuiObservedEvent;
+    // gui_task_started carries the frozen composition (system prompt/schemas); it is journaled
+    // verbatim so resume compares the session header against the exact original, not a redacted copy.
+    const safe = (event.type === 'gui_task_started' ? { ...event } : redactValue({ ...event })) as GuiObservedEvent;
+    safe.at = safe.at ?? new Date().toISOString();
     const pending = task.queue.then(async () => {
       const record: EventRecord = { type: 'gui_event', sequence: task.snapshot.sequence + 1, event: safe, at: new Date().toISOString() };
       await appendFile(task.snapshot.sources.events, `${JSON.stringify(record)}\n`, 'utf8');
       applyGuiEvent(task.snapshot, safe);
-      if (safe.type === 'model_started') task.modelStarts++;
-      if (safe.type === 'gui_checked_evidence') task.checkedEvidence = typeof safe.fingerprint === 'string' ? safe.fingerprint : undefined;
-      if (safe.type === 'gui_elapsed') task.snapshot.elapsedMs = Number(safe.elapsedMs);
+      this.foldTaskEvent(task, safe, record.at);
       task.snapshot.sequence = record.sequence;
       const price = task.created.task.pricing;
       if (price) task.snapshot.usage.costCny = (task.snapshot.usage.inputTokens * price.inputCnyPerMillion + task.snapshot.usage.outputTokens * price.outputCnyPerMillion) / 1_000_000;
@@ -553,17 +1068,35 @@ export class GuiSessionHost {
     return pending;
   }
 
+  /** Host-side (non-projection) folds for task bookkeeping; replay applies the same folds. */
+  private foldTaskEvent(task: LiveTask, event: GuiObservedEvent, recordAt: string): void {
+    if (event.type === 'model_started') task.modelStarts++;
+    if (event.type === 'gui_checked_evidence') task.checkedEvidence = typeof event.fingerprint === 'string' ? event.fingerprint : undefined;
+    if (event.type === 'gui_elapsed') task.snapshot.elapsedMs = Number(event.elapsedMs);
+    if (event.type === 'gui_task_started') {
+      task.started = { baseline: event.baseline as TestBaseline, composition: event.composition as SessionComposition,
+        model: String(event.model), at: String(event.at ?? recordAt) };
+    }
+    task.lastEventAt = recordAt;
+  }
+
   private makeTask(created: CreatedRecord): LiveTask {
     const root = this.options.dataDir;
-    return { created, queue: Promise.resolve(), abort: new AbortController(), pauseRequested: false, modelStarts: 0,
-      snapshot: { id: created.id, sequence: 0, objective: created.task.objective, cwd: created.task.cwd, model: created.model,
-        sessionId: created.id, goalId: created.id, status: 'starting', phase: '准备任务', nextAction: '', startedAt: created.at, elapsedMs: 0,
-        messages: [], tools: [], approval: null, approvalHistory: [], pendingInputs: [], completion: { granted: false, verdict: 'none', rationale: '完成授权未授予' },
-        review: null, evidenceToken: null, checks: [], diff: '', artifacts: [], usage: { inputTokens: 0, outputTokens: 0, costCny: created.task.pricing ? 0 : null,
-          costNote: created.task.pricing ? `估算 CNY；${created.task.pricing.source}；不含无法单列的缓存折扣` : '未配置可核实单价；Token 实际记录，费用未知' },
-        limits: { maxRounds: created.task.maxRounds, maxTurns: created.task.maxTurns, turnTimeoutMs: 120_000, wallClockMs: created.task.wallClockMs },
-        sources: { session: join(root, 'sessions', `${created.id}.jsonl`), goal: join(root, 'goals', `${created.id}.jsonl`), approvals: join(root, 'approvals', `${created.id}.jsonl`), events: join(root, 'gui', `${created.id}.jsonl`) },
-        warnings: ['Runtime 尚未提供可显示的实时 Reasoning 摘要；不生成模拟摘要。'], capabilities: { submit: false, pause: false, continue: false, stop: false, resume: false } } };
+    const snapshot: GuiLiveSnapshot = { id: created.id, sequence: 0, objective: created.task.objective, cwd: created.task.cwd, model: created.model,
+      sessionId: created.id, goalId: created.id, status: 'idle', phase: '任务已创建，待启动', nextAction: '', startedAt: created.at, elapsedMs: 0,
+      messages: [], tools: [], approval: null, approvalHistory: [], pendingInputs: [], completion: { granted: false, verdict: 'none', rationale: '完成授权未授予' },
+      review: null, evidenceToken: null, checks: [], diff: '', artifacts: [], usage: { inputTokens: 0, outputTokens: 0, costCny: created.task.pricing ? 0 : null,
+        costNote: created.task.pricing ? `估算 CNY；${created.task.pricing.source}；不含无法单列的缓存折扣` : '未配置可核实单价；Token 实际记录，费用未知' },
+      limits: { maxRounds: created.task.maxRounds, maxTurns: created.task.maxTurns, turnTimeoutMs: 120_000, wallClockMs: created.task.wallClockMs },
+      sources: { session: join(root, 'sessions', `${created.id}.jsonl`), goal: join(root, 'goals', `${created.id}.jsonl`), approvals: join(root, 'approvals', `${created.id}.jsonl`), events: join(root, 'gui', `${created.id}.jsonl`) },
+      warnings: ['Runtime 尚未提供可显示的实时 Reasoning 摘要；不生成模拟摘要。'], capabilities: { submit: false, pause: false, continue: false, stop: false, resume: false },
+      ...(created.task.sourceRef ? { sourceRef: created.task.sourceRef } : {}) };
+    return { created, queue: Promise.resolve(), abort: new AbortController(), pauseRequested: false, modelStarts: 0, snapshot,
+      pinned: false, lastEventAt: created.at,
+      forkMessages: created.fork ? forkInjectionMessages(created.fork) : undefined,
+      started: created.baseline && created.composition
+        ? { baseline: created.baseline, composition: created.composition, model: created.model, at: created.at }
+        : undefined };
   }
 
   private launch(task: LiveTask, resume?: GoalResumeState): void {
@@ -581,8 +1114,8 @@ export class GuiSessionHost {
   private initialize(): Promise<void> {
     this.initialized ??= (async () => {
       const dir = join(this.options.dataDir, 'gui');
-      let files: string[];
-      try { files = await readdir(dir); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error; }
+      let files: string[] = [];
+      try { files = await readdir(dir); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
       for (const file of files.filter((name) => /^gui-[a-f0-9-]+\.jsonl$/u.test(name)).sort()) {
         const id = file.slice(0, -6);
         const path = await this.safeJournalPath(id, false);
@@ -595,9 +1128,7 @@ export class GuiSessionHost {
           const record = JSON.parse(line) as EventRecord;
           if (record.type !== 'gui_event' || record.sequence !== task.snapshot.sequence + 1) throw new GuiLiveError(409, 'GUI journal sequence is invalid');
           applyGuiEvent(task.snapshot, record.event);
-          if (record.event.type === 'model_started') task.modelStarts++;
-          if (record.event.type === 'gui_checked_evidence') task.checkedEvidence = typeof record.event.fingerprint === 'string' ? record.event.fingerprint : undefined;
-          if (record.event.type === 'gui_elapsed') task.snapshot.elapsedMs = Number(record.event.elapsedMs);
+          this.foldTaskEvent(task, record.event, record.at);
           task.snapshot.sequence = record.sequence;
         }
         for (const message of task.snapshot.messages) if (message.status === 'running') message.status = 'incomplete';
@@ -606,6 +1137,14 @@ export class GuiSessionHost {
         await this.refreshAuthority(task);
         updateGuiCapabilities(task.snapshot, false);
         this.tasks.set(id, task);
+      }
+      // A CLI-pinned --task-file contract registers as a 待启动 task; an identical already-journaled
+      // contract is reused instead of re-registered (pinned-contract dedupe only, free tasks never dedupe).
+      if (this.task) {
+        const wanted = JSON.stringify(validateGuiTask(this.task));
+        const existing = [...this.tasks.values()].find((task) => JSON.stringify(validateGuiTask(task.created.task)) === wanted);
+        if (existing) existing.pinned = true;
+        else await this.registerTask(validateGuiTask(this.task), { pinned: true });
       }
     })();
     return this.initialized;
@@ -628,8 +1167,10 @@ export class GuiSessionHost {
 
   private async restoreSessionProjection(task: LiveTask): Promise<void> {
     if (!existsSync(task.snapshot.sources.session)) {
-      task.snapshot.status = 'unavailable';
-      task.snapshot.warnings.push('Session 初始化未完成，不能恢复执行');
+      if (task.started) {
+        task.snapshot.status = 'unavailable';
+        task.snapshot.warnings.push('Session 初始化未完成，不能恢复执行');
+      }
       return;
     }
     try {
@@ -682,7 +1223,7 @@ export class GuiSessionHost {
   }
 
   private async evidenceFingerprint(task: LiveTask, signal?: AbortSignal): Promise<string> {
-    const diff = await runCommand(defaultShellPath(), `git -c core.fsmonitor=false diff --no-ext-diff --no-textconv --binary --no-color ${task.created.baseline.headSha}`,
+    const diff = await runCommand(defaultShellPath(), `git -c core.fsmonitor=false diff --no-ext-diff --no-textconv --binary --no-color ${task.started!.baseline.headSha}`,
       task.created.task.cwd, 15_000, 500_000, signal,
       { scrubGitEnv: true, extraEnv: { GIT_INDEX_FILE: join(this.options.dataDir, 'gui-baselines', `${task.created.id}.index`).replaceAll('\\', '/') } });
     if (diff.code !== 0 || diff.truncated) throw new GuiLiveError(409, '无法完整确认验证对应的工作树');

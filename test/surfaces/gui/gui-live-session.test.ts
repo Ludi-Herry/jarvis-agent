@@ -56,16 +56,24 @@ async function until(host: GuiSessionHost, id: string, predicate: (snapshot: Gui
   throw new Error(`state wait expired: ${JSON.stringify({ status: latest!.status, phase: latest!.phase, warnings: latest!.warnings, completion: latest!.completion })}`);
 }
 
+/** Pinned --task-file contracts register as 待启动 at first access; start goes through startTask(id). */
+async function startPinned(host: GuiSessionHost): Promise<GuiLiveSnapshot> {
+  const overview = await host.overview();
+  const pending = overview.sessions.at(-1);
+  if (!pending) throw new Error('pinned task was not registered');
+  return host.startTask(pending.id);
+}
+
 describe('GUI real Runtime connection (deterministic provider, real tools and persistence)', () => {
   it('keeps a large SSE snapshot open after backpressure instead of treating drain as disconnection', async () => {
-    const { host, task, cwd } = await fixture(model(() => 'large-output '.repeat(8000)));
+    const { host, cwd } = await fixture(model(() => 'large-output '.repeat(8000)));
     const server = createGuiServer({ cwd, dataDir: join(cwd, 'data'), liveHost: host });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const address = server.address();
     if (!address || typeof address === 'string') throw new Error('server address missing');
     const controller = new AbortController();
     try {
-      const started = await host.start(task.objective);
+      const started = await startPinned(host);
       await until(host, started.id, (s) => !s.capabilities.stop && s.status === 'blocked');
       const stream = await fetch(`http://127.0.0.1:${address.port}/api/live/${started.id}/events`, { signal: controller.signal });
       const reader = stream.body!.getReader();
@@ -82,11 +90,11 @@ describe('GUI real Runtime connection (deterministic provider, real tools and pe
     } finally { controller.abort(); await host.dispose(); server.closeAllConnections(); await new Promise<void>((resolve) => server.close(() => resolve())); }
   }, 30_000);
   it('rejects approval of evidence changed after checks instead of verifying a stale review', async () => {
-    const { host, task, cwd } = await fixture(model((_messages, wave) => wave === 0
+    const { host, cwd } = await fixture(model((_messages, wave) => wave === 0
       ? [call('write', 'write', { path: 'answer.mjs', content: 'export const value=2;', createOnly: true })]
       : wave === 1 ? [call('claim', 'update_goal', { status: 'complete' })] : '等待验收'));
     try {
-      const started = await host.start(task.objective);
+      const started = await startPinned(host);
       const pending = await until(host, started.id, (s) => s.approval !== null);
       await host.decision(started.id, pending.approval!.requestId, 'allow-once');
       await until(host, started.id, (s) => !s.capabilities.stop && s.review !== null);
@@ -104,14 +112,14 @@ describe('GUI real Runtime connection (deterministic provider, real tools and pe
   it('preserves the user Git index and detects an oracle change relative to the private baseline', async () => {
     let release!: () => void;
     const held = new Promise<void>((resolve) => { release = resolve; });
-    const { host, task, cwd } = await fixture(model(async (_messages, wave) => {
+    const { host, cwd } = await fixture(model(async (_messages, wave) => {
       if (wave === 0) return [call('write', 'write', { path: 'answer.mjs', content: 'export const value=2;', createOnly: true })];
       if (wave === 1) { await held; return [call('claim', 'update_goal', { status: 'complete' })]; }
       return '等待检查';
     }));
     const indexBefore = await readFile(join(cwd, '.git', 'index'));
     try {
-      const started = await host.start(task.objective);
+      const started = await startPinned(host);
       const pending = await until(host, started.id, (s) => s.approval !== null);
       await host.decision(started.id, pending.approval!.requestId, 'allow-once');
       await until(host, started.id, (s) => s.tools.some((tool) => tool.status === 'committed'));
@@ -126,7 +134,7 @@ describe('GUI real Runtime connection (deterministic provider, real tools and pe
 
   it('uses the original absolute deadline when a near-expiry active session resumes', async () => {
     const original = await fixture(model(async () => { await new Promise((resolve) => setTimeout(resolve, 500)); return 'source'; }));
-    const started = await original.host.start(original.task.objective);
+    const started = await startPinned(original.host);
     await until(original.host, started.id, (s) => s.status === 'running');
     const recoveredData = join(original.cwd, 'deadline-copy');
     await cp(original.options.dataDir, recoveredData, { recursive: true });
@@ -153,7 +161,7 @@ describe('GUI real Runtime connection (deterministic provider, real tools and pe
   }, 30_000);
   it('serializes concurrent recovery of an active crash snapshot without losing persisted messages', async () => {
     const original = await fixture(model(async () => { await new Promise((resolve) => setTimeout(resolve, 500)); return 'interrupted source'; }));
-    const started = await original.host.start(original.task.objective);
+    const started = await startPinned(original.host);
     await until(original.host, started.id, (snapshot) => snapshot.status === 'running');
     const recoveredData = join(original.cwd, 'crash-copy');
     await cp(original.options.dataDir, recoveredData, { recursive: true });
@@ -185,9 +193,9 @@ describe('GUI real Runtime connection (deterministic provider, real tools and pe
       if (wave === 2) return [call('claim', 'update_goal', { status: 'complete' })];
       return '交付物已写入，等待 Runtime 和用户验收';
     });
-    const { host, options, cwd, task } = await fixture(provider);
+    const { host, options, cwd } = await fixture(provider);
     try {
-      const started = await host.start(task.objective);
+      const started = await startPinned(host);
       const first = await until(host, started.id, (s) => s.approval !== null);
       expect(first.completion.granted).toBe(false);
       await host.decision(started.id, first.approval!.requestId, 'deny', '请改为 2');
@@ -214,9 +222,9 @@ describe('GUI real Runtime connection (deterministic provider, real tools and pe
   }, 30_000);
 
   it('stops a pending write, invalidates approvals and preserves the interrupted scene across reload', async () => {
-    const { host, options, task, cwd } = await fixture(model(() => [call('write-stop', 'write', { path: 'answer.mjs', content: 'export const value=3;', createOnly: true })]));
+    const { host, options, cwd } = await fixture(model(() => [call('write-stop', 'write', { path: 'answer.mjs', content: 'export const value=3;', createOnly: true })]));
     try {
-      const started = await host.start(task.objective);
+      const started = await startPinned(host);
       const approval = await until(host, started.id, (s) => s.approval !== null);
       await host.control(started.id, 'stop', '测试终止待审批副作用');
       const stopped = await until(host, started.id, (s) => !s.capabilities.stop && s.status === 'interrupted');
@@ -236,14 +244,14 @@ describe('GUI real Runtime connection (deterministic provider, real tools and pe
     const held = new Promise<void>((resolve) => { release = resolve; });
     let waveCount = 0;
     let sawInput = false;
-    const { host, task } = await fixture(model(async (messages, wave) => {
+    const { host } = await fixture(model(async (messages, wave) => {
       waveCount++;
       if (wave === 0) { await held; return [call('read', 'read', { path: 'seed.txt' })]; }
       sawInput = messages.some((message) => message.role === 'user' && message.content === '补充真实输入');
       return '我已完成';
     }));
     try {
-      const started = await host.start(task.objective);
+      const started = await startPinned(host);
       await until(host, started.id, (s) => s.status === 'running');
       await host.control(started.id, 'pause');
       release();
@@ -272,9 +280,9 @@ describe('GUI real Runtime connection (deterministic provider, real tools and pe
     if (!address || typeof address === 'string') throw new Error('server address missing');
     const base = `http://127.0.0.1:${address.port}`;
     try {
-      const rejected = await fetch(`${base}/api/live/start`, { method: 'POST', body: JSON.stringify({ text: task.objective }) });
+      const rejected = await fetch(`${base}/api/live/task`, { method: 'POST', body: JSON.stringify({ objective: task.objective }) });
       expect(rejected.status).toBe(403);
-      const started = await host.start(task.objective);
+      const started = await startPinned(host);
       const stopped = await until(host, started.id, (s) => !s.capabilities.stop && s.status === 'blocked');
       for (let attempt = 0; attempt < 2; attempt++) {
         const controller = new AbortController();

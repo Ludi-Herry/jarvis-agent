@@ -185,7 +185,8 @@ async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknow
   const chunks: Buffer[] = [];
   for await (const chunk of req) {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-    if (Buffer.concat(chunks).length > 4096) throw new Error('request body too large');
+    // Free-task contracts (objective + requirements + paths/commands) legitimately exceed 4 KiB.
+    if (Buffer.concat(chunks).length > 32_768) throw new Error('request body too large');
   }
   const text = Buffer.concat(chunks).toString('utf8').trim();
   if (text === '') return {};

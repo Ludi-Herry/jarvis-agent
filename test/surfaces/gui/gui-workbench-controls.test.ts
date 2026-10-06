@@ -36,7 +36,16 @@ function snapshot(patch: Partial<GuiLiveSnapshot> = {}): GuiLiveSnapshot {
 function overview(patch: Partial<GuiLiveOverview> = {}): GuiLiveOverview {
   return {
     cwd: 'H:\\jarvis-agent', enabled: true,
-    task: { objective: '测试目标', requirements: ['要求一'] }, sessions: [], activeId: null,
+    task: { objective: '测试目标', requirements: ['要求一'] }, sessions: [], activeId: null, workspaces: [],
+    ...patch,
+  };
+}
+
+function session(patch: Partial<GuiLiveOverview['sessions'][number]> & { id: string }): GuiLiveOverview['sessions'][number] {
+  return {
+    title: patch.objective ?? '测试目标', objective: '测试目标', status: 'blocked',
+    workspaceId: 'ws-test', pinned: false, archived: false,
+    updatedAt: '2026-09-26T09:00:00.000Z', lastMessage: '',
     ...patch,
   };
 }
@@ -109,7 +118,7 @@ describe('GUI workbench control availability', () => {
   });
 
   it('refuses to start a second run when the task contract already has a recorded session', () => {
-    const recorded = overview({ sessions: [{ id: 'gui-old', objective: '测试目标', status: 'blocked' }] });
+    const recorded = overview({ sessions: [session({ id: 'gui-old' })] });
     expect(resolveCanStart(null, recorded).available).toBe(false);
     expect(resolveCanStart(null, overview()).available).toBe(true);
     expect(resolveCanStart(null, overview({ enabled: false })).available).toBe(false);
@@ -117,10 +126,10 @@ describe('GUI workbench control availability', () => {
   });
 
   it('locks session switching to the running scene', () => {
-    const busy = overview({ sessions: [{ id: 'gui-run', objective: '正在跑', status: 'running' }, { id: 'gui-old', objective: '旧的', status: 'blocked' }] });
+    const busy = overview({ sessions: [session({ id: 'gui-run', objective: '正在跑', status: 'running' }), session({ id: 'gui-old', objective: '旧的' })] });
     expect(resolveSessionSwitch('gui-old', busy).available).toBe(false);
     expect(resolveSessionSwitch('gui-run', busy).available).toBe(true);
-    expect(resolveSessionSwitch('gui-old', overview({ sessions: [{ id: 'gui-old', objective: '旧的', status: 'blocked' }] })).available).toBe(true);
+    expect(resolveSessionSwitch('gui-old', overview({ sessions: [session({ id: 'gui-old', objective: '旧的' })] })).available).toBe(true);
   });
 });
 

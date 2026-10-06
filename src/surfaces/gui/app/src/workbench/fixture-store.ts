@@ -89,7 +89,7 @@ export function useFixtureSession(fixtureId: string | null): FixtureSession {
       base.messages = [{ id: 'fixture-start', role: 'user', text, at: nowIso(), status: 'complete', toolIds: [] }, ...base.messages.slice(1)];
       setSelectedId(base.id);
       setSnapshot(base);
-      setOverview((current) => ({ ...current, sessions: [{ id: base.id, objective: text, status: base.status }], activeId: base.id }));
+      setOverview((current) => ({ ...current, sessions: [{ id: base.id, title: text.slice(0, 60), objective: text, status: base.status, workspaceId: current.workspaces[0]?.id ?? 'ws-fixture-main', pinned: false, archived: false, updatedAt: nowIso(), lastMessage: '' }], activeId: base.id }));
     },
     submitInput: async (text) => {
       requireSnapshot();

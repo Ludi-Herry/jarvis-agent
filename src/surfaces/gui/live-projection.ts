@@ -90,6 +90,12 @@ export function applyGuiEvent(state: GuiLiveSnapshot, event: GuiObservedEvent): 
     case 'gui_input_queued':
       state.pendingInputs.push(String(event.text));
       break;
+    case 'gui_meta': {
+      if (typeof event.title === 'string') state.title = event.title;
+      if (typeof event.pinned === 'boolean') state.pinned = event.pinned;
+      if (typeof event.archived === 'boolean') state.archived = event.archived;
+      break;
+    }
     case 'gui_inputs_consumed':
       state.pendingInputs.splice(0, Number(event.count));
       break;
@@ -122,6 +128,7 @@ export function applyGuiEvent(state: GuiLiveSnapshot, event: GuiObservedEvent): 
     case 'gui_settled':
     case 'gui_review_recorded':
     case 'gui_checked_evidence':
+    case 'gui_task_started':
       break;
     default: {
       const warning = `暂不支持的事件已保留：${event.type}`;
@@ -138,7 +145,8 @@ export function updateGuiCapabilities(state: GuiLiveSnapshot, running: boolean):
     stop: running && state.status !== 'stopping',
     resume: !running && state.status === 'recoverable',
   };
-  state.nextAction = state.status === 'approval' ? '检查工具请求，允许一次、拒绝或填写调整意见'
+  state.nextAction = state.status === 'idle' ? '任务已创建，待启动；可检查后启动、归档或更新元数据'
+    : state.status === 'approval' ? '检查工具请求，允许一次、拒绝或填写调整意见'
     : state.status === 'paused' ? '补充指令后继续，或终止本次运行'
     : state.status === 'pausing' ? '等待当前工具执行完毕，到下一模型调用边界暂停'
     : state.status === 'stopping' ? '等待 Runtime 结束在途操作；尚未确认安全停止'

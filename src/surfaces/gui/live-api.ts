@@ -10,14 +10,15 @@ export async function handleLiveApi(
   body: () => Promise<Record<string, unknown>>,
 ): Promise<void> {
   if (req.method === 'GET' && url.pathname === '/api/live') return json(res, await host.overview());
-  if (req.method === 'POST' && url.pathname === '/api/live/start') {
-    const input = await body();
-    return json(res, await host.start(requiredText(input, 'text')));
-  }
-  const match = /^\/api\/live\/(gui-[a-f0-9-]+)(?:\/(events|input|decision|pause|continue|stop|resume|review))?$/u.exec(url.pathname);
+  if (req.method === 'GET' && url.pathname === '/api/live/models') return json(res, await host.listModels());
+  if (req.method === 'POST' && url.pathname === '/api/live/task') return json(res, await host.createTask(await body()));
+  if (req.method === 'POST' && url.pathname === '/api/live/task/validate') return json(res, await host.validateTask(await body()));
+  if (req.method === 'POST' && url.pathname === '/api/live/workspaces') return json(res, await host.createWorkspace(await body()));
+  const match = /^\/api\/live\/(gui-[a-f0-9-]+)(?:\/(events|input|decision|pause|continue|stop|resume|review|start|meta|git))?$/u.exec(url.pathname);
   if (!match) throw new GuiLiveError(404, 'live API not found');
   const [, id, action] = match;
   if (req.method === 'GET' && !action) return json(res, await host.snapshot(id));
+  if (req.method === 'GET' && action === 'git') return json(res, await host.gitStatus(id));
   if (req.method === 'GET' && action === 'events') {
     // Verify identity/integrity before opening the stream. Reconnect always receives a full
     // persistent projection; Last-Event-ID never causes missing events to be discarded.
@@ -58,6 +59,8 @@ export async function handleLiveApi(
   }
   if (req.method !== 'POST') throw new GuiLiveError(405, 'method not allowed');
   const input = await body();
+  if (action === 'start') return json(res, await host.startTask(id));
+  if (action === 'meta') return json(res, await host.setMeta(id, input));
   if (action === 'input') return json(res, await host.input(id, requiredText(input, 'text')));
   if (action === 'decision') return json(res, await host.decision(id, requiredText(input, 'requestId'), requiredText(input, 'decision'), typeof input.reason === 'string' ? input.reason : undefined));
   if (action === 'pause' || action === 'continue' || action === 'stop' || action === 'resume') {
