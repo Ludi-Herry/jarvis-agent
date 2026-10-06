@@ -12,6 +12,7 @@
 
 ## 运行与操作边界
 
+- **全量测试默认并行度下 CLI 子进程用例间歇超时。** `test/cli/sessions-*.test.ts` 单条用例串行 spawn 多次 CLI，机器负载高时会超过该用例内置 15–20s timeout（断言本身全部成立，隔离单跑恒绿）。安静验收口径：`npx vitest run --maxWorkers=4`（2026-10-05 实测 154 文件 / 1760 通过 / 2 skipped / 0 失败）。
 - **Cron daemon 使用单工作区锁。** 进程被强制终止后，下一次启动可能先执行 stale-lock 恢复。锁与恢复逻辑由 `src/capabilities/goal/loop-cron.ts` 的 `FileLoopCronLock` 负责。
 - **Human review 只写本地 JSONL。** 当前没有多用户身份、远程通知、connector 或团队工作流；人工裁决入口是 `jarvis review` 与本地 GUI。
 - **Attended Bash 的 scheduler-command 仍有 TOCTOU 窗口。** 命令级 session allow 无法把检查后的命令文本与外部 scheduler 的最终执行绑定；安全严重度和接受边界见 [docs/security-review-baseline.md](docs/security-review-baseline.md)。

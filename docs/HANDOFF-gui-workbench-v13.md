@@ -1,5 +1,7 @@
 # 交接：V13 讨论区工作台改造（GUI MVP 重启第二轮）
 
+> **2026-10-05 更新：本文所述全部工作已随保护基线 `1375374` 入库（此前「不提交」纪律已由 Owner 推翻）；§5.1 的验收页新鲜度竞争修复已在 `--maxWorkers=4` 全量门下闭环（1760 通过 / 0 失败）。当前工作以 `PLAN-gui-v13-restart-2026-10-05.md` 为入口。以下保留 9-26 当时记录。**
+
 > 状态：`WORKBENCH REBUILT / LIVE WIRING REGRESSED / REAL TASK STILL UNACCEPTED`
 > 日期：2026-09-26（Asia/Shanghai）
 > 授权范围：本轮只用确定性输入完成 GUI 改造与回归；不重跑旧真实任务、不消耗新模型预算、不提交、不推送、不清理现场。

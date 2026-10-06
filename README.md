@@ -1,10 +1,20 @@
 # Jarvis-Agent
 
-Jarvis-Agent 是一个本地、CLI-first 的 TypeScript/Node 编码 agent harness。它把模型调用、工具执行、权限审批、会话恢复和完成验收放进同一个有状态宿主，并让 CLI、TUI 与本地 GUI 复用同一套事件和状态事实。
+Jarvis-Agent 是一个以 GUI 为主表面的本地 TypeScript/Node 编码 agent harness。它把模型调用、工具执行、权限审批、会话恢复和完成验收放进同一个有状态宿主，并让 CLI、TUI 与本地 GUI 复用同一套事件和状态事实。
 
 项目面向 Ludi 的个人项目维护场景。核心目标是让长任务持续推进，同时让失败、阻塞、权限和可信证据始终可见。
 
-> **项目状态：GUI MVP REBOOT（2026-09-01）**。v0.1 CLI-first 产品验收仍为 NO-GO，工程基线与历史失败继续保留。Ludi 已重开新的 GUI 产品路线：先刷新参考并交付三份静态 HTML 原型，选定方向后再进入 React + assistant-ui、真实 Web 闭环和桌面壳。当前开工合同见 [GUI MVP 重启交接](docs/handoff-gui-mvp-reboot.md)。
+> **项目状态：V13 重启批 0–2 进行中（2026-10-05）**。当前总计划见 [GUI 重启总计划](docs/PLAN-gui-v13-restart-2026-10-05.md)：以黑白灰精准还原 V13 讨论区样稿为最终目标，首批功能子集为自由任务/工作区/讨论分支/Git 状态/模型选择。
+> 历史状态：GUI MVP P3 未验收（2026-09-06，真实任务因传输故障安全终止，0 写入 0 介入，完成授权未授予）；v0.1 自然完成 0/3、PRODUCT NO-GO 与历史失败继续保留。见 [P3 真实 Web 闭环](docs/PLAN-gui-mvp-p3-runtime.md)。
+
+现有依赖已安装时，P3 Web 入口：
+
+```powershell
+npm --prefix src/surfaces/gui/app run build
+npm run gui -- --task-file docs/gui-mvp-p3-first-task.json
+```
+
+打开终端实际报告的 `/app/` 地址。该任务合同只允许首次使用引导组件的一次真实任务，启动后从 GUI 审批和纠偏；存在既有记录时恢复查看，不自动重跑。旧 GUI 保留在同一服务 `/`，P2 模拟证据保留在 `/app/?demo=1`。不带 `--task-file` 可只读打开工作区，不启动模型。
 
 ## 快速开始
 
