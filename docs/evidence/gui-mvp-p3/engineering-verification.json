@@ -1,0 +1,30 @@
+{
+  "date": "2026-09-06",
+  "scope": "P3 engineering and deterministic browser checks; not the real task outcome",
+  "realTaskStatus": "interrupted-before-write; see real-task-result.json",
+  "ownerVisualAcceptance": "not-performed",
+  "fullSuite": {"filesPassed": 153, "testsPassed": 1746, "skipped": 2, "seconds": 402.41, "log": "test.txt", "timing": "before bounded review fixes"},
+  "afterReviewTargeted": {"file": "test/surfaces/gui/gui-live-session.test.ts", "testsPassed": 8, "seconds": 10.77},
+  "afterRealTransportFailure": {"testsPassed":9,"seconds":10.87,"case":"SSE snapshot larger than 64 KB waits for drain and remains open","staticChecks":"root typecheck/lint/build and app build pass","realSnapshotAfterServerRestart":"connected; original interrupted state and usage retained"},
+  "staticChecks": {"rootTypecheck": "pass", "rootLint": "pass", "rootBuild": "pass", "appTypecheckAndBuild": "pass"},
+  "browser": {
+    "surface": "Codex in-app Browser",
+    "normalPath": ["submit fixed task", "streamed text observed", "request adjustment focuses Composer while approval stays pending", "denial reason changes next tool content", "allow once", "real node syntax check", "human review through existing authority", "verified persisted after reload"],
+    "failurePath": ["stop dialog cancel preserves scene", "stop pending approval prevents file creation", "interrupted does not offer fake continue/resume", "draft preserved after reload"],
+    "viewports": [{"width":1440,"height":900,"result":"readable"},{"width":1280,"height":800,"expandedColumns":[184,610,486],"documentOverflow":0}],
+    "consoleErrors": 0,
+    "consoleWarnings": 0,
+    "draftAfterStopAndReload": "保留这条尚未发送的草稿",
+    "normalFixture": "C:\\Users\\Administrator.DESKTOP-33TL0HO\\AppData\\Local\\Temp\\jarvis-p3-browser-GStZZr",
+    "stopFixture": "C:\\Users\\Administrator.DESKTOP-33TL0HO\\AppData\\Local\\Temp\\jarvis-p3-browser-Xojlkr",
+    "stopFixtureArtifactExists": false,
+    "humanReviewInFixture": "automated test action, not Ludi acceptance"
+  },
+  "preservedFailures": [
+    {"kind":"test fixture","cause":"ES module export used in .js fixture without module package; node --check correctly failed","fix":"fixture renamed .mjs","originalEvidence":"C:\\Users\\Administrator.DESKTOP-33TL0HO\\AppData\\Local\\Temp\\jarvis-gui-p3-test-i2GLOj"},
+    {"kind":"projection regression during implementation","cause":"recovery pending-tools warning overwrote known interrupted state","fix":"retain interrupted and block resume","subsequentTargeted":"pass"}
+  ],
+  "review": {"firstVerdict":"NO-GO","p0":0,"p1":["concurrent resume","stale human review evidence","deadline reset on resume"],"fixes":"implemented; 8 targeted tests passed","freshVerdict":"GO","freshP0":0,"freshP1":0,"reviewerTargetedSeconds":10.41,"clarification":"The byte comparison proves the user .git/index is unchanged; it does not claim the private baseline index is immutable.","bounds":["single host process per dataDir", "single external writer during evidence review"]},
+  "temporaryArtifacts": ["private Git baseline indices retained", "unit test temp repositories retained", "two deterministic browser fixture repositories retained"],
+  "gitCommitOrPush": false
+}

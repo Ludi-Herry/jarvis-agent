@@ -1,0 +1,125 @@
+@media (max-width: 1320px) {
+  .history-rail {
+    padding-inline: 9px;
+  }
+
+  .conversation-topbar {
+    grid-template-columns: minmax(0, 1fr) auto auto auto;
+    gap: 8px;
+    padding-inline: 14px;
+  }
+
+  .run-status {
+    min-width: 132px;
+  }
+
+  .run-controls button {
+    padding-inline: 7px;
+  }
+
+  .authority-seal {
+    min-width: 96px;
+    height: 32px;
+  }
+
+  .conversation-scroll,
+  .composer-bar {
+    padding-inline: 24px;
+  }
+
+  .context-panel {
+    padding-inline: 10px;
+  }
+
+  .approval-actions {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .approval-actions .primary {
+    grid-column: 1 / -1;
+  }
+
+  .tool-item {
+    grid-template-columns: 42px 80px minmax(0, 1fr) auto;
+  }
+
+  .tool-link {
+    display: none;
+  }
+
+  .conversation-shell[data-review-expanded="true"] .conversation-topbar {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-areas:
+      "copy status seal"
+      "copy controls controls";
+    min-height: 88px;
+  }
+
+  .conversation-shell[data-review-expanded="true"] .topbar-copy {
+    grid-area: copy;
+  }
+
+  .conversation-shell[data-review-expanded="true"] .run-status {
+    grid-area: status;
+  }
+
+  .conversation-shell[data-review-expanded="true"] .authority-seal {
+    grid-area: seal;
+  }
+
+  .conversation-shell[data-review-expanded="true"] .run-controls {
+    grid-area: controls;
+    justify-content: flex-end;
+  }
+}
+
+@media (max-height: 820px) {
+  .history-rail { gap: 11px; padding-block: 12px 10px; }
+  .conversation-topbar { min-height: 64px; padding-block: 8px; }
+  .conversation-scroll { padding-block: 14px 18px; }
+  .message-list { gap: 11px; }
+  .composer-bar { padding-block: 7px 9px; }
+  .context-panel { gap: 9px; padding-block: 10px; }
+  .plan-item { padding-block: 4px; }
+  .task-brief > p { margin-block: 7px 8px; }
+  .active-stage { padding: 11px; }
+  .active-stage > p { margin-block: 7px; }
+  .mini-diff { max-height: 90px; }
+  .evidence-tabs { margin-block: 7px 6px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto !important;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  .t-resize,
+  .t-modal,
+  .t-acc-panel,
+  .t-acc-panel-inner,
+  .t-acc-chevron,
+  .authority-seal,
+  .tool-link,
+  .prototype-toast {
+    transition: none !important;
+  }
+
+  .t-acc-panel-inner {
+    filter: none !important;
+  }
+
+  .terminate-dialog::backdrop,
+  .conversation-topbar,
+  .composer-bar {
+    backdrop-filter: none !important;
+  }
+}

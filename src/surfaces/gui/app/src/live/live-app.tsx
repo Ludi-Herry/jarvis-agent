@@ -1,0 +1,41 @@
+import { useEffect, useMemo } from 'react';
+import { useLiveSession } from './use-live-session.js';
+import { Workbench } from '../workbench/workbench.js';
+import type { WorkbenchCommands, WorkbenchInput } from '../workbench/types.js';
+
+/**
+ * Live wiring only. The workbench owns layout and display state; this component owns the real
+ * projection, the command surface and the readiness marker used by browser verification.
+ */
+export function LiveJarvisApp() {
+  const {
+    overview, snapshot, selectedId, connection, actionPending, overviewLoading, overviewError,
+    connectionNotice, streamWarning, actionError, chooseSession, start, submitInput, pause,
+    continueRun, stop, resume, decide, submitReview,
+  } = useLiveSession();
+
+  const commands = useMemo<WorkbenchCommands>(() => ({
+    chooseSession, start, submitInput, pause, continueRun, stop, resume, decide, submitReview,
+  }), [chooseSession, start, submitInput, pause, continueRun, stop, resume, decide, submitReview]);
+
+  const input = useMemo<WorkbenchInput>(() => ({
+    overview,
+    snapshot,
+    selectedId,
+    connection,
+    actionPending,
+    notices: { overviewLoading, overviewError, connectionNotice, streamWarning, actionError },
+    commands,
+    provenance: 'live',
+  }), [
+    actionError, actionPending, commands, connection, connectionNotice, overview, overviewError,
+    overviewLoading, selectedId, snapshot, streamWarning,
+  ]);
+
+  useEffect(() => {
+    document.documentElement.dataset.liveReady = 'true';
+    return () => { delete document.documentElement.dataset.liveReady; };
+  }, []);
+
+  return <Workbench input={input} />;
+}

@@ -1,0 +1,13 @@
+
+> jarvis-agent@0.1.0 test
+> vitest run --maxWorkers=1
+
+
+ RUN  v4.1.9 H:/jarvis-agent
+
+
+ Test Files  153 passed (153)
+      Tests  1746 passed | 2 skipped (1748)
+   Start at  16:41:06
+   Duration  402.41s (transform 9.50s, setup 0ms, import 25.31s, tests 359.06s, environment 9ms)
+

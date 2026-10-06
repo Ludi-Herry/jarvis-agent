@@ -2,6 +2,12 @@
 
 > 状态：APPROVED，2026-09-01。Ludi 已批准新的 GUI 产品方向、参考对象、前端选型与分阶段顺序。
 >
+> 当前阶段（2026-09-06）：Ludi 已明确授权 P3 真实 Runtime 接线与一个新真实任务，执行合同见 [PLAN-gui-mvp-p3-runtime.md](./PLAN-gui-mvp-p3-runtime.md)。本页 P0-P2 的历史阶段限制只约束各自阶段；本次授权覆盖旧的 P3 未授权表述，其他安全边界和旧实验冻结继续有效。
+>
+> 本轮结果：接线与工程门已完成，真实任务在写入审批前受大消息传输故障影响，已安全终止；P3 未验收。修复和未执行草稿已保留，不自动重跑、不进入 P4。
+>
+> 2026-09-02 收口：P0-P1 已完成，最终选择 `conversation-first-refined`。P2 React Spike 已按 scripts-disabled 依赖门完成并验收 GO；P2.1 按 Ludi 的明确反馈将视觉校准为纯白中性工具界面。裁决见 `docs/DECISION-gui-mvp-p1.md`，P2 合同与证据见 `docs/PLAN-gui-mvp-p2-react-spike.md` 和 `src/surfaces/gui/app/ACCEPTANCE.md`。
+>
 > 当前基线：决策时位于 `main`，HEAD 为 `804ca16 docs: freeze current product route`，工作区干净。新会话必须重新核对分支、HEAD 和 `git status`，不得把这里的快照当成实时状态。
 >
 > 权威关系：本文接管下一阶段 GUI 产品工作的入口。`docs/v03-gui-plan.md` 的 G1-G4 继续作为已完成工程证据，G5 与其未来路线停止生效。CLI-first v0.1 的 PRODUCT NO-GO 和历史失败继续保留，不会因 GUI 重启被改写为通过。
@@ -175,6 +181,8 @@ JSONL、工作区文件、验证证据与副作用审计
 - Spike 通过后才接真实 Runtime。
 
 ### P3：真实 Web 闭环
+
+2026-09-06 已授权，当前执行、真实任务及验收事实只维护在 [P3 短合同](./PLAN-gui-mvp-p3-runtime.md)。继续采用现有 React + assistant-ui 及精确依赖，不重复安装或选库。
 
 - 复用现有 EventBus，不新建第二套事件总线；
 - 建立窄事件流，至少覆盖消息增量、Reasoning、工具开始或更新或结束、审批请求或结果、运行状态、Artifact / Diff、错误与终局；

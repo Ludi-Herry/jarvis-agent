@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Jarvis GUI Prototype · Artifact First</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="../shared/motion.css">
+    <link rel="stylesheet" href="./prototype.css">
+  </head>
+  <body data-run-state="approval">
+    <a class="skip-link" href="#artifact-canvas">跳到 Diff 审阅</a>
+
+    <div class="artifact-shell">
+      <header class="review-header">
+        <div class="review-brand">
+          <span class="review-brand-mark" aria-hidden="true">J</span>
+          <span>
+            <strong>Jarvis Review</strong>
+            <small>静态原型 · 无 Runtime</small>
+          </span>
+        </div>
+        <div class="review-breadcrumb">
+          <span data-bind="task.id"></span>
+          <strong data-bind="task.objective"></strong>
+          <small>Artifact / Diff</small>
+        </div>
+        <div class="review-state" data-run-tone data-tone="warning" role="status" aria-live="polite">
+          <span class="review-state-mark" aria-hidden="true"></span>
+          <span>
+            <strong data-run-label>需要审批</strong>
+            <small data-run-detail>一次性写入 2 个现有文件</small>
+          </span>
+        </div>
+        <div class="review-controls" aria-label="运行控制">
+          <button type="button" data-action="pause">暂停</button>
+          <button type="button" data-action="resume" disabled>继续</button>
+          <button type="button" data-action="recover" disabled>恢复</button>
+          <button class="danger" type="button" data-action="terminate">终止</button>
+        </div>
+      </header>
+
+      <aside class="artifact-navigator" aria-label="产物导航与验证">
+        <section class="artifact-tree" aria-labelledby="artifact-tree-title">
+          <header>
+            <div>
+              <span class="section-label">CHANGED FILES</span>
+              <h2 id="artifact-tree-title">补丁产物</h2>
+            </div>
+            <strong>2</strong>
+          </header>
+          <ul data-file-list></ul>
+        </section>
+
+        <section class="verification-list" aria-labelledby="artifact-checks-title">
+          <header>
+            <span class="section-label" id="artifact-checks-title">EVIDENCE</span>
+            <strong>4 gates</strong>
+          </header>
+          <ul data-check-list></ul>
+        </section>
+
+        <section class="artifact-state-lab" aria-labelledby="artifact-state-title">
+          <header>
+            <span class="section-label" id="artifact-state-title">STATE LAB</span>
+            <button type="button" data-state-option="approval" aria-pressed="true">重置</button>
+          </header>
+          <div class="state-list">
+            <button type="button" data-state-option="running" aria-pressed="false"><span></span>运行中</button>
+            <button type="button" data-state-option="approval" aria-pressed="true"><span></span>需要审批</button>
+            <button type="button" data-state-option="completed" aria-pressed="false"><span></span>已完成</button>
+            <button type="button" data-state-option="failed" aria-pressed="false"><span></span>运行失败</button>
+          </div>
+        </section>
+
+        <dl class="artifact-meta">
+          <div><dt>workspace</dt><dd data-bind="meta.workspace"></dd></div>
+          <div><dt>branch</dt><dd data-bind="meta.branch"></dd></div>
+          <div><dt>session</dt><dd data-bind="meta.session"></dd></div>
+        </dl>
+      </aside>
+
+      <main id="artifact-canvas" class="artifact-canvas" data-tab-scope>
+        <header class="artifact-toolbar">
+          <div class="artifact-title">
+            <span class="file-kind">JS</span>
+            <div>
+              <h1>presentation.js</h1>
+              <p>src/surfaces/gui/assets/presentation.js</p>
+            </div>
+          </div>
+          <div class="artifact-stats">
+            <span class="added">+11</span>
+            <span class="removed">−2</span>
+            <span>模拟 Diff</span>
+          </div>
+          <div class="artifact-tabs" role="tablist" data-tabs>
+            <button type="button" role="tab" data-tab-target="diff" data-selected="true" aria-selected="true">Diff</button>
+            <button type="button" role="tab" data-tab-target="plan" data-selected="false" aria-selected="false">任务</button>
+            <button type="button" role="tab" data-tab-target="checks" data-selected="false" aria-selected="false">验证</button>
+          </div>
+        </header>
+
+        <section class="diff-view" data-tab-panel="diff" aria-label="模拟代码 Diff">
+          <div class="diff-context-bar">
+            <span>@@ -118,5 +118,12 @@</span>
+            <strong>reconcileRecoveredProjection</strong>
+            <button type="button" aria-label="折叠未修改行">折叠上下文</button>
+          </div>
+          <div class="diff-lines" data-diff-lines></div>
+          <button class="line-comment-anchor" type="button" data-comment-anchor aria-label="在第 123 行添加批注">
+            <span>123</span>
+            <strong>在这里批注</strong>
+          </button>
+        </section>
+
+        <section class="plan-view" data-tab-panel="plan" hidden>
+          <header>
+            <span class="section-label">TASK PLAN</span>
+            <strong data-bind="task.progress"></strong>
+          </header>
+          <ol data-plan-list></ol>
+        </section>
+
+        <section class="checks-view" data-tab-panel="checks" hidden>
+          <header>
+            <span class="section-label">VERIFICATION</span>
+            <strong data-completion-copy>完成授权：未授予</strong>
+          </header>
+          <ul data-check-list></ul>
+          <pre><code data-bind="terminal.command"></code></pre>
+        </section>
+
+        <footer class="annotation-composer">
+          <div class="annotation-anchor">
+            <span>批注锚点</span>
+            <strong>presentation.js : 123</strong>
+          </div>
+          <label>
+            <span class="sr-only">输入对 Diff 的批注意见</span>
+            <input type="text" placeholder="写下对这一行的修改意见；静态原型不会发送">
+          </label>
+          <button type="button" data-approval-action="revise">记录为调整意见</button>
+        </footer>
+      </main>
+
+      <aside class="review-rail" aria-label="对话、运行轨迹与审批">
+        <section class="review-conversation">
+          <header>
+            <div>
+              <span class="section-label">CONVERSATION</span>
+              <h2>围绕当前产物</h2>
+            </div>
+            <strong>3 messages</strong>
+          </header>
+          <div class="review-messages" data-message-list data-message-limit="2"></div>
+        </section>
+
+        <details class="review-reasoning" open>
+          <summary>
+            <span>
+              <strong>Reasoning 摘要</strong>
+              <small>绑定当前 Diff</small>
+            </span>
+            <span class="t-think" role="status" data-think-states="核对 sequence|比较 projection|准备 workspace.write">
+              <span class="t-think-sizer" aria-hidden="true">准备 workspace.write</span>
+              <span class="t-think-text" data-text="核对 sequence">核对 sequence</span>
+            </span>
+          </summary>
+          <ol data-reasoning-list></ol>
+        </details>
+
+        <details class="review-tools" open>
+          <summary>
+            <span>
+              <strong>运行轨迹</strong>
+              <small>工具与失败保持可追溯</small>
+            </span>
+            <strong>4</strong>
+          </summary>
+          <ul data-tool-list></ul>
+        </details>
+
+        <section class="artifact-approval" aria-labelledby="artifact-approval-title">
+          <header>
+            <div>
+              <span class="section-label">APPROVAL · DIFF BOUND</span>
+              <h2 id="artifact-approval-title" data-bind="approval.title"></h2>
+            </div>
+            <strong data-approval-state data-state="pending">等待你的决定</strong>
+          </header>
+          <p data-bind="approval.reason"></p>
+          <div class="approval-impact">
+            <span data-bind="approval.capability"></span>
+            <strong data-bind="approval.impact"></strong>
+          </div>
+          <div class="approval-actions">
+            <button type="button" data-approval-action="reject">拒绝</button>
+            <button type="button" data-approval-action="revise">要求调整</button>
+            <button class="primary" type="button" data-approval-action="approve-once">允许一次写入</button>
+          </div>
+        </section>
+
+        <section class="review-outcome" data-run-tone data-tone="warning">
+          <span>当前结论</span>
+          <strong data-outcome-copy>高影响动作已停在人工 gate。</strong>
+          <small data-completion-copy>完成授权：未授予</small>
+        </section>
+      </aside>
+    </div>
+
+    <dialog class="prototype-confirm" data-terminate-dialog>
+      <div class="prototype-confirm__surface">
+        <h2>终止当前模拟运行？</h2>
+        <p>Diff、批注锚点、消息和工具轨迹继续保留，随后可从同一现场恢复。</p>
+        <div class="prototype-confirm__actions">
+          <button type="button" data-close-dialog>取消</button>
+          <button class="danger" type="button" data-confirm-terminate>确认终止</button>
+        </div>
+      </div>
+    </dialog>
+    <div class="prototype-toast" data-toast data-open="false" role="status" aria-live="polite"></div>
+
+    <script src="../shared/scenario.js?rev=20260901-2"></script>
+    <script src="../shared/prototype-runtime.js?rev=20260901-2"></script>
+  </body>
+</html>

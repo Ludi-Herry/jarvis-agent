@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Jarvis GUI Prototype · Conversation First</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="../shared/motion.css">
+    <link rel="stylesheet" href="./prototype.css">
+  </head>
+  <body data-run-state="approval">
+    <a class="skip-link" href="#conversation-main">跳到当前对话</a>
+
+    <div class="conversation-shell">
+      <aside class="history-rail" aria-label="任务与会话">
+        <header class="brand-block">
+          <div class="brand-mark" aria-hidden="true">J</div>
+          <div>
+            <strong>Jarvis</strong>
+            <span>Conversation workspace</span>
+          </div>
+        </header>
+
+        <div class="prototype-note">
+          <span class="prototype-dot" aria-hidden="true"></span>
+          <div>
+            <strong>静态原型</strong>
+            <span>无 Runtime · 无真实写入</span>
+          </div>
+        </div>
+
+        <nav class="session-nav" aria-label="会话列表">
+          <p class="rail-label">当前任务</p>
+          <button class="session-row is-current" type="button">
+            <span class="session-state" aria-hidden="true"></span>
+            <span>
+              <strong data-bind="task.objective"></strong>
+              <small>等待一次性审批 · 14:32</small>
+            </span>
+          </button>
+          <p class="rail-label rail-label-spaced">最近会话</p>
+          <button class="session-row" type="button">
+            <span class="session-state is-done" aria-hidden="true"></span>
+            <span>
+              <strong>统一 CLI doctor 输出</strong>
+              <small>已完成 · 昨天</small>
+            </span>
+          </button>
+          <button class="session-row" type="button">
+            <span class="session-state is-failed" aria-hidden="true"></span>
+            <span>
+              <strong>异常流故障注入</strong>
+              <small>失败，保留证据 · 8 月 30 日</small>
+            </span>
+          </button>
+        </nav>
+
+        <section class="state-lab" aria-labelledby="conversation-state-lab">
+          <div class="rail-label-row">
+            <p id="conversation-state-lab" class="rail-label">状态演示</p>
+            <button type="button" data-state-option="approval" aria-pressed="true">重置</button>
+          </div>
+          <div class="state-options">
+            <button type="button" data-state-option="running" aria-pressed="false">运行</button>
+            <button type="button" data-state-option="approval" aria-pressed="true">待批</button>
+            <button type="button" data-state-option="completed" aria-pressed="false">完成</button>
+            <button type="button" data-state-option="failed" aria-pressed="false">失败</button>
+          </div>
+        </section>
+
+        <footer class="rail-footer">
+          <span data-bind="meta.workspace"></span>
+          <strong data-bind="meta.branch"></strong>
+        </footer>
+      </aside>
+
+      <main id="conversation-main" class="conversation-main">
+        <header class="conversation-topbar">
+          <div class="topbar-copy">
+            <span class="eyebrow" data-bind="task.id"></span>
+            <h1 data-bind="task.objective"></h1>
+          </div>
+          <div class="run-status" data-run-tone data-tone="warning" role="status" aria-live="polite">
+            <span class="run-status-dot" aria-hidden="true"></span>
+            <span>
+              <strong data-run-label>需要审批</strong>
+              <small data-run-detail>一次性写入 2 个现有文件</small>
+            </span>
+          </div>
+          <div class="run-controls" aria-label="运行控制">
+            <button type="button" data-action="pause">暂停</button>
+            <button type="button" data-action="resume" disabled>继续</button>
+            <button type="button" data-action="recover" disabled>恢复</button>
+            <button class="danger" type="button" data-action="terminate">终止</button>
+          </div>
+        </header>
+
+        <section class="conversation-scroll" aria-label="当前对话内容">
+          <div class="conversation-intro">
+            <span>当前目标</span>
+            <p data-bind="task.scope"></p>
+          </div>
+
+          <div class="message-list" data-message-list></div>
+
+          <details class="reasoning-block" open>
+            <summary>
+              <span class="summary-arrow" aria-hidden="true"></span>
+              <span>
+                <strong>Reasoning 摘要</strong>
+                <small>4 条 · 隐藏私有思维链</small>
+              </span>
+              <span class="t-think" role="status" data-think-states="核对恢复序列|比较显示投影|准备写入补丁">
+                <span class="t-think-sizer" aria-hidden="true">比较显示投影</span>
+                <span class="t-think-text" data-text="核对恢复序列">核对恢复序列</span>
+              </span>
+            </summary>
+            <ol data-reasoning-list></ol>
+          </details>
+
+          <details class="tool-block" open>
+            <summary>
+              <span class="summary-arrow" aria-hidden="true"></span>
+              <span>
+                <strong>工具执行</strong>
+                <small>2 完成 · 1 待批 · 1 排队</small>
+              </span>
+            </summary>
+            <ul data-tool-list></ul>
+          </details>
+
+          <article class="assistant-notice">
+            <span class="notice-mark" aria-hidden="true"></span>
+            <div>
+              <strong>执行已停在人工 gate</strong>
+              <p>审批结果会作为新的持久事实进入既有权限路径；本页按钮只演示界面反馈。</p>
+            </div>
+          </article>
+        </section>
+
+        <footer class="composer-bar">
+          <label for="conversation-input">补充指令</label>
+          <div class="composer-surface">
+            <textarea id="conversation-input" rows="2" placeholder="告诉 Jarvis 要调整什么；静态原型不会发送"></textarea>
+            <button type="button" data-approval-action="revise">作为调整意见</button>
+          </div>
+          <div class="composer-meta">
+            <span>Session <code data-bind="meta.session"></code></span>
+            <span data-completion-copy>完成授权：未授予</span>
+          </div>
+        </footer>
+      </main>
+
+      <aside class="context-panel" aria-label="任务状态与产物">
+        <section class="task-brief">
+          <div class="panel-heading">
+            <div>
+              <span class="eyebrow">TASK</span>
+              <h2>任务现场</h2>
+            </div>
+            <strong data-bind="task.progress"></strong>
+          </div>
+          <p data-bind="task.request"></p>
+          <ol class="compact-plan" data-plan-list></ol>
+        </section>
+
+        <section class="approval-card" aria-labelledby="conversation-approval-title">
+          <header>
+            <span class="approval-knot" aria-hidden="true"></span>
+            <div>
+              <span>需要你处理</span>
+              <h2 id="conversation-approval-title" data-bind="approval.title"></h2>
+            </div>
+            <strong data-approval-state data-state="pending">等待你的决定</strong>
+          </header>
+          <p data-bind="approval.reason"></p>
+          <dl>
+            <div>
+              <dt>能力</dt>
+              <dd data-bind="approval.capability"></dd>
+            </div>
+            <div>
+              <dt>影响</dt>
+              <dd data-bind="approval.impact"></dd>
+            </div>
+          </dl>
+          <div class="approval-actions">
+            <button type="button" data-approval-action="reject">拒绝</button>
+            <button type="button" data-approval-action="revise">要求调整</button>
+            <button class="primary" type="button" data-approval-action="approve-once">允许一次</button>
+          </div>
+        </section>
+
+        <section class="artifact-preview" data-tab-scope>
+          <header class="panel-heading">
+            <div>
+              <span class="eyebrow">ARTIFACT</span>
+              <h2>补丁预览</h2>
+            </div>
+            <strong>2 files</strong>
+          </header>
+          <ul class="file-list" data-file-list></ul>
+          <div class="mini-diff" aria-label="模拟 Diff 预览" data-diff-lines></div>
+          <p class="artifact-caption">模拟 Diff · 审批前可检查，写入后仍需测试。</p>
+        </section>
+
+        <section class="outcome-card" data-run-tone data-tone="warning">
+          <span>当前结论</span>
+          <strong data-outcome-copy>高影响动作已停在人工 gate。</strong>
+          <small data-completion-copy>完成授权：未授予</small>
+        </section>
+      </aside>
+    </div>
+
+    <dialog class="prototype-confirm" data-terminate-dialog>
+      <div class="prototype-confirm__surface">
+        <h2>终止这次模拟运行？</h2>
+        <p>界面会切到“已终止”，消息、工具与审批现场继续保留，并提供恢复入口。</p>
+        <div class="prototype-confirm__actions">
+          <button type="button" data-close-dialog>取消</button>
+          <button class="danger" type="button" data-confirm-terminate>确认终止</button>
+        </div>
+      </div>
+    </dialog>
+    <div class="prototype-toast" data-toast data-open="false" role="status" aria-live="polite"></div>
+
+    <script src="../shared/scenario.js?rev=20260901-2"></script>
+    <script src="../shared/prototype-runtime.js?rev=20260901-2"></script>
+  </body>
+</html>

@@ -1,6 +1,6 @@
 import { createServer, type IncomingHttpHeaders, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { readFile } from 'node:fs/promises';
-import { extname, join, resolve } from 'node:path';
+import { extname, join, resolve, relative, isAbsolute, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadWorkspaceObservation } from '../../capabilities/index.js';
 import {
@@ -13,30 +13,39 @@ import {
 import { readEmergencyStop, requestEmergencyStop } from '../../runtime/index.js';
 import { listGuiApprovalHistory } from './approval-history.js';
 import { buildGuiTimeline, type GuiStatusPayload } from './timeline.js';
+import { GuiLiveError, GuiSessionHost, validateGuiTask } from './live-session.js';
+import { handleLiveApi } from './live-api.js';
 
 interface GuiArgs {
   host: string;
   port: number;
   dataDir: string;
+  taskFile?: string;
 }
 
 const DEFAULT_PORT = 4317;
 const ASSET_DIR = fileURLToPath(new URL('./assets/', import.meta.url));
+const APP_DIR = fileURLToPath(new URL('./app/dist/', import.meta.url));
 const GUI_CSRF_HEADER = 'x-jarvis-gui';
 const GUI_CSRF_VALUE = '1';
 
 interface GuiServerContext {
   cwd: string;
   dataDir: string;
+  liveHost?: GuiSessionHost;
+  appDir?: string;
 }
 
 async function main(): Promise<void> {
   const args = parseGuiArgs(process.argv.slice(2));
   const cwd = process.cwd();
   const dataDir = resolve(cwd, args.dataDir);
-  const server = createGuiServer({ cwd, dataDir });
+  const task = args.taskFile ? validateGuiTask(JSON.parse(await readFile(resolve(cwd, args.taskFile), 'utf8'))) : undefined;
+  const liveHost = new GuiSessionHost({ cwd, dataDir: join(dataDir, 'gui-p3'), task });
+  const server = createGuiServer({ cwd, dataDir, liveHost, appDir: APP_DIR });
   const port = await listenWithFallback(server, args.host, args.port);
   console.log(`Jarvis GUI listening on http://${args.host}:${port}`);
+  console.log(`Conversation workspace: http://${args.host}:${port}/app/`);
   console.log(`observe source: npm run observe -- --json --data-dir ${dataDir}`);
   if (!isLoopbackBindHost(args.host)) {
     console.warn('[gui] warning: non-loopback host binding exposes this unauthenticated observation/control server to the network.');
@@ -61,6 +70,26 @@ async function handleRequest(
     }
 
     const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
+    if (url.pathname === '/api/live' || url.pathname.startsWith('/api/live/')) {
+      if (!context.liveHost) { json(res, 503, { error: 'live session host is not configured' }); return; }
+      if (req.method === 'POST' && !hasGuiCsrfHeader(req.headers)) {
+        json(res, 403, { error: `missing ${GUI_CSRF_HEADER} header` }); return;
+      }
+      await handleLiveApi(req, res, url, context.liveHost, () => readJsonBody(req));
+      return;
+    }
+    if (req.method === 'GET' && (url.pathname === '/app' || url.pathname.startsWith('/app/'))) {
+      const root = resolve(context.appDir ?? APP_DIR);
+      const name = url.pathname === '/app' || url.pathname === '/app/' ? 'index.html' : decodeURIComponent(url.pathname.slice('/app/'.length));
+      const file = resolve(root, name);
+      const local = relative(root, file);
+      if (local === '..' || local.startsWith(`..${sep}`) || isAbsolute(local) || !['.html', '.css', '.js'].includes(extname(file))) {
+        json(res, 404, { error: 'not found' }); return;
+      }
+      const content = await readFile(file);
+      res.writeHead(200, { 'content-type': contentType(file), 'cache-control': 'no-store' });
+      res.end(content); return;
+    }
     if (req.method === 'GET' && url.pathname === '/api/status') {
       const payload = await statusPayload(context.cwd, context.dataDir);
       json(res, 200, payload);
@@ -124,7 +153,7 @@ async function handleRequest(
     }
     json(res, 405, { error: 'method not allowed' });
   } catch (err) {
-    const status = err instanceof HumanReviewError ? err.status : err instanceof SyntaxError ? 400 : 500;
+    const status = err instanceof HumanReviewError || err instanceof GuiLiveError ? err.status : err instanceof SyntaxError ? 400 : 500;
     json(res, status, { error: err instanceof Error ? err.message : String(err) });
   }
 }
@@ -212,14 +241,16 @@ function parseGuiArgs(argv: string[]): GuiArgs {
   let host = '127.0.0.1';
   let port = DEFAULT_PORT;
   let dataDir = 'data';
+  let taskFile: string | undefined;
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--host') host = required(argv, ++i, '--host');
     else if (arg === '--port') port = parsePort(required(argv, ++i, '--port'));
     else if (arg === '--data-dir') dataDir = required(argv, ++i, '--data-dir');
+    else if (arg === '--task-file') taskFile = required(argv, ++i, '--task-file');
     else throw new Error(`unknown argument: ${arg}`);
   }
-  return { host, port, dataDir };
+  return { host, port, dataDir, taskFile };
 }
 
 function required(argv: string[], index: number, flag: string): string {

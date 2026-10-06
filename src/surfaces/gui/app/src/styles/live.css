@@ -1,0 +1,478 @@
+/* Live-surface component layer. Layout lives in workbench.css; this file keeps the
+   state colours and component details shared by the live and fixture surfaces. */
+
+html[data-surface="live"],
+html[data-surface="live"] body,
+html[data-surface="live"] #root,
+html[data-surface="fixture"],
+html[data-surface="fixture"] body,
+html[data-surface="fixture"] #root {
+  min-width: 0;
+}
+
+.wb-presence[data-state="success"] .prototype-dot,
+.wb-rail .session-state.is-complete {
+  background: var(--success);
+}
+
+.wb-presence[data-state="loading"] .prototype-dot,
+.wb-rail .session-state.is-starting,
+.wb-rail .session-state.is-running,
+.wb-rail .session-state.is-checking {
+  background: var(--blue);
+}
+
+.wb-presence[data-state="danger"] .prototype-dot,
+.wb-rail .session-state.is-stopping,
+.wb-rail .session-state.is-interrupted,
+.wb-rail .session-state.is-blocked,
+.wb-rail .session-state.is-unavailable {
+  background: var(--red);
+}
+
+.wb-presence[data-state="muted"] .prototype-dot,
+.wb-rail .session-state.is-idle,
+.wb-rail .session-state.is-paused {
+  background: var(--muted);
+}
+
+.wb-rail .session-state.is-approval,
+.wb-rail .session-state.is-pausing,
+.wb-rail .session-state.is-recoverable {
+  background: var(--amber);
+}
+
+.wb-notice {
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: start;
+  border-style: solid;
+}
+
+.wb-notice p {
+  margin: 1px 0 0;
+  color: var(--ink-soft);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.wb-notice[data-tone="danger"] {
+  border-color: color-mix(in srgb, var(--red) 28%, var(--line));
+  background: var(--red-soft);
+}
+
+.wb-notice[data-tone="danger"] .unknown-mark {
+  border-color: var(--red);
+  color: var(--red);
+}
+
+.wb-notice[data-tone="warning"] {
+  border-color: color-mix(in srgb, var(--amber) 30%, var(--line));
+  background: var(--amber-soft);
+}
+
+.wb-notice[data-tone="warning"] .unknown-mark {
+  border-color: var(--amber);
+  color: var(--amber);
+}
+
+.wb-tool-item .tool-detail {
+  max-width: 190px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wb-tool-item .status-word[data-status="committed"] {
+  color: var(--success);
+}
+
+.wb-tool-item .status-word[data-status="proposed"] {
+  color: var(--amber);
+}
+
+.wb-tool-item .status-word[data-status="denied"],
+.wb-tool-item .status-word[data-status="failed"] {
+  color: var(--red);
+}
+
+.wb-pending {
+  border-top: 1px solid var(--line-soft);
+}
+
+.wb-composer .composer-surface button:disabled {
+  border-color: var(--line);
+  background: var(--muted-surface);
+  color: var(--muted);
+}
+
+.wb-requirements,
+.wb-warning-list,
+.live-warning-list {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding: 9px 0 0 18px;
+  border-top: 1px solid var(--line-soft);
+  color: var(--ink-soft);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.wb-stage.is-danger {
+  border-color: color-mix(in srgb, var(--red) 30%, var(--line));
+}
+
+.wb-stage.is-danger .stage-index,
+.wb-stage.is-danger header > div > span,
+.wb-stage.is-danger header > strong {
+  color: var(--red);
+}
+
+.wb-stage.is-success .stage-index,
+.wb-stage.is-success header > div > span,
+.wb-stage.is-success header > strong {
+  color: var(--success);
+}
+
+.wb-stage.is-info .stage-index,
+.wb-stage.is-info header > div > span,
+.wb-stage.is-info header > strong {
+  color: var(--blue);
+}
+
+.wb-stage.is-warning .stage-index,
+.wb-stage.is-warning header > div > span,
+.wb-stage.is-warning header > strong {
+  color: var(--amber);
+}
+
+.live-readonly-note {
+  margin-bottom: 0 !important;
+  padding-top: 8px;
+  border-top: 1px solid var(--line-soft);
+  color: var(--muted) !important;
+}
+
+.live-approval-detail {
+  margin: 0 0 12px;
+  border-top: 1px solid var(--line-soft);
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.live-approval-detail summary,
+.live-history-details summary {
+  padding: 8px 0;
+  color: var(--ink-soft);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.live-approval-detail pre,
+.live-linked-tool pre,
+.live-checks pre {
+  max-height: 150px;
+  margin: 0 0 8px;
+  overflow: auto;
+  padding: 8px;
+  border-radius: 6px;
+  background: var(--code-surface);
+  color: var(--code-text);
+  font-family: Consolas, monospace;
+  font-size: 10px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.live-review-stage,
+.wb-stage-review > p {
+  margin-bottom: 12px;
+}
+
+.live-review-items {
+  display: grid;
+  gap: 9px;
+}
+
+.live-review-items fieldset {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  margin: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+
+.live-review-items legend {
+  max-width: 100%;
+  padding: 0 4px;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.live-review-items fieldset > p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.live-review-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink-soft);
+  font-size: 11px;
+}
+
+.live-review-check input {
+  accent-color: var(--ink);
+}
+
+.live-review-choice {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px;
+}
+
+.live-review-choice button {
+  min-height: 30px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink-soft);
+  font-size: 11px;
+}
+
+.live-review-choice button[data-selected="true"] {
+  border-color: var(--ink);
+  background: var(--muted-surface);
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.live-review-items textarea,
+.wb-stop-dialog textarea {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.live-review-items textarea {
+  min-height: 54px;
+  padding: 7px 8px;
+}
+
+.live-review-submit {
+  width: 100%;
+  margin-top: 10px;
+}
+
+.live-evidence-panel {
+  min-height: 220px;
+}
+
+.live-evidence-pane {
+  min-width: 0;
+}
+
+.live-muted {
+  margin: 9px 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.live-raw-diff {
+  max-height: 180px;
+  padding: 9px 10px;
+  font-family: Consolas, monospace;
+  font-size: 10px;
+  line-height: 1.55;
+  white-space: pre;
+}
+
+.conversation-shell[data-review-expanded="true"] .live-raw-diff {
+  max-height: 360px;
+}
+
+.live-linked-tool {
+  display: grid;
+  gap: 7px;
+  margin-bottom: 9px;
+  padding: 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+}
+
+.live-linked-tool > div {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.live-linked-tool span,
+.live-linked-tool strong,
+.live-linked-tool em,
+.live-linked-tool code,
+.live-linked-tool p {
+  margin: 0;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.live-linked-tool span,
+.live-linked-tool p {
+  color: var(--muted);
+}
+
+.live-linked-tool strong,
+.live-linked-tool code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--ink-soft);
+}
+
+.live-linked-tool em {
+  color: var(--muted);
+  font-style: normal;
+}
+
+.live-linked-tool em[data-status="committed"] {
+  color: var(--success);
+}
+
+.live-linked-tool em[data-status="denied"],
+.live-linked-tool em[data-status="failed"] {
+  color: var(--red);
+}
+
+.live-checks li {
+  align-items: flex-start;
+  padding: 8px 0;
+}
+
+.live-checks li > div {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.live-checks code {
+  color: var(--ink-soft);
+  font-family: Consolas, monospace;
+  font-size: 10px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.live-checks pre {
+  max-height: 180px;
+  margin: 0;
+}
+
+.live-context-warning {
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, var(--amber) 30%, var(--line));
+  border-radius: 6px;
+  background: var(--amber-soft);
+  color: var(--ink-soft) !important;
+}
+
+.live-warning-list {
+  margin-top: 8px;
+  padding-block: 8px;
+  color: var(--red);
+}
+
+.live-history-details {
+  margin-top: 10px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.live-history-details ol {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding: 0 0 0 18px;
+}
+
+.live-history-details li {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.live-history-details li strong,
+.live-history-details li span {
+  margin-right: 6px;
+  color: var(--ink-soft);
+}
+
+.live-history-details li p {
+  margin: 3px 0 0;
+  font-size: 10px;
+}
+
+.wb-stop-dialog .terminate-surface > label {
+  display: block;
+  margin: 15px 0 6px;
+  color: var(--ink-soft);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.wb-stop-dialog textarea {
+  min-height: 76px;
+  padding: 9px 10px;
+}
+
+.live-dialog-error {
+  margin-top: 8px !important;
+  color: var(--red) !important;
+  font-size: 11px;
+}
+
+.live-toast {
+  z-index: 90;
+}
+
+@media (max-width: 1320px) {
+  .wb-tool-item {
+    grid-template-columns: 42px 72px minmax(0, 1fr) auto;
+  }
+
+  .wb-tool-item .tool-detail {
+    max-width: 120px;
+  }
+}
+
+@media (max-width: 560px) {
+  .wb-composer .composer-meta span:nth-child(2),
+  .wb-composer .composer-meta span:nth-child(3) {
+    display: none;
+  }
+
+  .wb-tool-item {
+    grid-template-columns: 42px minmax(0, 1fr) auto;
+  }
+
+  .wb-tool-item code {
+    display: none;
+  }
+
+  .wb-tool-item .tool-detail {
+    max-width: 110px;
+  }
+}

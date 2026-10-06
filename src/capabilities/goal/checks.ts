@@ -73,6 +73,9 @@ export interface CheckDeps {
   /** `audit` records changes only; `forbid` makes any baseline drift reject. */
   worktreeChangePolicy?: WorktreeChangePolicy;
   signal?: AbortSignal;
+  /** Operator-owned private index matching a captured working-tree baseline. It only affects the
+   * tamper diff, never canonical commands or the user's real index. Omitted by existing callers. */
+  baselineIndexFile?: string;
 }
 
 /**
@@ -190,6 +193,7 @@ async function scanTestTamper(
     60_000,
     DIFF_OUTPUT_CHARS,
     deps.signal,
+    deps.baselineIndexFile ? { extraEnv: { GIT_INDEX_FILE: deps.baselineIndexFile } } : undefined,
   );
   if (res.code !== 0) {
     // git failed with a baseline present (unreachable sha / broken index): we CANNOT confirm the

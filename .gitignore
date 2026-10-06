@@ -2,6 +2,7 @@
 node_modules/
 dist/
 *.tsbuildinfo
+output/playwright/
 
 # runtime state (A 阶段暂未用)
 data/*

@@ -1,0 +1,185 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-02T17:59:56.0748257+08:00",
+  "title": "Design System: Jarvis Conversation Workspace",
+  "extensions": {
+    "colorMeta": {
+      "background": {
+        "role": "neutral",
+        "displayName": "White Ground",
+        "canonical": "oklch(1 0 0)",
+        "tonalRamp": ["oklch(0.15 0 0)", "oklch(0.27 0 0)", "oklch(0.39 0 0)", "oklch(0.51 0 0)", "oklch(0.63 0 0)", "oklch(0.75 0 0)", "oklch(0.87 0 0)", "oklch(0.97 0 0)"]
+      },
+      "foreground": {
+        "role": "neutral",
+        "displayName": "Near-black Text",
+        "canonical": "oklch(0.145 0 0)",
+        "tonalRamp": ["oklch(0.15 0 0)", "oklch(0.27 0 0)", "oklch(0.39 0 0)", "oklch(0.51 0 0)", "oklch(0.63 0 0)", "oklch(0.75 0 0)", "oklch(0.87 0 0)", "oklch(0.95 0 0)"]
+      },
+      "primary": {
+        "role": "primary",
+        "displayName": "Near-black Action",
+        "canonical": "oklch(0.205 0 0)",
+        "tonalRamp": ["oklch(0.15 0 0)", "oklch(0.25 0 0)", "oklch(0.37 0 0)", "oklch(0.49 0 0)", "oklch(0.61 0 0)", "oklch(0.73 0 0)", "oklch(0.85 0 0)", "oklch(0.95 0 0)"]
+      },
+      "muted-surface": {
+        "role": "neutral",
+        "displayName": "Soft Neutral",
+        "canonical": "oklch(0.97 0 0)",
+        "tonalRamp": ["oklch(0.15 0 0)", "oklch(0.27 0 0)", "oklch(0.39 0 0)", "oklch(0.51 0 0)", "oklch(0.63 0 0)", "oklch(0.75 0 0)", "oklch(0.87 0 0)", "oklch(0.97 0 0)"]
+      },
+      "border": {
+        "role": "neutral",
+        "displayName": "Quiet Border",
+        "canonical": "oklch(0.922 0 0)",
+        "tonalRamp": ["oklch(0.15 0 0)", "oklch(0.27 0 0)", "oklch(0.39 0 0)", "oklch(0.51 0 0)", "oklch(0.63 0 0)", "oklch(0.75 0 0)", "oklch(0.87 0 0)", "oklch(0.95 0 0)"]
+      },
+      "destructive": {
+        "role": "tertiary",
+        "displayName": "Destructive Red",
+        "canonical": "oklch(0.577 0.245 27.325)",
+        "tonalRamp": ["oklch(0.18 0.12 27.325)", "oklch(0.29 0.12 27.325)", "oklch(0.4 0.12 27.325)", "oklch(0.51 0.12 27.325)", "oklch(0.62 0.12 27.325)", "oklch(0.73 0.12 27.325)", "oklch(0.84 0.12 27.325)", "oklch(0.95 0.12 27.325)"]
+      },
+      "success": {
+        "role": "tertiary",
+        "displayName": "Verified Green",
+        "canonical": "oklch(0.49 0.12 150)",
+        "tonalRamp": ["oklch(0.18 0.08 150)", "oklch(0.29 0.08 150)", "oklch(0.4 0.08 150)", "oklch(0.51 0.08 150)", "oklch(0.62 0.08 150)", "oklch(0.73 0.08 150)", "oklch(0.84 0.08 150)", "oklch(0.95 0.08 150)"]
+      },
+      "warning": {
+        "role": "tertiary",
+        "displayName": "Pending Amber",
+        "canonical": "oklch(0.555 0.135 72)",
+        "tonalRamp": ["oklch(0.18 0.09 72)", "oklch(0.29 0.09 72)", "oklch(0.4 0.09 72)", "oklch(0.51 0.09 72)", "oklch(0.62 0.09 72)", "oklch(0.73 0.09 72)", "oklch(0.84 0.09 72)", "oklch(0.95 0.09 72)"]
+      },
+      "info": {
+        "role": "secondary",
+        "displayName": "Evidence Blue",
+        "canonical": "oklch(0.488 0.16 255)",
+        "tonalRamp": ["oklch(0.18 0.1 255)", "oklch(0.29 0.1 255)", "oklch(0.4 0.1 255)", "oklch(0.51 0.1 255)", "oklch(0.62 0.1 255)", "oklch(0.73 0.1 255)", "oklch(0.84 0.1 255)", "oklch(0.95 0.1 255)"]
+      },
+      "code-surface": {
+        "role": "neutral",
+        "displayName": "Code Surface",
+        "canonical": "oklch(0.18 0 0)",
+        "tonalRamp": ["oklch(0.15 0 0)", "oklch(0.27 0 0)", "oklch(0.39 0 0)", "oklch(0.51 0 0)", "oklch(0.63 0 0)", "oklch(0.75 0 0)", "oklch(0.87 0 0)", "oklch(0.95 0 0)"]
+      }
+    },
+    "typographyMeta": {
+      "headline": { "displayName": "Task Headline", "purpose": "当前任务目标，最多两行。" },
+      "title": { "displayName": "Panel Title", "purpose": "任务、阶段与证据区标题。" },
+      "body": { "displayName": "Conversation Body", "purpose": "对话主阅读内容。" },
+      "label": { "displayName": "Interface Label", "purpose": "按钮、状态与元数据。" },
+      "mono": { "displayName": "Evidence Mono", "purpose": "任务 ID、序号、命令、路径和 Diff。" }
+    },
+    "shadows": [
+      { "name": "soft-selection", "value": "0 1px 2px rgba(0, 0, 0, 0.04)", "purpose": "选中证据页签。" },
+      { "name": "raised-control", "value": "0 1px 3px rgba(0, 0, 0, 0.06)", "purpose": "Composer 等少量输入表面。" },
+      { "name": "dialog-lift", "value": "0 18px 48px rgba(0, 0, 0, 0.16)", "purpose": "终止确认与 Toast。" }
+    ],
+    "motion": [
+      { "name": "micro", "value": "80ms", "purpose": "极短反馈。" },
+      { "name": "quick", "value": "150ms", "purpose": "按钮颜色与按压反馈。" },
+      { "name": "fast", "value": "250ms", "purpose": "Accordion、Modal 与 Toast。" },
+      { "name": "resize", "value": "300ms cubic-bezier(0.22, 1, 0.36, 1)", "purpose": "审阅栏 compact 与 expanded 切换。" },
+      { "name": "medium", "value": "350ms", "purpose": "保留给较长但有界的状态变化。" },
+      { "name": "reduced-motion", "value": "0.01ms or none", "purpose": "关闭位移、缩放、模糊、平滑滚动和宽度过渡。" }
+    ],
+    "breakpoints": [
+      { "name": "desktop-min", "value": "1080px" },
+      { "name": "compact-desktop", "value": "1320px" },
+      { "name": "short-viewport", "value": "820px height" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "当前阶段唯一主动作。",
+      "html": "<button class=\"ds-btn-primary\">允许一次</button>",
+      "css": ".ds-btn-primary { min-height: 32px; padding: 0 10px; border: 1px solid oklch(0.205 0 0); border-radius: 7px; background: oklch(0.205 0 0); color: oklch(0.985 0 0); font: 650 11px/1.45 sans-serif; transition: color 150ms ease-in-out, background-color 150ms ease-in-out, transform 150ms cubic-bezier(0.22,1,0.36,1); } .ds-btn-primary:hover { background: oklch(0.145 0 0); } .ds-btn-primary:focus-visible { outline: 2px solid oklch(0.708 0 0); outline-offset: 2px; } .ds-btn-primary:active { transform: translateY(1px); }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "普通控制与次级决定。",
+      "html": "<button class=\"ds-btn-secondary\">要求调整</button>",
+      "css": ".ds-btn-secondary { min-height: 32px; padding: 0 10px; border: 1px solid oklch(0.922 0 0); border-radius: 7px; background: oklch(1 0 0); color: oklch(0.145 0 0); font: 650 11px/1.45 sans-serif; transition: border-color 150ms ease-in-out, background-color 150ms ease-in-out; } .ds-btn-secondary:hover { border-color: oklch(0.708 0 0); background: oklch(0.97 0 0); } .ds-btn-secondary:focus-visible { outline: 2px solid oklch(0.708 0 0); outline-offset: 2px; }"
+    },
+    {
+      "name": "Composer Field",
+      "kind": "input",
+      "refersTo": "composer",
+      "description": "持续补充要求的底部输入面。",
+      "html": "<label class=\"ds-composer\"><textarea aria-label=\"补充指令\" placeholder=\"告诉 Jarvis 要调整什么\"></textarea><button>发送</button></label>",
+      "css": ".ds-composer { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: end; gap: 8px; padding: 8px; border: 1px solid oklch(0.922 0 0); border-radius: 8px; background: oklch(1 0 0); box-shadow: 0 1px 3px rgba(0,0,0,.06); } .ds-composer:focus-within { border-color: oklch(0.708 0 0); box-shadow: 0 0 0 2px color-mix(in srgb, oklch(0.708 0 0) 22%, transparent); } .ds-composer textarea { min-height: 38px; resize: vertical; border: 0; outline: 0; background: transparent; color: oklch(0.145 0 0); font: 400 13px/1.55 sans-serif; } .ds-composer button { min-height: 32px; padding: 0 10px; border: 0; border-radius: 7px; background: oklch(0.205 0 0); color: oklch(0.985 0 0); }"
+    },
+    {
+      "name": "Session Row",
+      "kind": "nav",
+      "refersTo": "session-row",
+      "description": "会话连续性的紧凑导航项。",
+      "html": "<button class=\"ds-session-row\" aria-current=\"page\"><span></span><strong>修复会话恢复后的消息状态</strong></button>",
+      "css": ".ds-session-row { display: grid; grid-template-columns: 7px minmax(0,1fr); gap: 9px; width: 100%; padding: 9px 8px; border: 1px solid oklch(0.922 0 0); border-radius: 6px; background: oklch(1 0 0); color: oklch(0.145 0 0); text-align: left; } .ds-session-row > span { width: 6px; height: 6px; margin-top: 5px; border-radius: 50%; background: oklch(0.555 0.135 72); } .ds-session-row strong { overflow: hidden; font: 650 11px/1.45 sans-serif; text-overflow: ellipsis; white-space: nowrap; } .ds-session-row:hover { background: oklch(0.97 0 0); } .ds-session-row:focus-visible { outline: 2px solid oklch(0.708 0 0); outline-offset: 2px; }"
+    },
+    {
+      "name": "Active Review Stage",
+      "kind": "card",
+      "refersTo": "review-card",
+      "description": "审批、验证、失败或完成共享的稳定判断位置。",
+      "html": "<section class=\"ds-review-card\"><small>需要你处理</small><h3>批准一次性写入？</h3><p>写入 2 个现有文件；不改变 Runtime 或完成授权。</p></section>",
+      "css": ".ds-review-card { padding: 13px; border: 1px solid oklch(0.922 0 0); border-radius: 8px; background: oklch(1 0 0); color: oklch(0.145 0 0); } .ds-review-card small { color: oklch(0.556 0 0); font: 700 11px/1.45 sans-serif; } .ds-review-card h3 { margin: 4px 0 8px; font: 680 15px/1.35 sans-serif; } .ds-review-card p { margin: 0; color: oklch(0.269 0 0); font: 400 11px/1.55 sans-serif; }"
+    },
+    {
+      "name": "Evidence Tabs",
+      "kind": "nav",
+      "refersTo": "evidence-tabs",
+      "description": "Diff、验证与上下文的固定证据入口。",
+      "html": "<div class=\"ds-evidence-tabs\"><button aria-selected=\"true\">Diff</button><button>验证</button><button>上下文</button></div>",
+      "css": ".ds-evidence-tabs { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 2px; padding: 3px; border: 1px solid oklch(0.922 0 0); border-radius: 7px; background: oklch(0.97 0 0); } .ds-evidence-tabs button { min-height: 30px; border: 0; border-radius: 5px; background: transparent; color: oklch(0.556 0 0); font: 650 11px/1.45 sans-serif; } .ds-evidence-tabs button[aria-selected=\"true\"] { background: oklch(1 0 0); color: oklch(0.145 0 0); box-shadow: 0 1px 2px rgba(0,0,0,.04); } .ds-evidence-tabs button:focus-visible { outline: 2px solid oklch(0.708 0 0); outline-offset: 1px; }"
+    },
+    {
+      "name": "Completion Authority",
+      "kind": "chip",
+      "refersTo": "completion-authority",
+      "description": "独立表达完成授权是否已授予。",
+      "html": "<span class=\"ds-authority\"><small>完成授权</small><strong>已授予</strong></span>",
+      "css": ".ds-authority { display: inline-flex; align-items: center; justify-content: center; min-width: 104px; height: 32px; padding: 0 10px; border: 1px solid oklch(0.205 0 0); border-radius: 6px; background: oklch(0.205 0 0); color: oklch(0.985 0 0); } .ds-authority small, .ds-authority strong { font: 650 11px/1 sans-serif; white-space: nowrap; } .ds-authority small { margin-right: 5px; color: color-mix(in srgb, oklch(0.985 0 0) 76%, transparent); font-size: 10px; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "Neutral Operations Workspace",
+    "overview": "Jarvis 使用纯白、低装饰、信息密度可控的桌面工作区。它让持续对话占据主要阅读空间，同时把会话连续性、人工权力和执行证据固定在可预期的位置。视觉层服务于判断速度，界面不制造纸张、贴纸、印章或文化材质联想。\n\n整体气质接近 shadcn、Codex 与 DeepSeek Harness：文字近黑，边界浅灰，主要动作近黑，状态色只在运行事实需要区分时出现。三栏在空间上稳定，右栏只展示一个活动阶段，完成授权始终保持独立可见。",
+    "keyCharacteristics": [
+      "纯白主表面与浅灰辅助表面。",
+      "1px 中性边界，圆角紧凑，阴影极轻。",
+      "对话优先的三栏桌面结构。",
+      "状态色稀少且语义固定。",
+      "Motion 只说明状态变化，并完整支持 reduced motion。"
+    ],
+    "rules": [
+      { "name": "The White Ground Rule", "body": "主视图保持纯白；辅助层级只用轻微明度差和 1px 边界表达。", "section": "colors" },
+      { "name": "The Semantic Color Rule", "body": "彩色只承载运行、审批、失败、验证或完成事实；导航和装饰继续使用中性色。", "section": "colors" },
+      { "name": "The Reading Width Rule", "body": "长消息与 Composer 共享 760px 上限；右栏摘要保持短行，完整代码由扩展审阅承载。", "section": "typography" },
+      { "name": "The One Active Stage Rule", "body": "右栏同时只展开一个需要用户判断的活动阶段，旧阶段转为只读回执或证据。", "section": "layout" },
+      { "name": "The Preserved Context Rule", "body": "暂停、终止和恢复保留三栏滚动位置、证据页签、焦点和 Composer 草稿。", "section": "layout" },
+      { "name": "The Flat-by-default Rule", "body": "常驻信息不使用投影；阴影只说明输入焦点、浮层或临时覆盖关系。", "section": "elevation" }
+    ],
+    "dos": [
+      "Do 让白色、中性灰和近黑承担绝大多数视觉面积。",
+      "Do 把彩色留给审批、运行、失败、验证和完成事实。",
+      "Do 在 1280×800 下验证中央阅读宽度、主动作与急停可达性。",
+      "Do 使用 80–350ms 的状态过渡，并为 reduced motion 关闭位移、缩放、模糊和宽度动画。",
+      "Do 在视觉简化后继续保留任务、证据、审批、恢复与完成授权信息。"
+    ],
+    "donts": [
+      "Don't 使用暖纸底、纸张纹理、朱砂印章、旋转贴纸、和风或中国风材质。",
+      "Don't 用渐变、重阴影、玻璃模糊或装饰性图案制造层级。",
+      "Don't 让多个活动阶段同时展开，或把审批入口复制到多个位置。",
+      "Don't 用颜色作为状态的唯一线索。",
+      "Don't 让 assistant-ui、shadcn 或任何组件库默认主题覆盖 Jarvis 的产品层级。"
+    ]
+  }
+}

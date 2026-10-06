@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Jarvis GUI Prototype · Task First</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="../shared/motion.css">
+    <link rel="stylesheet" href="./prototype.css">
+  </head>
+  <body data-run-state="approval">
+    <a class="skip-link" href="#task-canvas">跳到任务画布</a>
+
+    <div class="task-shell">
+      <header class="command-header">
+        <div class="task-brand">
+          <span class="task-brand-mark" aria-hidden="true">J</span>
+          <span>
+            <strong>JARVIS</strong>
+            <small>OPERATOR</small>
+          </span>
+        </div>
+        <div class="command-objective">
+          <span data-bind="task.id"></span>
+          <h1 data-bind="task.objective"></h1>
+        </div>
+        <div class="command-status" data-run-tone data-tone="warning" role="status" aria-live="polite">
+          <span class="status-pulse" aria-hidden="true"></span>
+          <span>
+            <strong data-run-label>需要审批</strong>
+            <small data-run-detail>一次性写入 2 个现有文件</small>
+          </span>
+        </div>
+        <div class="command-controls" aria-label="运行控制">
+          <button type="button" data-action="pause">暂停</button>
+          <button type="button" data-action="resume" disabled>继续</button>
+          <button type="button" data-action="recover" disabled>恢复</button>
+          <button class="danger" type="button" data-action="terminate">终止</button>
+        </div>
+      </header>
+
+      <aside class="stage-index" aria-label="任务导航">
+        <div class="prototype-stamp">
+          <span>STATIC / P1</span>
+          <strong>任务主导</strong>
+          <p>页面行为只更新模拟状态，不触发 Jarvis API。</p>
+        </div>
+
+        <section class="phase-meter" aria-labelledby="phase-meter-title">
+          <div class="section-cap">
+            <span id="phase-meter-title">PHASES</span>
+            <strong data-bind="task.progress"></strong>
+          </div>
+          <ol data-plan-list></ol>
+        </section>
+
+        <section class="state-console" aria-labelledby="task-state-console">
+          <div class="section-cap">
+            <span id="task-state-console">STATE LAB</span>
+            <button type="button" data-state-option="approval" aria-pressed="true">RESET</button>
+          </div>
+          <div class="state-grid">
+            <button type="button" data-state-option="running" aria-pressed="false">运行中</button>
+            <button type="button" data-state-option="approval" aria-pressed="true">待审批</button>
+            <button type="button" data-state-option="completed" aria-pressed="false">已完成</button>
+            <button type="button" data-state-option="failed" aria-pressed="false">失败</button>
+          </div>
+        </section>
+
+        <dl class="run-identity">
+          <div>
+            <dt>workspace</dt>
+            <dd data-bind="meta.workspace"></dd>
+          </div>
+          <div>
+            <dt>branch</dt>
+            <dd data-bind="meta.branch"></dd>
+          </div>
+          <div>
+            <dt>session</dt>
+            <dd data-bind="meta.session"></dd>
+          </div>
+        </dl>
+      </aside>
+
+      <main id="task-canvas" class="task-canvas">
+        <section class="mission-strip">
+          <div>
+            <span class="section-label">MISSION</span>
+            <p data-bind="task.request"></p>
+          </div>
+          <div class="scope-lock">
+            <span>边界锁</span>
+            <strong>Runtime / Session / API 保持不变</strong>
+          </div>
+        </section>
+
+        <section class="task-focus" aria-labelledby="task-focus-heading">
+          <header class="focus-heading">
+            <div>
+              <span class="section-label">ACTIVE STEP · 03</span>
+              <h2 id="task-focus-heading">修正刷新屏障</h2>
+            </div>
+            <span class="t-think" role="status" data-think-states="核对 sequence|比较 projection|等待 workspace.write">
+              <span class="t-think-sizer" aria-hidden="true">等待 workspace.write</span>
+              <span class="t-think-text" data-text="核对 sequence">核对 sequence</span>
+            </span>
+          </header>
+
+          <div class="focus-grid">
+            <details class="reasoning-console" open>
+              <summary>
+                <span>REASONING SUMMARY</span>
+                <strong>4</strong>
+              </summary>
+              <ol data-reasoning-list></ol>
+            </details>
+
+            <section class="proposed-change" aria-labelledby="proposed-change-title">
+              <header>
+                <div>
+                  <span class="section-label">PROPOSED OUTPUT</span>
+                  <h3 id="proposed-change-title">刷新屏障补丁</h3>
+                </div>
+                <strong data-bind="approval.impact"></strong>
+              </header>
+              <ul class="file-list" data-file-list></ul>
+              <div class="diff-snippet" data-diff-lines aria-label="模拟 Diff"></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="execution-board" aria-labelledby="execution-board-title">
+          <header>
+            <div>
+              <span class="section-label">TRAJECTORY</span>
+              <h2 id="execution-board-title">执行队列</h2>
+            </div>
+            <span>sequence 124 → 128</span>
+          </header>
+          <ul class="tool-queue" data-tool-list></ul>
+          <div class="terminal-row">
+            <code data-bind="terminal.command"></code>
+            <span>等待审批后执行</span>
+          </div>
+        </section>
+
+        <footer class="task-composer">
+          <div class="composer-context">
+            <span>持续输入</span>
+            <strong>消息不会改变已锁定范围</strong>
+          </div>
+          <label class="composer-input">
+            <span class="sr-only">补充任务指令</span>
+            <input type="text" placeholder="补充约束或纠偏；静态原型不会发送">
+          </label>
+          <button type="button" data-approval-action="revise">写入调整意见</button>
+        </footer>
+      </main>
+
+      <aside class="runtime-rail" aria-label="审批、消息与验证证据">
+        <section class="gate-card" aria-labelledby="task-approval-title">
+          <header>
+            <div>
+              <span class="section-label">HUMAN GATE</span>
+              <h2 id="task-approval-title" data-bind="approval.title"></h2>
+            </div>
+            <strong data-approval-state data-state="pending">等待你的决定</strong>
+          </header>
+          <p data-bind="approval.reason"></p>
+          <dl>
+            <div>
+              <dt>CAPABILITY</dt>
+              <dd data-bind="approval.capability"></dd>
+            </div>
+            <div>
+              <dt>REQUEST</dt>
+              <dd data-bind="approval.requestId"></dd>
+            </div>
+          </dl>
+          <div class="gate-actions">
+            <button type="button" data-approval-action="reject">拒绝</button>
+            <button type="button" data-approval-action="revise">退回调整</button>
+            <button class="primary" type="button" data-approval-action="approve-once">允许一次并继续</button>
+          </div>
+        </section>
+
+        <section class="rail-section message-monitor">
+          <header>
+            <span class="section-label">LATEST MESSAGES</span>
+            <strong>2</strong>
+          </header>
+          <div data-message-list data-message-limit="2"></div>
+        </section>
+
+        <section class="rail-section evidence-monitor">
+          <header>
+            <span class="section-label">VERIFICATION</span>
+            <strong>4 gates</strong>
+          </header>
+          <ul data-check-list></ul>
+        </section>
+
+        <section class="terminal-outcome" data-run-tone data-tone="warning">
+          <span>RUN OUTCOME</span>
+          <strong data-outcome-copy>高影响动作已停在人工 gate。</strong>
+          <small data-completion-copy>完成授权：未授予</small>
+        </section>
+      </aside>
+    </div>
+
+    <dialog class="prototype-confirm" data-terminate-dialog>
+      <div class="prototype-confirm__surface">
+        <h2>终止当前模拟任务？</h2>
+        <p>任务会进入 interrupted，执行队列、消息与审批现场保持可恢复。</p>
+        <div class="prototype-confirm__actions">
+          <button type="button" data-close-dialog>取消</button>
+          <button class="danger" type="button" data-confirm-terminate>确认终止</button>
+        </div>
+      </div>
+    </dialog>
+    <div class="prototype-toast" data-toast data-open="false" role="status" aria-live="polite"></div>
+
+    <script src="../shared/scenario.js?rev=20260901-2"></script>
+    <script src="../shared/prototype-runtime.js?rev=20260901-2"></script>
+  </body>
+</html>

@@ -1,0 +1,41 @@
+{
+  "taskId": "gui-6a82e434-1b8a-43dc-9406-f9be7b43178e",
+  "objective": "首次使用引导",
+  "status": "interrupted",
+  "productAcceptance": "NOT ACCEPTED",
+  "completion": {
+    "granted": false,
+    "verdict": "none",
+    "rationale": "尚未产生可信裁决"
+  },
+  "elapsedMs": 654773,
+  "usage": {
+    "inputTokens": 82643,
+    "outputTokens": 2059,
+    "costCny": 0.557628,
+    "costNote": "估算 CNY；火山引擎 Doubao-Seed-2.1-pro 官方产品价目，2026-09-06 查询 https://www.volcengine.com/product/doubao；不含无法单列的缓存折扣"
+  },
+  "model": "doubao-seed-2-1-pro-260628",
+  "artifactCount": 0,
+  "toolCount": 8,
+  "ownerGuiInterventions": 0,
+  "externalTargetImplementation": 0,
+  "externalActions": [
+    "主线程启动任务",
+    "主线程修复大消息传输并刷新页面",
+    "主线程按停止条件执行急停"
+  ],
+  "proposal": "first-task-guide.unapplied.tsx.txt",
+  "proposalApplied": false,
+  "proposalLimitation": "引用了未创建、未获写入授权的 first-task-guide.module.css；草稿未通过构建验收",
+  "attributedBottleneck": "SSE 把 Node 写缓冲背压误判为断线，大输出使审批持续不可用；此后剩余时限不足本轮完整验证",
+  "sources": {
+    "session": "H:\\jarvis-agent\\data\\gui-p3\\sessions\\gui-6a82e434-1b8a-43dc-9406-f9be7b43178e.jsonl",
+    "goal": "H:\\jarvis-agent\\data\\gui-p3\\goals\\gui-6a82e434-1b8a-43dc-9406-f9be7b43178e.jsonl",
+    "approvals": "H:\\jarvis-agent\\data\\gui-p3\\approvals\\gui-6a82e434-1b8a-43dc-9406-f9be7b43178e.jsonl",
+    "events": "H:\\jarvis-agent\\data\\gui-p3\\gui\\gui-6a82e434-1b8a-43dc-9406-f9be7b43178e.jsonl"
+  },
+  "newOffload": "data/tool-results/call_p1hc0ftxredzuzyd238mmr5w.txt",
+  "legacyVerdictsChanged": false,
+  "p4Started": false
+}

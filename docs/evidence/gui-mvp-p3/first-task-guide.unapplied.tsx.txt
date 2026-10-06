@@ -1,0 +1,114 @@
+import styles from './first-task-guide.module.css';
+
+export function FirstTaskGuide() {
+  return (
+    <section className={styles.guide} aria-label="首次使用引导">
+      <header className={styles.header}>
+        <span className={styles.eyebrow}>第一次使用</span>
+        <h1 className={styles.title}>你不是在“聊天写代码”，而是在委托一项可验证的任务</h1>
+        <p className={styles.lead}>
+          把目标写清楚，让 Jarvis 在边界内工作；每次需要改动或运行命令时先交给你确认；最后用右侧证据逐项验收，确认后才算完成。
+        </p>
+      </header>
+
+      <div className={styles.columns} role="list" aria-label="三栏布局说明">
+        <article className={styles.column} role="listitem" aria-label="左侧任务历史">
+          <span className={styles.columnBadge}>左栏</span>
+          <h2>任务历史</h2>
+          <p>这里保存已经开始或完成的任务会话。第一次进来通常是空的，新任务启动后才会出现记录。</p>
+          <ul>
+            <li>查看当前是否已有运行中的会话</li>
+            <li>回到历史任务继续查看，不要把多个目标混在一条会话里</li>
+            <li>左侧没有内容时，就从中间开始提交第一项任务</li>
+          </ul>
+        </article>
+
+        <article className={styles.column} role="listitem" aria-label="中间目标与对话">
+          <span className={styles.columnBadge}>中间</span>
+          <h2>目标与持续对话</h2>
+          <p>这里是你和 Jarvis 的工作区。先固定要达成的目标，运行中再补充约束、文件范围和验收要求。</p>
+          <ul>
+            <li>在底部输入框写下第一项目标：要改什么、不能碰什么、怎样算完成</li>
+            <li>如果页面已经给出固定任务，先确认目标，再点“启动”</li>
+            <li>运行中继续在中间补充信息，不要重复发送同一句话</li>
+          </ul>
+        </article>
+
+        <article className={styles.column} role="listitem" aria-label="右侧检查与审批">
+          <span className={styles.columnBadge}>右栏</span>
+          <h2>检查、审批与证据</h2>
+          <p>所有需要你决定的动作、Diff、验证结果和人工验收项都在这里。完成不是靠感觉，而是靠这里的证据。</p>
+          <ul>
+            <li>出现“需要审批”时，先看动作和影响，再决定允许一次、拒绝或要求调整</li>
+            <li>完成前查看 Diff、检查记录和上下文，确认没有越界或伪造结果</li>
+            <li>进入人工验收后，逐项勾选并给出通过/不通过理由</li>
+          </ul>
+        </article>
+      </div>
+
+      <section className={styles.flow} aria-label="第一项任务流程">
+        <h2 className={styles.sectionTitle}>从哪里开始第一项任务</h2>
+        <ol className={styles.steps}>
+          <li>
+            <strong>1. 写目标</strong>
+            <p>
+              先看中间底部的输入框。如果还没有固定任务，就直接描述第一项目标；如果已显示任务目标，先核对是否准确，再补充限制条件。
+            </p>
+          </li>
+          <li>
+            <strong>2. 启动并等待边界</strong>
+            <p>
+              点击输入框右侧的“启动”。任务开始后，Jarvis 会先分析，不会擅自写入文件或运行命令。
+            </p>
+          </li>
+          <li>
+            <strong>3. 逐个处理审批</strong>
+            <p>
+              当右栏出现“允许一次 / 拒绝 / 要求调整”时，说明接下来的动作需要你授权。只批准你确认安全且符合目标的一次操作。
+            </p>
+          </li>
+          <li>
+            <strong>4. 用证据验证</strong>
+            <p>
+              查看右栏的 Diff、验证检查和上下文。不要只看中间回复；以右栏实际改动和检查结果为准。
+            </p>
+          </li>
+          <li>
+            <strong>5. 完成授权</strong>
+            <p>
+              只有当你逐项完成人工验收并提交通过判断后，任务才会获得完成授权。验证通过本身不等于完成。
+            </p>
+          </li>
+        </ol>
+      </section>
+
+      <section className={styles.decisions} aria-label="审批决策说明">
+        <h2 className={styles.sectionTitle}>什么时候点哪个按钮</h2>
+        <div className={styles.decisionGrid}>
+          <article>
+            <h3>允许一次</h3>
+            <p>你看过动作、影响和参数，确认这一步符合目标且风险可接受。只授权这一次，后续动作仍会再次请求。</p>
+          </article>
+          <article>
+            <h3>拒绝</h3>
+            <p>这一步不该做、方向错了，或会触碰你明确禁止的范围。写清拒绝理由，Jarvis 会停下并改走别的路径。</p>
+          </article>
+          <article>
+            <h3>要求调整</h3>
+            <p>方向大体可以，但范围、方式、命名、文件或命令还不对。说明你希望怎样改，Jarvis 会按反馈重做这一步。</p>
+          </article>
+        </div>
+      </section>
+
+      <section className={styles.checklist} aria-label="完成前确认">
+        <h2 className={styles.sectionTitle}>怎样才算完成</h2>
+        <ul>
+          <li>右栏 Diff 只包含本次任务相关改动</li>
+          <li>验证检查已跑完，没有被你忽略的失败或警告</li>
+          <li>每个人工验收项都已检查证据并写明判断</li>
+          <li>你明确提交通过后，状态才会进入“已完成”</li>
+        </ul>
+      </section>
+    </section>
+  );
+}

@@ -1,6 +1,6 @@
 # Jarvis-Agent · 项目规范
 
-陆凌华（UX 设计师，非程序员）自研的 TypeScript/Node 编码 agent —— **Jarvis-Agent**（CLI + agent harness），未来叠加自定义 GUI。本文件是这个仓库的规则层；跨工具个人默认见 `~/.codex/AGENTS.md`，不在此重复。
+陆凌华（UX 设计师，非程序员）自研的 TypeScript/Node 编码 agent —— **Jarvis-Agent**（CLI + agent harness），未来叠加自定义 GUI。本文件是这个仓库的规则层；个人全局默认由当前宿主加载，本文件定义项目专属规则。
 
 ## 产品定位与范围
 - **是**：一个有状态宿主 + 纯函数决策点的 agent loop，事件流 day-1 解耦前端，渐进披露 skill，确定性交脚本、判断交模型。
@@ -50,11 +50,11 @@ data/          # 运行期状态（gitignore 大件；A 阶段暂未用）
 - 统一 CLI：`npm run jarvis -- --help`（root command、version、全局 cwd、doctor 与既有 primitive 转发）
 - 续跑：`npm run resume`（恢复 `data/sessions/` 最近一个会话；指定 id 用 `npx tsx src/surfaces/cli/index.ts --resume <id>`。注：PowerShell 下 `npm run dev -- --resume` 会被 npm 吞掉 `--resume`，故用专用脚本）
 - 活体 demo（需 `ARK_API_KEY`）：`demo:a1/a2/a3/a5`（A 各里程碑）、`demo:b1`（权限闸门：读 allow / 改源码 ask / 读 .env deny）、`demo:b3`（bash 安全闭环 + 危险/密钥拦截）
-> 写代码声明完成前，先把 typecheck / lint / test / build 端到端跑通，有证据再说"完成"。
+> 源码或运行行为变更声明完成前，运行 typecheck / lint / test / build。纯文档改动检查差异、引用路径与命令名称，不启动业务全量测试。
 
 ## Git
 - commit message 用英文，简洁说明意图。
 - 默认分支 main；push 仅在明确要求时（跨设备同步），不靠 push 部署。
 
 ## 清理
-- 阶段任务完成后删临时产物（评估/备份/中间脚本），确认只剩核心交付。
+- 阶段任务结束时列出本轮临时产物；删除须按用户授权执行。保留失败证据、备份和其他会话文件，不自动清理。

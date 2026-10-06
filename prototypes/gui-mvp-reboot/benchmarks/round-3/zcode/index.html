@@ -1,0 +1,772 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-author="zcode" data-round="3">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<title>Jarvis 工作台 · GUI-RECOVER-17</title>
+<style>
+/* ============ motion tokens ============ */
+:root{
+  --t1:120ms; --t2:220ms; --t3:360ms;
+  --ease:cubic-bezier(.22,.61,.25,1);
+  /* ============ material: 工程档案纸 ============ */
+  --paper:#F3EFE6; --paper-2:#FBF9F3; --paper-3:#ECE7D9;
+  --ink:#21201C; --ink-2:#5A564C; --ink-3:#8D8779;
+  --line:#D8D1BE; --line-2:#C4BCA5;
+  --accent:#B5401F; --ok:#2E6B4F;
+  --serif:Georgia,"Times New Roman","Songti SC",SimSun,serif;
+  --sans:"Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+  --mono:Consolas,"Courier New",monospace;
+  --review-w:480px;
+}
+@media (max-width:1360px){ :root{ --review-w:440px; } }
+
+*{box-sizing:border-box}
+html,body{height:100%;overflow:hidden}
+body{margin:0;background:var(--paper);color:var(--ink);font:13.5px/1.6 var(--sans)}
+
+:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+button{font-family:var(--sans)}
+
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{
+    transition-duration:.01ms !important;
+    animation-duration:.01ms !important;
+    animation-iteration-count:1 !important;
+    scroll-behavior:auto !important;
+  }
+}
+
+/* ============ shell ============ */
+.app{height:100vh;display:flex;flex-direction:column}
+
+/* ============ 头部任务带 ============ */
+.taskband{
+  display:flex;align-items:center;gap:14px;
+  padding:9px 16px;background:var(--paper-2);
+  border-bottom:2px solid var(--ink);flex:none;
+}
+.brandmark{
+  width:32px;height:32px;background:var(--ink);color:var(--paper);
+  font:700 16px var(--serif);display:flex;align-items:center;justify-content:center;flex:none;
+}
+.taskhead{display:flex;flex-direction:column;gap:3px;min-width:0}
+.chips{display:flex;gap:6px;align-items:center}
+.task-chip{border:1px solid var(--ink);padding:1px 8px;font-size:12px;font-weight:600;letter-spacing:.05em;white-space:nowrap}
+.proto-chip{border:1px dashed var(--ink-3);color:var(--ink-2);padding:1px 8px;font-size:12px;white-space:nowrap}
+.goal{font:600 14px/1.3 var(--serif);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* 阶段步进 */
+.stepper{display:flex;align-items:center;flex:none;margin-left:6px}
+.step{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--ink-3);white-space:nowrap}
+.step .g{font-size:13px;width:1em;text-align:center}
+.step.done{color:var(--ink-2)}
+.step.current{color:var(--ink);font-weight:600}
+.step.current .g{color:var(--accent)}
+.step-sep{width:22px;height:1px;background:var(--line-2);margin:0 8px;flex:none}
+
+/* 运行控制 */
+.runbox{display:flex;align-items:center;gap:10px;margin-left:auto;flex:none}
+.run-status{font-size:12.5px;font-weight:600;min-width:70px;text-align:right}
+.ctrls{display:flex;gap:6px;align-items:center}
+.icobtn{
+  width:30px;height:30px;border:1px solid var(--line-2);background:var(--paper-2);
+  display:flex;align-items:center;justify-content:center;cursor:pointer;
+  transition:background var(--t1) var(--ease),border-color var(--t1) var(--ease);
+}
+.icobtn svg{width:13px;height:13px;stroke:var(--ink);fill:none;stroke-width:2}
+.icobtn:hover:not(:disabled){background:var(--paper-3)}
+.icobtn:disabled{opacity:.32;cursor:not-allowed}
+.termbtn{
+  height:30px;padding:0 11px;font-size:12.5px;font-weight:600;cursor:pointer;
+  border:1.5px solid var(--accent);color:var(--accent);background:transparent;
+  transition:background var(--t1) var(--ease),color var(--t1) var(--ease);
+}
+.termbtn:hover:not(:disabled){background:var(--accent);color:#FBF9F3}
+.termbtn.armed{background:var(--accent);color:#FBF9F3}
+.termbtn:disabled{opacity:.32;cursor:not-allowed}
+
+/* 完成授权徽章 */
+.auth{
+  display:flex;align-items:center;gap:8px;border:1.5px solid var(--ink);
+  padding:4px 10px;font-size:12px;font-weight:600;background:var(--paper-2);
+  white-space:nowrap;transition:border-color var(--t2) var(--ease);
+}
+.auth .dot{width:8px;height:8px;background:var(--accent);flex:none;transition:background var(--t2) var(--ease)}
+.auth.done{border-color:var(--ok)}
+.auth.done .dot{background:var(--ok)}
+
+/* ============ 主体两表面 ============ */
+.main{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) var(--review-w)}
+
+/* ---------- 左：对话 ---------- */
+.chatcol{display:flex;flex-direction:column;min-width:0;border-right:1px solid var(--line-2)}
+.colcap{
+  flex:none;display:flex;justify-content:space-between;align-items:center;
+  padding:6px 22px;border-bottom:1px solid var(--line);
+  font-size:12px;color:var(--ink-3);letter-spacing:.08em;
+}
+.chat-scroll{flex:1;min-height:0;overflow-y:auto;padding:16px 22px 8px;scroll-behavior:smooth}
+.chat-inner{max-width:780px}
+
+@keyframes rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.msg{margin:0 0 20px}
+.msg.fresh{animation:rise var(--t3) var(--ease)}
+.speaker{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:600;letter-spacing:.1em;color:var(--ink-2);margin-bottom:5px}
+.speaker .mk{width:8px;height:8px;flex:none}
+.speaker .mk.u{background:var(--ink)}
+.speaker .mk.j{background:var(--accent)}
+.speaker .seq{color:var(--ink-3);font-weight:400;letter-spacing:.05em}
+
+.msg.user{background:#E9E2D1;border:1px solid var(--line-2);border-radius:3px;padding:10px 14px;max-width:78%}
+.msg.user .speaker{margin-bottom:4px}
+.msg.user .body{color:var(--ink)}
+.tagchip{
+  display:inline-block;border:1px solid var(--ink-2);color:var(--ink-2);
+  font-size:12px;padding:0 7px;margin-right:8px;letter-spacing:.05em;
+}
+
+.msg.jarvis{border-left:2px solid var(--accent);padding-left:14px}
+.jsec{margin:8px 0}
+.jlabel{font-size:12px;letter-spacing:.14em;color:var(--ink-3);font-weight:600;margin-bottom:4px}
+.reason-toggle{
+  border:none;background:none;padding:0;cursor:pointer;color:var(--ink-2);
+  font-size:12px;letter-spacing:.05em;border-bottom:1px dashed var(--line-2);
+}
+.reason-toggle:hover{color:var(--ink)}
+.reason-body{display:none;margin-top:6px;color:var(--ink-2)}
+.reason-body.open{display:block}
+.reason-body li{margin:2px 0}
+.toolrow{display:flex;flex-wrap:wrap;gap:6px}
+.tool{
+  display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line-2);
+  padding:2px 9px;font-size:12px;background:var(--paper-2);cursor:pointer;
+  font-family:var(--mono);transition:border-color var(--t1) var(--ease),background var(--t1) var(--ease);
+}
+.tool:hover{border-color:var(--ink)}
+.tool .st{font-family:var(--sans);color:var(--ink-2)}
+.tool.gate{border-color:var(--accent)}
+.tool.gate .st{color:var(--accent)}
+.jconcl{color:var(--ink)}
+
+.msg.system{display:flex;align-items:center;gap:10px;color:var(--ink-3);font-size:12.5px}
+.msg.system::before,.msg.system::after{content:"";flex:1;height:1px;background:var(--line)}
+
+/* ---------- Composer ---------- */
+.composer{flex:none;border-top:2px solid var(--ink);background:var(--paper-2);padding:9px 22px 11px}
+.comp-label{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:5px}
+.comp-label .lb{font-size:12px;font-weight:600;letter-spacing:.1em;color:var(--ink-2)}
+.comp-label .hint{font-size:12px;color:var(--ink-3)}
+#composerInput{
+  width:100%;min-height:46px;max-height:110px;resize:none;
+  border:1px solid var(--line-2);background:#FFFDF6;color:var(--ink);
+  padding:8px 10px;font:13.5px/1.5 var(--sans);
+}
+#composerInput:focus{outline:2px solid var(--ink);outline-offset:-1px}
+#composerInput:disabled{background:var(--paper-3);color:var(--ink-3)}
+.comp-foot{display:flex;justify-content:space-between;align-items:center;margin-top:7px;gap:10px}
+.comp-note{font-size:12px;color:var(--ink-3)}
+.comp-btns{display:flex;gap:8px}
+.btn{
+  height:30px;padding:0 13px;font-size:12.5px;font-weight:600;cursor:pointer;
+  border:1.5px solid var(--ink);background:var(--ink);color:var(--paper);
+  transition:background var(--t1) var(--ease),color var(--t1) var(--ease),opacity var(--t1) var(--ease);
+}
+.btn:hover:not(:disabled){background:#3A3830}
+.btn:disabled{opacity:.35;cursor:not-allowed}
+.btn.ghost{background:transparent;color:var(--ink);border-color:var(--line-2)}
+.btn.ghost:hover:not(:disabled){border-color:var(--ink);background:var(--paper-3)}
+.btn.accent{background:var(--accent);border-color:var(--accent)}
+.btn.accent:hover:not(:disabled){background:var(--accent)}
+.btn.okbtn{background:var(--ok);border-color:var(--ok)}
+
+/* ---------- 右：审阅面 ---------- */
+.review{display:flex;flex-direction:column;min-width:0;background:#EFEADD}
+.review-head{
+  flex:none;display:flex;justify-content:space-between;align-items:baseline;gap:8px;
+  padding:9px 14px 8px;border-bottom:1px solid var(--line-2);background:#EFEADD;
+}
+.review-title{font:600 14.5px var(--serif);white-space:nowrap}
+.review-phase{font-size:12px;color:var(--ink-3);white-space:nowrap}
+.review-scroll{flex:1;min-height:0;overflow-y:auto;padding:12px 14px 16px;display:flex;flex-direction:column;gap:12px}
+
+/* 决定区 */
+.decision{border:1.5px solid var(--ink);background:var(--paper-2)}
+.decision-head{
+  background:var(--ink);color:var(--paper);padding:7px 12px;font-size:12.5px;font-weight:600;
+  display:flex;justify-content:space-between;align-items:center;gap:8px;
+}
+.decision-head .scope{font:12px var(--mono);font-weight:400;color:#D9D2C0}
+.decision-body{padding:10px 11px}
+.factrow{display:flex;justify-content:space-between;gap:10px;font-size:12.5px;padding:3px 0;border-bottom:1px dashed var(--line)}
+.factrow:last-of-type{border-bottom:none}
+.factrow .k{color:var(--ink-3)}
+.factrow .v{font-weight:600;text-align:right}
+.decide-note{font-size:12px;color:var(--ink-3);margin-top:6px}
+.decide-actions{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+.outcome{font-size:13px;margin-top:2px}
+.outcome.ok{color:var(--ok);font-weight:600}
+.outcome.bad{color:var(--accent);font-weight:600}
+.suggrow{display:flex;flex-direction:column;gap:6px;margin-top:10px}
+.sugg{
+  text-align:left;border:1px dashed var(--ink-2);background:transparent;color:var(--ink-2);
+  padding:6px 10px;font-size:12.5px;cursor:pointer;
+  transition:background var(--t1) var(--ease),color var(--t1) var(--ease);
+}
+.sugg:hover{background:var(--paper-3);color:var(--ink)}
+
+/* 证据区（Diff） */
+.evidence{border:1px solid var(--line-2);background:var(--paper-2)}
+.evi-tabs{display:flex;border-bottom:1px solid var(--line-2)}
+.tab{
+  padding:7px 12px;font-size:12.5px;background:transparent;border:none;cursor:pointer;color:var(--ink-2);
+}
+.tab[aria-selected="true"]{color:var(--ink);font-weight:600;box-shadow:inset 0 -2px 0 var(--ink);background:var(--paper-2)}
+.tab:hover{color:var(--ink)}
+.evi-body{padding:9px 11px}
+.filerow{display:flex;flex-direction:column;gap:3px;padding:7px 0;border-bottom:1px dashed var(--line)}
+.filerow:last-of-type{border-bottom:none}
+.fpath{font:12px var(--mono);color:var(--ink);word-break:break-all}
+.fstat{display:flex;align-items:center;gap:8px;font-size:12px}
+.bar{display:flex;height:6px;width:150px;flex:none}
+.bar .add{background:var(--ok)}
+.bar .del{background:var(--accent)}
+.fstat .num{font-weight:600;color:var(--ink)}
+.evi-note{font-size:12px;color:var(--ink-3);margin-top:8px}
+.diffwrap{max-height:280px;overflow:auto;border:1px solid var(--line);background:#FFFDF6}
+.diff{font:12px/1.55 var(--mono);margin:0}
+.dl{white-space:pre-wrap;word-break:break-all;padding:0 8px}
+.dl.add{background:#E6EEE7;color:#1F4D37}
+.dl.del{background:#F5E4DC;color:#8F3317}
+.dl.hunk{color:var(--ink-3);background:var(--paper-3);margin:3px 0}
+.dl.ctx{color:var(--ink-2)}
+
+/* 验证区 */
+.verify{border:1px solid var(--line-2);background:var(--paper-2);padding:9px 11px}
+.vrow{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600}
+.vrow .g{width:1.2em;text-align:center}
+.vnote{font-size:12px;color:var(--ink-3);margin-top:5px}
+.verdict-line{font:600 13px var(--serif);color:var(--ok);margin-top:6px}
+
+/* 未验证项 */
+.unverified{border:1px dashed var(--ink-3);padding:8px 11px}
+.unverified .jlabel{margin-bottom:3px}
+.unverified ul{margin:0;padding-left:18px;color:var(--ink-2);font-size:12.5px}
+.unverified li{margin:2px 0}
+
+/* 联动高亮 */
+.flash{outline:2px solid var(--accent);outline-offset:2px;transition:outline-color var(--t3) var(--ease)}
+.flash-off{outline-color:transparent}
+</style>
+</head>
+<body>
+<div class="app" id="app">
+
+  <!-- ======== 头部任务带 ======== -->
+  <header class="taskband">
+    <div class="brandmark" aria-hidden="true">J</div>
+    <div class="taskhead">
+      <div class="chips">
+        <span class="task-chip">GUI-RECOVER-17</span>
+        <span class="proto-chip">静态原型 · 内存模拟</span>
+      </div>
+      <div class="goal" id="goalText">修复会话恢复后消息状态与最新 Diff 不同步</div>
+    </div>
+
+    <nav class="stepper" id="stepper" aria-label="任务阶段"></nav>
+
+    <div class="runbox">
+      <span class="run-status" id="runStatus" aria-live="polite">● 运行中</span>
+      <div class="ctrls">
+        <button type="button" class="icobtn" data-action="pause" id="btnPause" title="暂停" aria-label="暂停">
+          <svg viewBox="0 0 16 16"><path d="M5 3v10M11 3v10"/></svg>
+        </button>
+        <button type="button" class="icobtn" data-action="continue" id="btnContinue" title="继续" aria-label="继续" disabled>
+          <svg viewBox="0 0 16 16"><path d="M4 3l9 5-9 5z"/></svg>
+        </button>
+        <button type="button" class="icobtn" data-action="resume" id="btnResume" title="恢复" aria-label="恢复" disabled>
+          <svg viewBox="0 0 16 16"><path d="M13 8a5 5 0 1 1-1.5-3.5M13 3v3h-3"/></svg>
+        </button>
+        <button type="button" class="termbtn" data-action="terminate" id="btnTerm">终止</button>
+      </div>
+      <div class="auth" id="authBadge" aria-live="polite">
+        <span class="dot" aria-hidden="true"></span><span id="authText">完成授权未授予</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ======== 主体 ======== -->
+  <div class="main">
+
+    <!-- 左：对话 -->
+    <section class="chatcol" aria-label="对话区">
+      <div class="colcap"><span>对话 · 持续交互</span><span>消息流为内存模拟</span></div>
+      <div class="chat-scroll" id="chatScroll">
+        <div class="chat-inner" id="chatInner"></div>
+      </div>
+      <div class="composer">
+        <div class="comp-label">
+          <span class="lb">回复 JARVIS</span>
+          <span class="hint">Enter 发送 · Shift+Enter 换行</span>
+        </div>
+        <textarea id="composerInput" rows="2" aria-label="给 Jarvis 的输入" placeholder="给 Jarvis 发送消息，或对当前任务补充指令…"></textarea>
+        <div class="comp-foot">
+          <span class="comp-note" id="compNote">无 Runtime · 无真实写入 · 按钮只更新内存模拟状态</span>
+          <div class="comp-btns">
+            <button type="button" class="btn ghost" data-action="send-addendum" id="btnAddendum">作为补充指令</button>
+            <button type="button" class="btn" data-action="send" id="btnSend">发送</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 右：审阅面 -->
+    <aside class="review" aria-label="审阅面">
+      <div class="review-head">
+        <span class="review-title" id="reviewTitle">审阅面 · 等待你的决定</span>
+        <span class="review-phase" id="reviewPhase">阶段 ❶ · 模拟</span>
+      </div>
+      <div class="review-scroll" id="reviewScroll">
+
+        <div class="decision" id="decisionCard">
+          <div class="decision-head">
+            <span id="decisionTitle">待审批 · apply_patch</span>
+            <span class="scope">workspace.write</span>
+          </div>
+          <div class="decision-body" id="decisionBody"></div>
+        </div>
+
+        <div class="evidence" id="evidenceCard">
+          <div class="evi-tabs" role="tablist" aria-label="Diff 证据">
+            <button type="button" class="tab" role="tab" id="tabSummary" aria-selected="true" data-action="tab-summary">Diff 摘要</button>
+            <button type="button" class="tab" role="tab" id="tabFull" aria-selected="false" data-action="tab-full">完整 Diff</button>
+          </div>
+          <div class="evi-body" id="eviBody"></div>
+        </div>
+
+        <div class="verify" id="verifyCard"></div>
+
+        <div class="unverified" id="unverifiedCard">
+          <div class="jlabel">未验证项</div>
+          <ul>
+            <li>静态原型：无 Runtime、无 Session、无真实写入。</li>
+            <li>vitest 未真实执行，「通过」为模拟结论。</li>
+            <li>文件名与 +29 / −2 来自 Brief 给定事实；Diff 行为演示内容。</li>
+          </ul>
+        </div>
+
+      </div>
+    </aside>
+
+  </div>
+</div>
+
+<script>
+'use strict';
+/* 错误捕获（供验收读取） */
+window.__jarvisErrors = [];
+window.addEventListener('error', function(e){ window.__jarvisErrors.push('error: ' + (e.message || e.type)); });
+window.addEventListener('unhandledrejection', function(e){ window.__jarvisErrors.push('rejection: ' + String(e.reason)); });
+
+/* ============ 状态 ============ */
+function initialState(){
+  return {
+    run: 'running',          /* running | paused | terminated */
+    approval: 'pending',     /* pending | allowed | rejected | adjusting | updated */
+    verify: 'queued',        /* queued | running | waiting-resume | passed */
+    verdict: null,           /* null | 'verified' */
+    diffTab: 'summary',
+    reasoningOpen: false,
+    termArmed: false,
+    seq: 2,
+    timers: [],
+    msgs: [
+      { kind:'user', n:1, text:'恢复会话后，活动记录显示已完成，但 Artifact 仍停在旧 Diff。保持 API 与完成授权不变，做最小修复并补一条聚焦测试。' },
+      { kind:'jarvis', n:2, structured:true,
+        concl:'定位：恢复后 presentation 层重放事件时未与最新 Diff 版本对齐，属于显示投影问题；持久化事实完整。最小修复集中在 presentation.js，并补一条聚焦测试。apply_patch 已就绪，等待你的审批（右侧审阅面）。' },
+      { kind:'system', text:'apply_patch 已提交审批 · 等待你的决定（模拟）' }
+    ]
+  };
+}
+var S = initialState();
+
+/* ============ DOM ============ */
+var $ = function(id){ return document.getElementById(id); };
+var els = {
+  chatInner: $('chatInner'), chatScroll: $('chatScroll'),
+  stepper: $('stepper'), runStatus: $('runStatus'),
+  btnPause: $('btnPause'), btnContinue: $('btnContinue'), btnResume: $('btnResume'), btnTerm: $('btnTerm'),
+  authBadge: $('authBadge'), authText: $('authText'),
+  reviewTitle: $('reviewTitle'), reviewPhase: $('reviewPhase'),
+  decisionCard: $('decisionCard'), decisionTitle: $('decisionTitle'), decisionBody: $('decisionBody'),
+  eviBody: $('eviBody'), tabSummary: $('tabSummary'), tabFull: $('tabFull'),
+  verifyCard: $('verifyCard'),
+  composerInput: $('composerInput'), btnSend: $('btnSend'), btnAddendum: $('btnAddendum'), compNote: $('compNote')
+};
+
+/* ============ 渲染 ============ */
+function esc(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+var GLYPH = { ok:'✓', half:'◐', empty:'○', bad:'✕' };
+
+function toolChip(name, status, glyph, gate, focus){
+  return '<button type="button" class="tool' + (gate ? ' gate' : '') + '" data-action="focus-' + focus + '">' +
+    glyph + ' <span>' + name + '</span><span class="st">· ' + status + '</span></button>';
+}
+
+var prevMsgCount = 0;
+function renderChat(){
+  var grew = S.msgs.length > prevMsgCount;
+  var html = '';
+  S.msgs.forEach(function(m, i){
+    var fresh = (grew && i === S.msgs.length - 1) ? ' fresh' : '';
+    if(m.kind === 'system'){
+      html += '<div class="msg system' + fresh + '"><span>' + esc(m.text) + '</span></div>'; return;
+    }
+    if(m.kind === 'user'){
+      html += '<div class="msg user' + fresh + '"><div class="speaker"><span class="mk u"></span>LUDI<span class="seq">#' + m.n + '</span></div>' +
+        '<div class="body">' + (m.tag ? '<span class="tagchip">' + esc(m.tag) + '</span>' : '') + esc(m.text) + '</div></div>'; return;
+    }
+    var inner = '';
+    if(m.structured){
+      inner += '<div class="jsec"><div class="jlabel">推理摘要</div>' +
+        '<button type="button" class="reason-toggle" data-action="reasoning">' + (S.reasoningOpen ? '收起推理摘要 ▴' : '展开推理摘要 ▾') + '</button>' +
+        '<ul class="reason-body' + (S.reasoningOpen ? ' open' : '') + '">' +
+        '<li>核对 Session sequence；</li><li>确认持久化事实完整；</li><li>沿用 mutation barrier；</li><li>审批后写入并运行聚焦测试。</li></ul></div>';
+      var apStat = S.approval === 'pending' ? '待审批' : S.approval === 'allowed' ? '已应用' :
+                   S.approval === 'rejected' ? '已拒绝' : '待重审';
+      var apG = S.approval === 'pending' || S.approval === 'adjusting' || S.approval === 'updated' ? GLYPH.half :
+                S.approval === 'allowed' ? GLYPH.ok : GLYPH.bad;
+      var vtStat = S.verify === 'queued' ? '排队中' : S.verify === 'running' ? '运行中' :
+                   S.verify === 'waiting-resume' ? '等待继续' : '通过（模拟）';
+      var vtG = S.verify === 'queued' ? GLYPH.empty : S.verify === 'passed' ? GLYPH.ok : GLYPH.half;
+      inner += '<div class="jsec"><div class="jlabel">工具</div><div class="toolrow">' +
+        toolChip('read_file', '已完成', GLYPH.ok, false, 'decision') +
+        toolChip('rg', '已完成', GLYPH.ok, false, 'decision') +
+        toolChip('apply_patch', apStat, apG, S.approval === 'pending' || S.approval === 'updated' || S.approval === 'adjusting', 'decision') +
+        toolChip('vitest', vtStat, vtG, false, 'verify') +
+        '</div></div>';
+      inner += '<div class="jsec"><div class="jlabel">结论</div><div class="jconcl">' + esc(m.concl) + '</div></div>';
+    } else {
+      inner = '<div class="jconcl">' + m.body + '</div>';
+    }
+    html += '<div class="msg jarvis' + fresh + '"><div class="speaker"><span class="mk j"></span>JARVIS<span class="seq">#' + m.n + '</span></div>' + inner + '</div>';
+  });
+  els.chatInner.innerHTML = html;
+  prevMsgCount = S.msgs.length;
+  /* 仅在新消息进入时吸附底部；状态刷新不打断用户回读历史 */
+  if(grew) els.chatScroll.scrollTop = els.chatScroll.scrollHeight;
+}
+
+function renderHeader(){
+  var st = S.run === 'running' ? '● 运行中' : S.run === 'paused' ? '◐ 已暂停' : '■ 已终止';
+  els.runStatus.textContent = st;
+  els.btnPause.disabled = S.run !== 'running';
+  els.btnContinue.disabled = S.run !== 'paused';
+  els.btnResume.disabled = S.run !== 'terminated';
+  els.btnTerm.disabled = S.run === 'terminated';
+  if(!S.termArmed){ els.btnTerm.classList.remove('armed'); els.btnTerm.textContent = '终止'; }
+
+  if(S.verdict === 'verified'){
+    els.authBadge.classList.add('done');
+    els.authText.textContent = 'decideVerdict · verified（模拟）';
+    els.authBadge.querySelector('.dot').setAttribute('aria-hidden','true');
+  } else {
+    els.authBadge.classList.remove('done');
+    els.authText.textContent = '完成授权未授予';
+  }
+
+  /* 步进器：诊断 → 修正显示投影 → 验证 */
+  var s2cls = 'step current', s2lab = '需要审批';
+  if(S.approval === 'allowed'){ s2cls = 'step done'; s2lab = '已应用'; }
+  if(S.approval === 'rejected'){ s2lab = '受阻'; }
+  if(S.approval === 'adjusting'){ s2lab = '等待调整'; }
+  if(S.approval === 'updated'){ s2lab = '待重审'; }
+  var s3cls = 'step', s3g = GLYPH.empty, s3lab = '验证';
+  if(S.verify === 'running' || S.verify === 'waiting-resume'){ s3cls = 'step current'; s3g = GLYPH.half; s3lab = S.verify === 'running' ? '验证 · 运行中' : '验证 · 等待继续'; }
+  if(S.verify === 'passed'){ s3cls = 'step done'; s3g = GLYPH.ok; s3lab = '验证 · 通过'; }
+  els.stepper.innerHTML =
+    '<span class="step done"><span class="g">' + GLYPH.ok + '</span>诊断</span><span class="step-sep"></span>' +
+    '<span class="' + s2cls + '"><span class="g">' + (S.approval === 'allowed' ? GLYPH.ok : GLYPH.half) + '</span>修正显示投影 · ' + s2lab + '</span><span class="step-sep"></span>' +
+    '<span class="' + s3cls + '"><span class="g">' + s3g + '</span>' + s3lab + '</span>';
+}
+
+function decisionInner(){
+  var facts =
+    '<div class="factrow"><span class="k">写入文件</span><span class="v">2 个 · 见 Diff 证据</span></div>' +
+    '<div class="factrow"><span class="k">影响</span><span class="v">+29 / −2</span></div>' +
+    '<div class="factrow"><span class="k">还原</span><span class="v">可通过 Git 还原</span></div>' +
+    '<div class="decide-note">一次性授权 · 仅更新内存模拟状态</div>';
+  if(S.approval === 'pending'){
+    return facts +
+      '<div class="decide-actions">' +
+      '<button type="button" class="btn" data-action="approve">' + GLYPH.ok + ' 允许一次</button>' +
+      '<button type="button" class="btn ghost" data-action="reject">' + GLYPH.bad + ' 拒绝</button>' +
+      '<button type="button" class="btn ghost" data-action="adjust">↩ 要求调整</button>' +
+      '</div>';
+  }
+  if(S.approval === 'updated'){
+    return '<div class="factrow"><span class="k">状态</span><span class="v">已按调整意见更新（模拟）</span></div>' + facts +
+      '<div class="decide-actions">' +
+      '<button type="button" class="btn" data-action="approve">' + GLYPH.ok + ' 允许一次</button>' +
+      '<button type="button" class="btn ghost" data-action="reject">' + GLYPH.bad + ' 拒绝</button>' +
+      '<button type="button" class="btn ghost" data-action="adjust">↩ 要求调整</button>' +
+      '</div>';
+  }
+  if(S.approval === 'adjusting'){
+    return '<div class="factrow"><span class="k">状态</span><span class="v">等待你的调整说明</span></div>' +
+      '<div class="decide-note">选择一条建议填入 Composer，或直接输入；发送后补丁将重新提交审批（模拟）。</div>' +
+      '<div class="suggrow">' +
+      '<button type="button" class="sugg" data-action="suggest" data-val="调整：保持公共 API 不变，只动显示投影层。">建议 ① 保持公共 API 不变，只动显示投影层</button>' +
+      '<button type="button" class="sugg" data-val="调整：测试命名与既有用例风格对齐。">建议 ② 测试命名与既有用例风格对齐</button>' +
+      '<button type="button" class="sugg" data-val="调整：把对齐逻辑收敛到单一函数，方便回滚。">建议 ③ 对齐逻辑收敛到单一函数，方便回滚</button>' +
+      '</div>';
+  }
+  if(S.approval === 'allowed'){
+    return '<div class="factrow"><span class="k">决定</span><span class="v">已允许一次（模拟）</span></div>' +
+      '<div class="factrow"><span class="k">apply_patch</span><span class="v">已应用（模拟）</span></div>' +
+      '<div class="decide-note">验证进度见下方「验证」区；暂停时验证会挂起，继续后恢复。</div>';
+  }
+  /* rejected */
+  return '<div class="factrow"><span class="k">决定</span><span class="v">已拒绝（模拟）</span></div>' +
+    '<div class="decide-note">apply_patch 未写入。可在对话中补充指令让我调整方案，或暂停 / 终止任务；完成授权保持未授予。</div>';
+}
+
+var DIFF_LINES = [
+  ['hunk','── src/surfaces/gui/assets/presentation.js（模拟演示行）──'],
+  ['ctx',' function renderResumeProjection(snapshot) {'],
+  ['del','-   const view = snapshot.lastProjected ?? snapshot.messages'],
+  ['add','+   // 模拟演示行：重放投影前先与最新 Diff 版本对齐'],
+  ['add','+   const view = alignToArtifactVersion(snapshot.messages, snapshot.latestDiff)'],
+  ['add','+   if (view.isStale) view.replay(presentationEvents)'],
+  ['ctx','   return view;'],
+  ['hunk','── test/surfaces/gui/gui-presentation.test.js（模拟演示行）──'],
+  ['add','+ it("恢复会话后消息状态对齐最新 Diff", () => {'],
+  ['add','+   const s = resumeSession(fixtureOf("GUI-RECOVER-17"))'],
+  ['add','+   expect(s.messageState.diffVersion).toBe(s.latestDiff.version)'],
+  ['add','+ })']
+];
+
+function renderEvidence(){
+  els.tabSummary.setAttribute('aria-selected', S.diffTab === 'summary' ? 'true' : 'false');
+  els.tabFull.setAttribute('aria-selected', S.diffTab === 'full' ? 'true' : 'false');
+  if(S.diffTab === 'summary'){
+    els.eviBody.innerHTML =
+      '<div class="filerow"><span class="fpath">src/surfaces/gui/assets/presentation.js</span>' +
+      '<span class="fstat"><span class="bar"><span class="add" style="width:112px"></span><span class="del" style="width:14px"></span></span><span class="num">+27 / −2</span></span></div>' +
+      '<div class="filerow"><span class="fpath">test/surfaces/gui/gui-presentation.test.js</span>' +
+      '<span class="fstat"><span class="bar"><span class="add" style="width:24px"></span></span><span class="num">+2 / −0</span></span></div>' +
+      '<div class="evi-note">合计 +29 / −2（Brief 给定）。切换「完整 Diff」标签即可一步展开；行内容为模拟演示。</div>';
+  } else {
+    var lines = DIFF_LINES.map(function(l){
+      return '<span class="dl ' + l[0] + '">' + esc(l[1]) + '</span>';
+    }).join('');
+    els.eviBody.innerHTML =
+      '<div class="evi-note" style="margin:0 0 6px">以下为模拟 Diff 演示行，非真实代码内容。</div>' +
+      '<div class="diffwrap"><pre class="diff">' + lines + '</pre></div>';
+  }
+}
+
+function renderVerify(){
+  var g, t;
+  if(S.verify === 'queued'){ g = GLYPH.empty; t = '排队中'; }
+  else if(S.verify === 'running'){ g = GLYPH.half; t = '运行中（模拟）'; }
+  else if(S.verify === 'waiting-resume'){ g = GLYPH.half; t = '等待继续（任务已暂停/终止）'; }
+  else { g = GLYPH.ok; t = '通过（模拟）'; }
+  var h = '<div class="jlabel">验证 · vitest（聚焦测试）</div>' +
+    '<div class="vrow"><span class="g">' + g + '</span>' + t + '</div>' +
+    '<div class="vnote">聚焦测试文件：test/surfaces/gui/gui-presentation.test.js（模拟）</div>';
+  if(S.verdict === 'verified'){
+    h += '<div class="verdict-line">decideVerdict · verified（模拟）</div>';
+  }
+  els.verifyCard.innerHTML = h;
+}
+
+function renderReview(){
+  var title, phase;
+  if(S.verdict === 'verified'){ title = '审阅面 · 终局'; phase = '阶段 ❸ · 模拟'; }
+  else if(S.approval === 'allowed' && (S.verify === 'running' || S.verify === 'waiting-resume')){ title = '审阅面 · 验证中'; phase = '阶段 ❷ · 模拟'; }
+  else { title = '审阅面 · 等待你的决定'; phase = '阶段 ❶ · 模拟'; }
+  if(S.run === 'terminated'){ phase += ' · 已终止'; }
+  els.reviewTitle.textContent = title;
+  els.reviewPhase.textContent = phase;
+  els.decisionTitle.textContent = S.approval === 'allowed' ? '已批准 · apply_patch（模拟）'
+    : S.approval === 'rejected' ? '已拒绝 · apply_patch（模拟）'
+    : S.approval === 'adjusting' ? '待审批 · 等待调整说明'
+    : S.approval === 'updated' ? '待审批 · 已按调整更新（模拟）'
+    : '待审批 · apply_patch';
+  els.decisionBody.innerHTML = decisionInner();
+  renderEvidence();
+  renderVerify();
+}
+
+function renderComposer(){
+  var dead = S.run === 'terminated';
+  els.composerInput.disabled = dead;
+  els.btnSend.disabled = dead;
+  els.btnAddendum.disabled = dead;
+  els.compNote.textContent = dead
+    ? '任务已终止 · 点击右上「恢复」继续（仅内存模拟）'
+    : '无 Runtime · 无真实写入 · 按钮只更新内存模拟状态';
+}
+
+function renderAll(){ renderChat(); renderHeader(); renderReview(); renderComposer(); }
+
+/* ============ 行为 ============ */
+function clearTimers(){ S.timers.forEach(clearTimeout); S.timers = []; }
+/* 终止确认的解除计时器独立于 S.timers，避免被暂停/继续的 clearTimers 误清后卡在「确认终止？」 */
+var termTimer = null;
+function cancelArm(){
+  S.termArmed = false;
+  if(termTimer){ clearTimeout(termTimer); termTimer = null; }
+  els.btnTerm.classList.remove('armed');
+  els.btnTerm.textContent = '终止';
+}
+function sysLine(text){ S.msgs.push({ kind:'system', text:text }); }
+function pushJarvis(body){ S.seq += 1; S.msgs.push({ kind:'jarvis', n:S.seq, body:body }); }
+function pushUser(text, tag){ S.seq += 1; S.msgs.push({ kind:'user', n:S.seq, text:text, tag:tag }); }
+function later(fn, ms){ S.timers.push(setTimeout(fn, ms)); }
+
+function startVerify(){
+  if(S.run !== 'running'){ S.verify = 'waiting-resume'; renderAll(); return; }
+  S.verify = 'running'; renderAll();
+  later(function(){
+    S.verify = 'passed'; S.verdict = 'verified';
+    sysLine('vitest 聚焦测试通过（模拟）· 完成授权翻转');
+    pushJarvis('decideVerdict · verified（模拟）—— 聚焦测试通过与既有验证链（均为模拟）走完，界面获准显示完成。改动：presentation.js 与 gui-presentation.test.js，+29 / −2。真实环境中完成授权仍由既有可信路径负责。');
+    renderAll();
+  }, 1600);
+}
+
+var actions = {
+  'approve': function(){
+    if(S.approval !== 'pending' && S.approval !== 'updated' && S.approval !== 'adjusting') return;
+    S.approval = 'allowed';
+    sysLine('已允许一次（模拟）· apply_patch 已应用');
+    pushJarvis('补丁已按一次性授权应用（模拟）。聚焦测试 vitest 即将启动；若任务此刻处于暂停，验证会等待「继续」。');
+    startVerify();
+    renderAll();
+  },
+  'reject': function(){
+    if(S.approval === 'allowed' || S.approval === 'rejected') return;
+    S.approval = 'rejected';
+    sysLine('已拒绝 apply_patch（模拟）· 完成授权保持未授予');
+    pushJarvis('已按你的决定放弃本次 apply_patch（模拟）。你可以在下方补充指令让我调整方案，或暂停 / 终止任务；完成授权保持未授予。');
+    renderAll();
+  },
+  'adjust': function(){
+    if(S.approval === 'allowed' || S.approval === 'rejected') return;
+    S.approval = 'adjusting';
+    renderAll();
+    els.composerInput.focus();
+  },
+  'suggest': function(el){
+    els.composerInput.value = el.getAttribute('data-val');
+    els.composerInput.focus();
+  },
+  'pause': function(){
+    if(S.run !== 'running') return;
+    cancelArm();
+    S.run = 'paused';
+    if(S.verify === 'running'){ clearTimers(); S.verify = 'waiting-resume'; }
+    sysLine('任务已暂停（模拟）· 验证链挂起');
+    renderAll();
+  },
+  'continue': function(){
+    if(S.run !== 'paused') return;
+    cancelArm();
+    S.run = 'running';
+    sysLine('任务已继续（模拟）');
+    renderAll();
+    if(S.verify === 'waiting-resume'){ startVerify(); }
+  },
+  'resume': function(){
+    if(S.run !== 'terminated') return;
+    cancelArm();
+    S.run = 'running';
+    sysLine('任务已恢复（模拟）');
+    renderAll();
+    if(S.verify === 'waiting-resume'){ startVerify(); }
+  },
+  'terminate': function(){
+    if(S.run === 'terminated') return;
+    if(!S.termArmed){
+      S.termArmed = true;
+      els.btnTerm.classList.add('armed');
+      els.btnTerm.textContent = '确认终止？';
+      if(termTimer) clearTimeout(termTimer);
+      termTimer = setTimeout(function(){
+        termTimer = null;
+        if(S.termArmed){ S.termArmed = false; els.btnTerm.classList.remove('armed'); els.btnTerm.textContent = '终止'; }
+      }, 4000);
+      return;
+    }
+    if(termTimer){ clearTimeout(termTimer); termTimer = null; }
+    S.termArmed = false;
+    S.run = 'terminated';
+    if(S.verify === 'running'){ clearTimers(); S.verify = 'waiting-resume'; }
+    sysLine('任务已终止（模拟）· 完成授权未授予 · 可「恢复」');
+    renderAll();
+  },
+  'tab-summary': function(){ S.diffTab = 'summary'; renderEvidence(); },
+  'tab-full': function(){ S.diffTab = 'full'; renderEvidence(); },
+  'reasoning': function(){ S.reasoningOpen = !S.reasoningOpen; renderChat(); },
+  'focus-decision': function(){ focusReview(els.decisionCard); },
+  'focus-verify': function(){ focusReview(els.verifyCard); },
+  'send': function(){ doSend(false); },
+  'send-addendum': function(){ doSend(true); }
+};
+
+function doSend(isAddendum){
+  if(S.run === 'terminated') return;
+  var txt = els.composerInput.value.trim();
+  if(!txt) return;
+  pushUser(txt, isAddendum ? '补充指令' : '');
+  els.composerInput.value = '';
+  if(S.approval === 'adjusting'){
+    S.approval = 'updated';
+    sysLine('补丁已按调整意见更新（模拟）· apply_patch 重新等待审批');
+    later(function(){ pushJarvis('已按你的补充调整补丁并重新提交审批（模拟）：变更仍集中在 presentation.js 与聚焦测试，+29 / −2 不变。请在右侧审阅面重新决定。'); renderAll(); }, 700);
+  } else {
+    later(function(){ pushJarvis('（模拟回复）已收到。当前任务焦点仍是 GUI-RECOVER-17 的审批与验证；你可以直接在右侧审阅面做出决定。'); renderAll(); }, 700);
+  }
+  renderAll();
+}
+
+function focusReview(el){
+  el.classList.remove('flash-off');
+  el.classList.add('flash');
+  el.scrollIntoView({ behavior:'smooth', block:'nearest' });
+  setTimeout(function(){ el.classList.add('flash-off'); }, 1200);
+}
+
+/* ============ 事件委托 ============ */
+document.addEventListener('click', function(e){
+  var t = e.target.closest('[data-action]');
+  if(!t) return;
+  var a = t.getAttribute('data-action');
+  if(actions[a]) actions[a](t);
+});
+els.composerInput.addEventListener('keydown', function(e){
+  if(e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); doSend(false); }
+});
+
+/* ============ 测试钩子（仅内存） ============ */
+window.__jarvis = {
+  get state(){ return S; },
+  act: function(name, el){ if(actions[name]) actions[name](el); },
+  reset: function(){
+    clearTimers();
+    cancelArm();
+    S = initialState();
+    prevMsgCount = 0;
+    els.composerInput.value = '';
+    renderAll();
+  }
+};
+
+renderAll();
+</script>
+</body>
+</html>

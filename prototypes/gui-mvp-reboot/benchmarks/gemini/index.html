@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-author="gemini">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Jarvis-Agent · 对话主导 GUI 原型</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- 顶部任务锚点栏：高频信息与权威状态常驻，双视口持续可达 -->
+  <header class="task-anchor" role="banner">
+    <div class="anchor-brand-group">
+      <span class="prototype-badge" title="纯本地静态原型，不连接任何后端 API">
+        <svg class="icon" viewBox="0 0 16 16" width="12" height="12" fill="currentColor" aria-hidden="true">
+          <circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.5" fill="none"/>
+          <path d="M8 4v4l2.5 2.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+        静态原型 · 无 Runtime · 无真实写入
+      </span>
+      <div class="task-id-badge">
+        <span class="task-id-label">任务</span>
+        <span class="task-id-value" id="taskIdText">GUI-RECOVER-17</span>
+      </div>
+      <h1 class="task-title" id="taskGoalText">修复会话恢复后消息状态与最新 Diff 不同步</h1>
+    </div>
+
+    <div class="anchor-status-group">
+      <!-- 当前阶段与状态 -->
+      <div class="status-chip-group">
+        <div class="status-chip phase-chip" title="当前执行阶段">
+          <span class="chip-label">阶段</span>
+          <span class="chip-val" id="phaseText">修正显示投影</span>
+        </div>
+        <div class="status-chip state-chip" id="stateBadge" data-state="pending_approval" title="当前循环状态">
+          <span class="state-icon" id="stateIcon" aria-hidden="true">⚠</span>
+          <span class="chip-val" id="stateText">需要审批</span>
+        </div>
+        <div class="status-chip verdict-chip" id="verdictBadge" data-verdict="unauthorized" title="完成授权判定边界">
+          <span class="verdict-icon" id="verdictIcon" aria-hidden="true">⊘</span>
+          <span class="chip-val" id="verdictText">完成授权未授予</span>
+        </div>
+      </div>
+
+      <!-- 全局运行控制与模拟场景切换 -->
+      <div class="anchor-controls">
+        <div class="run-actions" role="group" aria-label="运行控制">
+          <button type="button" class="btn btn-control" id="btnPauseResume" aria-label="暂停或继续任务">
+            <span class="btn-icon" id="pauseResumeIcon">⏸</span>
+            <span id="pauseResumeLabel">暂停</span>
+          </button>
+          <button type="button" class="btn btn-control btn-danger-outline" id="btnTerminate" aria-label="终止或恢复任务">
+            <span class="btn-icon" id="terminateIcon">⏹</span>
+            <span id="terminateLabel">终止</span>
+          </button>
+        </div>
+
+        <div class="scenario-selector" title="快速切换测试场景">
+          <label for="scenarioSelect" class="sr-only">模拟场景切换</label>
+          <select id="scenarioSelect" class="select-scenario" aria-label="切换预设模拟状态">
+            <option value="pending_approval" selected>场景：待审批 (默认)</option>
+            <option value="completed_verified">场景：已验证完成 (Verified)</option>
+            <option value="failed">场景：测试失败 (Failure)</option>
+            <option value="paused">场景：已暂停 (Paused)</option>
+            <option value="terminated">场景：已终止 (Terminated)</option>
+          </select>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- 主工作区：对话主导的单向时间线 -->
+  <main class="workspace-layout">
+    <div class="conversation-container">
+      
+      <!-- 快捷状态指示条（在长滚动下补充指示） -->
+      <div class="stream-telemetry-banner" id="streamTelemetry">
+        <div class="telemetry-item">
+          <span class="label">Session:</span>
+          <span class="val mono">sess_20260901_rec17</span>
+        </div>
+        <div class="telemetry-item">
+          <span class="label">Barrier:</span>
+          <span class="val mono">mutation-lock:active</span>
+        </div>
+        <div class="telemetry-item">
+          <span class="label">Pending Op:</span>
+          <span class="val mono">workspace.write (+29 / −2)</span>
+        </div>
+      </div>
+
+      <div class="message-feed" id="messageFeed" role="feed" aria-label="任务对话流">
+
+        <!-- 消息 1：用户原始需求 -->
+        <article class="chat-msg user-msg" id="msg1" aria-label="用户消息">
+          <header class="msg-header">
+            <div class="author-badge">
+              <span class="author-role user-role">Ludi</span>
+              <span class="author-tag">Owner</span>
+            </div>
+            <time class="msg-time">19:14:10</time>
+          </header>
+          <div class="msg-body">
+            <p>恢复会话后，活动记录显示已完成，但 Artifact 仍停在旧 Diff。保持 API 与完成授权不变，做最小修复并补一条聚焦测试。</p>
+          </div>
+        </article>
+
+        <!-- 消息 2：Jarvis 响应与执行主编排 -->
+        <article class="chat-msg jarvis-msg" id="msg2" aria-label="Jarvis 执行与审批">
+          <header class="msg-header">
+            <div class="author-badge">
+              <span class="author-role jarvis-role">Jarvis</span>
+              <span class="author-tag">Agent Loop</span>
+            </div>
+            <time class="msg-time">19:14:12</time>
+          </header>
+          
+          <div class="msg-body">
+            <p class="summary-lead">已定位会话恢复时的 Diff 投影刷新时序竞争。准备写入最小修复并补齐聚焦单测。</p>
+
+            <!-- 1. Reasoning 摘要：可折叠展开，展示严谨推导 -->
+            <section class="block-card reasoning-card" aria-label="Reasoning 摘要">
+              <button type="button" class="accordion-trigger" id="reasoningToggle" aria-expanded="true" aria-controls="reasoningContent">
+                <span class="accordion-title">
+                  <svg class="icon icon-reasoning" viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true">
+                    <path d="M8 1.5a6.5 6.5 0 100 13 6.5 6.5 0 000-13zM0 8a8 8 0 1116 0A8 8 0 010 8z"/>
+                    <path d="M6.5 7.75A.75.75 0 017.25 7h1.5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-2.75h-.75a.75.75 0 01-.75-.75zM8 4.5a.875.875 0 110 1.75.875.875 0 010-1.75z"/>
+                  </svg>
+                  <strong>Reasoning 结构化推导</strong>
+                  <span class="mono-meta">4 个推导节点 · 证据已锚定</span>
+                </span>
+                <span class="toggle-indicator" id="reasoningIndicator" aria-hidden="true">收起 ▲</span>
+              </button>
+              <div class="accordion-content" id="reasoningContent">
+                <ol class="reasoning-steps">
+                  <li><strong>核对 Session sequence：</strong>确认恢复事件被 replay 时，旧 diff cache 在 projection 更新前先触发了 render 事件。</li>
+                  <li><strong>确认持久化事实完整：</strong>只改 GUI 渲染端 <code>presentation.js</code> 订阅层，不侵入 Core Runtime 与 SessionStore 持久化。</li>
+                  <li><strong>沿用 mutation barrier：</strong>涉及文件写入前保持锁止，待用户授权后单批原子执行。</li>
+                  <li><strong>验证闭环策略：</strong>写入后执行 <code>gui-presentation.test.js</code> 单测，仅当用例通过后才进入完成授权。</li>
+                </ol>
+              </div>
+            </section>
+
+            <!-- 2. 工具执行管线：清晰呈现已完成、待审批与排队 -->
+            <section class="block-card tools-pipeline-card" aria-label="工具调用管线">
+              <div class="card-header">
+                <h3 class="card-title">工具执行链 (Tool Pipeline)</h3>
+                <span class="pipeline-summary mono" id="toolSummary">2 完成 · 1 待审批 · 1 排队</span>
+              </div>
+              <ul class="tool-list">
+                <li class="tool-item status-done">
+                  <div class="tool-icon-col"><span class="tool-status-icon">✓</span></div>
+                  <div class="tool-info-col">
+                    <div class="tool-name-line">
+                      <span class="tool-name mono">read_file</span>
+                      <span class="tool-target mono">src/surfaces/gui/presentation.js</span>
+                    </div>
+                    <div class="tool-meta-line">已读取 142 行 · 确认 Diff 订阅在 session.resume 后未重新绑定</div>
+                  </div>
+                  <span class="tool-tag tag-success">已完成</span>
+                </li>
+
+                <li class="tool-item status-done">
+                  <div class="tool-icon-col"><span class="tool-status-icon">✓</span></div>
+                  <div class="tool-info-col">
+                    <div class="tool-name-line">
+                      <span class="tool-name mono">rg</span>
+                      <span class="tool-target mono">test/surfaces/gui/presentation.test.js</span>
+                    </div>
+                    <div class="tool-meta-line">检索既有测试套件 · 确认当前缺少 resume-diff-sync 用例</div>
+                  </div>
+                  <span class="tool-tag tag-success">已完成</span>
+                </li>
+
+                <li class="tool-item status-pending" id="toolApplyPatch">
+                  <div class="tool-icon-col"><span class="tool-status-icon" id="patchToolIcon">⚠</span></div>
+                  <div class="tool-info-col">
+                    <div class="tool-name-line">
+                      <span class="tool-name mono">apply_patch</span>
+                      <span class="tool-target mono">workspace.write (2 files)</span>
+                    </div>
+                    <div class="tool-meta-line" id="patchToolMeta">
+                      改动规模：<span class="diff-stat-add">+29</span> / <span class="diff-stat-del">−2</span> · 隔离工作区 · 可通过 Git 干净回退
+                    </div>
+                  </div>
+                  <span class="tool-tag tag-warning" id="patchToolTag">待用户审批</span>
+                </li>
+
+                <li class="tool-item status-queued" id="toolVitest">
+                  <div class="tool-icon-col"><span class="tool-status-icon" id="vitestIcon">⏳</span></div>
+                  <div class="tool-info-col">
+                    <div class="tool-name-line">
+                      <span class="tool-name mono">vitest</span>
+                      <span class="tool-target mono">test/surfaces/gui/presentation.test.js</span>
+                    </div>
+                    <div class="tool-meta-line" id="vitestMeta">排队中 · 待 apply_patch 成功写入后自动触发单测</div>
+                  </div>
+                  <span class="tool-tag tag-muted" id="vitestTag">排队中</span>
+                </li>
+              </ul>
+            </section>
+
+            <!-- 3. 待审批区域 (Gate)：核心交互卡片，支持 3 种决定 -->
+            <section class="block-card approval-gate-card" id="approvalGateCard" aria-label="人工权限审批闸门">
+              <div class="gate-header">
+                <div class="gate-title-group">
+                  <span class="gate-badge-icon">🛡️</span>
+                  <div>
+                    <h3 class="gate-title">写操作权限审批请求 (One-time Workspace Write)</h3>
+                    <p class="gate-desc">Agent 请求向本地工作区写入修改代码及新增测试用例。</p>
+                  </div>
+                </div>
+                <div class="gate-security-note mono">安全边界：权限单次生效 · 无网络外溢 · 变更可回退</div>
+              </div>
+
+              <!-- 待写入改动清单 -->
+              <div class="gate-impact-grid">
+                <div class="impact-col">
+                  <span class="impact-label">目标文件：</span>
+                  <ul class="impact-file-list mono">
+                    <li><span class="badge-mod">M</span> src/surfaces/gui/presentation.js <span class="diff-stat-add">(+22, −2)</span></li>
+                    <li><span class="badge-add">A</span> test/surfaces/gui/presentation.test.js <span class="diff-stat-add">(+7, −0)</span></li>
+                  </ul>
+                </div>
+                <div class="impact-col">
+                  <span class="impact-label">验证前提：</span>
+                  <div class="impact-val">审批通过后立即运行 <code>vitest</code>，断言失败将自动停止并保持未授权状态。</div>
+                </div>
+              </div>
+
+              <!-- 审批决定动作栏 -->
+              <div class="gate-actions-row" id="gateActionButtons">
+                <button type="button" class="btn btn-primary btn-action-allow" id="btnAllowOnce" title="快捷键：A">
+                  <span class="btn-kbd">A</span>
+                  <span>允许一次 (Allow Once)</span>
+                </button>
+                <button type="button" class="btn btn-secondary btn-action-modify" id="btnRequestChanges" title="快捷键：M">
+                  <span class="btn-kbd">M</span>
+                  <span>要求调整 (Request Changes)</span>
+                </button>
+                <button type="button" class="btn btn-danger btn-action-reject" id="btnReject" title="快捷键：R">
+                  <span class="btn-kbd">R</span>
+                  <span>拒绝执行 (Reject)</span>
+                </button>
+              </div>
+
+              <!-- 审批决定生效反馈（动态插入） -->
+              <div class="gate-verdict-banner hidden" id="gateDecisionResult" role="alert"></div>
+            </section>
+
+            <!-- 4. 产物与 Diff 检查器：就地呈现代码变更，不跳出对话流 -->
+            <section class="block-card artifact-diff-card" aria-label="产物与 Diff 审阅">
+              <div class="card-header artifact-header">
+                <div class="tab-group" role="tablist" aria-label="文件 Diff 切换">
+                  <button type="button" class="tab-btn active" role="tab" aria-selected="true" id="tabPresentation" aria-controls="diffPresentation">
+                    presentation.js <span class="tab-diff-stat">+22/−2</span>
+                  </button>
+                  <button type="button" class="tab-btn" role="tab" aria-selected="false" id="tabTest" aria-controls="diffTest">
+                    presentation.test.js <span class="tab-diff-stat">+7/−0</span>
+                  </button>
+                </div>
+                <div class="diff-mode-info mono">
+                  <span>Git Index Projection</span>
+                </div>
+              </div>
+
+              <!-- Diff 面板 1 -->
+              <div class="diff-pane" id="diffPresentation" role="tabpanel" aria-labelledby="tabPresentation">
+                <div class="diff-code-wrapper">
+                  <pre class="diff-pre"><code><span class="diff-chunk-header">@@ -45,8 +45,28 @@ export function createPresentationPipeline(eventBus, sessionStore) {</span>
+<span class="diff-context">   const state = { currentDiff: null, isRunning: false };</span>
+<span class="diff-context"> </span>
+<span class="diff-del">-  // 缺陷：仅监听活跃任务更新，会话恢复事件未触发 diff 同步</span>
+<span class="diff-del">-  eventBus.on('task:update', (payload) =&gt; state.currentDiff = payload.diff);</span>
+<span class="diff-add">+  // 修复：显式订阅 session:resumed 与 task:restored 事件，强制与最新落地 Diff 对齐</span>
+<span class="diff-add">+  function syncDiffProjection(sourceEvent) {</span>
+<span class="diff-add">+    const latestArtifact = sessionStore.getLatestArtifactSnapshot();</span>
+<span class="diff-add">+    state.currentDiff = latestArtifact?.diff || null;</span>
+<span class="diff-add">+    eventBus.emit('presentation:diff-synced', {</span>
+<span class="diff-add">+      source: sourceEvent,</span>
+<span class="diff-add">+      diff: state.currentDiff,</span>
+<span class="diff-add">+      timestamp: Date.now()</span>
+<span class="diff-add">+    });</span>
+<span class="diff-add">+  }</span>
+<span class="diff-add">+</span>
+<span class="diff-add">+  eventBus.on('task:update', (payload) =&gt; {</span>
+<span class="diff-add">+    state.currentDiff = payload.diff;</span>
+<span class="diff-add">+  });</span>
+<span class="diff-add">+  eventBus.on('session:resumed', () =&gt; syncDiffProjection('session:resumed'));</span>
+<span class="diff-add">+  eventBus.on('task:restored', () =&gt; syncDiffProjection('task:restored'));</span>
+<span class="diff-context"> </span>
+<span class="diff-context">   return {</span>
+<span class="diff-context">     getState: () =&gt; ({ ...state }),</span></code></pre>
+                </div>
+              </div>
+
+              <!-- Diff 面板 2 -->
+              <div class="diff-pane hidden" id="diffTest" role="tabpanel" aria-labelledby="tabTest">
+                <div class="diff-code-wrapper">
+                  <pre class="diff-pre"><code><span class="diff-chunk-header">@@ -88,0 +89,7 @@ describe('presentation pipeline recovery sync', () =&gt; {</span>
+<span class="diff-add">+  it('should immediately sync diff projection when session:resumed fires', async () =&gt; {</span>
+<span class="diff-add">+    const { bus, store, pipeline } = setupMockEnvironment({ hasStoredDiff: true });</span>
+<span class="diff-add">+    bus.emit('session:resumed', { sessionId: 'sess-restore-test' });</span>
+<span class="diff-add">+    expect(pipeline.getState().currentDiff).not.toBeNull();</span>
+<span class="diff-add">+    expect(pipeline.getState().currentDiff).toContain('presentation.js');</span>
+<span class="diff-add">+  });</span>
+<span class="diff-context"> });</span></code></pre>
+                </div>
+              </div>
+            </section>
+
+            <!-- 5. 未验证项与基线检查说明 -->
+            <section class="block-card verification-checklist-card" aria-label="验证项追踪">
+              <div class="card-header">
+                <h3 class="card-title">验证证据链状态 (Verification Chain)</h3>
+              </div>
+              <ul class="verify-list" id="verificationList">
+                <li class="verify-item verify-pass" id="chkSessionSeq">
+                  <span class="v-icon">✓</span>
+                  <span class="v-text">Session sequence 事实核验：回放事件流无数据丢失</span>
+                </li>
+                <li class="verify-item verify-pass" id="chkApiCompat">
+                  <span class="v-icon">✓</span>
+                  <span class="v-text">API 接口兼容性：保持 <code>createPresentationPipeline</code> 签名零破坏</span>
+                </li>
+                <li class="verify-item verify-pending" id="chkVitest">
+                  <span class="v-icon" id="chkVitestIcon">⏳</span>
+                  <span class="v-text" id="chkVitestText">聚焦单测断言：等待 <code>gui-presentation.test.js</code> 真实执行</span>
+                </li>
+              </ul>
+            </section>
+
+          </div>
+        </article>
+
+        <!-- 消息 3：动态完成/失败结果消息（随状态机呈现） -->
+        <article class="chat-msg jarvis-msg hidden" id="msg3Final" aria-label="Jarvis 完成验收报告">
+          <header class="msg-header">
+            <div class="author-badge">
+              <span class="author-role jarvis-role">Jarvis</span>
+              <span class="author-tag">Final Verdict</span>
+            </div>
+            <time class="msg-time" id="msg3Time">19:14:28</time>
+          </header>
+          
+          <div class="msg-body" id="msg3Body">
+            <!-- 由 JS 渲染完成卡片或失败卡片 -->
+          </div>
+        </article>
+
+      </div>
+    </div>
+  </main>
+
+  <!-- 底部固定决策条：保证在任何视口高度下，审批与终止始终触手可及 -->
+  <footer class="persistent-dock" id="persistentDock" role="region" aria-label="紧急控制与审批快捷栏">
+    <div class="dock-inner">
+      <div class="dock-status-summary">
+        <span class="dock-dot" id="dockDot">●</span>
+        <span class="dock-text" id="dockText">等待审批：<code>apply_patch</code> (+29 / −2)</span>
+      </div>
+      <div class="dock-quick-actions" id="dockActionGroup">
+        <button type="button" class="btn btn-sm btn-primary" id="dockBtnAllow">允许一次 (A)</button>
+        <button type="button" class="btn btn-sm btn-secondary" id="dockBtnModify">要求调整 (M)</button>
+        <button type="button" class="btn btn-sm btn-danger-outline" id="dockBtnReject">拒绝 (R)</button>
+      </div>
+    </div>
+  </footer>
+
+  <!-- 模态框：要求调整 -->
+  <dialog class="modal-dialog" id="modalAdjustment" aria-labelledby="modalAdjTitle">
+    <form method="dialog" class="modal-form" id="formAdjustment">
+      <div class="modal-header">
+        <h3 class="modal-title" id="modalAdjTitle">提出调整要求</h3>
+        <button type="button" class="btn-close" id="btnCloseAdjModal" aria-label="关闭">✕</button>
+      </div>
+      <div class="modal-body">
+        <label for="adjInput" class="input-label">请向 Jarvis 输入具体的修改意见或约束条件：</label>
+        <textarea id="adjInput" class="form-textarea" rows="3" placeholder="例如：不要在 presentation.js 引入额外 emit，改在 sessionStore 回调处理..."></textarea>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" id="btnCancelAdj">取消</button>
+        <button type="submit" class="btn btn-primary" id="btnSubmitAdj">提交调整需求</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- 模态框：终止确认 -->
+  <dialog class="modal-dialog" id="modalTerminate" aria-labelledby="modalTermTitle">
+    <form method="dialog" class="modal-form" id="formTerminate">
+      <div class="modal-header">
+        <h3 class="modal-title text-danger" id="modalTermTitle">确认终止任务</h3>
+        <button type="button" class="btn-close" id="btnCloseTermModal" aria-label="关闭">✕</button>
+      </div>
+      <div class="modal-body">
+        <p>终止后将立即中断当前 Agent 执行循环并释放锁。已暂存的文件可通过 Git 恢复。完成授权将保持<strong>未授予</strong>状态。</p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" id="btnCancelTerm">放弃</button>
+        <button type="submit" class="btn btn-danger" id="btnConfirmTerm">确认终止循环</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>
