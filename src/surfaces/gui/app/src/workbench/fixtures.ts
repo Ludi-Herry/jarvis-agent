@@ -1,4 +1,4 @@
-import type { GuiLiveOverview, GuiLiveOverviewSession, GuiLiveSnapshot, GuiMessage, GuiTool, GuiWorkspaceInfo } from '../../../live-types.js';
+import type { GuiLiveOverview, GuiLiveOverviewSession, GuiLiveSnapshot, GuiMessage, GuiModelsResponse, GuiTool, GuiWorkspaceInfo } from '../../../live-types.js';
 import type { LiveConnectionState } from '../live/use-live-session.js';
 import type { WorkbenchNotices } from './types.js';
 
@@ -77,6 +77,21 @@ const FIXTURE_WORKSPACES: GuiWorkspaceInfo[] = [
   { id: 'ws-fixture-main', name: 'jarvis-agent', cwd: FIXTURE_CWD, createdAt: '2026-09-26T08:00:00.000Z', archived: false, sort: 0 },
 ];
 
+/** 与真实端点一致的诚实形状：单模型、当前配置固定、思考档只读。 */
+export const FIXTURE_MODELS: GuiModelsResponse = {
+  defaultModel: 'deepseek-flash',
+  models: [{ id: 'deepseek-flash', label: 'DeepSeek-V4.1-Flash', maxContextTokens: 1_048_576, thinkingLevels: ['off'] }],
+};
+
+/** 演示用多档目录（试件专用，不代表真实 provider）。 */
+export const FIXTURE_MODELS_DEMO: GuiModelsResponse = {
+  defaultModel: 'deepseek-flash',
+  models: [
+    { id: 'deepseek-flash', label: 'DeepSeek-V4.1-Flash', maxContextTokens: 1_048_576, thinkingLevels: ['off', 'low', 'high', 'max'] },
+    { id: 'deepseek-pro', label: 'DeepSeek-V4-Pro（演示）', maxContextTokens: 1_048_576, thinkingLevels: ['off', 'low', 'high', 'max'] },
+  ],
+};
+
 function overviewSession(patch: Partial<GuiLiveOverviewSession> = {}): GuiLiveOverviewSession {
   return {
     id: 'gui-fixture-0001',
@@ -127,6 +142,7 @@ export interface WorkbenchFixture {
   readonly connection: LiveConnectionState;
   readonly actionPending: string | null;
   readonly notices: WorkbenchNotices;
+  readonly models: GuiModelsResponse;
 }
 
 function fixture(id: string, label: string, hint: string, patch: Partial<WorkbenchFixture> & { snapshot?: GuiLiveSnapshot | null }): WorkbenchFixture {
@@ -139,6 +155,7 @@ function fixture(id: string, label: string, hint: string, patch: Partial<Workben
     connection: patch.connection ?? 'connected',
     actionPending: patch.actionPending ?? null,
     notices: patch.notices ?? NOTICES,
+    models: patch.models ?? FIXTURE_MODELS,
   };
 }
 

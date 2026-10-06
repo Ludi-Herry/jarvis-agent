@@ -215,6 +215,8 @@ export function Workbench({ input }: { readonly input: WorkbenchInput }) {
           newTaskState={switchState(null)}
           onSelect={commands.chooseSession}
           onToggleCollapsed={() => setRailCollapsed(!railCollapsed)}
+          onUpdateMeta={commands.updateMeta}
+          onCreateWorkspace={commands.createWorkspace}
         />
 
         <LiveJarvisExternalStoreProvider

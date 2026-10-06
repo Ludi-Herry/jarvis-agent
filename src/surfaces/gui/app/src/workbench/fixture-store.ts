@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { GuiLiveSnapshot, GuiMessage } from '../../../live-types.js';
+import type { GuiGitStatus, GuiLiveOverviewSession, GuiLiveSnapshot, GuiMessage, GuiTaskValidateResponse } from '../../../live-types.js';
+import type { GuiCreateTaskInput, GuiMetaPatch, GuiWorkspaceInput } from '../live/api.js';
 import { findFixture, workbenchFixtures, type WorkbenchFixture } from './fixtures.js';
 import type { WorkbenchCommands, WorkbenchInput } from './types.js';
 
@@ -72,6 +73,43 @@ export function useFixtureSession(fixtureId: string | null): FixtureSession {
     if (snapshot === null) throw new Error('试件当前没有运行现场。');
     return snapshot;
   }, [snapshot]);
+
+  const createFixtureTask = useCallback(async (input: GuiCreateTaskInput): Promise<GuiLiveSnapshot> => {
+    const id = `gui-fixture-created-${Math.abs(Date.now() % 100_000)}`;
+    const isFork = 'forkFrom' in input;
+    const parentTitle = isFork
+      ? overview.sessions.find((session) => session.id === input.forkFrom.parentId)?.title ?? ''
+      : '';
+    const sourceRef = isFork
+      ? { parentId: input.forkFrom.parentId, turnId: input.forkFrom.turnId, summary: `承接「${parentTitle.slice(0, 40)}」的讨论分支（试件示意）` }
+      : undefined;
+    const objective = isFork ? `承接「${parentTitle.slice(0, 60)}」的讨论分支` : ('objective' in input ? input.objective : '');
+    const base = findFixture('running')?.snapshot;
+    if (!base) throw new Error('试件基座缺失。');
+    const created: GuiLiveSnapshot = {
+      ...structuredClone(base),
+      id, sequence: 0, objective, cwd: overview.cwd, model: 'deterministic-fixture', thinking: 'off',
+      sessionId: id, goalId: id, status: 'idle', phase: '任务已创建，待启动', nextAction: '', startedAt: nowIso(), elapsedMs: 0,
+      messages: isFork && snapshot !== null ? snapshot.messages.filter((item) => item.role === 'user' || item.role === 'assistant').slice(0, 4) : [],
+      tools: [], approval: null, approvalHistory: [], pendingInputs: [],
+      checks: [], diff: '', artifacts: [],
+      usage: { inputTokens: 0, outputTokens: 0, costCny: null, costNote: '试件不计费' },
+      warnings: [], capabilities: { submit: false, pause: false, continue: false, stop: false, resume: false },
+      ...(sourceRef ? { sourceRef } : {}),
+    } as GuiLiveSnapshot;
+    const row: GuiLiveOverviewSession = {
+      id, title: objective.slice(0, 60), objective, status: 'idle',
+      workspaceId: isFork
+        ? (overview.sessions.find((session) => session.id === input.forkFrom.parentId)?.workspaceId ?? overview.workspaces[0]?.id ?? '')
+        : (('workspaceId' in input ? input.workspaceId : undefined) ?? overview.workspaces[0]?.id ?? ''),
+      pinned: false, archived: false, updatedAt: nowIso(), lastMessage: '',
+      ...(sourceRef ? { sourceRef } : {}),
+    };
+    setOverview((current) => ({ ...current, sessions: [row, ...current.sessions] }));
+    setSelectedId(id);
+    setSnapshot(created);
+    return created;
+  }, [overview, snapshot]);
 
   const commands = useMemo<WorkbenchCommands>(() => ({
     chooseSession: (id) => {
@@ -183,7 +221,49 @@ export function useFixtureSession(fixtureId: string | null): FixtureSession {
         draft.phase = draft.completion.granted ? '任务交付与验收已完成' : '验收未通过；完成授权未授予';
       });
     },
-  }), [advance, fixture, requireSnapshot]);
+    updateMeta: async (id: string, patch: GuiMetaPatch) => {
+      setOverview((current) => ({
+        ...current,
+        sessions: current.sessions.map((session) => {
+          if (session.id !== id) return session;
+          const titlePatch = patch.title;
+          const title = titlePatch === undefined ? session.title
+            : titlePatch === null || titlePatch === '' ? session.objective.slice(0, 60) : titlePatch;
+          return { ...session, title, pinned: patch.pinned ?? session.pinned, archived: patch.archived ?? session.archived, updatedAt: nowIso() };
+        }),
+      }));
+      setSnapshot((live) => {
+        if (live === null || live.id !== id) return live;
+        const titlePatch = patch.title;
+        return { ...live,
+          ...(titlePatch !== undefined ? { title: titlePatch === null || titlePatch === '' ? undefined : titlePatch } : {}),
+          ...(patch.pinned !== undefined ? { pinned: patch.pinned } : {}),
+          ...(patch.archived !== undefined ? { archived: patch.archived } : {}) };
+      });
+    },
+    createWorkspace: async (input: GuiWorkspaceInput) => {
+      if (!input.name.trim() || !input.cwd.trim()) { setActionError('名称与路径都要填写。'); throw new Error('缺少工作区字段'); }
+      setOverview((current) => current.workspaces.some((item) => item.cwd === input.cwd.trim())
+        ? current
+        : { ...current, workspaces: [...current.workspaces, { id: `ws-fixture-${current.workspaces.length + 1}`, name: input.name.trim(), cwd: input.cwd.trim(), createdAt: nowIso(), archived: false, sort: current.workspaces.length }] });
+    },
+    validateTask: async (input: GuiCreateTaskInput): Promise<GuiTaskValidateResponse> => {
+      if ('forkFrom' in input) return { ok: true, errors: [] };
+      const errors: GuiTaskValidateResponse['errors'] = [];
+      if (!input.objective.trim()) errors.push({ field: 'objective', message: '先写清这次要完成什么。' });
+      if (input.writePaths.length === 0 || input.writePaths.some((path) => !path.trim())) errors.push({ field: 'writePaths', message: '至少一条相对写入路径。' });
+      if (input.checkCommands.length === 0 || input.checkCommands.some((command) => !command.trim())) errors.push({ field: 'checkCommands', message: '至少一条检查命令。' });
+      return { ok: errors.length === 0, errors };
+    },
+    createTask: async (input: GuiCreateTaskInput): Promise<GuiLiveSnapshot> => createFixtureTask(input),
+    createBranch: async (turnId: string): Promise<GuiLiveSnapshot> => {
+      const parentId = snapshot?.id ?? selectedId ?? 'gui-fixture-0001';
+      return createFixtureTask({ forkFrom: { parentId, turnId } });
+    },
+    getGit: async (): Promise<GuiGitStatus> => ({
+      at: nowIso(), branch: 'main', ahead: 1, behind: 0, uncommitted: 2, worktree: 'dirty',
+    }),
+  }), [advance, createFixtureTask, fixture, requireSnapshot]);
 
   const selectFixture = useCallback((id: string) => {
     const next = findFixture(id);
@@ -216,6 +296,7 @@ export function useFixtureSession(fixtureId: string | null): FixtureSession {
     },
     commands,
     provenance: 'fixture',
+    models: fixture.models,
     fixture,
     selectFixture,
     simulateReconnect,

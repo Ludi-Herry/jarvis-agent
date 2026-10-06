@@ -6,10 +6,18 @@ import type {
   GuiStreamFrame,
 } from '../../../live-types.js';
 import {
+  createLiveTask,
+  createLiveWorkspace,
+  getLiveGitStatus,
   getLiveOverview,
   getLiveSnapshot,
+  postLiveMeta,
   postLiveSnapshot,
   startLiveTask,
+  validateLiveTask,
+  type GuiCreateTaskInput,
+  type GuiMetaPatch,
+  type GuiWorkspaceInput,
 } from './api.js';
 
 export type LiveConnectionState = GuiConnectionState;
@@ -331,6 +339,39 @@ export function useLiveSession() {
     );
   }, [connection, overview?.enabled, runMutation, selectedPath]);
 
+  const updateMeta = useCallback(async (id: string, patch: GuiMetaPatch) => {
+    if (overview?.enabled !== true) throw new Error('真实运行入口当前未启用。');
+    const next = await postLiveMeta(id, patch);
+    if (next.id === selectedIdRef.current) receiveMutationSnapshot(next);
+    void refreshOverview();
+  }, [overview?.enabled, receiveMutationSnapshot, refreshOverview]);
+
+  const createWorkspace = useCallback(async (input: GuiWorkspaceInput) => {
+    if (overview?.enabled !== true) throw new Error('真实运行入口当前未启用。');
+    await createLiveWorkspace(input);
+    void refreshOverview();
+  }, [overview?.enabled, refreshOverview]);
+
+  const validateTask = useCallback(async (input: GuiCreateTaskInput) => validateLiveTask(input), []);
+
+  const createTask = useCallback(async (input: GuiCreateTaskInput) => {
+    if (overview?.enabled !== true) throw new Error('真实运行入口当前未启用。');
+    const next = await createLiveTask(input);
+    snapshotsRef.current.set(next.id, next);
+    latestSequenceRef.current.set(next.id, next.sequence);
+    chooseSession(next.id);
+    void refreshOverview();
+    return next;
+  }, [chooseSession, overview?.enabled, refreshOverview]);
+
+  const createBranch = useCallback(async (turnId: string) => {
+    const parentId = selectedIdRef.current;
+    if (parentId === null) throw new Error('请先选择一个会话。');
+    return createTask({ forkFrom: { parentId, turnId } });
+  }, [createTask]);
+
+  const getGit = useCallback(async (id: string) => getLiveGitStatus(id), []);
+
   return {
     overview,
     overviewLoading,
@@ -352,5 +393,11 @@ export function useLiveSession() {
     resume,
     decide,
     submitReview,
+    updateMeta,
+    createWorkspace,
+    validateTask,
+    createTask,
+    createBranch,
+    getGit,
   };
 }

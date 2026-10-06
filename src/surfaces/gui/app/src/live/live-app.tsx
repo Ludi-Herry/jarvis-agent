@@ -1,4 +1,6 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import type { GuiModelsResponse } from '../../../live-types.js';
+import { getLiveModels } from './api.js';
 import { useLiveSession } from './use-live-session.js';
 import { Workbench } from '../workbench/workbench.js';
 import type { WorkbenchCommands, WorkbenchInput } from '../workbench/types.js';
@@ -11,12 +13,24 @@ export function LiveJarvisApp() {
   const {
     overview, snapshot, selectedId, connection, actionPending, overviewLoading, overviewError,
     connectionNotice, streamWarning, actionError, chooseSession, start, submitInput, pause,
-    continueRun, stop, resume, decide, submitReview,
+    continueRun, stop, resume, decide, submitReview, updateMeta, createWorkspace, validateTask,
+    createTask, createBranch, getGit,
   } = useLiveSession();
+
+  const [models, setModels] = useState<GuiModelsResponse | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    getLiveModels(controller.signal).then(setModels).catch(() => setModels(null));
+    return () => controller.abort();
+  }, []);
 
   const commands = useMemo<WorkbenchCommands>(() => ({
     chooseSession, start, submitInput, pause, continueRun, stop, resume, decide, submitReview,
-  }), [chooseSession, start, submitInput, pause, continueRun, stop, resume, decide, submitReview]);
+    updateMeta, createWorkspace, validateTask, createTask, createBranch, getGit,
+  }), [
+    chooseSession, start, submitInput, pause, continueRun, stop, resume, decide, submitReview,
+    updateMeta, createWorkspace, validateTask, createTask, createBranch, getGit,
+  ]);
 
   const input = useMemo<WorkbenchInput>(() => ({
     overview,
@@ -27,8 +41,9 @@ export function LiveJarvisApp() {
     notices: { overviewLoading, overviewError, connectionNotice, streamWarning, actionError },
     commands,
     provenance: 'live',
+    models,
   }), [
-    actionError, actionPending, commands, connection, connectionNotice, overview, overviewError,
+    actionError, actionPending, commands, connection, connectionNotice, models, overview, overviewError,
     overviewLoading, selectedId, snapshot, streamWarning,
   ]);
 

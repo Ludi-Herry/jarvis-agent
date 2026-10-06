@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react';
-import type { GuiConnectionState, GuiLiveOverview } from '../../../live-types.js';
+import type { GuiConnectionState, GuiLiveOverview, GuiLiveOverviewSession } from '../../../live-types.js';
+import type { GuiMetaPatch, GuiWorkspaceInput } from '../live/api.js';
 import type { ControlState } from './controls.js';
-import { statusPresentation, workspaceName } from './format.js';
+import { statusPresentation } from './format.js';
 import { FolderIcon, GearIcon, PlusIcon, RailIcon, SearchIcon } from './icons.js';
 
 export interface ConnectionBadge {
@@ -52,6 +53,8 @@ export function WorkspaceRail({
   newTaskState,
   onSelect,
   onToggleCollapsed,
+  onUpdateMeta,
+  onCreateWorkspace,
 }: {
   readonly overview: GuiLiveOverview | null;
   readonly selectedId: string | null;
@@ -61,19 +64,68 @@ export function WorkspaceRail({
   readonly newTaskState: ControlState;
   readonly onSelect: (id: string | null) => void;
   readonly onToggleCollapsed: () => void;
+  readonly onUpdateMeta: (id: string, patch: GuiMetaPatch) => Promise<unknown>;
+  readonly onCreateWorkspace: (input: GuiWorkspaceInput) => Promise<unknown>;
 }) {
   const [query, setQuery] = useState('');
   const [searching, setSearching] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [menuFor, setMenuFor] = useState<string | null>(null);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState('');
+  const [archivedOpen, setArchivedOpen] = useState<string | null>(null);
+  const [wsDialogOpen, setWsDialogOpen] = useState(false);
+  const [wsName, setWsName] = useState('');
+  const [wsCwd, setWsCwd] = useState('');
+  const [wsError, setWsError] = useState<string | null>(null);
+  const [wsPending, setWsPending] = useState(false);
   const sessions = overview?.sessions ?? [];
-  const workspace = workspaceName(overview?.cwd);
-  const taskTitle = overview?.task?.objective.split(/[。\n]/u)[0].slice(0, 60) ?? '等待真实待办';
+  const workspaces = useMemo(() => (overview?.workspaces ?? []).filter((item) => !item.archived), [overview?.workspaces]);
 
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase();
     if (needle === '') return sessions;
-    return sessions.filter((session) => session.objective.toLowerCase().includes(needle) || session.id.toLowerCase().includes(needle));
+    return sessions.filter((session) =>
+      session.title.toLowerCase().includes(needle)
+      || session.objective.toLowerCase().includes(needle)
+      || session.lastMessage.toLowerCase().includes(needle)
+      || session.id.toLowerCase().includes(needle));
   }, [query, sessions]);
+
+  const groups = useMemo(() => {
+    const fallback = workspaces[0]?.id ?? '';
+    const byWorkspace = new Map<string, GuiLiveOverviewSession[]>();
+    for (const session of visible) {
+      const key = workspaces.some((item) => item.id === session.workspaceId) ? session.workspaceId : fallback;
+      byWorkspace.set(key, [...(byWorkspace.get(key) ?? []), session]);
+    }
+    return workspaces.map((ws) => ({
+      ws,
+      active: (byWorkspace.get(ws.id) ?? []).filter((session) => !session.archived),
+      archived: (byWorkspace.get(ws.id) ?? []).filter((session) => session.archived),
+    })).filter((group) => group.active.length > 0 || group.archived.length > 0 || query.trim() === '');
+  }, [visible, workspaces, query]);
+
+  const commitMeta = (id: string, patch: GuiMetaPatch) => {
+    setMenuFor(null);
+    void onUpdateMeta(id, patch).catch(() => undefined);
+  };
+
+  const commitRename = (session: GuiLiveOverviewSession) => {
+    const next = renameDraft.trim();
+    setRenamingId(null);
+    if (next === '' || next === session.title) return;
+    void onUpdateMeta(session.id, { title: next }).catch(() => undefined);
+  };
+
+  const submitWorkspace = () => {
+    setWsPending(true);
+    setWsError(null);
+    onCreateWorkspace({ name: wsName.trim(), cwd: wsCwd.trim() })
+      .then(() => { setWsDialogOpen(false); setWsName(''); setWsCwd(''); })
+      .catch((error: unknown) => setWsError(error instanceof Error && error.message.trim() !== '' ? error.message : '工作区创建失败。'))
+      .finally(() => setWsPending(false));
+  };
 
   if (collapsed) {
     return (
@@ -176,46 +228,150 @@ export function WorkspaceRail({
         <section className="wb-group">
           <header>
             <FolderIcon />
-            <span>{workspace}</span>
-            <em>{sessions.length}</em>
+            <span>任务空态</span>
           </header>
           <button
             type="button"
             className={`session-row wb-task-row${selectedId === null ? ' is-current' : ''}`}
             aria-current={selectedId === null ? 'page' : undefined}
             disabled={!newTaskState.available && selectedId !== null}
-            title={newTaskState.available ? '任务空态' : newTaskState.reason}
+            title={newTaskState.available ? '新任务创建面板' : newTaskState.reason}
             onClick={() => onSelect(null)}
           >
             <span className="session-state is-idle" aria-hidden="true" />
             <span>
-              <strong>{taskTitle}</strong>
-              <small>任务空态</small>
+              <strong>新建任务</strong>
+              <small>输入目标并确认合同</small>
             </span>
           </button>
-          {visible.length === 0 ? (
-            <p className="wb-group-empty">{query.trim() === '' ? '还没有会话记录。' : '没有匹配的会话。'}</p>
-          ) : null}
-          {visible.map((session) => {
-            const state = switchState(session.id);
-            return (
+        </section>
+        {groups.map((group) => (
+          <section className="wb-group" key={group.ws.id}>
+            <header>
+              <FolderIcon />
+              <span>{group.ws.name}</span>
+              <em>{group.active.length}</em>
+            </header>
+            {group.active.length === 0 && group.archived.length === 0 ? (
+              <p className="wb-group-empty">{query.trim() === '' ? '该工作区还没有会话记录。' : '没有匹配的会话。'}</p>
+            ) : null}
+            {group.active.map((session) => {
+              const state = switchState(session.id);
+              if (renamingId === session.id) {
+                return (
+                  <div className="wb-task-wrap" key={session.id}>
+                    <input
+                      className="wb-rename"
+                      value={renameDraft}
+                      autoFocus
+                      aria-label={`重命名 ${session.title}`}
+                      onChange={(event) => setRenameDraft(event.currentTarget.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') commitRename(session);
+                        if (event.key === 'Escape') setRenamingId(null);
+                      }}
+                      onBlur={() => commitRename(session)}
+                    />
+                  </div>
+                );
+              }
+              return (
+                <div className="wb-task-wrap" key={session.id}>
+                  <button
+                    type="button"
+                    className={`session-row wb-task-row${selectedId === session.id ? ' is-current' : ''}`}
+                    aria-current={selectedId === session.id ? 'page' : undefined}
+                    disabled={!state.available}
+                    title={state.available ? `${session.objective}${session.lastMessage !== '' ? `\n最近：${session.lastMessage}` : ''}` : state.reason}
+                    onClick={() => onSelect(session.id)}
+                  >
+                    <span className={`session-state is-${session.status}`} aria-hidden="true" />
+                    <span>
+                      <strong>{session.sourceRef !== undefined ? '分支 · ' : ''}{session.title}</strong>
+                      <small>{statusPresentation[session.status].label}</small>
+                    </span>
+                    {session.pinned ? <span className="wb-pin" aria-label="已置顶" title="已置顶">●</span> : null}
+                  </button>
+                  <button
+                    type="button"
+                    className="wb-task-menu"
+                    aria-expanded={menuFor === session.id}
+                    aria-haspopup="menu"
+                    aria-label={`任务选项：${session.title}`}
+                    onClick={() => setMenuFor(menuFor === session.id ? null : session.id)}
+                  >
+                    …
+                  </button>
+                  {menuFor === session.id ? (
+                    <div className="wb-task-menu-pop" role="menu" aria-label="任务选项">
+                      <button type="button" role="menuitem" onClick={() => { setMenuFor(null); setRenamingId(session.id); setRenameDraft(session.title); }}>重命名</button>
+                      <button type="button" role="menuitem" onClick={() => commitMeta(session.id, { pinned: !session.pinned })}>{session.pinned ? '取消置顶' : '置顶'}</button>
+                      <button type="button" role="menuitem" onClick={() => commitMeta(session.id, { archived: true })}>归档</button>
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+            {group.archived.length > 0 ? (
               <button
-                key={session.id}
                 type="button"
-                className={`session-row wb-task-row${selectedId === session.id ? ' is-current' : ''}`}
-                aria-current={selectedId === session.id ? 'page' : undefined}
-                disabled={!state.available}
-                title={state.available ? `${session.objective}\n${session.id}` : state.reason}
-                onClick={() => onSelect(session.id)}
+                className="wb-archived-toggle"
+                aria-expanded={archivedOpen === group.ws.id}
+                onClick={() => setArchivedOpen(archivedOpen === group.ws.id ? null : group.ws.id)}
               >
-                <span className={`session-state is-${session.status}`} aria-hidden="true" />
-                <span>
-                  <strong>{session.objective.split(/[。\n]/u)[0].slice(0, 60)}</strong>
-                  <small>{statusPresentation[session.status].label}</small>
-                </span>
+                已归档 · {group.archived.length}
               </button>
-            );
-          })}
+            ) : null}
+            {archivedOpen === group.ws.id ? group.archived.map((session) => (
+              <div className="wb-task-wrap is-archived" key={session.id}>
+                <button
+                  type="button"
+                  className="session-row wb-task-row"
+                  onClick={() => onSelect(session.id)}
+                >
+                  <span className={`session-state is-${session.status}`} aria-hidden="true" />
+                  <span>
+                    <strong>{session.title}</strong>
+                    <small>{statusPresentation[session.status].label}</small>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className="wb-task-menu"
+                  aria-label={`恢复归档：${session.title}`}
+                  onClick={() => commitMeta(session.id, { archived: false })}
+                >
+                  恢复
+                </button>
+              </div>
+            )) : null}
+          </section>
+        ))}
+        <section className="wb-group">
+          <button type="button" className="wb-action-row" onClick={() => setWsDialogOpen((open) => !open)} aria-expanded={wsDialogOpen}>
+            <PlusIcon />
+            <span>新建工作区</span>
+            <kbd>绝对路径</kbd>
+          </button>
+          {wsDialogOpen ? (
+            <div className="wb-ws-dialog" role="dialog" aria-label="新建工作区">
+              <label>
+                <span>名称</span>
+                <input value={wsName} onChange={(event) => setWsName(event.currentTarget.value)} placeholder="例如 demo 项目" />
+              </label>
+              <label>
+                <span>目录（绝对路径）</span>
+                <input value={wsCwd} onChange={(event) => setWsCwd(event.currentTarget.value)} placeholder="H:\\path\\to\\repo" />
+              </label>
+              {wsError !== null ? <p className="wb-ws-error">{wsError}</p> : null}
+              <div className="wb-ws-actions">
+                <button type="button" onClick={() => setWsDialogOpen(false)}>取消</button>
+                <button type="button" className="wb-ws-confirm" disabled={wsPending || wsName.trim() === '' || wsCwd.trim() === ''} onClick={submitWorkspace}>
+                  {wsPending ? '创建中…' : '创建'}
+                </button>
+              </div>
+            </div>
+          ) : null}
         </section>
       </nav>
 

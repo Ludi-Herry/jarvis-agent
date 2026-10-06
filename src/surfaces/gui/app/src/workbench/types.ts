@@ -1,4 +1,12 @@
-import type { GuiConnectionState, GuiLiveOverview, GuiLiveSnapshot } from '../../../live-types.js';
+import type {
+  GuiConnectionState,
+  GuiGitStatus,
+  GuiLiveOverview,
+  GuiLiveSnapshot,
+  GuiModelsResponse,
+  GuiTaskValidateResponse,
+} from '../../../live-types.js';
+import type { GuiCreateTaskInput, GuiMetaPatch, GuiWorkspaceInput } from '../live/api.js';
 import type { HumanReviewDecision } from '../live/use-live-session.js';
 
 /**
@@ -16,6 +24,12 @@ export interface WorkbenchCommands {
   readonly resume: () => Promise<unknown>;
   readonly decide: (requestId: string, decision: 'allow-once' | 'deny', reason?: string) => Promise<unknown>;
   readonly submitReview: (decisions: readonly HumanReviewDecision[]) => Promise<unknown>;
+  readonly updateMeta: (id: string, patch: GuiMetaPatch) => Promise<unknown>;
+  readonly createWorkspace: (input: GuiWorkspaceInput) => Promise<unknown>;
+  readonly validateTask: (input: GuiCreateTaskInput) => Promise<GuiTaskValidateResponse>;
+  readonly createTask: (input: GuiCreateTaskInput) => Promise<GuiLiveSnapshot>;
+  readonly createBranch: (turnId: string) => Promise<GuiLiveSnapshot>;
+  readonly getGit: (id: string) => Promise<GuiGitStatus>;
 }
 
 export interface WorkbenchNotices {
@@ -38,6 +52,8 @@ export interface WorkbenchInput {
   readonly notices: WorkbenchNotices;
   readonly commands: WorkbenchCommands;
   readonly provenance: WorkbenchProvenance;
+  /** Real model catalog from the host; null until loaded or when fixtures omit it. */
+  readonly models: GuiModelsResponse | null;
 }
 
 export type { HumanReviewDecision };

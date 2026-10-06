@@ -1083,6 +1083,7 @@ export class GuiSessionHost {
   private makeTask(created: CreatedRecord): LiveTask {
     const root = this.options.dataDir;
     const snapshot: GuiLiveSnapshot = { id: created.id, sequence: 0, objective: created.task.objective, cwd: created.task.cwd, model: created.model,
+      thinking: created.task.thinking ?? 'off',
       sessionId: created.id, goalId: created.id, status: 'idle', phase: '任务已创建，待启动', nextAction: '', startedAt: created.at, elapsedMs: 0,
       messages: [], tools: [], approval: null, approvalHistory: [], pendingInputs: [], completion: { granted: false, verdict: 'none', rationale: '完成授权未授予' },
       review: null, evidenceToken: null, checks: [], diff: '', artifacts: [], usage: { inputTokens: 0, outputTokens: 0, costCny: created.task.pricing ? 0 : null,

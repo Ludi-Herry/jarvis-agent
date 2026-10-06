@@ -98,6 +98,8 @@ export interface GuiLiveSnapshot {
   objective: string;
   cwd: string;
   model: string;
+  /** Thinking effort recorded in the task contract; 'off' when unset. */
+  thinking?: string;
   sessionId: string;
   goalId: string;
   status: GuiRunStatus;
