@@ -99,7 +99,7 @@ export function useHistoryGeometry(
       }),
       ticks: tickFractions(turns, container.scrollHeight),
       activeIndex: currentTurnIndex(turns, container.scrollTop, container.clientHeight),
-      atLatest: scrollablePx - container.scrollTop < 48,
+      atLatest: scrollablePx - container.scrollTop <= 80,
       scrollable: scrollablePx > 0,
     });
   }, [containerRef, turnTexts]);
@@ -138,7 +138,7 @@ export function useHistoryGeometry(
     const node = container.querySelector<HTMLElement>(`[data-turn-id="${CSS.escape(id)}"]`);
     if (node === null) return;
     const top = node.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop;
-    container.scrollTo({ top: Math.max(0, top - 12), behavior: prefersReducedMotion() ? 'auto' : 'smooth' });
+    container.scrollTo({ top: Math.max(0, top - 20), behavior: prefersReducedMotion() ? 'auto' : 'smooth' });
   }, [containerRef]);
 
   const scrollToLatest = useCallback(() => {

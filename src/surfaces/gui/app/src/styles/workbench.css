@@ -12,14 +12,16 @@
   --background: #ffffff;
   --ink: #18181b;
   --ink-soft: #3f3f46;
+  --ink-body: #52525b;
   --muted: #71717a;
   --faint: #a1a1aa;
   --line: #e4e4e7;
-  --line-soft: #f0f0f1;
+  --line-soft: #f4f4f5;
   --line-strong: #d4d4d8;
   --border: #e4e4e7;
   --input: #d4d4d8;
   --paper: #ffffff;
+  --paper-glass: rgba(255, 255, 255, 0.96);
   --paper-deep: #f3f3f5;
   --shell: #f3f3f5;
   --well: #fafafa;
@@ -32,6 +34,7 @@
   --primary: #27272a;
   --primary-foreground: #ffffff;
   --ring: #a1a1aa;
+  --code-dim: #a1a1aa;
   --sage: #27272a;
   --sage-soft: #f4f4f5;
   --seal: #27272a;
@@ -51,7 +54,7 @@
   --shadow-dialog: 0 18px 50px rgba(24, 24, 27, 0.14);
 
   --wb-rail: 244px;
-  --wb-rail-collapsed: 52px;
+  --wb-rail-collapsed: 58px;
 
   display: contents;
 }
@@ -86,7 +89,7 @@ html[data-surface="fixture"] .wb-shell {
   gap: 10px;
   min-width: 0;
   min-height: 0;
-  padding: 12px 10px 10px;
+  padding: 22px 12px 14px;
   border-right: 1px solid var(--line);
   background: var(--shell);
 }
@@ -94,7 +97,7 @@ html[data-surface="fixture"] .wb-shell {
 .wb-rail.is-collapsed {
   gap: 8px;
   align-items: center;
-  padding: 12px 6px 10px;
+  padding: 14px 5px;
 }
 
 .wb-rail-head {
@@ -102,6 +105,7 @@ html[data-surface="fixture"] .wb-shell {
   align-items: center;
   justify-content: space-between;
   gap: 6px;
+  margin-bottom: 16px;
   padding: 0 2px;
 }
 
@@ -114,9 +118,9 @@ html[data-surface="fixture"] .wb-shell {
   width: 28px;
   height: 28px;
   border: 0;
-  border-radius: 8px;
+  border-radius: 9px;
   background: var(--accent);
-  color: #fff;
+  color: var(--primary-foreground);
   font-size: 15px;
 }
 
@@ -148,6 +152,19 @@ html[data-surface="fixture"] .wb-shell {
   color: var(--faint);
 }
 
+.wb-rail-head .wb-icon-btn {
+  width: 25px;
+  height: 25px;
+  margin-left: auto;
+  color: var(--faint);
+}
+
+.wb-rail.is-collapsed > .wb-icon-btn:first-child {
+  width: 25px;
+  height: 25px;
+  color: var(--faint);
+}
+
 .wb-rail-actions {
   display: grid;
   gap: 2px;
@@ -159,7 +176,7 @@ html[data-surface="fixture"] .wb-shell {
   align-items: center;
   gap: 8px;
   width: 100%;
-  min-height: 30px;
+  min-height: 34px;
   padding: 0 8px;
   border: 0;
   border-radius: 7px;
@@ -192,7 +209,7 @@ html[data-surface="fixture"] .wb-shell {
 .wb-action-row:hover kbd,
 .wb-action-row:focus-visible kbd {
   border-color: var(--line);
-  background: #fff;
+  background: var(--paper);
   color: var(--muted);
   opacity: 1;
 }
@@ -208,7 +225,7 @@ html[data-surface="fixture"] .wb-shell {
   padding: 0 8px;
   border: 1px solid var(--line-strong);
   border-radius: 7px;
-  background: #fff;
+  background: var(--paper);
   color: var(--ink);
   font: inherit;
   font-size: 12px;
@@ -216,7 +233,7 @@ html[data-surface="fixture"] .wb-shell {
 
 .wb-search input:focus-visible {
   border-color: var(--ring);
-  outline: 2px solid color-mix(in srgb, var(--ring) 30%, transparent);
+  outline: 2px solid var(--accent);
   outline-offset: 0;
 }
 
@@ -286,9 +303,13 @@ html[data-surface="fixture"] .wb-shell {
   grid-template-columns: 16px minmax(0, 1fr) auto;
   align-items: center;
   gap: 7px;
-  padding: 6px 8px 4px;
-  color: var(--muted);
-  font-size: 11px;
+  padding: 15px 10px 7px;
+  color: var(--faint);
+  font-size: 10px;
+}
+
+.wb-groups > .wb-group:first-child > header {
+  padding-top: 7px;
 }
 
 .wb-group > header span {
@@ -305,11 +326,12 @@ html[data-surface="fixture"] .wb-shell {
 
 .wb-task-row {
   grid-template-columns: 7px minmax(0, 1fr);
+  min-height: 34px;
   border-radius: 7px;
 }
 
 .wb-task-row strong {
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 500;
   color: var(--ink-soft);
 }
@@ -355,12 +377,12 @@ html[data-surface="fixture"] .wb-shell {
   justify-content: space-between;
   gap: 6px;
   padding-top: 8px;
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--line-strong);
 }
 
 .wb-person {
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr);
+  grid-template-columns: 25px minmax(0, 1fr);
   align-items: center;
   gap: 7px;
   min-width: 0;
@@ -388,8 +410,8 @@ html[data-surface="fixture"] .wb-shell {
 .wb-avatar {
   display: grid;
   place-items: center;
-  width: 24px;
-  height: 24px;
+  width: 25px;
+  height: 25px;
   border: 1px solid var(--line-strong);
   border-radius: 50%;
   background: var(--accent-soft);
@@ -441,7 +463,7 @@ html[data-surface="fixture"] .wb-shell {
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: 11px;
-  background: #fff;
+  background: var(--paper);
   box-shadow: var(--shadow-float);
 }
 
@@ -496,10 +518,10 @@ html[data-surface="fixture"] .wb-shell {
   display: flex;
   align-items: center;
   gap: 10px;
-  min-height: 44px;
-  padding: 6px 14px;
-  border-bottom: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.96);
+  min-height: 54px;
+  padding: 6px 14px 6px 23px;
+  border-bottom: 0;
+  background: var(--paper-glass);
 }
 
 .wb-head-title {
@@ -511,8 +533,19 @@ html[data-surface="fixture"] .wb-shell {
 }
 
 .wb-head-folder {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
   flex: 0 0 auto;
-  color: var(--muted);
+  border-radius: 6px;
+  background: var(--accent-soft);
+  color: var(--ink-soft);
+}
+
+.wb-head-folder svg {
+  width: 15px;
+  height: 15px;
 }
 
 .wb-head-workspace {
@@ -527,10 +560,11 @@ html[data-surface="fixture"] .wb-shell {
 
 .wb-head h1 {
   margin: 0;
+  max-width: 220px;
   min-width: 0;
   overflow: hidden;
-  font-family: "Segoe UI Variable Display", "Microsoft YaHei UI", sans-serif;
-  font-size: 14px;
+  color: var(--ink-soft);
+  font-size: 12px;
   font-weight: 600;
   line-height: 1.4;
   text-overflow: ellipsis;
@@ -544,14 +578,31 @@ html[data-surface="fixture"] .wb-shell {
   flex: 0 0 auto;
 }
 
+.wb-head .wb-icon-btn {
+  width: 26px;
+  height: 26px;
+}
+
+.wb-head-tool-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.wb-status-chip + .wb-head-tool-group {
+  margin: 0 7px;
+  padding-left: 8px;
+  border-left: 1px solid var(--line);
+}
+
 .wb-status-chip {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   max-width: 300px;
-  padding: 3px 10px;
+  padding: 3px 8px;
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: 7px;
   background: var(--well);
   color: var(--ink-soft);
   font-size: 11px;
@@ -609,7 +660,7 @@ html[data-surface="fixture"] .wb-shell {
 .wb-history {
   min-height: 0;
   overflow-y: auto;
-  padding: 18px clamp(16px, 3vw, 44px) 30px;
+  padding: 23px max(30px, calc((100% - 730px) / 2)) 24px;
   scrollbar-color: var(--line-strong) transparent;
 }
 
@@ -620,6 +671,13 @@ html[data-surface="fixture"] .wb-shell {
   width: 100%;
   max-width: 760px;
   margin-inline: auto;
+}
+
+.wb-history-content[data-empty="true"] {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 100%;
 }
 
 .wb-history-content .message-list,
@@ -637,7 +695,7 @@ html[data-surface="fixture"] .wb-shell {
 /* ------------------------------------------------------------- messages --- */
 
 .wb-message-list {
-  gap: 18px;
+  gap: 46px;
 }
 
 .wb-turn {
@@ -646,10 +704,10 @@ html[data-surface="fixture"] .wb-shell {
 
 .wb-turn[data-role="user"] .wb-message {
   width: auto;
-  max-width: min(88%, 620px);
+  max-width: min(83%, 560px);
   margin-left: auto;
-  padding: 10px 13px;
-  border: 0;
+  padding: 12px 15px 13px;
+  border: 1px solid var(--accent-soft);
   border-radius: 14px 14px 4px 14px;
   background: var(--muted-surface);
 }
@@ -679,6 +737,57 @@ html[data-surface="fixture"] .wb-shell {
   font-weight: 650;
 }
 
+.wb-message-meta time {
+  font-size: 10px;
+}
+
+.wb-msg-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.wb-msg-avatar {
+  display: grid;
+  place-items: center;
+  width: 29px;
+  height: 29px;
+  flex: 0 0 auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--primary-foreground);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.wb-msg-ident {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.wb-msg-ident strong {
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.wb-msg-ident small {
+  color: var(--faint);
+  font-size: 9px;
+}
+
+.wb-msg-body {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.wb-turn[data-role="assistant"] .wb-msg-body {
+  margin-left: 37px;
+}
+
 .wb-incomplete {
   padding: 1px 5px;
   border: 1px solid color-mix(in srgb, var(--red) 34%, var(--line));
@@ -689,9 +798,14 @@ html[data-surface="fixture"] .wb-shell {
 }
 
 .wb-turn .message-copy {
+  color: var(--ink-body);
+  font-size: 12px;
+  line-height: 1.78;
+}
+
+.wb-turn[data-role="user"] .wb-message .message-copy {
   color: var(--ink-soft);
-  font-size: 13px;
-  line-height: 1.72;
+  line-height: 1.75;
 }
 
 /* folded tool stream ---------------------------------------------------- */
@@ -762,9 +876,9 @@ html[data-surface="fixture"] .wb-shell {
 .wb-reply-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-height: 24px;
-  margin-top: 2px;
+  gap: 3px;
+  min-height: 27px;
+  margin-top: 12px;
   opacity: 0;
   transition: opacity var(--duration-quick) var(--ease-in-out);
 }
@@ -776,31 +890,38 @@ html[data-surface="fixture"] .wb-shell {
 }
 
 .wb-action {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 3px 7px;
+  display: grid;
+  place-items: center;
+  width: 25px;
+  height: 25px;
+  padding: 0;
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--faint);
 }
 
 .wb-action:hover {
   background: var(--accent-soft);
-  color: var(--ink-soft);
+  color: var(--ink-body);
+}
+
+.wb-action svg {
+  width: 15px;
+  height: 15px;
+  stroke-width: 1.6;
 }
 
 .wb-time {
+  margin-left: auto;
   color: var(--faint);
   font-size: 10px;
+  line-height: 25px;
   opacity: 0;
 }
 
 .wb-turn:hover .wb-time,
-.wb-turn:focus-within .wb-time,
-.wb-reply-actions[data-latest="true"] .wb-time {
+.wb-turn:focus-within .wb-time {
   opacity: 1;
 }
 
@@ -819,27 +940,24 @@ html[data-surface="fixture"] .wb-shell {
   right: 0;
   left: 0;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  gap: 10px;
-  padding: 9px clamp(16px, 3vw, 44px) 16px;
+  justify-items: center;
+  padding: 8px 18px 13px;
   border: 0;
-  background: linear-gradient(to bottom, #fff 0%, #fff 62%, rgba(255, 255, 255, 0));
+  background: linear-gradient(to bottom, var(--paper) 0%, var(--paper) 73%, rgba(255, 255, 255, 0));
   text-align: left;
-}
-
-.wb-sticky-prompt > span {
-  padding: 2px 6px;
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  color: var(--faint);
-  font-size: 10px;
-  white-space: nowrap;
 }
 
 .wb-sticky-prompt strong {
   display: -webkit-box;
   overflow: hidden;
+  width: 100%;
+  max-width: 748px;
+  min-height: 33px;
+  padding: 7px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--accent-soft);
+  box-shadow: 0 3px 12px rgba(63, 63, 70, 0.07);
   color: var(--ink-soft);
   font-size: 12px;
   font-weight: 550;
@@ -853,7 +971,7 @@ html[data-surface="fixture"] .wb-shell {
 }
 
 .wb-sticky-prompt:focus-visible {
-  outline: 2px solid var(--muted);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
@@ -862,37 +980,33 @@ html[data-surface="fixture"] .wb-shell {
 .wb-map {
   position: absolute;
   z-index: 5;
-  top: 12px;
-  bottom: 16px;
-  left: 8px;
-  width: 20px;
+  top: 14px;
+  left: calc(max(30px, calc((100% - 730px) / 2)) - 17px);
+  width: 26px;
+  height: max(160px, calc(100% - 28px));
 }
 
 .wb-tick {
   position: absolute;
-  left: 0;
-  width: 12px;
-  height: 2px;
+  left: 5px;
+  width: 6px;
+  height: 1px;
   padding: 0;
   border: 0;
-  border-radius: 2px;
   background: var(--faint);
-  transition: background-color var(--duration-quick) var(--ease-in-out), width var(--duration-quick) var(--ease-smooth-out);
+  transition: background-color var(--duration-quick) var(--ease-in-out), width var(--duration-quick) var(--ease-smooth-out), height var(--duration-quick) var(--ease-smooth-out);
 }
 
 .wb-tick:hover,
-.wb-tick:focus-visible {
-  width: 18px;
-  background: var(--ink-soft);
-}
-
+.wb-tick:focus-visible,
 .wb-tick[data-active="true"] {
-  width: 18px;
+  width: 16px;
+  height: 2px;
   background: var(--accent);
 }
 
 .wb-tick:focus-visible {
-  outline: 2px solid var(--ring);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
@@ -900,14 +1014,14 @@ html[data-surface="fixture"] .wb-shell {
   position: absolute;
   z-index: 7;
   top: -8px;
-  left: 24px;
+  left: 34px;
   display: grid;
   gap: 4px;
-  width: min(280px, 40vw);
-  padding: 10px 11px;
+  width: min(320px, calc(100vw - 100px));
+  padding: 12px 13px 11px;
   border: 1px solid var(--line);
   border-radius: 13px;
-  background: #fff;
+  background: var(--paper);
   box-shadow: 0 9px 24px rgba(39, 39, 42, 0.13);
   pointer-events: none;
 }
@@ -921,7 +1035,7 @@ html[data-surface="fixture"] .wb-shell {
 .wb-tick-preview strong {
   color: var(--ink-soft);
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 650;
   line-height: 1.5;
 }
 
@@ -936,15 +1050,15 @@ html[data-surface="fixture"] .wb-shell {
 .wb-to-latest {
   position: absolute;
   z-index: 6;
-  bottom: 14px;
+  bottom: 10px;
   left: 50%;
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 6px 12px;
+  padding: 7px 12px;
   border: 1px solid var(--line);
   border-radius: 999px;
-  background: #fff;
+  background: var(--paper);
   box-shadow: 0 5px 14px rgba(39, 39, 42, 0.12);
   color: var(--ink-soft);
   font-size: 11px;
@@ -965,7 +1079,7 @@ html[data-surface="fixture"] .wb-shell {
   border: 1px solid var(--line-strong);
   border-left: 3px solid var(--amber);
   border-radius: 10px;
-  background: #fff;
+  background: var(--paper);
   box-shadow: var(--shadow-raised);
 }
 
@@ -992,7 +1106,7 @@ html[data-surface="fixture"] .wb-shell {
 
 .wb-decision h2 {
   margin: 2px 0 0;
-  font-family: "Segoe UI Variable Display", "Microsoft YaHei UI", sans-serif;
+  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   font-size: 14px;
   font-weight: 680;
 }
@@ -1089,7 +1203,7 @@ html[data-surface="fixture"] .wb-shell {
   padding: 0 10px;
   border: 1px solid var(--line);
   border-radius: 7px;
-  background: #fff;
+  background: var(--paper);
   font-size: 11px;
   font-weight: 650;
 }
@@ -1122,20 +1236,20 @@ html[data-surface="fixture"] .wb-shell {
 /* ------------------------------------------------------------- composer --- */
 
 .wb-composer {
-  padding: 8px clamp(16px, 3vw, 44px) 12px;
-  border-top: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.96);
+  padding: 10px clamp(16px, 3vw, 44px) 13px;
+  border-top: 0;
+  background: var(--paper-glass);
 }
 
 .wb-composer > label {
-  max-width: 760px;
+  max-width: 730px;
   margin-bottom: 4px;
   color: var(--muted);
 }
 
 .wb-composer .composer-surface {
   border-color: var(--line-strong);
-  border-radius: 10px;
+  border-radius: 15px;
   box-shadow: var(--shadow-raised);
 }
 
@@ -1184,7 +1298,7 @@ html[data-surface="fixture"] .wb-shell {
 }
 
 .wb-detail-head strong {
-  font-family: "Segoe UI Variable Display", "Microsoft YaHei UI", sans-serif;
+  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   font-size: 13px;
 }
 
@@ -1207,7 +1321,7 @@ html[data-surface="fixture"] .wb-shell {
   padding: 0 8px;
   border: 1px solid var(--line);
   border-radius: 7px;
-  background: #fff;
+  background: var(--paper);
   color: var(--ink-soft);
   font-size: 11px;
   font-weight: 600;
@@ -1270,17 +1384,17 @@ html[data-surface="fixture"] .wb-shell {
 
 .wb-diff-row[data-kind="removed"] {
   background: color-mix(in srgb, var(--red) 16%, transparent);
-  color: color-mix(in srgb, var(--red) 78%, #fff);
+  color: color-mix(in srgb, var(--red) 78%, var(--paper));
 }
 
 .wb-diff-row[data-kind="meta"],
 .wb-diff-row[data-kind="header"] {
-  color: #9a9a9a;
+  color: var(--faint);
 }
 
 .wb-diff-row[data-kind="hunk"] {
   background: rgba(255, 255, 255, 0.06);
-  color: #b6b6b6;
+  color: var(--code-dim);
 }
 
 /* ---------------------------------------------------------- empty state --- */
@@ -1296,10 +1410,18 @@ html[data-surface="fixture"] .wb-shell {
   gap: 5px;
 }
 
+.wb-empty-icon {
+  align-self: center;
+  width: 29px;
+  height: 29px;
+  margin-bottom: 17px;
+  color: var(--faint);
+}
+
 .wb-empty h2 {
   margin: 0;
-  font-family: "Segoe UI Variable Display", "Microsoft YaHei UI", sans-serif;
-  font-size: clamp(16px, 1.5vw, 20px);
+  color: var(--ink-soft);
+  font-size: clamp(17px, 2vw, 23px);
   font-weight: 550;
   line-height: 1.45;
 }
@@ -1337,7 +1459,7 @@ html[data-surface="fixture"] .wb-shell {
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: 9px;
-  background: #fff;
+  background: var(--paper);
 }
 
 .wb-empty-task > header {
@@ -1364,7 +1486,7 @@ html[data-surface="fixture"] .wb-shell {
 .wb-empty-task[data-available="true"] > header strong {
   border-color: var(--accent);
   background: var(--accent);
-  color: #fff;
+  color: var(--primary-foreground);
 }
 
 .wb-empty-objective {
@@ -1423,7 +1545,7 @@ html[data-surface="fixture"] .wb-shell {
   overflow-y: auto;
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: #fff;
+  background: var(--paper);
   box-shadow: var(--shadow-float);
 }
 
@@ -1442,7 +1564,7 @@ html[data-surface="fixture"] .wb-shell {
   padding: 6px 12px;
   border: 1px solid var(--line);
   border-radius: 999px;
-  background: #fff;
+  background: var(--paper);
   box-shadow: 0 5px 14px rgba(39, 39, 42, 0.12);
   color: var(--muted);
   font-size: 11px;
@@ -1495,7 +1617,7 @@ html[data-surface="fixture"] .wb-shell {
   padding: 7px 8px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fff;
+  background: var(--paper);
   text-align: left;
 }
 
@@ -1532,10 +1654,6 @@ html[data-surface="fixture"] .wb-shell {
 /* --------------------------------------------------------- responsive --- */
 
 @media (max-width: 1320px) {
-  .wb-root {
-    --wb-rail: 184px;
-  }
-
   .wb-head {
     padding-inline: 10px;
   }
@@ -1661,11 +1779,6 @@ html[data-surface="fixture"] .wb-shell {
   .wb-run-controls button {
     flex: 1 1 62px;
     padding-inline: 6px;
-  }
-
-  .wb-history,
-  .wb-composer {
-    padding-inline: 12px;
   }
 
   .wb-sticky-prompt {

@@ -77,16 +77,20 @@ function ToolGroup({ parts, onEvidence }: {
 export function MessageView({
   message,
   isLatestAssistant,
+  assistantSubline,
   onEvidence,
 }: {
   readonly message: MessageState;
   readonly isLatestAssistant: boolean;
+  readonly assistantSubline?: string | null;
   readonly onEvidence: (toolId: string, tab: EvidenceTab) => void;
 }) {
   const [copied, setCopied] = useState(false);
-  const name = stringValue(message.metadata.custom.name, message.role === 'user' ? 'Ludi' : 'Jarvis');
-  const time = formatTimestamp(message.metadata.custom.time);
   const isUser = message.role === 'user';
+  const name = stringValue(message.metadata.custom.name, isUser ? 'Ludi' : 'Jarvis');
+  const time = formatTimestamp(message.metadata.custom.time);
+  const timeValue = stringValue(message.metadata.custom.time, '');
+  const incomplete = message.metadata.custom.sourceStatus === 'incomplete';
   const toolParts = message.content.filter((part): part is ToolPartState => part.type === 'tool-call');
 
   const copy = async () => {
@@ -103,31 +107,59 @@ export function MessageView({
     }
   };
 
+  const parts = (
+    <MessagePrimitive.Parts>
+      {({ part }) => {
+        if (part.type === 'text') return <p className="message-copy">{part.text}</p>;
+        if (part.type === 'tool-call') return null;
+        return <div className="unsupported-part">这部分内容暂时无法显示，原始事实仍保留在会话中。</div>;
+      }}
+    </MessagePrimitive.Parts>
+  );
+
+  if (isUser) {
+    return (
+      <MessagePrimitive.Root className="message-item wb-message" data-role={message.role}>
+        <div className="message-meta wb-message-meta">
+          <strong>{name}</strong>
+          <time dateTime={timeValue}>{time}</time>
+          {incomplete ? (
+            <em className="wb-incomplete" data-tone="danger">回复未完整落盘</em>
+          ) : null}
+        </div>
+        {parts}
+      </MessagePrimitive.Root>
+    );
+  }
+
   return (
     <MessagePrimitive.Root className="message-item wb-message" data-role={message.role}>
-      <div className="message-meta wb-message-meta">
-        <strong>{name}</strong>
-        {message.metadata.custom.sourceStatus === 'incomplete' ? (
+      <div className="wb-msg-head">
+        <span className="wb-msg-avatar" aria-hidden="true">J</span>
+        <div className="wb-msg-ident">
+          <strong>{name}</strong>
+          {typeof assistantSubline === 'string' && assistantSubline !== '' ? <small>{assistantSubline}</small> : null}
+        </div>
+        {incomplete ? (
           <em className="wb-incomplete" data-tone="danger">回复未完整落盘</em>
         ) : null}
       </div>
-      <MessagePrimitive.Parts>
-        {({ part }) => {
-          if (part.type === 'text') return <p className="message-copy">{part.text}</p>;
-          if (part.type === 'tool-call') return null;
-          return <div className="unsupported-part">这部分内容暂时无法显示，原始事实仍保留在会话中。</div>;
-        }}
-      </MessagePrimitive.Parts>
-      {!isUser ? <ToolGroup parts={toolParts} onEvidence={onEvidence} /> : null}
-      {!isUser ? (
+      <div className="wb-msg-body">
+        {parts}
+        <ToolGroup parts={toolParts} onEvidence={onEvidence} />
         <div className="wb-reply-actions" data-latest={isLatestAssistant}>
-          <button type="button" className="wb-action" onClick={() => { void copy(); }} aria-label="复制这条回复">
+          <button
+            type="button"
+            className="wb-action"
+            onClick={() => { void copy(); }}
+            title={copied ? '已复制' : '复制'}
+            aria-label="复制这条回复"
+          >
             <CopyIcon />
-            <span>{copied ? '已复制' : '复制'}</span>
           </button>
-          <time className="wb-time" dateTime={stringValue(message.metadata.custom.time, '')}>{time}</time>
+          <time className="wb-time" dateTime={timeValue}>{time}</time>
         </div>
-      ) : null}
+      </div>
     </MessagePrimitive.Root>
   );
 }

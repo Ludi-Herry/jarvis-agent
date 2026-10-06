@@ -12,9 +12,11 @@ export interface TurnGeometry {
 }
 
 export const MAP_MIN_WINDOW_WIDTH = 1200;
-/** The track lives in the history gutter; 36px is enough for a 12px tick plus its focus ring. */
-export const MAP_MIN_GUTTER = 36;
-export const MAP_MIN_SCROLLABLE = 160;
+/** The track sits just left of the feed column; 52px of gutter keeps it clear of the history edge. */
+export const MAP_MIN_GUTTER = 52;
+/** A single exchange leaves too little to locate, so the track waits for the second turn. */
+export const MAP_MIN_TURNS = 2;
+export const MAP_MIN_SCROLLABLE = 64;
 
 /**
  * The sticky summary appears only after a whole question has left the top of the history area.
@@ -41,8 +43,8 @@ export interface ConversationMapGate {
 export function shouldShowConversationMap(gate: ConversationMapGate): boolean {
   return gate.windowWidth >= MAP_MIN_WINDOW_WIDTH
     && gate.gutterWidth >= MAP_MIN_GUTTER
-    && gate.turnCount > 0
-    && gate.scrollablePx >= MAP_MIN_SCROLLABLE
+    && gate.turnCount >= MAP_MIN_TURNS
+    && gate.scrollablePx > MAP_MIN_SCROLLABLE
     && gate.hasScrolled;
 }
 

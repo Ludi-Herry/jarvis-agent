@@ -1,11 +1,11 @@
-import { useState, type ChangeEvent, type RefObject } from 'react';
+import { useState, type ChangeEvent, type FormEvent, type RefObject } from 'react';
 import { ComposerPrimitive, ThreadPrimitive } from '@assistant-ui/react';
 import type { GuiLiveOverview, GuiLiveSnapshot } from '../../../live-types.js';
 import { DecisionBar, type DecisionKind } from './active-stage.js';
 import type { ControlState, ComposerIntent, RunControls as RunControlState } from './controls.js';
 import { EmptyTaskState } from './empty-state.js';
 import { shortObjective, statusPresentation, workspaceName } from './format.js';
-import { ArrowDownIcon, FolderIcon, PanelIcon, StopIcon } from './icons.js';
+import { ArrowDownIcon, FolderIcon, PanelIcon, StopIcon, TerminalIcon } from './icons.js';
 import { MessageView } from './message-item.js';
 import type { EvidenceTab } from './prefs.js';
 import type { WorkbenchNotices, WorkbenchProvenance, HumanReviewDecision } from './types.js';
@@ -46,6 +46,13 @@ function RunActions({ actions }: { readonly actions: readonly RunAction[] }) {
       ))}
     </div>
   );
+}
+
+/** The textarea grows with its content up to the CSS cap, then it scrolls. */
+function growComposer(event: FormEvent<HTMLTextAreaElement>): void {
+  const node = event.currentTarget;
+  node.style.height = 'auto';
+  node.style.height = `${Math.min(node.scrollHeight, 164)}px`;
 }
 
 export interface ConversationPaneProps {
@@ -130,7 +137,9 @@ export function ConversationPane(props: ConversationPaneProps) {
     <main id="conversation-main" className="conversation-main wb-conversation">
       <header className="wb-head">
         <div className="wb-head-title">
-          <FolderIcon className="wb-head-folder" />
+          <span className="wb-head-folder" aria-hidden="true">
+            <FolderIcon />
+          </span>
           <span className="wb-head-workspace" title={cwd}>{workspaceName(cwd)}</span>
           <h1 title={objective}>{shortObjective(objective)}</h1>
         </div>
@@ -148,36 +157,41 @@ export function ConversationPane(props: ConversationPaneProps) {
               <em>{authority}</em>
             </span>
           ) : null}
-          <RunActions actions={[
-            { label: '暂停', state: controls.pause, onClick: onPause },
-            { label: snapshot?.status === 'pausing' ? '取消暂停' : '继续', state: controls.continueRun, onClick: onContinue },
-            { label: '恢复', state: controls.resume, onClick: onResume },
-            { label: '急停', state: controls.stop, danger: true, onClick: onStop },
-          ]}
-          />
-          <button
-            type="button"
-            className="wb-icon-btn"
-            aria-pressed={detailOpen}
-            onClick={onToggleDetail}
-            title={detailOpen ? '收起证据栏' : '打开证据栏'}
-            aria-label={detailOpen ? '收起证据栏' : '打开证据栏'}
-          >
-            <PanelIcon />
-          </button>
+          <div className="wb-head-tool-group">
+            <RunActions actions={[
+              { label: '暂停', state: controls.pause, onClick: onPause },
+              { label: snapshot?.status === 'pausing' ? '取消暂停' : '继续', state: controls.continueRun, onClick: onContinue },
+              { label: '恢复', state: controls.resume, onClick: onResume },
+              { label: '急停', state: controls.stop, danger: true, onClick: onStop },
+            ]}
+            />
+            <button
+              type="button"
+              className="wb-icon-btn"
+              aria-pressed={detailOpen}
+              onClick={onToggleDetail}
+              title={detailOpen ? '收起证据栏' : '打开证据栏'}
+              aria-label={detailOpen ? '收起证据栏' : '打开证据栏'}
+            >
+              <PanelIcon />
+            </button>
+          </div>
         </div>
       </header>
 
       <ThreadPrimitive.Root className="thread-layout wb-thread">
         <div className="wb-thread-body">
           <ThreadPrimitive.Viewport ref={historyRef} className="conversation-scroll wb-history" onScroll={geometry.onScroll}>
-            <div className="wb-history-content" data-history-content>
+            <div className="wb-history-content" data-history-content data-empty={snapshot === null}>
               {provenance === 'fixture' ? (
                 <Notice tone="warning">确定性试件：以下现场由本地构造数据驱动，不是真实运行，也不构成任何验收结论。</Notice>
               ) : null}
 
               {snapshot === null ? (
-                <EmptyTaskState overview={overview} canStart={canStart} />
+                <>
+                  <TerminalIcon className="wb-empty-icon" aria-hidden="true" />
+                  <EmptyTaskState overview={overview} canStart={canStart} />
+                </>
               ) : null}
 
               {notices.overviewLoading ? <Notice>正在读取本地任务。</Notice> : null}
@@ -201,6 +215,7 @@ export function ConversationPane(props: ConversationPaneProps) {
                       <MessageView
                         message={message}
                         isLatestAssistant={message.role === 'assistant' && message.id === latestAssistantId}
+                        assistantSubline={snapshot?.model ?? null}
                         onEvidence={onEvidence}
                       />
                     </div>
@@ -227,7 +242,6 @@ export function ConversationPane(props: ConversationPaneProps) {
               onClick={() => geometry.scrollToTurn(geometry.sticky?.id ?? '')}
               title="回到这条提问"
             >
-              <span>最近提问</span>
               <strong>{geometry.sticky.question}</strong>
             </button>
           ) : null}
@@ -286,13 +300,14 @@ export function ConversationPane(props: ConversationPaneProps) {
             <ComposerPrimitive.Input
               ref={composerRef}
               id="wb-conversation-input"
-              rows={2}
+              rows={1}
               submitMode="ctrlEnter"
               addAttachmentOnPaste={false}
               unstable_focusOnRunStart={false}
               unstable_focusOnThreadSwitched={false}
               placeholder={placeholder}
               onChange={onComposerChange}
+              onInput={growComposer}
               data-draft-key={composerStorageKey}
             />
             <ComposerPrimitive.Send>{sendLabel}</ComposerPrimitive.Send>

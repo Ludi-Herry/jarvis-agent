@@ -15,8 +15,8 @@ body,
 body {
   background: var(--background);
   color: var(--ink);
-  font-family: "Microsoft YaHei UI", "Segoe UI Variable Text", sans-serif;
-  font-size: 14px;
+  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-size: 13px;
 }
 
 button,
@@ -105,7 +105,7 @@ button:disabled {
   border-radius: var(--radius-md);
   background: var(--surface);
   color: var(--ink);
-  font-family: "Segoe UI Variable Display", "Microsoft YaHei UI", sans-serif;
+  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   font-size: 18px;
   font-weight: 700;
 }
@@ -118,7 +118,7 @@ button:disabled {
 }
 
 .brand-block strong {
-  font-family: "Segoe UI Variable Display", "Microsoft YaHei UI", sans-serif;
+  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   font-size: 17px;
   letter-spacing: 0.02em;
 }
@@ -316,7 +316,7 @@ button:disabled {
   display: -webkit-box;
   overflow: hidden;
   margin: 4px 0 0;
-  font-family: "Segoe UI Variable Display", "Microsoft YaHei UI", sans-serif;
+  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   font-size: clamp(17px, 1.45vw, 21px);
   font-weight: 600;
   line-height: 1.22;
@@ -838,7 +838,7 @@ button.primary,
 
 .composer-bar > label {
   display: block;
-  max-width: 760px;
+  max-width: 730px;
   margin: 0 auto 5px;
   color: var(--muted);
   font-size: 11px;
@@ -849,7 +849,7 @@ button.primary,
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: end;
   gap: 8px;
-  max-width: 760px;
+  max-width: 730px;
   margin: auto;
   padding: 8px;
   border: 1px solid var(--line);
@@ -865,22 +865,24 @@ button.primary,
 
 .composer-surface textarea {
   width: 100%;
-  min-height: 38px;
-  max-height: 96px;
-  resize: vertical;
+  min-height: 60px;
+  max-height: 164px;
+  padding: 15px 16px 8px;
+  overflow-y: auto;
+  resize: none;
   border: 0;
   outline: 0;
   background: transparent;
   color: var(--ink);
   font-size: 13px;
-  line-height: 1.55;
+  line-height: 1.65;
 }
 
 .composer-meta {
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  max-width: 760px;
+  max-width: 730px;
   margin: 5px auto 0;
   color: var(--muted);
   font-size: 11px;
