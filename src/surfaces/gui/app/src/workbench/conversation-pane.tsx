@@ -95,6 +95,9 @@ export interface ConversationPaneProps {
   readonly onBranch?: (messageId: string) => void;
   readonly onSavePresets: (wsId: string, input: Omit<GuiWorkspacePresets, 'savedAt'>) => Promise<unknown>;
   readonly onProbeCommands: (wsId: string) => Promise<GuiWorkspaceProbe>;
+  readonly onWithdrawInput: (index: number) => void;
+  readonly onEditPendingInput: (index: number) => void;
+  readonly onSelectTask: (id: string) => void;
 }
 
 export function ConversationPane(props: ConversationPaneProps) {
@@ -104,8 +107,13 @@ export function ConversationPane(props: ConversationPaneProps) {
     detailOpen, latestAssistantId, onComposerChange, onEvidence, onOpenEvidence, onPause, onContinue,
     onResume, onStop, onPrepareDecision, onAllow, onSubmitReview, onToggleDetail,
     onValidateTask, onCreateTask, onCreateAndStart, onStart, onBranch, onSavePresets, onProbeCommands,
+    onWithdrawInput, onEditPendingInput, onSelectTask,
   } = props;
   const [hoveredTick, setHoveredTick] = useState<number | null>(null);
+  // Batch 6 §可控: other sessions waiting on approval, excluding the one already on screen.
+  const attention = useMemo(() => (overview?.sessions ?? []).filter(
+    (session) => session.status === 'approval' && session.id !== (snapshot?.id ?? null),
+  ), [overview?.sessions, snapshot?.id]);
   // Batch 5 §运行状态: the strip only covers live run states; terminal states keep the StatusCard.
   const vitals = useMemo(
     () => (snapshot !== null && RUN_VITALS_STATUSES.includes(snapshot.status) ? describeRunVitals(snapshot) : null),
@@ -252,6 +260,18 @@ export function ConversationPane(props: ConversationPaneProps) {
                 <Notice key={`${index}:${warning}`} tone="warning">{warning}</Notice>
               ))}
 
+              {attention.length > 0 ? (
+                <section className="wb-attention" aria-label="其他任务待处理">
+                  <strong>还有 {attention.length} 个任务等你处理</strong>
+                  <p>以下任务正等待你的审批；切换查看不会中断当前任务。</p>
+                  <div className="wb-attention-actions">
+                    {attention.slice(0, 3).map((session) => (
+                      <button key={session.id} type="button" onClick={() => onSelectTask(session.id)}>{session.title}</button>
+                    ))}
+                  </div>
+                </section>
+              ) : null}
+
               <div className="message-list wb-message-list">
                 <ThreadPrimitive.Messages>
                   {({ message }) => (
@@ -278,7 +298,18 @@ export function ConversationPane(props: ConversationPaneProps) {
                   <span className="notice-mark" aria-hidden="true" />
                   <div>
                     <strong>已收到 {snapshot.pendingInputs.length} 条补充</strong>
-                    <p>这些内容会在下一次处理边界送达 Jarvis。</p>
+                    <p>这些内容会在下一次处理边界送达；撤回只影响尚未送达的内容。</p>
+                    <ul className="wb-pending-list">
+                      {snapshot.pendingInputs.map((text, index) => (
+                        <li key={`${index}:${text.length}`}>
+                          <span className="wb-pending-text">{text}</span>
+                          <span className="wb-pending-actions">
+                            <button type="button" disabled={actionPending !== null} onClick={() => onWithdrawInput(index)}>撤回</button>
+                            <button type="button" disabled={actionPending !== null} onClick={() => onEditPendingInput(index)}>修改</button>
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
                   </div>
                 </article>
               ) : null}

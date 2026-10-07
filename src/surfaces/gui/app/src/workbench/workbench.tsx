@@ -178,6 +178,23 @@ export function Workbench({ input }: { readonly input: WorkbenchInput }) {
     runAction(() => commands.submitReview(decisions), '人工验收已提交，完成状态等待可信链确认。');
   }, [commands, runAction]);
 
+  // Batch 6 §可控: withdraw one queued input; edit = withdraw + restore into the composer draft.
+  const withdrawPending = useCallback((index: number) => {
+    runAction(() => commands.withdrawInput(index), '该条补充已撤回。');
+  }, [commands, runAction]);
+
+  const editPending = useCallback((index: number) => {
+    const text = snapshot?.pendingInputs[index];
+    if (text === undefined) return;
+    void commands.withdrawInput(index).then(() => {
+      storageSet(composerStorageKey, text);
+      setDraftRecoveryToken((value) => value + 1);
+      announce('已把这条补充放回输入区，可修改后重新发送。');
+    }).catch((error: unknown) => {
+      announce(error instanceof Error && error.message.trim() !== '' ? error.message : '撤回失败。');
+    });
+  }, [announce, commands, composerStorageKey, snapshot?.pendingInputs]);
+
   const openStop = useCallback(() => {
     setStopAttempted(false);
     stopDialogRef.current?.showModal();
@@ -308,6 +325,9 @@ export function Workbench({ input }: { readonly input: WorkbenchInput }) {
             onProbeCommands={commands.probeWorkspaceCommands}
             onStart={onStart}
             onBranch={snapshot === null ? undefined : openBranch}
+            onWithdrawInput={withdrawPending}
+            onEditPendingInput={editPending}
+            onSelectTask={commands.chooseSession}
           />
         </LiveJarvisExternalStoreProvider>
 

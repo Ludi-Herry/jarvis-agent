@@ -224,6 +224,16 @@ export function ContextEvidence({ overview, snapshot, streamWarning, getGit }: {
   }
   return (
     <div className="context-pane live-evidence-pane">
+      <section className="wb-cost" aria-label="本次任务消耗与预算">
+        <strong>本次任务消耗与预算</strong>
+        <ul>
+          <li><span>累计 Token</span><b>{formatTokens(snapshot.usage.inputTokens)} 输入 / {formatTokens(snapshot.usage.outputTokens)} 输出</b></li>
+          <li><span>估算成本</span><b>{formatCost(snapshot.usage.costCny)}</b>{snapshot.usage.costNote ? <small>{snapshot.usage.costNote}</small> : null}</li>
+          <li><span>执行时间</span><b>已用 {formatDuration(snapshot.elapsedMs)} / 上限 {formatDuration(snapshot.limits.wallClockMs)}</b></li>
+          <li><span>结构上限</span><b>{snapshot.limits.maxRounds} 轮 × {snapshot.limits.maxTurns} 步</b></li>
+        </ul>
+        <p className="wb-cost-note">累计 Token 是本次任务全部消耗，不等于当前上下文窗口占用；窗口余量未测量，不显示占比。</p>
+      </section>
       <dl>
         <div><dt>模型</dt><dd>{snapshot.model || '未知'}（只读，由任务合同与 CLI 配置固定）</dd></div>
         <div><dt>Token</dt><dd>{formatTokens(snapshot.usage.inputTokens)} 输入 / {formatTokens(snapshot.usage.outputTokens)} 输出</dd></div>

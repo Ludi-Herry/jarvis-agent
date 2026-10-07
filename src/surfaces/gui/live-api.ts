@@ -22,7 +22,7 @@ export async function handleLiveApi(
     if (req.method === 'POST' && wsAction === 'presets') return json(res, await host.saveWorkspacePresets(wsId, await body()));
     throw new GuiLiveError(405, 'method not allowed');
   }
-  const match = /^\/api\/live\/(gui-[a-f0-9-]+)(?:\/(events|input|decision|pause|continue|stop|resume|review|start|meta|git|terminal\/cancel|terminal|file|open-external))?$/u.exec(url.pathname);
+  const match = /^\/api\/live\/(gui-[a-f0-9-]+)(?:\/(events|input|decision|pause|continue|stop|resume|review|start|meta|git|terminal\/cancel|terminal|file|open-external|input-withdraw))?$/u.exec(url.pathname);
   if (!match) throw new GuiLiveError(404, 'live API not found');
   const [, id, action] = match;
   if (req.method === 'GET' && !action) return json(res, await host.snapshot(id));
@@ -71,6 +71,7 @@ export async function handleLiveApi(
   if (action === 'start') return json(res, await host.startTask(id));
   if (action === 'meta') return json(res, await host.setMeta(id, input));
   if (action === 'input') return json(res, await host.input(id, requiredText(input, 'text')));
+  if (action === 'input-withdraw') return json(res, await host.withdrawInput(id, input.index));
   if (action === 'terminal') return json(res, await host.startTerminal(id, input.command));
   if (action === 'terminal/cancel') return json(res, await host.cancelTerminal(id));
   if (action === 'open-external') {

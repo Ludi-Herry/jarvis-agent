@@ -229,11 +229,12 @@ export const workbenchFixtures: readonly WorkbenchFixture[] = [
     snapshot: null,
     overview: overview(),
   }),
-  fixture('running', '运行中', '流式回复与只读工具摘要；暂停与急停可用。', {
+  fixture('running', '运行中', '流式回复与只读工具摘要；暂停与急停可用；待送达补充可撤回。', {
     snapshot: snapshot({
       status: 'running',
       phase: '模型正在生成回复',
       nextAction: '观察执行过程；需要时补充指令或终止',
+      pendingInputs: ['模型生成完这段回复后，请再核对一遍需求描述里有没有遗漏。'],
       messages: RUNNING_MESSAGES,
       tools: [
         ...READ_TOOLS,
@@ -488,7 +489,7 @@ export const workbenchFixtures: readonly WorkbenchFixture[] = [
       capabilities: { submit: false, pause: false, continue: false, stop: false, resume: false },
     }),
   }),
-  fixture('multi', '多任务与工作区', '两个工作区、置顶、已归档与运行中任务并存；左栏分组与菜单可试。', {
+  fixture('multi', '多任务与工作区', '两个工作区、置顶、已归档与运行中任务并存；含一条待审批任务，顶部出现「其他任务待处理」提示条。', {
     snapshot: snapshot({
       status: 'running',
       messages: RUNNING_MESSAGES,
@@ -513,7 +514,7 @@ export const workbenchFixtures: readonly WorkbenchFixture[] = [
         overviewSession({ id: 'gui-fixture-pin-1', title: '置顶：GUI 文案巡检', status: 'complete', pinned: true, updatedAt: '2026-09-26T09:12:00.000Z', lastMessage: '已交付，验收已完成。' }),
         overviewSession({ id: 'gui-fixture-0001', status: 'running', updatedAt: '2026-09-26T09:11:00.000Z' }),
         overviewSession({ id: 'gui-fixture-arch-1', title: '旧文档迁移（归档）', status: 'blocked', archived: true, updatedAt: '2026-09-25T17:40:00.000Z', lastMessage: '预算用尽，已保留现场。' }),
-        overviewSession({ id: 'gui-fixture-demo-1', title: 'demo-standby 的首个任务', workspaceId: 'ws-fixture-demo', status: 'idle', objective: '演示第二个工作区里的待启动任务', updatedAt: '2026-09-26T09:02:00.000Z', lastMessage: '' }),
+        overviewSession({ id: 'gui-fixture-demo-1', title: 'demo-standby 的首个任务（待审批）', workspaceId: 'ws-fixture-demo', status: 'approval', objective: '演示第二个工作区里等待审批的任务（试件数据）', updatedAt: '2026-09-26T09:02:00.000Z', lastMessage: '（试件）写入等待你的审批' }),
       ],
     }),
     models: FIXTURE_MODELS_DEMO,

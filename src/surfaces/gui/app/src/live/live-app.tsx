@@ -12,8 +12,8 @@ import type { WorkbenchCommands, WorkbenchInput } from '../workbench/types.js';
 export function LiveJarvisApp() {
   const {
     overview, snapshot, selectedId, connection, actionPending, overviewLoading, overviewError,
-    connectionNotice, streamWarning, actionError, chooseSession, start, submitInput, pause,
-    continueRun, stop, resume, decide, submitReview, updateMeta, createWorkspace, saveWorkspacePresets,
+    connectionNotice, streamWarning, actionError, chooseSession, start, submitInput, withdrawInput,
+    pause, continueRun, stop, resume, decide, submitReview, updateMeta, createWorkspace, saveWorkspacePresets,
     probeWorkspaceCommands, validateTask,
     createTask, createBranch, getGit, getFileView, openFileExternal, runTerminal, cancelTerminal,
   } = useLiveSession();
@@ -26,12 +26,12 @@ export function LiveJarvisApp() {
   }, []);
 
   const commands = useMemo<WorkbenchCommands>(() => ({
-    chooseSession, start, submitInput, pause, continueRun, stop, resume, decide, submitReview,
+    chooseSession, start, submitInput, withdrawInput, pause, continueRun, stop, resume, decide, submitReview,
     updateMeta, createWorkspace, saveWorkspacePresets, probeWorkspaceCommands, validateTask,
     createTask, createBranch, getGit, getFileView,
     openFileExternal, runTerminal, cancelTerminal,
   }), [
-    chooseSession, start, submitInput, pause, continueRun, stop, resume, decide, submitReview,
+    chooseSession, start, submitInput, withdrawInput, pause, continueRun, stop, resume, decide, submitReview,
     updateMeta, createWorkspace, saveWorkspacePresets, probeWorkspaceCommands, validateTask,
     createTask, createBranch, getGit, getFileView,
     openFileExternal, runTerminal, cancelTerminal,

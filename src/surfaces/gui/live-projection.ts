@@ -106,6 +106,13 @@ export function applyGuiEvent(state: GuiLiveSnapshot, event: GuiObservedEvent): 
     case 'gui_input_queued':
       state.pendingInputs.push(String(event.text));
       break;
+    case 'gui_input_withdrawn': {
+      // Batch 6 §可控: journal-deterministic splice; out-of-range indexes fold to a no-op so old
+      // journals and boundary-raced withdraws never corrupt the queue.
+      const index = Number(event.index);
+      if (Number.isInteger(index) && index >= 0 && index < state.pendingInputs.length) state.pendingInputs.splice(index, 1);
+      break;
+    }
     case 'gui_meta': {
       if (typeof event.title === 'string') state.title = event.title;
       if (typeof event.pinned === 'boolean') state.pinned = event.pinned;

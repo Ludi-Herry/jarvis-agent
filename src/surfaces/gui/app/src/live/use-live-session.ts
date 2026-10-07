@@ -13,6 +13,7 @@ import {
   getLiveGitStatus,
   getLiveOverview,
   getLiveSnapshot,
+  postInputWithdraw,
   postLiveMeta,
   postLiveSnapshot,
   postOpenFileExternal,
@@ -294,6 +295,13 @@ export function useLiveSession() {
     return runMutation('正在发送', () => postLiveSnapshot(selectedPath('input'), { text }));
   }, [connection, overview?.enabled, runMutation, selectedPath]);
 
+  // Batch 6 §可控: withdraw one queued input; selectedTaskId pins the viewed task like runTerminal.
+  const withdrawInput = useCallback(async (index: number) => {
+    if (overview?.enabled !== true) throw new Error('真实运行入口当前未启用。');
+    if (connection !== 'connected') throw new Error('连接已中断，撤回尚未提交。');
+    return runMutation('正在撤回', () => postInputWithdraw(selectedTaskId(), index));
+  }, [connection, overview?.enabled, runMutation, selectedTaskId]);
+
   const pause = useCallback(async () => {
     if (overview?.enabled !== true) throw new Error('真实运行入口当前未启用。');
     if (connection !== 'connected') throw new Error('连接已中断，无法暂停。');
@@ -431,6 +439,7 @@ export function useLiveSession() {
     refreshOverview,
     start,
     submitInput,
+    withdrawInput,
     pause,
     continueRun,
     stop,

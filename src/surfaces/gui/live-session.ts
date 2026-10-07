@@ -735,6 +735,22 @@ export class GuiSessionHost {
     return this.snapshot(id);
   }
 
+  /** Batch 6 §可控: withdraw one still-queued supplementary input by index. The effect is journaled
+   *  (replay-folds by splice); only items NOT yet consumed at a processing boundary can be
+   *  withdrawn — anything already delivered returns an honest 409. */
+  async withdrawInput(id: string, index: unknown): Promise<GuiLiveSnapshot> {
+    await this.initialize();
+    const task = this.requireTask(id);
+    updateGuiCapabilities(task.snapshot, Boolean(task.run));
+    if (!task.snapshot.capabilities.submit) throw new GuiLiveError(409, '当前状态不能撤回补充指令');
+    const pending = task.snapshot.pendingInputs;
+    if (typeof index !== 'number' || !Number.isInteger(index) || index < 0 || index >= pending.length) {
+      throw new GuiLiveError(409, '该条补充不存在或已在处理边界送达，无法撤回');
+    }
+    await this.record(task, { type: 'gui_input_withdrawn', index, text: pending[index] });
+    return this.snapshot(id);
+  }
+
   async decision(id: string, requestId: string, decision: string, reason?: string): Promise<GuiLiveSnapshot> {
     await this.initialize();
     const task = this.requireTask(id);

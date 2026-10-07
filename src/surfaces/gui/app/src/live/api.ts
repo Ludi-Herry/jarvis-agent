@@ -197,6 +197,11 @@ export async function postOpenFileExternal(id: string, path: string, signal?: Ab
   return postLiveJson<{ ok: true }>(`/api/live/${encodeURIComponent(id)}/open-external`, { path }, signal);
 }
 
+/** Batch 6 §可控: withdraw one still-queued supplementary input by index (409 once delivered). */
+export async function postInputWithdraw(id: string, index: number, signal?: AbortSignal): Promise<GuiLiveSnapshot> {
+  return postLiveJson<GuiLiveSnapshot>(`/api/live/${encodeURIComponent(id)}/input-withdraw`, { index }, signal);
+}
+
 /** Batch 3 §D14: attended desk-side terminal; server spawns in the task cwd. */
 export async function postTerminalCommand(id: string, command: string, signal?: AbortSignal): Promise<GuiLiveSnapshot> {
   return postLiveJson<GuiLiveSnapshot>(`/api/live/${encodeURIComponent(id)}/terminal`, { command }, signal);

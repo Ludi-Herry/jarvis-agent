@@ -187,6 +187,9 @@ export function useFixtureSession(fixtureId: string | null): FixtureSession {
         draft.phase = '补充指令已在处理边界送达';
       });
     },
+    withdrawInput: async (index: number) => setSnapshot((current) => (current === null || index < 0 || index >= current.pendingInputs.length
+      ? current
+      : { ...current, sequence: current.sequence + 1, pendingInputs: current.pendingInputs.filter((_, i) => i !== index) })),
     pause: async () => advance('正在暂停', (draft) => {
       draft.status = 'pausing';
       draft.phase = '等待下一模型调用边界暂停';
