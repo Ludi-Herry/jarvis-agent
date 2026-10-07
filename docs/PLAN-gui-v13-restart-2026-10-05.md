@@ -1,5 +1,7 @@
 # GUI 重启总计划：V13 黑白灰精准还原与功能补齐（2026-10-05）
 
+> **2026-10-07 视觉修复**：接手 Kimi 批次，修复空态重复输入、窄窗裁切、消息/审批/输入区对齐、证据栏与工具明细错位，并关闭重复创建任务 P1。1,805 项测试通过，独立定向复核 GO；截图和几何差异见 [修复回执](evidence/gui-v13-repair-2026-10-07/README.md)。仍待 Owner 对照 V13 视觉签收。
+
 > **进度**：批 0 ✅ 收口（`1375374`/`7e18aa0`）；批 1 ✅（`cde7a15`，证据 `docs/evidence/gui-v13-batch1/`）；批 2 ✅（`c367f27`/`2502804`/`0f9dc8a`，证据 `docs/evidence/gui-v13-batch2/`）；批 3 ✅ 并发/子智能体/预览/终端（合同 `PLAN-gui-v13-batch3-architecture.md`，证据 `docs/evidence/gui-v13-batch3/`，全量 1803 绿）。均**待 Owner 视觉签收**。后续：P3 真实任务真人验收窗口（Owner 安排）；批 1/2/3 开放裁点见各证据包 README。
 
 > Owner 立项（2026-10-05）：重启 Jarvis GUI 设计与开发，最终目标**精准还原 H:\Ludi-design-studio 内 V13 样稿（黑白灰色系，不要绿色系）**，并补齐样稿有设计、Jarvis 没有的功能。

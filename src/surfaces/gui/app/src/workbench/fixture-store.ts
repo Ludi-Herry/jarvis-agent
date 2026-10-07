@@ -134,10 +134,11 @@ export function useFixtureSession(fixtureId: string | null): FixtureSession {
       setSnapshot(id === null ? null : fixture.snapshot);
       setOverview(id === null ? { ...fixture.overview, sessions: [], activeId: null, activeIds: [] } : fixture.overview);
     },
-    start: async (text) => {
+    start: async (text, taskId) => {
       const running = findFixture('running');
       const base = structuredClone(running?.snapshot ?? requireSnapshot());
       const current = snapshotRef.current;
+      if (taskId !== undefined && taskId !== current?.id) throw new Error('启动目标与已创建的任务不一致。');
       // An empty text means "start the currently selected contract" (batch 2 per-task start).
       base.id = current?.id ?? 'gui-fixture-started';
       base.sessionId = base.id;

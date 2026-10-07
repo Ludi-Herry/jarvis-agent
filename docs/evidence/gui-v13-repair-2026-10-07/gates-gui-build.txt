@@ -1,0 +1,16 @@
+
+> @jarvis-agent/gui-app@0.0.0-spike build
+> tsc --noEmit && vite build
+
+vite v8.2.2 building client environment for production...
+transforming...
+✓ 737 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                        1.35 kB │ gzip:   0.82 kB
+dist/assets/index-Dk9xu5mY.css        75.15 kB │ gzip:  13.87 kB
+dist/assets/fixture-app-Bh_UMMSF.js   30.45 kB │ gzip:   9.67 kB
+dist/assets/index-9c3OsCiW.js        582.85 kB │ gzip: 174.40 kB
+
+✓ built in 371ms
+EXIT_CODE=0

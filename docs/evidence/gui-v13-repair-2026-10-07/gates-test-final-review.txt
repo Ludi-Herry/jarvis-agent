@@ -1,0 +1,14 @@
+
+> jarvis-agent@0.1.0 test
+> vitest run --maxWorkers=4
+
+
+ RUN  v4.1.9 H:/jarvis-agent
+
+
+ Test Files  159 passed (159)
+      Tests  1805 passed | 2 skipped (1807)
+   Start at  05:03:33
+   Duration  118.82s (transform 4.76s, setup 0ms, import 21.75s, tests 431.42s, environment 10ms)
+
+EXIT_CODE=0

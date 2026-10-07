@@ -207,7 +207,7 @@ export function Workbench({ input }: { readonly input: WorkbenchInput }) {
 
   const handleCreateAndStart = useCallback(async (input: GuiFreeTaskInput): Promise<GuiLiveSnapshot> => {
     const created = await commands.createTask(input);
-    await commands.start('');
+    await commands.start('', created.id);
     return created;
   }, [commands]);
 

@@ -1,0 +1,8 @@
+Preserved diagnostic: first root typecheck after adding the duplicate-submission regression test.
+
+> jarvis-agent@0.1.0 typecheck
+> tsc --noEmit
+
+test/surfaces/gui/gui-task-submission.test.ts(2,33): error TS6142: Module '../../../src/surfaces/gui/app/src/workbench/create-task-panel.js' was resolved to 'H:/jarvis-agent/src/surfaces/gui/app/src/workbench/create-task-panel.tsx', but '--jsx' is not set.
+
+Resolution: moved the submission helper to the existing live/api.ts module. The test imports that .ts module. No compiler configuration changed.

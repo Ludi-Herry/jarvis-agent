@@ -272,12 +272,12 @@ export function useLiveSession() {
   }, []);
 
   // The text argument stays for the pinned-contract legacy call sites; starts now target a task id.
-  const start = useCallback(async (text: string) => {
+  const start = useCallback(async (text: string, taskId?: string) => {
     void text;
     if (overview === null || !overview.enabled) {
       throw new Error('真实运行入口当前未启用。');
     }
-    const id = selectedIdRef.current;
+    const id = taskId ?? selectedIdRef.current;
     if (id === null) throw new Error('请先选择要启动的任务；新建任务请在任务创建面板确认合同。');
     // The server is the authority on start readiness; the SSE stream may still be reconnecting.
     return runMutation('正在启动', () => startLiveTask(id), true);

@@ -16,7 +16,7 @@ import type { HumanReviewDecision } from '../live/use-live-session.js';
  */
 export interface WorkbenchCommands {
   readonly chooseSession: (id: string | null) => void;
-  readonly start: (text: string) => Promise<unknown>;
+  readonly start: (text: string, taskId?: string) => Promise<unknown>;
   readonly submitInput: (text: string) => Promise<unknown>;
   readonly pause: () => Promise<unknown>;
   readonly continueRun: () => Promise<unknown>;

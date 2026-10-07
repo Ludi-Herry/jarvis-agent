@@ -109,7 +109,7 @@ export function ConversationPane(props: ConversationPaneProps) {
     : snapshot.status === 'complete' && !snapshot.completion.granted
       ? { label: '完成待授权', tone: 'warning' }
       : statusPresentation[snapshot.status];
-  const objective = snapshot?.objective ?? overview?.task?.objective ?? '等待操作者固定真实任务合同';
+  const objective = snapshot?.title ?? snapshot?.objective ?? '新任务';
   const cwd = snapshot?.cwd ?? overview?.cwd ?? '';
   const authority = snapshot === null
     ? null
@@ -148,7 +148,7 @@ export function ConversationPane(props: ConversationPaneProps) {
           <span className="wb-head-folder" aria-hidden="true">
             <FolderIcon />
           </span>
-          <span className="wb-head-workspace" title={cwd}>{workspaceName(cwd)}</span>
+          <span className="wb-head-workspace wb-sr-only" title={cwd}>{workspaceName(cwd)}</span>
           <h1 title={objective}>{shortObjective(objective)}</h1>
         </div>
         <div className="wb-head-tools">
@@ -187,12 +187,12 @@ export function ConversationPane(props: ConversationPaneProps) {
         </div>
       </header>
 
-      <ThreadPrimitive.Root className="thread-layout wb-thread">
+      <ThreadPrimitive.Root className="thread-layout wb-thread" data-empty={snapshot === null}>
         <div className="wb-thread-body">
           <ThreadPrimitive.Viewport ref={historyRef} className="conversation-scroll wb-history" onScroll={geometry.onScroll}>
             <div className="wb-history-content" data-history-content data-empty={snapshot === null}>
               {provenance === 'fixture' ? (
-                <Notice tone="warning">确定性试件：以下现场由本地构造数据驱动，不是真实运行，也不构成任何验收结论。</Notice>
+                <div className="wb-fixture-notice"><Notice tone="warning">确定性试件：以下现场由本地构造数据驱动，不是真实运行，也不构成任何验收结论。</Notice></div>
               ) : null}
 
               {snapshot === null ? (
@@ -325,8 +325,8 @@ export function ConversationPane(props: ConversationPaneProps) {
           onEvidence={onOpenEvidence}
         />
 
-        <ComposerPrimitive.Root className="composer-bar wb-composer">
-          <label htmlFor="wb-conversation-input">{composerLabel}</label>
+        {snapshot !== null ? <ComposerPrimitive.Root className="composer-bar wb-composer">
+          <label className="wb-sr-only" htmlFor="wb-conversation-input">{composerLabel}</label>
           <div className="composer-surface">
             <ComposerPrimitive.Input
               ref={composerRef}
@@ -348,14 +348,16 @@ export function ConversationPane(props: ConversationPaneProps) {
               <span className="wb-model-pill" title="当前任务的思考档">
                 思考：{snapshot?.thinking ?? 'off'}
               </span>
-              <ComposerPrimitive.Send>{sendLabel}</ComposerPrimitive.Send>
+              <ComposerPrimitive.Send className="wb-send-icon" aria-label={sendLabel} title={sendLabel}>
+                <ArrowDownIcon style={{ transform: 'rotate(180deg)' }} />
+              </ComposerPrimitive.Send>
             </div>
           </div>
           <div className="composer-meta wb-composer-meta">
             {connection !== 'connected' ? <span data-tone="danger">连接未就绪：可继续编辑，发送与控制暂不可用</span> : null}
             <span>Ctrl Enter 发送</span>
           </div>
-        </ComposerPrimitive.Root>
+        </ComposerPrimitive.Root> : null}
       </ThreadPrimitive.Root>
     </main>
   );

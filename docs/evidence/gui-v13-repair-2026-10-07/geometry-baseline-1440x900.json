@@ -1,0 +1,111 @@
+{
+  "reference": {
+    "composer": {
+      "bottom": 551.25,
+      "height": 133,
+      "left": 449.5,
+      "right": 1234.5,
+      "top": 418.25,
+      "width": 785,
+      "x": 449.5,
+      "y": 418.25
+    },
+    "dpr": 1,
+    "header": {
+      "bottom": 54,
+      "height": 54,
+      "left": 244,
+      "right": 1440,
+      "top": 0,
+      "width": 1196,
+      "x": 244,
+      "y": 0
+    },
+    "rail": {
+      "bottom": 900,
+      "height": 900,
+      "left": 0,
+      "right": 244,
+      "top": 0,
+      "width": 244,
+      "x": 0,
+      "y": 0
+    },
+    "suggestions": [],
+    "title": {
+      "bottom": 369.25,
+      "height": 34.5,
+      "left": 738.5,
+      "right": 945.5,
+      "top": 334.75,
+      "width": 207,
+      "x": 738.5,
+      "y": 334.75
+    },
+    "url": "http://127.0.0.1:4339/",
+    "viewport": [
+      1440,
+      900
+    ]
+  },
+  "candidate": {
+    "cards": {
+      "bottom": 650.671875,
+      "height": 58,
+      "left": 477,
+      "right": 1207,
+      "top": 592.671875,
+      "width": 730,
+      "x": 477,
+      "y": 592.671875
+    },
+    "composer": {
+      "bottom": 552.671875,
+      "height": 134,
+      "left": 449.5,
+      "right": 1234.5,
+      "top": 418.671875,
+      "width": 785,
+      "x": 449.5,
+      "y": 418.671875
+    },
+    "dpr": 1,
+    "header": {
+      "bottom": 54,
+      "height": 54,
+      "left": 244,
+      "right": 1440,
+      "top": 0,
+      "width": 1196,
+      "x": 244,
+      "y": 0
+    },
+    "pageWidth": 1440,
+    "rail": {
+      "bottom": 900,
+      "height": 900,
+      "left": 0,
+      "right": 244,
+      "top": 0,
+      "width": 244,
+      "x": 0,
+      "y": 0
+    },
+    "title": {
+      "bottom": 367.671875,
+      "height": 33.34375,
+      "left": 738.5,
+      "right": 945.5,
+      "top": 334.328125,
+      "width": 207,
+      "x": 738.5,
+      "y": 334.328125
+    },
+    "url": "http://127.0.0.1:4317/app/",
+    "viewport": [
+      1440,
+      900
+    ],
+    "visibleInputs": 1
+  }
+}

@@ -12,6 +12,22 @@ const GUI_HEADERS = {
   'x-jarvis-gui': '1',
 } as const;
 
+/** Keep the validated draft and prevent duplicate creation while a request is in flight. */
+export async function submitTaskDraft(
+  lock: { current: boolean },
+  input: GuiFreeTaskInput,
+  validate: (input: GuiFreeTaskInput) => Promise<boolean>,
+  commit: (input: GuiFreeTaskInput) => Promise<unknown>,
+): Promise<void> {
+  if (lock.current) return;
+  lock.current = true;
+  try {
+    if (await validate(input)) await commit(input);
+  } finally {
+    lock.current = false;
+  }
+}
+
 export class LiveApiError extends Error {
   readonly status: number;
 
@@ -163,4 +179,3 @@ export async function getLiveModels(signal?: AbortSignal): Promise<GuiModelsResp
   });
   return readJson<GuiModelsResponse>(response);
 }
-

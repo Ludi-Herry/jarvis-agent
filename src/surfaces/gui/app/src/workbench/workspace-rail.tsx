@@ -173,13 +173,14 @@ export function WorkspaceRail({
           <div className="brand-mark" aria-hidden="true">J</div>
           <div>
             <strong>Jarvis</strong>
-            <span>任务工作区</span>
           </div>
         </div>
         <button type="button" className="wb-icon-btn" onClick={onToggleCollapsed} aria-label="收起左栏" title="收起左栏">
           <RailIcon />
         </button>
       </header>
+
+      <div className="wb-surface-label">讨论区</div>
 
       <div className="wb-rail-actions">
         <button
@@ -216,35 +217,33 @@ export function WorkspaceRail({
         ) : null}
       </div>
 
-      <div className="wb-presence" data-state={badge.state}>
-        <span className="prototype-dot" aria-hidden="true" />
-        <div>
-          <strong>{badge.label}</strong>
-          <span>{badge.detail}</span>
-        </div>
+      <div className="wb-workspace-heading">
+        <span>工作区</span>
+        <button type="button" className="wb-icon-btn" title="新建工作区" aria-label="新建工作区" onClick={() => setWsDialogOpen((open) => !open)} aria-expanded={wsDialogOpen}>
+          <PlusIcon />
+        </button>
       </div>
 
       <nav className="wb-groups" aria-label="工作区与任务">
-        <section className="wb-group">
-          <header>
-            <FolderIcon />
-            <span>任务空态</span>
-          </header>
-          <button
-            type="button"
-            className={`session-row wb-task-row${selectedId === null ? ' is-current' : ''}`}
-            aria-current={selectedId === null ? 'page' : undefined}
-            disabled={!newTaskState.available && selectedId !== null}
-            title={newTaskState.available ? '新任务创建面板' : newTaskState.reason}
-            onClick={() => onSelect(null)}
-          >
-            <span className="session-state is-idle" aria-hidden="true" />
-            <span>
-              <strong>新建任务</strong>
-              <small>输入目标并确认合同</small>
-            </span>
-          </button>
-        </section>
+        {wsDialogOpen ? (
+          <div className="wb-ws-dialog" role="dialog" aria-label="新建工作区">
+            <label>
+              <span>名称</span>
+              <input autoFocus value={wsName} onChange={(event) => setWsName(event.currentTarget.value)} placeholder="例如 demo 项目" />
+            </label>
+            <label>
+              <span>目录（绝对路径）</span>
+              <input value={wsCwd} onChange={(event) => setWsCwd(event.currentTarget.value)} placeholder="H:\\path\\to\\repo" />
+            </label>
+            {wsError !== null ? <p className="wb-ws-error">{wsError}</p> : null}
+            <div className="wb-ws-actions">
+              <button type="button" onClick={() => setWsDialogOpen(false)}>取消</button>
+              <button type="button" className="wb-ws-confirm" disabled={wsPending || wsName.trim() === '' || wsCwd.trim() === ''} onClick={submitWorkspace}>
+                {wsPending ? '创建中…' : '创建'}
+              </button>
+            </div>
+          </div>
+        ) : null}
         {groups.map((group) => (
           <section className="wb-group" key={group.ws.id}>
             <header>
@@ -347,34 +346,12 @@ export function WorkspaceRail({
             )) : null}
           </section>
         ))}
-        <section className="wb-group">
-          <button type="button" className="wb-action-row" onClick={() => setWsDialogOpen((open) => !open)} aria-expanded={wsDialogOpen}>
-            <PlusIcon />
-            <span>新建工作区</span>
-            <kbd>绝对路径</kbd>
-          </button>
-          {wsDialogOpen ? (
-            <div className="wb-ws-dialog" role="dialog" aria-label="新建工作区">
-              <label>
-                <span>名称</span>
-                <input value={wsName} onChange={(event) => setWsName(event.currentTarget.value)} placeholder="例如 demo 项目" />
-              </label>
-              <label>
-                <span>目录（绝对路径）</span>
-                <input value={wsCwd} onChange={(event) => setWsCwd(event.currentTarget.value)} placeholder="H:\\path\\to\\repo" />
-              </label>
-              {wsError !== null ? <p className="wb-ws-error">{wsError}</p> : null}
-              <div className="wb-ws-actions">
-                <button type="button" onClick={() => setWsDialogOpen(false)}>取消</button>
-                <button type="button" className="wb-ws-confirm" disabled={wsPending || wsName.trim() === '' || wsCwd.trim() === ''} onClick={submitWorkspace}>
-                  {wsPending ? '创建中…' : '创建'}
-                </button>
-              </div>
-            </div>
-          ) : null}
-        </section>
       </nav>
 
+      <div className="wb-presence" data-state={badge.state} title={badge.detail} role="status">
+        <span className="prototype-dot" aria-hidden="true" />
+        <strong>{badge.label}</strong>
+      </div>
       <footer className="wb-rail-foot">
         <div className="wb-person">
           <span className="wb-avatar" aria-hidden="true">L</span>
