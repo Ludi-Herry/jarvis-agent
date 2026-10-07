@@ -1,5 +1,5 @@
 import { type RefObject } from 'react';
-import type { GuiLiveOverview, GuiLiveSnapshot, GuiTool } from '../../../live-types.js';
+import type { GuiFileView, GuiLiveOverview, GuiLiveSnapshot, GuiTool } from '../../../live-types.js';
 import { ContextEvidence, DiffEvidence, VerificationEvidence } from './evidence.js';
 import { toolStatusLabels } from './format.js';
 import { ChevronIcon } from './icons.js';
@@ -63,6 +63,8 @@ export function DetailPane({
   onClose,
   onContextScroll,
   getGit,
+  getFileView,
+  openFileExternal,
 }: {
   readonly overview: GuiLiveOverview | null;
   readonly snapshot: GuiLiveSnapshot | null;
@@ -81,6 +83,8 @@ export function DetailPane({
   readonly onClose: () => void;
   readonly onContextScroll: (event: { readonly currentTarget: HTMLElement }) => void;
   readonly getGit?: (id: string) => Promise<import('../../../live-types.js').GuiGitStatus>;
+  readonly getFileView: (taskId: string, path: string) => Promise<GuiFileView>;
+  readonly openFileExternal: (taskId: string, path: string) => Promise<{ ok: true }>;
 }) {
   return (
     <aside
@@ -119,7 +123,15 @@ export function DetailPane({
             </button>
           ))}
         </div>
-        {evidenceTab === 'diff' ? <DiffEvidence snapshot={snapshot} selectedTool={selectedTool} /> : null}
+        {evidenceTab === 'diff' ? (
+          <DiffEvidence
+            snapshot={snapshot}
+            selectedTool={selectedTool}
+            taskId={taskId}
+            getFileView={getFileView}
+            openFileExternal={openFileExternal}
+          />
+        ) : null}
         {evidenceTab === 'verification' ? <VerificationEvidence snapshot={snapshot} selectedTool={selectedTool} /> : null}
         {evidenceTab === 'context' ? <ContextEvidence overview={overview} snapshot={snapshot} streamWarning={streamWarning} getGit={getGit} /> : null}
         {evidenceTab === 'subagents' ? <SubagentsEvidence snapshot={snapshot} /> : null}

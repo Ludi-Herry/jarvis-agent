@@ -137,6 +137,37 @@ const RUNNING_MESSAGES: GuiMessage[] = [
   message('call_fx_m2', 'assistant', '收到。我会把 label 改成一句可直接使用的引导，并在写入前请求你的审批。', '2026-09-26T09:00:44.000Z', { status: 'running' }),
 ];
 
+/** Batch 4 §阅读试件：一条带 Markdown 结构的回复，验证渲染而非真实任务内容。 */
+const MARKDOWN_MESSAGES: GuiMessage[] = [
+  ...RUNNING_MESSAGES,
+  message(
+    'call_fx_md',
+    'assistant',
+    [
+      '我把需要改的地方拆开说清楚，方便你直接判断。',
+      '',
+      '## 现状',
+      '',
+      '- `fixture/answer.mjs` 只有一行 `export const label`，说明太短。',
+      '- 目标：让第一次使用的人知道**从哪里开始**。',
+      '',
+      '## 计划改法',
+      '',
+      '| 步骤 | 动作 | 是否要写盘 |',
+      '| --- | --- | --- |',
+      '| 1 | 把 label 改成完整引导句 | 要 |',
+      '| 2 | `node --check` 语法验证 | 不要 |',
+      '',
+      '```js',
+      'export const label = "从左侧选择任务，中间描述目标；写入前会在右侧请求你的批准。";',
+      '```',
+      '',
+      '> 细节与来源可以展开 [V13 冻结清单](https://example.test/docs) 对照；这只影响说明文字，不碰运行逻辑。',
+    ].join('\n'),
+    '2026-09-26T09:00:50.000Z',
+  ),
+];
+
 export interface WorkbenchFixture {
   readonly id: string;
   readonly label: string;
@@ -204,6 +235,17 @@ export const workbenchFixtures: readonly WorkbenchFixture[] = [
       capabilities: runningCaps,
     }),
   }),
+  fixture('markdown', 'Markdown 阅读', '一条带标题、列表、表格与代码块的回复（试件形状）。', {
+    snapshot: snapshot({
+      status: 'running',
+      phase: '模型正在生成回复',
+      nextAction: '观察执行过程；需要时补充指令或终止',
+      messages: MARKDOWN_MESSAGES,
+      tools: [...READ_TOOLS],
+      usage: { inputTokens: 4210, outputTokens: 318, costCny: 0.0348, costNote: '试件按构造值估算，不产生真实费用' },
+      capabilities: runningCaps,
+    }),
+  }),
   fixture('long', '长对话与定位刻度', '九轮问答：验证顶部提问摘要与左侧定位刻度的出现条件。', {
     snapshot: snapshot({
       status: 'running',
@@ -231,7 +273,7 @@ export const workbenchFixtures: readonly WorkbenchFixture[] = [
         capability: 'writes-files',
         reason: '写入文件需要你的批准',
         detail: '仅允许本次请求；拒绝理由会传回模型',
-        arguments: JSON.stringify({ path: 'fixture/answer.mjs', content: 'export const label = "说明清楚";\n', expectedVersion: 1 }, null, 2),
+        arguments: JSON.stringify({ path: 'fixture/answer.mjs', content: 'export const label = "说明清楚";\n', expectedVersion: 'fv1:aa01' }, null, 2),
       },
       capabilities: { submit: true, pause: false, continue: false, stop: true, resume: false },
     }),
@@ -259,6 +301,37 @@ export const workbenchFixtures: readonly WorkbenchFixture[] = [
         reason: '写入文件需要你的批准',
         detail: '仅允许本次请求；拒绝理由会传回模型',
         arguments: JSON.stringify({ path: 'fixture/answer.mjs', content: 'export const label = "从左侧选择任务，中间描述目标；写入前会在右侧请求你的批准。";\n' }, null, 2),
+      },
+      capabilities: { submit: true, pause: false, continue: false, stop: true, resume: false },
+    }),
+  }),
+  fixture('edit', '待审批 Edit', '一次局部修改请求；结构化变更视图显示 oldText→newText 的差异。', {
+    snapshot: snapshot({
+      status: 'approval',
+      phase: '等待你的审批',
+      nextAction: '检查修改内容，允许一次、拒绝或填写调整意见',
+      messages: RUNNING_MESSAGES,
+      tools: [
+        ...READ_TOOLS,
+        tool('call_fx_edit_1', 'edit', 'proposed', {
+          path: 'fixture/answer.mjs',
+          oldText: 'export const label = "说明";\n',
+          newText: 'export const label = "从左侧选择任务，中间描述目标；写入前会在右侧请求你的批准。";\n',
+          expectedVersion: 'fv1:bb02',
+        }, { path: 'fixture/answer.mjs' }),
+      ],
+      approval: {
+        requestId: 'req-fx-3',
+        toolName: 'edit',
+        capability: 'writes-files',
+        reason: '写入文件需要你的批准',
+        detail: '仅允许本次请求；拒绝理由会传回模型',
+        arguments: JSON.stringify({
+          path: 'fixture/answer.mjs',
+          oldText: 'export const label = "说明";\n',
+          newText: 'export const label = "从左侧选择任务，中间描述目标；写入前会在右侧请求你的批准。";\n',
+          expectedVersion: 'fv1:bb02',
+        }, null, 2),
       },
       capabilities: { submit: true, pause: false, continue: false, stop: true, resume: false },
     }),

@@ -1,5 +1,6 @@
 import type {
   GuiConnectionState,
+  GuiFileView,
   GuiGitStatus,
   GuiLiveOverview,
   GuiLiveSnapshot,
@@ -30,6 +31,8 @@ export interface WorkbenchCommands {
   readonly createTask: (input: GuiCreateTaskInput) => Promise<GuiLiveSnapshot>;
   readonly createBranch: (turnId: string) => Promise<GuiLiveSnapshot>;
   readonly getGit: (id: string) => Promise<GuiGitStatus>;
+  readonly getFileView: (taskId: string, path: string) => Promise<GuiFileView>;
+  readonly openFileExternal: (taskId: string, path: string) => Promise<{ ok: true }>;
   readonly runTerminal: (command: string) => Promise<unknown>;
   readonly cancelTerminal: () => Promise<unknown>;
 }

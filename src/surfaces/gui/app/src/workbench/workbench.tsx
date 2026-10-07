@@ -328,6 +328,8 @@ export function Workbench({ input }: { readonly input: WorkbenchInput }) {
             onClose={() => setDetailOpen(false)}
             onContextScroll={detailScroll.onScroll}
             getGit={commands.getGit}
+            getFileView={commands.getFileView}
+            openFileExternal={commands.openFileExternal}
           />
         ) : null}
       </div>

@@ -8,11 +8,13 @@ import type {
 import {
   createLiveTask,
   createLiveWorkspace,
+  getLiveFileView,
   getLiveGitStatus,
   getLiveOverview,
   getLiveSnapshot,
   postLiveMeta,
   postLiveSnapshot,
+  postOpenFileExternal,
   postTerminalCancel,
   postTerminalCommand,
   startLiveTask,
@@ -383,6 +385,10 @@ export function useLiveSession() {
 
   const getGit = useCallback(async (id: string) => getLiveGitStatus(id), []);
 
+  const getFileView = useCallback(async (taskId: string, path: string) => getLiveFileView(taskId, path), []);
+
+  const openFileExternal = useCallback(async (taskId: string, path: string) => postOpenFileExternal(taskId, path), []);
+
   const runTerminal = useCallback(async (command: string) => {
     if (overview?.enabled !== true) throw new Error('真实运行入口当前未启用。');
     if (connection !== 'connected') throw new Error('连接已中断，命令尚未发送。');
@@ -424,6 +430,8 @@ export function useLiveSession() {
     createTask,
     createBranch,
     getGit,
+    getFileView,
+    openFileExternal,
     runTerminal,
     cancelTerminal,
   };

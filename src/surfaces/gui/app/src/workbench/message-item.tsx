@@ -4,6 +4,7 @@ import type { GuiTool } from '../../../live-types.js';
 import type { EvidenceTab } from './prefs.js';
 import { formatTimestamp, stringValue, toolStatusLabels } from './format.js';
 import { BranchIcon, ChevronIcon, CopyIcon } from './icons.js';
+import { MarkdownBody } from './markdown.js';
 
 type ToolPartState = Extract<EnrichedPartState, { type: 'tool-call' }>;
 
@@ -112,7 +113,7 @@ export function MessageView({
   const parts = (
     <MessagePrimitive.Parts>
       {({ part }) => {
-        if (part.type === 'text') return <p className="message-copy">{part.text}</p>;
+        if (part.type === 'text') return <div className="message-copy"><MarkdownBody text={part.text} /></div>;
         if (part.type === 'tool-call') return null;
         return <div className="unsupported-part">这部分内容暂时无法显示，原始事实仍保留在会话中。</div>;
       }}

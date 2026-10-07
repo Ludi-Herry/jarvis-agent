@@ -14,11 +14,12 @@ export async function handleLiveApi(
   if (req.method === 'POST' && url.pathname === '/api/live/task') return json(res, await host.createTask(await body()));
   if (req.method === 'POST' && url.pathname === '/api/live/task/validate') return json(res, await host.validateTask(await body()));
   if (req.method === 'POST' && url.pathname === '/api/live/workspaces') return json(res, await host.createWorkspace(await body()));
-  const match = /^\/api\/live\/(gui-[a-f0-9-]+)(?:\/(events|input|decision|pause|continue|stop|resume|review|start|meta|git|terminal\/cancel|terminal))?$/u.exec(url.pathname);
+  const match = /^\/api\/live\/(gui-[a-f0-9-]+)(?:\/(events|input|decision|pause|continue|stop|resume|review|start|meta|git|terminal\/cancel|terminal|file|open-external))?$/u.exec(url.pathname);
   if (!match) throw new GuiLiveError(404, 'live API not found');
   const [, id, action] = match;
   if (req.method === 'GET' && !action) return json(res, await host.snapshot(id));
   if (req.method === 'GET' && action === 'git') return json(res, await host.gitStatus(id));
+  if (req.method === 'GET' && action === 'file') return json(res, await host.readFileView(id, url.searchParams.get('path') ?? ''));
   if (req.method === 'GET' && action === 'events') {
     // Verify identity/integrity before opening the stream. Reconnect always receives a full
     // persistent projection; Last-Event-ID never causes missing events to be discarded.
@@ -64,6 +65,9 @@ export async function handleLiveApi(
   if (action === 'input') return json(res, await host.input(id, requiredText(input, 'text')));
   if (action === 'terminal') return json(res, await host.startTerminal(id, input.command));
   if (action === 'terminal/cancel') return json(res, await host.cancelTerminal(id));
+  if (action === 'open-external') {
+    return json(res, await host.openFileExternal(id, typeof input.path === 'string' ? input.path : ''));
+  }
   if (action === 'decision') return json(res, await host.decision(id, requiredText(input, 'requestId'), requiredText(input, 'decision'), typeof input.reason === 'string' ? input.reason : undefined));
   if (action === 'pause' || action === 'continue' || action === 'stop' || action === 'resume') {
     return json(res, await host.control(id, action, typeof input.reason === 'string' ? input.reason : undefined));

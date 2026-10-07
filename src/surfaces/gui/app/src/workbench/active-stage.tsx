@@ -1,7 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { GuiApproval, GuiLiveSnapshot } from '../../../live-types.js';
 import type { HumanReviewDecision } from '../live/use-live-session.js';
+import { buildApprovalPreview } from './approval-diff.js';
 import type { ControlState } from './controls.js';
+import { parseUnifiedDiff } from './diff.js';
 import { statusPresentation, toolKindLabels } from './format.js';
 import type { EvidenceTab } from './prefs.js';
 
@@ -36,6 +38,13 @@ export function ApprovalCard({
   readonly onEvidence: (tab: EvidenceTab) => void;
 }) {
   const disabled = !gate.available || pending;
+  // Batch 4 §授权判断: the pending-change preview is computed from the approval arguments only —
+  // it is NOT the already-executed diff shown in the Diff tab, and the card says so explicitly.
+  const preview = useMemo(() => buildApprovalPreview(approval.toolName, approval.arguments), [approval.toolName, approval.arguments]);
+  const previewRows = useMemo(
+    () => (preview !== null && (preview.kind === 'write-create' || preview.kind === 'edit') ? parseUnifiedDiff(preview.diff) : null),
+    [preview],
+  );
   return (
     <section className="wb-decision wb-decision-approval" aria-labelledby="wb-approval-title">
       <header>
@@ -51,6 +60,30 @@ export function ApprovalCard({
         <div><dt>操作</dt><dd>{approval.toolName}</dd></div>
         <div><dt>影响</dt><dd>{approval.detail}</dd></div>
       </dl>
+      {preview !== null ? (
+        <section className="wb-approval-preview" aria-label="即将批准的变更">
+          <strong>即将批准的变更（预览，尚未执行）</strong>
+          <p className="wb-approval-preview-note">与右侧 Diff 页签的已执行改动不是同一份；此内容来自本次工具调用参数。</p>
+          {previewRows !== null ? (
+            <pre className="mini-diff wb-diff">
+              {previewRows.rows.map((row, index) => (
+                <span key={`${index}:${row.kind}`} className="wb-diff-row" data-kind={row.kind}>{row.text || ' '}</span>
+              ))}
+              {previewRows.truncated ? <span className="wb-diff-row" data-kind="meta">…预览已截断，请检查调用参数</span> : null}
+            </pre>
+          ) : null}
+          {preview.kind === 'write-replace' ? (
+            <>
+              <code>{preview.path}</code>
+              <p className="wb-approval-preview-note">{preview.note}</p>
+              <pre className="wb-approval-preview-content">{preview.content}</pre>
+            </>
+          ) : null}
+          {preview.kind === 'command' ? (
+            <pre className="wb-approval-preview-content"><code>{preview.command}</code></pre>
+          ) : null}
+        </section>
+      ) : null}
       <details className="live-approval-detail">
         <summary>查看调用参数</summary>
         <pre>{approval.arguments}</pre>

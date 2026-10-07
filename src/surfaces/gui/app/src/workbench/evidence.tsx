@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { GuiGitStatus, GuiLiveOverview, GuiLiveSnapshot, GuiTool } from '../../../live-types.js';
+import type { GuiFileView, GuiGitStatus, GuiLiveOverview, GuiLiveSnapshot, GuiTool } from '../../../live-types.js';
 import { diffSummary, parseUnifiedDiff } from './diff.js';
 import { formatCost, formatDuration, formatTimestamp, formatTokens, toolStatusLabels } from './format.js';
 
@@ -11,7 +11,10 @@ function GitRows({ id, getGit }: {
   const [git, setGit] = useState<GuiGitStatus | null>(null);
   useEffect(() => {
     let disposed = false;
-    getGit(id).then((value) => { if (!disposed) setGit(value); }).catch(() => { if (!disposed) setGit(null); });
+    getGit(id).then((value) => { if (!disposed) setGit(value); }).catch(() => {
+      // Batch 4 §GitRows 修复: a rejected query must not pin the row on 读取中 forever.
+      if (!disposed) setGit({ at: new Date().toISOString(), unavailable: 'git 状态查询失败；请稍后重试' });
+    });
     return () => { disposed = true; };
   }, [id, getGit]);
   if (git === null) return <div><dt>Git</dt><dd>读取中…</dd></div>;
@@ -39,13 +42,62 @@ export function SelectedToolEvidence({ tool }: { readonly tool: GuiTool | null }
   );
 }
 
-export function DiffEvidence({ snapshot, selectedTool }: {
+/** Batch 4 §阅读: inline preview state for one artifact file, loaded on demand via the live API. */
+interface FilePreviewState {
+  readonly path: string;
+  readonly status: 'loading' | 'ok' | 'error';
+  readonly view?: GuiFileView;
+  readonly error?: string;
+  readonly externalPending?: boolean;
+}
+
+function previewError(error: unknown): string {
+  return error instanceof Error && error.message.trim() !== '' ? error.message : '读取文件失败。';
+}
+
+export function DiffEvidence({ snapshot, selectedTool, taskId, getFileView, openFileExternal }: {
   readonly snapshot: GuiLiveSnapshot | null;
   readonly selectedTool: GuiTool | null;
+  readonly taskId: string | null;
+  readonly getFileView: (taskId: string, path: string) => Promise<GuiFileView>;
+  readonly openFileExternal: (taskId: string, path: string) => Promise<{ ok: true }>;
 }) {
   const diff = snapshot?.diff ?? '';
   const summary = diffSummary(diff);
   const { rows, truncated } = parseUnifiedDiff(diff);
+  const [filePreview, setFilePreview] = useState<FilePreviewState | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const openPreview = (path: string) => {
+    if (taskId === null) return;
+    setFilePreview({ path, status: 'loading' });
+    getFileView(taskId, path)
+      .then((view) => setFilePreview((current) => (current?.path === path ? { path, status: 'ok', view } : current)))
+      .catch((error: unknown) => setFilePreview((current) => (current?.path === path ? { path, status: 'error', error: previewError(error) } : current)));
+  };
+
+  const openExternal = () => {
+    if (taskId === null || filePreview === null) return;
+    const path = filePreview.path;
+    setFilePreview({ ...filePreview, externalPending: true });
+    openFileExternal(taskId, path)
+      .then(() => setFilePreview((current) => (current?.path === path ? { ...current, externalPending: false } : current)))
+      .catch((error: unknown) => setFilePreview((current) => (current?.path === path
+        ? { ...current, status: 'error', error: previewError(error), externalPending: false }
+        : current)));
+  };
+
+  const copyContent = async () => {
+    if (filePreview?.view?.kind !== 'text') return;
+    try {
+      await navigator.clipboard.writeText(filePreview.view.content);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1600);
+    } catch {
+      setCopied(false);
+    }
+  };
+
   return (
     <div className="live-evidence-pane wb-diff-pane">
       <SelectedToolEvidence tool={selectedTool} />
@@ -61,11 +113,50 @@ export function DiffEvidence({ snapshot, selectedTool }: {
             {snapshot.artifacts.length === 0 ? <li><span>暂无产物</span><strong>—</strong></li> : null}
             {snapshot.artifacts.map((artifact, index) => (
               <li key={`${index}:${artifact.path}:${artifact.outcome}`}>
-                <span>{artifact.path}</span>
+                <span>
+                  {artifact.path}
+                  {taskId !== null ? (
+                    <button
+                      type="button"
+                      className="wb-artifact-open"
+                      onClick={() => openPreview(artifact.path)}
+                      aria-label={`打开 ${artifact.path} 的预览`}
+                    >
+                      打开
+                    </button>
+                  ) : null}
+                </span>
                 <strong>{artifact.outcome}</strong>
               </li>
             ))}
           </ul>
+          {filePreview !== null ? (
+            <section className="wb-file-preview" aria-label={`文件预览 ${filePreview.path}`}>
+              <header>
+                <code>{filePreview.path}</code>
+                <span className="wb-file-preview-actions">
+                  {filePreview.status === 'ok' && filePreview.view?.kind === 'text' ? (
+                    <button type="button" onClick={() => { void copyContent(); }}>{copied ? '已复制' : '复制'}</button>
+                  ) : null}
+                  <button type="button" disabled={filePreview.externalPending === true} onClick={openExternal}>
+                    {filePreview.externalPending === true ? '打开中…' : '在外部打开'}
+                  </button>
+                  <button type="button" onClick={() => setFilePreview(null)} aria-label="关闭预览">×</button>
+                </span>
+              </header>
+              {filePreview.status === 'loading' ? <p className="live-muted">读取中…</p> : null}
+              {filePreview.status === 'error' ? <p className="wb-file-preview-error">{filePreview.error ?? '读取文件失败。'}</p> : null}
+              {filePreview.status === 'ok' && filePreview.view?.kind === 'text' ? (
+                <>
+                  <pre className="wb-file-preview-content">{filePreview.view.content}</pre>
+                  {filePreview.view.truncated ? <p className="live-muted">文件过大，仅显示前 200 KB。</p> : null}
+                </>
+              ) : null}
+              {filePreview.status === 'ok' && filePreview.view?.kind === 'image' ? (
+                <img className="wb-file-preview-image" alt={filePreview.view.path} src={`data:${filePreview.view.mime};base64,${filePreview.view.content}`} />
+              ) : null}
+            </section>
+          ) : null}
           {diff.trim() === '' ? (
             <p className="live-muted">当前没有可显示的 Diff。基线由宿主的私有 Git index 固定，不含你的 index。</p>
           ) : (

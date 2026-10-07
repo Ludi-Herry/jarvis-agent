@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { GuiGitStatus, GuiLiveOverviewSession, GuiLiveSnapshot, GuiMessage, GuiTaskValidateResponse } from '../../../live-types.js';
+import type { GuiFileView, GuiGitStatus, GuiLiveOverviewSession, GuiLiveSnapshot, GuiMessage, GuiTaskValidateResponse } from '../../../live-types.js';
 import type { GuiCreateTaskInput, GuiMetaPatch, GuiWorkspaceInput } from '../live/api.js';
 import { findFixture, workbenchFixtures, type WorkbenchFixture } from './fixtures.js';
 import type { WorkbenchCommands, WorkbenchInput } from './types.js';
@@ -15,6 +15,23 @@ const RUNNING_CAPABILITIES = { submit: true, pause: true, continue: false, stop:
 function nowIso(): string {
   return new Date('2026-09-26T09:10:00.000Z').toISOString();
 }
+
+/** Batch 4 §阅读: deterministic file previews for fixture artifact paths (no disk reads here). */
+const FIXTURE_FILES: Record<string, { kind: 'text' | 'image'; content: string; mime?: string; truncated: false; sizeBytes: number }> = {
+  'fixture/answer.mjs': {
+    kind: 'text',
+    content: 'export const label = "从左侧选择任务，中间描述目标；写入前会在右侧请求你的批准。";\n',
+    truncated: false,
+    sizeBytes: 96,
+  },
+  'fixture/v13-shot.png': {
+    kind: 'image',
+    content: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNoAAAAggCBd81ytgAAAABJRU5ErkJggg==',
+    mime: 'image/png',
+    truncated: false,
+    sizeBytes: 67,
+  },
+};
 
 function asUserMessage(text: string, index: number): GuiMessage {
   return { id: `fixture-input-${index}`, role: 'user', text, at: nowIso(), status: 'complete', toolIds: [] };
@@ -296,6 +313,12 @@ export function useFixtureSession(fixtureId: string | null): FixtureSession {
     getGit: async (): Promise<GuiGitStatus> => ({
       at: nowIso(), branch: 'main', ahead: 1, behind: 0, uncommitted: 2, worktree: 'dirty',
     }),
+    getFileView: async (_taskId: string, path: string): Promise<GuiFileView> => {
+      const found = FIXTURE_FILES[path];
+      if (!found) throw new Error('试件没有这个文件');
+      return { path, kind: found.kind, content: found.content, truncated: found.truncated, sizeBytes: found.sizeBytes, at: nowIso(), ...(found.mime ? { mime: found.mime } : {}) };
+    },
+    openFileExternal: async (): Promise<{ ok: true }> => ({ ok: true }),
     runTerminal: async (command: string) => {
       requireSnapshot();
       advance('正在运行命令', (draft) => {

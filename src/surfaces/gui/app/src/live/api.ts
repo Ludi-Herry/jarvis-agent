@@ -1,4 +1,5 @@
 import type {
+  GuiFileView,
   GuiGitStatus,
   GuiLiveOverview,
   GuiLiveSnapshot,
@@ -160,6 +161,20 @@ export async function getLiveGitStatus(id: string, signal?: AbortSignal): Promis
     signal,
   });
   return readJson<GuiGitStatus>(response);
+}
+
+/** Batch 4 §阅读: on-demand preview read of one workspace file (never persisted server-side). */
+export async function getLiveFileView(id: string, path: string, signal?: AbortSignal): Promise<GuiFileView> {
+  const response = await fetch(`/api/live/${encodeURIComponent(id)}/file?path=${encodeURIComponent(path)}`, {
+    headers: { accept: 'application/json' },
+    signal,
+  });
+  return readJson<GuiFileView>(response);
+}
+
+/** Batch 4 §阅读: open one workspace file with the OS default handler. */
+export async function postOpenFileExternal(id: string, path: string, signal?: AbortSignal): Promise<{ ok: true }> {
+  return postLiveJson<{ ok: true }>(`/api/live/${encodeURIComponent(id)}/open-external`, { path }, signal);
 }
 
 /** Batch 3 §D14: attended desk-side terminal; server spawns in the task cwd. */

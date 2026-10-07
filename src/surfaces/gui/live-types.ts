@@ -74,6 +74,18 @@ export type GuiGitStatus = { at: string } & (
   | { branch: string; ahead: number; behind: number; uncommitted: number; worktree: 'clean' | 'dirty' }
 );
 
+/** On-demand read of one workspace file for the operator's preview; never persisted or journaled. */
+export interface GuiFileView {
+  path: string;
+  kind: 'text' | 'image';
+  /** kind==='image' → raw base64 with `mime`; kind==='text' → decoded content (possibly truncated). */
+  content: string;
+  mime?: string;
+  truncated: boolean;
+  sizeBytes: number;
+  at: string;
+}
+
 export interface GuiTool {
   id: string;
   name: string;

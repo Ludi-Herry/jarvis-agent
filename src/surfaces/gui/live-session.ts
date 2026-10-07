@@ -1,13 +1,15 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
+import { open } from 'node:fs/promises';
 import { appendFile, lstat, mkdir, readFile, readdir, realpath, rename, stat, writeFile } from 'node:fs/promises';
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import {
   buildDefaultRegistry, createBashTool, createProvider, DefaultContextManager, defaultShellPath,
   loadDoubaoConfig, runAgent, runCommand, scrubProviderKeyFromEnv,
   type DoubaoConfig, type ModelProvider, type Message, type ThinkingEffort,
 } from '../../core/index.js';
+import { safeResolve } from '../../core/tools/safe-path.js';
 import { redactSecrets } from '../../core/model/errors.js';
 import {
   buildConfigPermissionPolicy, createEmergencyStopSignal, createSessionComposition,
@@ -30,7 +32,7 @@ import { JARVIS_VERSION } from '../cli/package-info.js';
 import { resolveHooks, type HookRunner } from '../../capabilities/hooks/index.js';
 import { applyGuiEvent, updateGuiCapabilities, type GuiObservedEvent } from './live-projection.js';
 import type {
-  GuiGitStatus, GuiLiveOverview, GuiLiveOverviewSession, GuiLiveSnapshot, GuiMessage,
+  GuiFileView, GuiGitStatus, GuiLiveOverview, GuiLiveOverviewSession, GuiLiveSnapshot, GuiMessage,
   GuiModelsResponse, GuiTaskContract, GuiTaskFieldError, GuiTaskValidateResponse, GuiWorkspaceInfo,
 } from './live-types.js';
 
@@ -53,6 +55,15 @@ const MAX_SUBAGENT_DEPTH = 1;
 
 const ALL_THINKING_LEVELS: ThinkingEffort[] = ['off', 'low', 'medium', 'high'];
 const GIT_CACHE_MS = 5_000;
+
+/** Batch 4 §阅读: operator file preview bounds. */
+const FILE_PATH_MAX = 500;
+const FILE_TEXT_CAP_BYTES = 200 * 1_024;
+const FILE_IMAGE_CAP_BYTES = 2 * 1_024 * 1_024;
+const FILE_BINARY_SNIFF_BYTES = 4_096;
+const FILE_IMAGE_MIME: Readonly<Record<string, string>> = {
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp',
+};
 
 /** Desk-side terminal bounds (batch 3 §D14–§D17). */
 const TERMINAL_COMMAND_MAX = 2_000;
@@ -499,6 +510,69 @@ export class GuiSessionHost {
     const payload = await this.queryGitStatus(task.created.task.cwd);
     task.gitCache = { at: Date.now(), payload };
     return payload;
+  }
+
+  /** Batch 4 §阅读: on-demand read of one workspace file for the operator's preview. The same
+   *  safeResolve confinement as the file tools applies (containment, symlink re-check, sensitive
+   *  and git-metadata refusal). Text is capped at 200 KB with an honest truncated flag; known
+   *  image extensions return base64 (≤2 MiB); other binary content is refused honestly.
+   *  Deliberately not redacted and not journaled — the operator views their own workspace file
+   *  on demand and nothing here is persisted. */
+  async readFileView(id: string, path: string): Promise<GuiFileView> {
+    await this.initialize();
+    const task = this.requireTask(id);
+    const abs = await this.resolveReadableFile(task, path);
+    const info = await stat(abs);
+    const ext = extname(abs).toLowerCase();
+    const mime = FILE_IMAGE_MIME[ext];
+    if (mime !== undefined) {
+      if (info.size > FILE_IMAGE_CAP_BYTES) throw new GuiLiveError(413, `图片超过 2 MiB（${info.size} 字节），请在外部打开查看`);
+      const buffer = await readFile(abs);
+      return { path, kind: 'image', content: buffer.toString('base64'), mime, truncated: false, sizeBytes: buffer.length, at: new Date().toISOString() };
+    }
+    const handle = await open(abs, 'r');
+    let bytes: Buffer;
+    try {
+      const buffer = Buffer.alloc(FILE_TEXT_CAP_BYTES + 1);
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+      bytes = buffer.subarray(0, bytesRead);
+    } finally {
+      await handle.close();
+    }
+    if (bytes.subarray(0, FILE_BINARY_SNIFF_BYTES).includes(0)) throw new GuiLiveError(415, '二进制文件无法内联预览');
+    const truncated = bytes.length > FILE_TEXT_CAP_BYTES;
+    if (truncated) bytes = bytes.subarray(0, FILE_TEXT_CAP_BYTES);
+    return { path, kind: 'text', content: bytes.toString('utf8'), truncated, sizeBytes: info.size, at: new Date().toISOString() };
+  }
+
+  /** Batch 4 §阅读: open one workspace file with the OS default handler. Same confinement as
+   *  readFileView; the opener spawns without a shell and detaches immediately. */
+  async openFileExternal(id: string, path: string): Promise<{ ok: true }> {
+    await this.initialize();
+    const task = this.requireTask(id);
+    const abs = await this.resolveReadableFile(task, path);
+    const program = process.platform === 'win32' ? 'explorer.exe' : process.platform === 'darwin' ? 'open' : 'xdg-open';
+    let child: ChildProcess;
+    try {
+      child = spawn(program, [abs], { detached: true, stdio: 'ignore', windowsHide: true });
+    } catch (error) {
+      throw new GuiLiveError(500, `无法启动系统打开器：${redactSecrets(error instanceof Error ? error.message : String(error))}`);
+    }
+    child.unref();
+    return { ok: true };
+  }
+
+  /** Shared path validation for readFileView/openFileExternal: non-empty ≤500-char path, resolved
+   *  under the task cwd via safeResolve, and the target must actually be a file. */
+  private async resolveReadableFile(task: LiveTask, path: string): Promise<string> {
+    if (typeof path !== 'string' || path.trim() === '' || path.length > FILE_PATH_MAX) {
+      throw new GuiLiveError(400, `path 必须是 1–${FILE_PATH_MAX} 字的非空文本`);
+    }
+    const safe = await safeResolve(task.created.task.cwd, path);
+    if (!safe.ok) throw new GuiLiveError(403, safe.reason);
+    const info = await stat(safe.abs).catch(() => null);
+    if (!info?.isFile()) throw new GuiLiveError(404, '不是文件或不存在');
+    return safe.abs;
   }
 
   /** Models honestly derived from the real provider/config: single entry, never fabricated. */
