@@ -11,7 +11,8 @@ function errorMessage(error: unknown): string {
 /** The open row is the projection's last history entry while a command runs (batch 3 §D14 fold). */
 function entryStatus(entry: GuiTerminalEntry, open: boolean): string {
   if (open) return '运行中';
-  if (entry.canceled) return '已取消';
+  // Batch 5 §恢复: a journaled cancel cause distinguishes timeout from a user cancel.
+  if (entry.canceled) return entry.cause === 'timeout' ? '超时自动结束' : entry.cause === 'interrupted' ? '宿主退出，命令中断' : '已取消';
   if (entry.code !== null) return `完成 · 退出码 ${entry.code}`;
   return '超时/中断';
 }

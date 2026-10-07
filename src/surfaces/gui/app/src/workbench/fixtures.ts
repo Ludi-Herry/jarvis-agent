@@ -74,7 +74,15 @@ function snapshot(patch: SnapshotPatch): GuiLiveSnapshot {
 }
 
 const FIXTURE_WORKSPACES: GuiWorkspaceInfo[] = [
-  { id: 'ws-fixture-main', name: 'jarvis-agent', cwd: FIXTURE_CWD, createdAt: '2026-09-26T08:00:00.000Z', archived: false, sort: 0 },
+  {
+    id: 'ws-fixture-main', name: 'jarvis-agent', cwd: FIXTURE_CWD, createdAt: '2026-09-26T08:00:00.000Z', archived: false, sort: 0,
+    presets: {
+      writePaths: ['fixture/answer.mjs'],
+      checkCommands: ['node --check fixture/answer.mjs'],
+      maxRounds: 2, maxTurns: 6, minutes: 10,
+      savedAt: '2026-09-26T08:30:00.000Z',
+    },
+  },
 ];
 
 /** 与真实端点一致的诚实形状：单模型、当前配置固定、思考档只读。 */
@@ -488,7 +496,10 @@ export const workbenchFixtures: readonly WorkbenchFixture[] = [
       capabilities: runningCaps,
       terminal: {
         running: null,
-        history: [{ command: 'node --version', code: 0, output: 'v22.12.0\n（试件构造输出，非真实执行）', canceled: false, at: '2026-09-26T09:08:00.000Z' }],
+        history: [
+          { command: 'node --version', code: 0, output: 'v22.12.0\n（试件构造输出，非真实执行）', canceled: false, at: '2026-09-26T09:08:00.000Z' },
+          { command: 'npm run build', code: null, output: '（试件）构建输出中途超过 120 秒命令上限\n', canceled: true, cause: 'timeout', at: '2026-09-26T09:09:00.000Z' },
+        ],
       },
     }),
     overview: overview({

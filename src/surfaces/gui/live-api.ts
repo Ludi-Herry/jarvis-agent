@@ -14,6 +14,14 @@ export async function handleLiveApi(
   if (req.method === 'POST' && url.pathname === '/api/live/task') return json(res, await host.createTask(await body()));
   if (req.method === 'POST' && url.pathname === '/api/live/task/validate') return json(res, await host.validateTask(await body()));
   if (req.method === 'POST' && url.pathname === '/api/live/workspaces') return json(res, await host.createWorkspace(await body()));
+  // Batch 5 §启动: workspace-level routes must win before the task-id action regex below.
+  const wsMatch = /^\/api\/live\/workspaces\/(ws-[a-z0-9-]+)\/(presets|probe)$/u.exec(url.pathname);
+  if (wsMatch) {
+    const [, wsId, wsAction] = wsMatch;
+    if (req.method === 'GET' && wsAction === 'probe') return json(res, await host.probeWorkspaceCommands(wsId));
+    if (req.method === 'POST' && wsAction === 'presets') return json(res, await host.saveWorkspacePresets(wsId, await body()));
+    throw new GuiLiveError(405, 'method not allowed');
+  }
   const match = /^\/api\/live\/(gui-[a-f0-9-]+)(?:\/(events|input|decision|pause|continue|stop|resume|review|start|meta|git|terminal\/cancel|terminal|file|open-external))?$/u.exec(url.pathname);
   if (!match) throw new GuiLiveError(404, 'live API not found');
   const [, id, action] = match;

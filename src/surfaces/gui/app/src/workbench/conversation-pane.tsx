@@ -1,6 +1,6 @@
-import { useState, type ChangeEvent, type FormEvent, type RefObject } from 'react';
+import { useMemo, useState, type ChangeEvent, type FormEvent, type RefObject } from 'react';
 import { ComposerPrimitive, ThreadPrimitive } from '@assistant-ui/react';
-import type { GuiLiveOverview, GuiLiveSnapshot, GuiModelsResponse } from '../../../live-types.js';
+import type { GuiLiveOverview, GuiLiveSnapshot, GuiModelsResponse, GuiWorkspacePresets, GuiWorkspaceProbe } from '../../../live-types.js';
 import type { GuiFreeTaskInput } from '../live/api.js';
 import { DecisionBar, type DecisionKind } from './active-stage.js';
 import type { ControlState, ComposerIntent, RunControls as RunControlState } from './controls.js';
@@ -9,6 +9,7 @@ import { shortObjective, statusPresentation, workspaceName } from './format.js';
 import { ArrowDownIcon, FolderIcon, PanelIcon, StopIcon } from './icons.js';
 import { MessageView } from './message-item.js';
 import type { EvidenceTab } from './prefs.js';
+import { describeRunVitals, RUN_VITALS_STATUSES } from './run-vitals.js';
 import type { WorkbenchNotices, WorkbenchProvenance, HumanReviewDecision } from './types.js';
 import type { HistoryGeometryApi } from './use-history-geometry.js';
 
@@ -92,6 +93,8 @@ export interface ConversationPaneProps {
   readonly onCreateAndStart: (input: GuiFreeTaskInput) => Promise<unknown>;
   readonly onStart: () => void;
   readonly onBranch?: (messageId: string) => void;
+  readonly onSavePresets: (wsId: string, input: Omit<GuiWorkspacePresets, 'savedAt'>) => Promise<unknown>;
+  readonly onProbeCommands: (wsId: string) => Promise<GuiWorkspaceProbe>;
 }
 
 export function ConversationPane(props: ConversationPaneProps) {
@@ -100,9 +103,14 @@ export function ConversationPane(props: ConversationPaneProps) {
     decideState, composerState, composerIntent, composerRef, historyRef, geometry, composerStorageKey,
     detailOpen, latestAssistantId, onComposerChange, onEvidence, onOpenEvidence, onPause, onContinue,
     onResume, onStop, onPrepareDecision, onAllow, onSubmitReview, onToggleDetail,
-    onValidateTask, onCreateTask, onCreateAndStart, onStart, onBranch,
+    onValidateTask, onCreateTask, onCreateAndStart, onStart, onBranch, onSavePresets, onProbeCommands,
   } = props;
   const [hoveredTick, setHoveredTick] = useState<number | null>(null);
+  // Batch 5 §运行状态: the strip only covers live run states; terminal states keep the StatusCard.
+  const vitals = useMemo(
+    () => (snapshot !== null && RUN_VITALS_STATUSES.includes(snapshot.status) ? describeRunVitals(snapshot) : null),
+    [snapshot],
+  );
 
   const presentation = snapshot === null
     ? null
@@ -187,6 +195,15 @@ export function ConversationPane(props: ConversationPaneProps) {
         </div>
       </header>
 
+      {vitals !== null ? (
+        <section className="wb-vitals" aria-label="运行状态">
+          <div><span>在做什么</span><strong>{vitals.doing}</strong></div>
+          <div><span>在等什么</span><strong>{vitals.waiting}</strong></div>
+          <div><span>下一步</span><strong>{vitals.next || '—'}</strong></div>
+          <div><span>预算</span><strong>{vitals.budget}</strong></div>
+        </section>
+      ) : null}
+
       <ThreadPrimitive.Root className="thread-layout wb-thread" data-empty={snapshot === null}>
         <div className="wb-thread-body">
           <ThreadPrimitive.Viewport ref={historyRef} className="conversation-scroll wb-history" onScroll={geometry.onScroll}>
@@ -204,6 +221,8 @@ export function ConversationPane(props: ConversationPaneProps) {
                   onValidate={onValidateTask}
                   onCreate={onCreateTask}
                   onCreateAndStart={onCreateAndStart}
+                  onSavePresets={onSavePresets}
+                  onProbeCommands={onProbeCommands}
                 />
               ) : null}
 

@@ -304,6 +304,8 @@ export function Workbench({ input }: { readonly input: WorkbenchInput }) {
             onValidateTask={commands.validateTask}
             onCreateTask={commands.createTask}
             onCreateAndStart={handleCreateAndStart}
+            onSavePresets={commands.saveWorkspacePresets}
+            onProbeCommands={commands.probeWorkspaceCommands}
             onStart={onStart}
             onBranch={snapshot === null ? undefined : openBranch}
           />

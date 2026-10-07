@@ -6,6 +6,8 @@ import type {
   GuiModelsResponse,
   GuiTaskValidateResponse,
   GuiWorkspaceInfo,
+  GuiWorkspacePresets,
+  GuiWorkspaceProbe,
 } from '../../../live-types.js';
 
 const GUI_HEADERS = {
@@ -153,6 +155,24 @@ export async function postLiveMeta(id: string, patch: GuiMetaPatch, signal?: Abo
 
 export async function createLiveWorkspace(input: GuiWorkspaceInput, signal?: AbortSignal): Promise<{ workspaces: GuiWorkspaceInfo[] }> {
   return postLiveJson<{ workspaces: GuiWorkspaceInfo[] }>('/api/live/workspaces', input, signal);
+}
+
+/** Batch 5 §启动: persist operator-confirmed drafting presets for one workspace. */
+export async function saveWorkspacePresets(
+  wsId: string,
+  input: Omit<GuiWorkspacePresets, 'savedAt'>,
+  signal?: AbortSignal,
+): Promise<{ workspaces: GuiWorkspaceInfo[] }> {
+  return postLiveJson<{ workspaces: GuiWorkspaceInfo[] }>(`/api/live/workspaces/${encodeURIComponent(wsId)}/presets`, input, signal);
+}
+
+/** Batch 5 §启动: read-only probe of plausible check commands in the workspace root. */
+export async function probeWorkspaceCommands(wsId: string, signal?: AbortSignal): Promise<GuiWorkspaceProbe> {
+  const response = await fetch(`/api/live/workspaces/${encodeURIComponent(wsId)}/probe`, {
+    headers: { accept: 'application/json' },
+    signal,
+  });
+  return readJson<GuiWorkspaceProbe>(response);
 }
 
 export async function getLiveGitStatus(id: string, signal?: AbortSignal): Promise<GuiGitStatus> {

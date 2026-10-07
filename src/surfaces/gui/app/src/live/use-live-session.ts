@@ -4,6 +4,7 @@ import type {
   GuiLiveOverview,
   GuiLiveSnapshot,
   GuiStreamFrame,
+  GuiWorkspacePresets,
 } from '../../../live-types.js';
 import {
   createLiveTask,
@@ -17,6 +18,8 @@ import {
   postOpenFileExternal,
   postTerminalCancel,
   postTerminalCommand,
+  saveWorkspacePresets as saveWorkspacePresetsApi,
+  probeWorkspaceCommands as probeWorkspaceCommandsApi,
   startLiveTask,
   validateLiveTask,
   type GuiCreateTaskInput,
@@ -365,6 +368,16 @@ export function useLiveSession() {
     void refreshOverview();
   }, [overview?.enabled, refreshOverview]);
 
+  // Batch 5 §启动: same enable-check + overview-refresh posture as createWorkspace above.
+  const saveWorkspacePresets = useCallback(async (wsId: string, input: Omit<GuiWorkspacePresets, 'savedAt'>) => {
+    if (overview?.enabled !== true) throw new Error('真实运行入口当前未启用。');
+    const result = await saveWorkspacePresetsApi(wsId, input);
+    void refreshOverview();
+    return result;
+  }, [overview?.enabled, refreshOverview]);
+
+  const probeWorkspaceCommands = useCallback(async (wsId: string) => probeWorkspaceCommandsApi(wsId), []);
+
   const validateTask = useCallback(async (input: GuiCreateTaskInput) => validateLiveTask(input), []);
 
   const createTask = useCallback(async (input: GuiCreateTaskInput) => {
@@ -426,6 +439,8 @@ export function useLiveSession() {
     submitReview,
     updateMeta,
     createWorkspace,
+    saveWorkspacePresets,
+    probeWorkspaceCommands,
     validateTask,
     createTask,
     createBranch,

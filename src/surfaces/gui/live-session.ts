@@ -34,6 +34,7 @@ import { applyGuiEvent, updateGuiCapabilities, type GuiObservedEvent } from './l
 import type {
   GuiFileView, GuiGitStatus, GuiLiveOverview, GuiLiveOverviewSession, GuiLiveSnapshot, GuiMessage,
   GuiModelsResponse, GuiTaskContract, GuiTaskFieldError, GuiTaskValidateResponse, GuiWorkspaceInfo,
+  GuiWorkspacePresets, GuiWorkspaceProbe,
 } from './live-types.js';
 
 /** Operator-owned task contract. The browser/model cannot edit checks, paths or budgets. */
@@ -64,6 +65,57 @@ const FILE_BINARY_SNIFF_BYTES = 4_096;
 const FILE_IMAGE_MIME: Readonly<Record<string, string>> = {
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp',
 };
+
+/** Batch 5 §启动: candidate check commands probed read-only from workspace manifests. */
+const PROBE_SCRIPT_NAMES = ['test', 'lint', 'typecheck', 'check', 'verify'] as const;
+const PROBE_VITEST_CONFIGS = [
+  'vitest.config.ts', 'vitest.config.js', 'vitest.config.mts', 'vitest.config.mjs',
+  'vite.config.ts', 'vite.config.js', 'vite.config.mts', 'vite.config.mjs',
+] as const;
+
+/** Batch 5 §启动: presets share the create-panel contract rules (relative writePaths, command
+ *  lines, budget caps); savedAt is required only when reading a persisted record back. */
+function inspectPresets(value: unknown, requireSavedAt: boolean): { ok: boolean; errors: GuiTaskFieldError[]; presets?: GuiWorkspacePresets } {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { ok: false, errors: [{ field: 'presets', message: '预设必须是一个对象' }] };
+  }
+  const input = value as Record<string, unknown>;
+  const errors: GuiTaskFieldError[] = [];
+  if (!Array.isArray(input.writePaths) || input.writePaths.length === 0
+    || !input.writePaths.every((path) => typeof path === 'string' && path !== '' && !isAbsolute(path)
+      && !path.split(/[\\/]/u).some((part) => part === '..' || part === '.' || part === '') && !/[*?]/u.test(path))) {
+    errors.push({ field: 'presets.writePaths', message: 'writePaths 必须是非空数组，每项为不含 ..、通配符的相对路径' });
+  }
+  if (!Array.isArray(input.checkCommands) || input.checkCommands.length === 0
+    || !input.checkCommands.every((command) => typeof command === 'string' && command.trim() !== '')) {
+    errors.push({ field: 'presets.checkCommands', message: 'checkCommands 必须是非空的命令数组' });
+  }
+  if (!Number.isInteger(input.maxRounds) || (input.maxRounds as number) < 1 || (input.maxRounds as number) > 8) {
+    errors.push({ field: 'presets.maxRounds', message: 'maxRounds 必须是 1–8 的整数' });
+  }
+  if (!Number.isInteger(input.maxTurns) || (input.maxTurns as number) < 1 || (input.maxTurns as number) > 16) {
+    errors.push({ field: 'presets.maxTurns', message: 'maxTurns 必须是 1–16 的整数' });
+  }
+  if (!Number.isInteger(input.minutes) || (input.minutes as number) < 1 || (input.minutes as number) > 15) {
+    errors.push({ field: 'presets.minutes', message: 'minutes 必须是 1–15 的整数' });
+  }
+  if (requireSavedAt && typeof input.savedAt !== 'string') {
+    errors.push({ field: 'presets.savedAt', message: 'savedAt 必须是字符串' });
+  }
+  if (errors.length > 0) return { ok: false, errors };
+  return {
+    ok: true,
+    errors: [],
+    presets: {
+      writePaths: [...(input.writePaths as string[])],
+      checkCommands: [...(input.checkCommands as string[])],
+      maxRounds: input.maxRounds as number,
+      maxTurns: input.maxTurns as number,
+      minutes: input.minutes as number,
+      savedAt: typeof input.savedAt === 'string' ? input.savedAt : '',
+    },
+  };
+}
 
 /** Desk-side terminal bounds (batch 3 §D14–§D17). */
 const TERMINAL_COMMAND_MAX = 2_000;
@@ -626,6 +678,54 @@ export class GuiSessionHost {
     return { workspaces: structuredClone(this.workspaces!) };
   }
 
+  /** Batch 5 §启动: per-workspace drafting presets, saved ONLY by this explicit user action.
+   *  Presets never grant write scopes or change the submitted contract — they prefill the form. */
+  async saveWorkspacePresets(wsId: string, value: unknown): Promise<{ workspaces: GuiWorkspaceInfo[] }> {
+    await this.initialize();
+    await this.ensureWorkspaces();
+    const workspace = this.workspaces!.find((item) => item.id === wsId);
+    if (!workspace) throw new GuiLiveError(404, '工作区不存在');
+    const inspected = inspectPresets(value, false);
+    if (!inspected.ok || !inspected.presets) {
+      throw new GuiLiveError(400, `预设无效：${inspected.errors.map((error) => `${error.field}: ${error.message}`).join('；')}`);
+    }
+    workspace.presets = { ...inspected.presets, savedAt: new Date().toISOString() };
+    await this.persistWorkspaces();
+    return { workspaces: structuredClone(this.workspaces!) };
+  }
+
+  /** Batch 5 §启动: read-only discovery of plausible check commands from the workspace root
+   *  manifests. Nothing is written or executed; adopting a candidate stays a user click. */
+  async probeWorkspaceCommands(wsId: string): Promise<GuiWorkspaceProbe> {
+    await this.initialize();
+    await this.ensureWorkspaces();
+    const workspace = this.workspaces!.find((item) => item.id === wsId);
+    if (!workspace) throw new GuiLiveError(404, '工作区不存在');
+    const candidates: Array<{ command: string; source: string }> = [];
+    try {
+      const manifest = JSON.parse(await readFile(join(workspace.cwd, 'package.json'), 'utf8')) as { scripts?: unknown };
+      if (manifest.scripts && typeof manifest.scripts === 'object' && !Array.isArray(manifest.scripts)) {
+        const scripts = manifest.scripts as Record<string, unknown>;
+        for (const name of PROBE_SCRIPT_NAMES) {
+          if (typeof scripts[name] === 'string') candidates.push({ command: `npm run ${name}`, source: 'package.json scripts' });
+        }
+      }
+    } catch { /* package.json missing or unparsable — the other probes still report honestly */ }
+    if (PROBE_VITEST_CONFIGS.some((file) => existsSync(join(workspace.cwd, file)))) {
+      candidates.push({ command: 'npx vitest run', source: 'vite/vitest 配置' });
+    }
+    if (existsSync(join(workspace.cwd, 'tsconfig.json'))) {
+      candidates.push({ command: 'npx tsc --noEmit', source: 'tsconfig.json' });
+    }
+    const deduped = candidates.filter((candidate, index) => candidates.findIndex((item) => item.command === candidate.command) === index);
+    return {
+      candidates: deduped,
+      note: deduped.length > 0
+        ? '候选来自项目只读文件（package.json / vite·tsconfig）；采用前请自行确认。'
+        : '未在 package.json scripts 与 vite/tsconfig 配置中发现候选检查命令。',
+    };
+  }
+
   async input(id: string, text: string): Promise<GuiLiveSnapshot> {
     await this.initialize();
     const task = this.requireTask(id);
@@ -1008,7 +1108,13 @@ export class GuiSessionHost {
         && Number.isInteger((item as GuiWorkspaceInfo).sort))) {
       throw new GuiLiveError(409, 'workspaces.json 格式无效');
     }
-    return structuredClone(parsed.workspaces) as GuiWorkspaceInfo[];
+    const workspaces = structuredClone(parsed.workspaces) as GuiWorkspaceInfo[];
+    // Batch 5 §启动: a workspace whose persisted presets fail validation keeps loading — the
+    // presets field alone is omitted (honest degrade), never the whole workspaces file.
+    for (const workspace of workspaces) {
+      if (workspace.presets !== undefined && !inspectPresets(workspace.presets, true).ok) delete workspace.presets;
+    }
+    return workspaces;
   }
 
   private async persistWorkspaces(): Promise<void> {

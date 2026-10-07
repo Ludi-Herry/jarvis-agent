@@ -147,6 +147,8 @@ export function applyGuiEvent(state: GuiLiveSnapshot, event: GuiObservedEvent): 
         case 'cancel':
           if (entry && entry.code === null) {
             entry.canceled = true;
+            // Batch 5 §恢复: the cancel reason survives the fold so the UI can tell 超时/中断/用户取消 apart.
+            if (typeof event.reason === 'string') entry.cause = event.reason as GuiTerminalEntry['cause'];
             entry.at = String(event.at ?? entry.at);
           }
           terminal.running = null;

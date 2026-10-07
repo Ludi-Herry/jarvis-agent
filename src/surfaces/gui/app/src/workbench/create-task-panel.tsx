@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { GuiLiveOverview, GuiLiveSnapshot, GuiModelsResponse } from '../../../live-types.js';
+import type { GuiLiveOverview, GuiLiveSnapshot, GuiModelsResponse, GuiWorkspacePresets, GuiWorkspaceProbe } from '../../../live-types.js';
 import { submitTaskDraft, type GuiFreeTaskInput } from '../live/api.js';
 import type { ControlState } from './controls.js';
 import { PinnedTaskCard } from './empty-state.js';
+import { formatTimestamp } from './format.js';
 
 interface FieldErrors {
   readonly [field: string]: string;
@@ -23,7 +24,7 @@ function lines(value: string): string[] {
  * Free-task creation: the user drafts the objective and confirms the auditable contract
  * (write paths, check commands, budgets, model) before any model token is spent.
  */
-export function CreateTaskPanel({ overview, models, canStart, pending, onValidate, onCreate, onCreateAndStart }: {
+export function CreateTaskPanel({ overview, models, canStart, pending, onValidate, onCreate, onCreateAndStart, onSavePresets, onProbeCommands }: {
   readonly overview: GuiLiveOverview | null;
   readonly models: GuiModelsResponse | null;
   readonly canStart: ControlState;
@@ -31,6 +32,8 @@ export function CreateTaskPanel({ overview, models, canStart, pending, onValidat
   readonly onValidate: (input: GuiFreeTaskInput) => Promise<{ ok: boolean; errors: Array<{ field: string; message: string }> }>;
   readonly onCreate: (input: GuiFreeTaskInput) => Promise<GuiLiveSnapshot>;
   readonly onCreateAndStart: (input: GuiFreeTaskInput) => Promise<unknown>;
+  readonly onSavePresets: (wsId: string, input: Omit<GuiWorkspacePresets, 'savedAt'>) => Promise<unknown>;
+  readonly onProbeCommands: (wsId: string) => Promise<GuiWorkspaceProbe>;
 }) {
   const workspaces = useMemo(
     () => overview?.workspaces.filter((item) => !item.archived) ?? [],
@@ -52,6 +55,11 @@ export function CreateTaskPanel({ overview, models, canStart, pending, onValidat
   const submitLock = useRef(false);
   const [contractOpen, setContractOpen] = useState(false);
   const objectiveRef = useRef<HTMLTextAreaElement>(null);
+  // Batch 5 §启动: preset save feedback + probed candidates; both reset on workspace switch.
+  const [presetNote, setPresetNote] = useState<string | null>(null);
+  const [probe, setProbe] = useState<GuiWorkspaceProbe | null>(null);
+  const [probing, setProbing] = useState(false);
+  const lastPresetWsRef = useRef<string | null>(null);
 
   const selectedModel = useMemo(() => (
     models?.models.find((item) => item.id === model)
@@ -69,6 +77,23 @@ export function CreateTaskPanel({ overview, models, canStart, pending, onValidat
         : workspaces[0]?.id ?? ''
     ));
   }, [workspaces]);
+
+  // Batch 5 §启动: when the selected workspace id CHANGES (initial default or user switch),
+  // prefill the contract fields from its saved presets. The ref of the last-applied id keeps
+  // re-renders and overview refreshes from clobbering in-progress edits.
+  useEffect(() => {
+    if (workspaceId === '' || lastPresetWsRef.current === workspaceId) return;
+    lastPresetWsRef.current = workspaceId;
+    setPresetNote(null);
+    setProbe(null);
+    const presets = workspaces.find((item) => item.id === workspaceId)?.presets;
+    if (presets === undefined) return;
+    setWritePaths(presets.writePaths.join('\n'));
+    setCheckCommands(presets.checkCommands.join('\n'));
+    setMaxRounds(presets.maxRounds);
+    setMaxTurns(presets.maxTurns);
+    setMinutes(presets.minutes);
+  }, [workspaceId, workspaces]);
 
   useEffect(() => {
     if (models === null) return;
@@ -139,6 +164,63 @@ export function CreateTaskPanel({ overview, models, canStart, pending, onValidat
   };
 
   const field = (name: string) => (errors[name] !== undefined ? <p className="wb-field-error" role="alert">{errors[name]}</p> : null);
+
+  // Batch 5 §启动: one-line contract summary mirroring what the form would submit today.
+  const activeWorkspaceId = workspaceId || workspaces[0]?.id;
+  const preset = workspaces.find((item) => item.id === activeWorkspaceId)?.presets;
+  const matchesPreset = preset !== undefined
+    && lines(writePaths).join('\n') === preset.writePaths.join('\n')
+    && lines(checkCommands).join('\n') === preset.checkCommands.join('\n')
+    && maxRounds === preset.maxRounds
+    && maxTurns === preset.maxTurns
+    && minutes === preset.minutes;
+  const presetLabel = preset === undefined
+    ? '界面默认值（该工作区尚无预设）'
+    : matchesPreset
+      ? `预设（保存于 ${formatTimestamp(preset.savedAt)}）`
+      : '在预设基础上已修改';
+
+  // Batch 5 §启动: presets persist only on this explicit, validated user click (§M5-1 contract).
+  const savePresets = async () => {
+    if (!(await validate())) { setPresetNote(null); return; }
+    setSubmitError(null);
+    try {
+      await onSavePresets(activeWorkspaceId ?? '', {
+        writePaths: lines(writePaths),
+        checkCommands: lines(checkCommands),
+        maxRounds,
+        maxTurns,
+        minutes,
+      });
+      setPresetNote('预设已保存，下次新建任务时自动带入。');
+    } catch (error) {
+      setPresetNote(null);
+      setSubmitError(error instanceof Error && error.message.trim() !== '' ? error.message : '预设保存失败。');
+    }
+  };
+
+  const probeCommands = async () => {
+    setSubmitError(null);
+    setProbing(true);
+    try {
+      setProbe(await onProbeCommands(activeWorkspaceId ?? ''));
+    } catch (error) {
+      setProbe(null);
+      setSubmitError(error instanceof Error && error.message.trim() !== '' ? error.message : '候选命令读取失败。');
+    } finally {
+      setProbing(false);
+    }
+  };
+
+  // Batch 5 §启动: adopting a probe candidate only appends it to the check-commands draft.
+  const adoptCommand = (command: string) => {
+    const adopted = command.trim();
+    if (adopted === '') return;
+    setCheckCommands((current) => {
+      const existing = lines(current);
+      return existing.includes(adopted) ? current : [...existing, adopted].join('\n');
+    });
+  };
 
   return (
     <section className="wb-empty wb-new-task" aria-labelledby="wb-empty-title">
@@ -219,17 +301,30 @@ export function CreateTaskPanel({ overview, models, canStart, pending, onValidat
           <button
             type="button"
             className="wb-send-icon"
-            aria-label="确认任务合同"
-            title="确认任务合同"
+            aria-label="校验合同并展开范围与检查"
+            title="校验合同并展开范围与检查"
             aria-expanded={contractOpen}
             aria-controls="wb-create-contract"
-            onClick={() => setContractOpen(true)}
+            onClick={() => { void validate(); }}
           >
             <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M8 13V3M4.25 6.75 8 3l3.75 3.75" />
             </svg>
           </button>
         </div>
+
+        {!contractOpen ? (
+          <button
+            type="button"
+            className="wb-contract-summary"
+            onClick={() => setContractOpen(true)}
+            aria-expanded={contractOpen}
+            aria-controls="wb-create-contract"
+          >
+            {`范围 ${lines(writePaths).length} 条 · 检查 ${lines(checkCommands).length} 条 · 预算 ${maxRounds}轮×${maxTurns}步 ≤${minutes}分 · ${presetLabel}`}
+            <span className="wb-contract-summary-edit">修改</span>
+          </button>
+        ) : null}
       </div>
 
       <div className="wb-starters" aria-label="任务建议">
@@ -282,6 +377,43 @@ export function CreateTaskPanel({ overview, models, canStart, pending, onValidat
         {singleModel ? <p className="wb-field-note">模型由当前配置固定：{selectedModel?.id ?? '…'}；多模型切换需要 provider 配置支持，不会在这里虚构列表。</p> : null}
 
         {submitError !== null ? <p className="wb-field-error" role="alert">{submitError}</p> : null}
+
+        <div className="wb-field-row" data-layout="preset">
+          <button
+            type="button"
+            className="wb-ghost"
+            disabled={pending || validating || submitting || activeWorkspaceId === undefined}
+            onClick={() => { void savePresets(); }}
+          >
+            保存为该工作区预设
+          </button>
+          <button
+            type="button"
+            className="wb-ghost"
+            disabled={pending || validating || submitting || probing || activeWorkspaceId === undefined}
+            onClick={() => { void probeCommands(); }}
+          >
+            {probing ? '读取中…' : '从项目读取候选命令'}
+          </button>
+        </div>
+        {presetNote !== null ? <p className="wb-field-note">{presetNote}</p> : null}
+        {probe !== null ? (
+          <div className="wb-probe-result">
+            <p className="wb-field-note">{probe.note}</p>
+            {probe.candidates.length > 0 ? (
+              <ul className="wb-probe-list">
+                {probe.candidates.map((candidate) => (
+                  <li key={candidate.command}>
+                    <button type="button" onClick={() => adoptCommand(candidate.command)}>采用</button>
+                    <code>{candidate.command}</code>
+                    <small>{candidate.source}</small>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
+        ) : null}
+
         <div className="wb-create-actions">
           <button type="button" className="wb-ghost" disabled={pending || validating || submitting} onClick={() => { void validate(); }}>
             {validating ? '校验中…' : '校验合同'}

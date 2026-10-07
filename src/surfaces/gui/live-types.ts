@@ -43,6 +43,23 @@ export interface GuiWorkspaceInfo {
   createdAt: string;
   archived: boolean;
   sort: number;
+  /** Batch 5 §启动: user-confirmed drafting presets; absent until explicitly saved. */
+  presets?: GuiWorkspacePresets;
+}
+
+/** Operator-confirmed per-workspace drafting defaults; saved only by an explicit user action. */
+export interface GuiWorkspacePresets {
+  writePaths: string[];
+  checkCommands: string[];
+  maxRounds: number;
+  maxTurns: number;
+  minutes: number;
+  savedAt: string;
+}
+
+export interface GuiWorkspaceProbe {
+  candidates: Array<{ command: string; source: string }>;
+  note: string;
 }
 
 export interface GuiModelInfo {
@@ -112,6 +129,8 @@ export interface GuiTerminalEntry {
   /** Merged out chunks, head+tail truncated to the cap when oversized. */
   output: string;
   canceled: boolean;
+  /** Batch 5 §恢复: why the entry was canceled (folded from the gui_terminal cancel reason). */
+  cause?: 'user' | 'timeout' | 'interrupted';
   at: string;
 }
 

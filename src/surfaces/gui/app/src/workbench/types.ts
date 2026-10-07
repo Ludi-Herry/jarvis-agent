@@ -6,6 +6,9 @@ import type {
   GuiLiveSnapshot,
   GuiModelsResponse,
   GuiTaskValidateResponse,
+  GuiWorkspaceInfo,
+  GuiWorkspacePresets,
+  GuiWorkspaceProbe,
 } from '../../../live-types.js';
 import type { GuiCreateTaskInput, GuiMetaPatch, GuiWorkspaceInput } from '../live/api.js';
 import type { HumanReviewDecision } from '../live/use-live-session.js';
@@ -31,6 +34,8 @@ export interface WorkbenchCommands {
   readonly createTask: (input: GuiCreateTaskInput) => Promise<GuiLiveSnapshot>;
   readonly createBranch: (turnId: string) => Promise<GuiLiveSnapshot>;
   readonly getGit: (id: string) => Promise<GuiGitStatus>;
+  readonly saveWorkspacePresets: (wsId: string, input: Omit<GuiWorkspacePresets, 'savedAt'>) => Promise<{ workspaces: GuiWorkspaceInfo[] }>;
+  readonly probeWorkspaceCommands: (wsId: string) => Promise<GuiWorkspaceProbe>;
   readonly getFileView: (taskId: string, path: string) => Promise<GuiFileView>;
   readonly openFileExternal: (taskId: string, path: string) => Promise<{ ok: true }>;
   readonly runTerminal: (command: string) => Promise<unknown>;

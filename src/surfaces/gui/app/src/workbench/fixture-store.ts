@@ -313,6 +313,22 @@ export function useFixtureSession(fixtureId: string | null): FixtureSession {
     getGit: async (): Promise<GuiGitStatus> => ({
       at: nowIso(), branch: 'main', ahead: 1, behind: 0, uncommitted: 2, worktree: 'dirty',
     }),
+    saveWorkspacePresets: async (wsId, input) => {
+      setOverview((current) => ({
+        ...current,
+        workspaces: current.workspaces.map((workspace) => (workspace.id === wsId
+          ? { ...workspace, presets: { ...input, savedAt: nowIso() } }
+          : workspace)),
+      }));
+      return { workspaces: [] }; // return value unused by the UI; overview state above is the truth
+    },
+    probeWorkspaceCommands: async () => ({
+      candidates: [
+        { command: 'npm run test', source: 'package.json scripts' },
+        { command: 'npx vitest run', source: 'vite/vitest 配置' },
+      ],
+      note: '候选来自项目只读文件（package.json / vite·tsconfig）；采用前请自行确认。（试件）',
+    }),
     getFileView: async (_taskId: string, path: string): Promise<GuiFileView> => {
       const found = FIXTURE_FILES[path];
       if (!found) throw new Error('试件没有这个文件');
