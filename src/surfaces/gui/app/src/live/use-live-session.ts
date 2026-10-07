@@ -13,6 +13,7 @@ import {
   getLiveGitStatus,
   getLiveOverview,
   getLiveSnapshot,
+  getLiveWorkspaceTree,
   postInputWithdraw,
   postLiveMeta,
   postLiveSnapshot,
@@ -408,6 +409,8 @@ export function useLiveSession() {
 
   const getFileView = useCallback(async (taskId: string, path: string) => getLiveFileView(taskId, path), []);
 
+  const getWorkspaceTree = useCallback(async (taskId: string, path: string) => getLiveWorkspaceTree(taskId, path), []);
+
   const openFileExternal = useCallback(async (taskId: string, path: string) => postOpenFileExternal(taskId, path), []);
 
   const runTerminal = useCallback(async (command: string) => {
@@ -455,6 +458,7 @@ export function useLiveSession() {
     createBranch,
     getGit,
     getFileView,
+    getWorkspaceTree,
     openFileExternal,
     runTerminal,
     cancelTerminal,

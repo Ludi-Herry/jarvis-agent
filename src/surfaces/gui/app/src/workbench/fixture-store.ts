@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { GuiFileView, GuiGitStatus, GuiLiveOverviewSession, GuiLiveSnapshot, GuiMessage, GuiTaskValidateResponse } from '../../../live-types.js';
 import type { GuiCreateTaskInput, GuiMetaPatch, GuiWorkspaceInput } from '../live/api.js';
-import { findFixture, workbenchFixtures, type WorkbenchFixture } from './fixtures.js';
+import { findFixture, workbenchFixtures, FIXTURE_TREE, type WorkbenchFixture } from './fixtures.js';
 import type { WorkbenchCommands, WorkbenchInput } from './types.js';
 
 /**
@@ -30,6 +30,12 @@ const FIXTURE_FILES: Record<string, { kind: 'text' | 'image'; content: string; m
     mime: 'image/png',
     truncated: false,
     sizeBytes: 67,
+  },
+  'docs/guide.md': {
+    kind: 'text',
+    content: '# 引导（试件构造内容）\n\n从左侧选择任务，中间描述目标；写入前会在右侧请求你的批准。\n',
+    truncated: false,
+    sizeBytes: 120,
   },
 };
 
@@ -338,6 +344,11 @@ export function useFixtureSession(fixtureId: string | null): FixtureSession {
       return { path, kind: found.kind, content: found.content, truncated: found.truncated, sizeBytes: found.sizeBytes, at: nowIso(), ...(found.mime ? { mime: found.mime } : {}) };
     },
     openFileExternal: async (): Promise<{ ok: true }> => ({ ok: true }),
+    getWorkspaceTree: async (_taskId: string, path: string) => {
+      const found = FIXTURE_TREE[path];
+      if (!found) throw new Error('试件没有这个目录');
+      return found;
+    },
     runTerminal: async (command: string) => {
       requireSnapshot();
       advance('正在运行命令', (draft) => {

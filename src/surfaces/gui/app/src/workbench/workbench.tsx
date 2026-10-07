@@ -351,6 +351,7 @@ export function Workbench({ input }: { readonly input: WorkbenchInput }) {
             onContextScroll={detailScroll.onScroll}
             getGit={commands.getGit}
             getFileView={commands.getFileView}
+            getTree={commands.getWorkspaceTree}
             openFileExternal={commands.openFileExternal}
           />
         ) : null}

@@ -103,6 +103,13 @@ export interface GuiFileView {
   at: string;
 }
 
+/** Batch 7 §工作空间: one lazy directory level of the task workspace (read-only navigation). */
+export interface GuiWorkspaceTree {
+  path: string; // as requested, '' = workspace root
+  entries: Array<{ name: string; kind: 'dir' | 'file' | 'other'; link: boolean; size?: number }>;
+  truncated: boolean;
+}
+
 export interface GuiTool {
   id: string;
   name: string;

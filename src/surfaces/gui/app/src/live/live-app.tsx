@@ -15,7 +15,7 @@ export function LiveJarvisApp() {
     connectionNotice, streamWarning, actionError, chooseSession, start, submitInput, withdrawInput,
     pause, continueRun, stop, resume, decide, submitReview, updateMeta, createWorkspace, saveWorkspacePresets,
     probeWorkspaceCommands, validateTask,
-    createTask, createBranch, getGit, getFileView, openFileExternal, runTerminal, cancelTerminal,
+    createTask, createBranch, getGit, getFileView, getWorkspaceTree, openFileExternal, runTerminal, cancelTerminal,
   } = useLiveSession();
 
   const [models, setModels] = useState<GuiModelsResponse | null>(null);
@@ -28,12 +28,12 @@ export function LiveJarvisApp() {
   const commands = useMemo<WorkbenchCommands>(() => ({
     chooseSession, start, submitInput, withdrawInput, pause, continueRun, stop, resume, decide, submitReview,
     updateMeta, createWorkspace, saveWorkspacePresets, probeWorkspaceCommands, validateTask,
-    createTask, createBranch, getGit, getFileView,
+    createTask, createBranch, getGit, getFileView, getWorkspaceTree,
     openFileExternal, runTerminal, cancelTerminal,
   }), [
     chooseSession, start, submitInput, withdrawInput, pause, continueRun, stop, resume, decide, submitReview,
     updateMeta, createWorkspace, saveWorkspacePresets, probeWorkspaceCommands, validateTask,
-    createTask, createBranch, getGit, getFileView,
+    createTask, createBranch, getGit, getFileView, getWorkspaceTree,
     openFileExternal, runTerminal, cancelTerminal,
   ]);
 

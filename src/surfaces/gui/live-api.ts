@@ -22,12 +22,13 @@ export async function handleLiveApi(
     if (req.method === 'POST' && wsAction === 'presets') return json(res, await host.saveWorkspacePresets(wsId, await body()));
     throw new GuiLiveError(405, 'method not allowed');
   }
-  const match = /^\/api\/live\/(gui-[a-f0-9-]+)(?:\/(events|input|decision|pause|continue|stop|resume|review|start|meta|git|terminal\/cancel|terminal|file|open-external|input-withdraw))?$/u.exec(url.pathname);
+  const match = /^\/api\/live\/(gui-[a-f0-9-]+)(?:\/(events|input|decision|pause|continue|stop|resume|review|start|meta|git|terminal\/cancel|terminal|file|open-external|input-withdraw|tree))?$/u.exec(url.pathname);
   if (!match) throw new GuiLiveError(404, 'live API not found');
   const [, id, action] = match;
   if (req.method === 'GET' && !action) return json(res, await host.snapshot(id));
   if (req.method === 'GET' && action === 'git') return json(res, await host.gitStatus(id));
   if (req.method === 'GET' && action === 'file') return json(res, await host.readFileView(id, url.searchParams.get('path') ?? ''));
+  if (req.method === 'GET' && action === 'tree') return json(res, await host.listWorkspaceDir(id, url.searchParams.get('path') ?? ''));
   if (req.method === 'GET' && action === 'events') {
     // Verify identity/integrity before opening the stream. Reconnect always receives a full
     // persistent projection; Last-Event-ID never causes missing events to be discarded.

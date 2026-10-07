@@ -3118,3 +3118,128 @@ html[data-surface="fixture"] .wb-shell {
 .wb-conversation:has(> .wb-vitals) {
   grid-template-rows: auto auto minmax(0, 1fr);
 }
+
+/* ----------------------------------- batch 7 §工作空间 per-file diff --- */
+
+.wb-diff-file {
+  display: grid;
+  margin: 0 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.wb-diff-file > header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 5px 8px;
+  background: var(--muted-surface);
+}
+
+.wb-diff-file-toggle {
+  display: flex;
+  flex: none;
+  align-items: center;
+  padding: 1px 2px;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.wb-diff-file-toggle[data-open="true"] .wb-chevron {
+  transform: rotate(90deg);
+}
+
+.wb-diff-file > header > strong {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-soft);
+  font-family: Consolas, monospace;
+  font-size: 10.5px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wb-diff-file > header .wb-artifact-open {
+  flex: none;
+  margin-left: 0;
+}
+
+.wb-diff-file > pre {
+  border: 0;
+  border-radius: 0;
+}
+
+/* -------------------------------------- batch 7 §工作空间 file tree --- */
+
+.wb-file-tree-note {
+  margin-top: 0;
+}
+
+.wb-file-tree {
+  display: grid;
+  gap: 1px;
+  margin-bottom: 9px;
+}
+
+.wb-file-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  margin: 0;
+  padding-top: 3px;
+  padding-right: 6px;
+  padding-bottom: 3px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: var(--ink-soft);
+  font-family: Consolas, monospace;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.wb-file-tree-row:hover {
+  background: var(--well);
+}
+
+.wb-file-tree-row .wb-chevron {
+  flex: none;
+  color: var(--faint);
+}
+
+.wb-file-tree-row[data-open="true"] .wb-chevron {
+  transform: rotate(90deg);
+}
+
+.wb-file-tree-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wb-file-tree-leaf {
+  color: var(--ink-body);
+}
+
+div.wb-file-tree-row {
+  cursor: default;
+  color: var(--muted);
+}
+
+.wb-file-tree-info {
+  margin: 0;
+  padding-top: 3px;
+  padding-bottom: 3px;
+  color: var(--muted);
+  font-size: 10.5px;
+  line-height: 1.55;
+}

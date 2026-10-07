@@ -13,9 +13,9 @@ const RAIL_COLLAPSED_KEY = 'jarvis.gui.workbench.rail-collapsed';
 const MONITOR_OPEN_KEY = 'jarvis.gui.workbench.monitor-open';
 const PREVIEW_HISTORY_PREFIX = 'jarvis.gui.live.previewHistory:';
 
-export type EvidenceTab = 'diff' | 'verification' | 'context' | 'subagents' | 'preview' | 'terminal';
+export type EvidenceTab = 'diff' | 'verification' | 'context' | 'subagents' | 'preview' | 'terminal' | 'files';
 
-const EVIDENCE_TABS: readonly EvidenceTab[] = ['diff', 'verification', 'context', 'subagents', 'preview', 'terminal'];
+const EVIDENCE_TABS: readonly EvidenceTab[] = ['diff', 'verification', 'context', 'subagents', 'preview', 'terminal', 'files'];
 
 export function storageGet(key: string): string | null {
   try {

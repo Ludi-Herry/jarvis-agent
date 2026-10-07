@@ -1,6 +1,7 @@
 import { type RefObject } from 'react';
-import type { GuiFileView, GuiLiveOverview, GuiLiveSnapshot, GuiTool } from '../../../live-types.js';
+import type { GuiFileView, GuiLiveOverview, GuiLiveSnapshot, GuiTool, GuiWorkspaceTree } from '../../../live-types.js';
 import { ContextEvidence, DiffEvidence, VerificationEvidence } from './evidence.js';
+import { FileTreePane } from './file-tree-pane.js';
 import { toolStatusLabels } from './format.js';
 import { ChevronIcon } from './icons.js';
 import type { EvidenceTab } from './prefs.js';
@@ -15,6 +16,7 @@ const EVIDENCE_TABS = [
   ['subagents', '子智能体'],
   ['preview', '预览'],
   ['terminal', '终端'],
+  ['files', '文件'],
 ] as const;
 
 /** Batch 3 §B7: subagent delegations derived from task tool calls; honest empty state otherwise. */
@@ -64,6 +66,7 @@ export function DetailPane({
   onContextScroll,
   getGit,
   getFileView,
+  getTree,
   openFileExternal,
 }: {
   readonly overview: GuiLiveOverview | null;
@@ -84,6 +87,7 @@ export function DetailPane({
   readonly onContextScroll: (event: { readonly currentTarget: HTMLElement }) => void;
   readonly getGit?: (id: string) => Promise<import('../../../live-types.js').GuiGitStatus>;
   readonly getFileView: (taskId: string, path: string) => Promise<GuiFileView>;
+  readonly getTree: (taskId: string, path: string) => Promise<GuiWorkspaceTree>;
   readonly openFileExternal: (taskId: string, path: string) => Promise<{ ok: true }>;
 }) {
   return (
@@ -138,6 +142,9 @@ export function DetailPane({
         {evidenceTab === 'preview' ? <PreviewPane scope={taskId} /> : null}
         {evidenceTab === 'terminal' ? (
           <TerminalPane snapshot={snapshot} pending={actionPending} runTerminal={runTerminal} cancelTerminal={cancelTerminal} />
+        ) : null}
+        {evidenceTab === 'files' ? (
+          <FileTreePane taskId={taskId} getTree={getTree} getFileView={getFileView} openFileExternal={openFileExternal} />
         ) : null}
       </section>
     </aside>

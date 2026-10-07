@@ -8,6 +8,7 @@ import type {
   GuiWorkspaceInfo,
   GuiWorkspacePresets,
   GuiWorkspaceProbe,
+  GuiWorkspaceTree,
 } from '../../../live-types.js';
 
 const GUI_HEADERS = {
@@ -190,6 +191,15 @@ export async function getLiveFileView(id: string, path: string, signal?: AbortSi
     signal,
   });
   return readJson<GuiFileView>(response);
+}
+
+/** Batch 7 §工作空间: lazy single-level read-only directory listing of the task workspace. */
+export async function getLiveWorkspaceTree(id: string, path: string, signal?: AbortSignal): Promise<GuiWorkspaceTree> {
+  const response = await fetch(`/api/live/${encodeURIComponent(id)}/tree?path=${encodeURIComponent(path)}`, {
+    headers: { accept: 'application/json' },
+    signal,
+  });
+  return readJson<GuiWorkspaceTree>(response);
 }
 
 /** Batch 4 §阅读: open one workspace file with the OS default handler. */

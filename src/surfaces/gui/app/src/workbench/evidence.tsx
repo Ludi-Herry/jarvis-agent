@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import type { GuiFileView, GuiGitStatus, GuiLiveOverview, GuiLiveSnapshot, GuiTool } from '../../../live-types.js';
-import { diffSummary, parseUnifiedDiff } from './diff.js';
+import { diffSummary, parseUnifiedDiff, splitDiffByFile } from './diff.js';
+import { FilePreviewCard, type FilePreviewState } from './file-preview.js';
 import { formatCost, formatDuration, formatTimestamp, formatTokens, toolStatusLabels } from './format.js';
+import { ChevronIcon } from './icons.js';
 
 /** Read-only git observation rows for the context tab; fetched once per task open, never polled. */
 function GitRows({ id, getGit }: {
@@ -42,15 +44,7 @@ export function SelectedToolEvidence({ tool }: { readonly tool: GuiTool | null }
   );
 }
 
-/** Batch 4 §阅读: inline preview state for one artifact file, loaded on demand via the live API. */
-interface FilePreviewState {
-  readonly path: string;
-  readonly status: 'loading' | 'ok' | 'error';
-  readonly view?: GuiFileView;
-  readonly error?: string;
-  readonly externalPending?: boolean;
-}
-
+/** Batch 4 §阅读: inline preview loading helpers; the card itself is shared (batch 7 §工作空间). */
 function previewError(error: unknown): string {
   return error instanceof Error && error.message.trim() !== '' ? error.message : '读取文件失败。';
 }
@@ -65,6 +59,10 @@ export function DiffEvidence({ snapshot, selectedTool, taskId, getFileView, open
   const diff = snapshot?.diff ?? '';
   const summary = diffSummary(diff);
   const { rows, truncated } = parseUnifiedDiff(diff);
+  // Batch 7 §工作空间: grouped per-file blocks with collapse defaults (>20 files → first 3 open).
+  const diffBlocks = splitDiffByFile(diff);
+  const manyFiles = diffBlocks.files.length > 20;
+  const [collapsedMap, setCollapsedMap] = useState<Record<string, boolean>>({});
   const [filePreview, setFilePreview] = useState<FilePreviewState | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -131,41 +129,61 @@ export function DiffEvidence({ snapshot, selectedTool, taskId, getFileView, open
             ))}
           </ul>
           {filePreview !== null ? (
-            <section className="wb-file-preview" aria-label={`文件预览 ${filePreview.path}`}>
-              <header>
-                <code>{filePreview.path}</code>
-                <span className="wb-file-preview-actions">
-                  {filePreview.status === 'ok' && filePreview.view?.kind === 'text' ? (
-                    <button type="button" onClick={() => { void copyContent(); }}>{copied ? '已复制' : '复制'}</button>
-                  ) : null}
-                  <button type="button" disabled={filePreview.externalPending === true} onClick={openExternal}>
-                    {filePreview.externalPending === true ? '打开中…' : '在外部打开'}
-                  </button>
-                  <button type="button" onClick={() => setFilePreview(null)} aria-label="关闭预览">×</button>
-                </span>
-              </header>
-              {filePreview.status === 'loading' ? <p className="live-muted">读取中…</p> : null}
-              {filePreview.status === 'error' ? <p className="wb-file-preview-error">{filePreview.error ?? '读取文件失败。'}</p> : null}
-              {filePreview.status === 'ok' && filePreview.view?.kind === 'text' ? (
-                <>
-                  <pre className="wb-file-preview-content">{filePreview.view.content}</pre>
-                  {filePreview.view.truncated ? <p className="live-muted">文件过大，仅显示前 200 KB。</p> : null}
-                </>
-              ) : null}
-              {filePreview.status === 'ok' && filePreview.view?.kind === 'image' ? (
-                <img className="wb-file-preview-image" alt={filePreview.view.path} src={`data:${filePreview.view.mime};base64,${filePreview.view.content}`} />
-              ) : null}
-            </section>
+            <FilePreviewCard
+              preview={filePreview}
+              copied={copied}
+              onCopy={() => { void copyContent(); }}
+              onOpenExternal={openExternal}
+              onClose={() => setFilePreview(null)}
+            />
           ) : null}
           {diff.trim() === '' ? (
             <p className="live-muted">当前没有可显示的 Diff。基线由宿主的私有 Git index 固定，不含你的 index。</p>
-          ) : (
+          ) : diffBlocks.files.length === 0 ? (
+            // Non-git output (e.g. the host's honest "Diff 读取失败" note) keeps the flat rendering.
             <pre className="mini-diff live-raw-diff wb-diff">
               {rows.map((row, index) => (
                 <span key={`${index}:${row.kind}`} className="wb-diff-row" data-kind={row.kind}>{row.text || ' '}</span>
               ))}
               {truncated ? <span className="wb-diff-row" data-kind="meta">…预览已截断，请检查工作区原文件</span> : null}
             </pre>
+          ) : (
+            <>
+              {diffBlocks.files.map((block, blockIndex) => {
+                const collapsed = collapsedMap[block.path] ?? (manyFiles && blockIndex >= 3);
+                return (
+                  <section className="wb-diff-file" key={block.path}>
+                    <header>
+                      <button
+                        type="button"
+                        className="wb-diff-file-toggle"
+                        aria-expanded={!collapsed}
+                        aria-label={collapsed ? `展开 ${block.path}` : `折叠 ${block.path}`}
+                        onClick={() => setCollapsedMap((current) => ({ ...current, [block.path]: !collapsed }))}
+                      >
+                        <ChevronIcon className="wb-chevron" />
+                      </button>
+                      <strong>{block.path}</strong>
+                      <span className="wb-diff-count" data-kind="added">+{block.added}</span>
+                      <span className="wb-diff-count" data-kind="removed">−{block.removed}</span>
+                      {block.binary ? <span className="wb-diff-count" data-kind="meta">二进制</span> : null}
+                      {taskId !== null ? (
+                        <button type="button" className="wb-artifact-open" onClick={() => openPreview(block.path)} aria-label={`打开 ${block.path} 的预览`}>打开</button>
+                      ) : null}
+                    </header>
+                    {!collapsed ? (
+                      <pre className="mini-diff wb-diff">
+                        {block.rows.map((row, rowIndex) => (
+                          <span key={`${rowIndex}:${row.kind}`} className="wb-diff-row" data-kind={row.kind}>{row.text || ' '}</span>
+                        ))}
+                      </pre>
+                    ) : null}
+                  </section>
+                );
+              })}
+              {diffBlocks.truncated ? <p className="live-muted">…预览已截断，请检查工作区原文件</p> : null}
+              {manyFiles ? <p className="live-muted">{`共 ${diffBlocks.files.length} 个文件，已默认折叠后 ${diffBlocks.files.length - 3} 个`}</p> : null}
+            </>
           )}
         </>
       )}

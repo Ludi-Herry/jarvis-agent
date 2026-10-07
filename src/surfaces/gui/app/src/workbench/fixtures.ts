@@ -1,4 +1,4 @@
-import type { GuiLiveOverview, GuiLiveOverviewSession, GuiLiveSnapshot, GuiMessage, GuiModelsResponse, GuiTool, GuiWorkspaceInfo } from '../../../live-types.js';
+import type { GuiLiveOverview, GuiLiveOverviewSession, GuiLiveSnapshot, GuiMessage, GuiModelsResponse, GuiTool, GuiWorkspaceInfo, GuiWorkspaceTree } from '../../../live-types.js';
 import type { LiveConnectionState } from '../live/use-live-session.js';
 import type { WorkbenchNotices } from './types.js';
 
@@ -98,6 +98,35 @@ export const FIXTURE_MODELS_DEMO: GuiModelsResponse = {
     { id: 'deepseek-flash', label: 'DeepSeek-V4.1-Flash', maxContextTokens: 1_048_576, thinkingLevels: ['off', 'low', 'high', 'max'] },
     { id: 'deepseek-pro', label: 'DeepSeek-V4-Pro（演示）', maxContextTokens: 1_048_576, thinkingLevels: ['off', 'low', 'high', 'max'] },
   ],
+};
+
+/** Batch 7 §工作空间: deterministic tree levels for the 「文件」tab; sorted like the server (dirs → files → other). */
+export const FIXTURE_TREE: Record<string, GuiWorkspaceTree> = {
+  '': {
+    path: '',
+    entries: [
+      { name: 'docs', kind: 'dir', link: false },
+      { name: 'fixture', kind: 'dir', link: false },
+      { name: 'package.json', kind: 'file', link: false, size: 312 },
+      { name: 'locked.lnk', kind: 'other', link: true },
+    ],
+    truncated: false,
+  },
+  fixture: {
+    path: 'fixture',
+    entries: [
+      { name: 'answer.mjs', kind: 'file', link: false, size: 96 },
+      { name: 'v13-shot.png', kind: 'file', link: false, size: 67 },
+    ],
+    truncated: false,
+  },
+  docs: {
+    path: 'docs',
+    entries: [
+      { name: 'guide.md', kind: 'file', link: false, size: 120 },
+    ],
+    truncated: false,
+  },
 };
 
 function overviewSession(patch: Partial<GuiLiveOverviewSession> = {}): GuiLiveOverviewSession {
@@ -361,8 +390,8 @@ export const workbenchFixtures: readonly WorkbenchFixture[] = [
         tool('call_fx_goal_1', 'update_goal', 'committed', { status: 'complete' }, { output: 'Goal 状态已记录为 complete；等待独立检查与人工验收' }),
       ],
       approvalHistory: [{ requestId: 'req-fx-2', toolName: 'write', decision: 'allow-once' }],
-      artifacts: [{ path: 'fixture/answer.mjs', outcome: 'written' }],
-      diff: 'diff --git a/fixture/answer.mjs b/fixture/answer.mjs\nindex 8c1e2f4..2b7a91c 100644\n--- a/fixture/answer.mjs\n+++ b/fixture/answer.mjs\n@@ -1 +1 @@\n-export const label = "说明";\n+export const label = "从左侧选择任务，中间描述目标；写入前会在右侧请求你的批准。";\n',
+      artifacts: [{ path: 'fixture/answer.mjs', outcome: 'written' }, { path: 'docs/guide.md', outcome: 'written' }],
+      diff: 'diff --git a/docs/guide.md b/docs/guide.md\nnew file mode 100644\nindex 0000000..1f2d3e4\n--- /dev/null\n+++ b/docs/guide.md\n@@ -0,0 +1 @@\n+# 引导（试件构造内容）\ndiff --git a/fixture/answer.mjs b/fixture/answer.mjs\nindex 8c1e2f4..2b7a91c 100644\n--- a/fixture/answer.mjs\n+++ b/fixture/answer.mjs\n@@ -1 +1 @@\n-export const label = "说明";\n+export const label = "从左侧选择任务，中间描述目标；写入前会在右侧请求你的批准。";\n',
       checks: [
         { command: 'node --check fixture/answer.mjs', code: 0, output: '' },
         { command: 'GUI evidence stability', code: 0, output: '验证期间源文件未变化' },

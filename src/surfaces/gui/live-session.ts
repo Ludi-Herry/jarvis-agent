@@ -10,6 +10,7 @@ import {
   type DoubaoConfig, type ModelProvider, type Message, type ThinkingEffort,
 } from '../../core/index.js';
 import { safeResolve } from '../../core/tools/safe-path.js';
+import { isSensitivePath } from '../../runtime/permission/index.js';
 import { redactSecrets } from '../../core/model/errors.js';
 import {
   buildConfigPermissionPolicy, createEmergencyStopSignal, createSessionComposition,
@@ -34,7 +35,7 @@ import { applyGuiEvent, updateGuiCapabilities, type GuiObservedEvent } from './l
 import type {
   GuiFileView, GuiGitStatus, GuiLiveOverview, GuiLiveOverviewSession, GuiLiveSnapshot, GuiMessage,
   GuiModelsResponse, GuiTaskContract, GuiTaskFieldError, GuiTaskValidateResponse, GuiWorkspaceInfo,
-  GuiWorkspacePresets, GuiWorkspaceProbe,
+  GuiWorkspacePresets, GuiWorkspaceProbe, GuiWorkspaceTree,
 } from './live-types.js';
 
 /** Operator-owned task contract. The browser/model cannot edit checks, paths or budgets. */
@@ -65,6 +66,9 @@ const FILE_BINARY_SNIFF_BYTES = 4_096;
 const FILE_IMAGE_MIME: Readonly<Record<string, string>> = {
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp',
 };
+
+/** Batch 7 §工作空间: one directory level lists at most this many entries, honestly flagged. */
+const TREE_ENTRY_CAP = 500;
 
 /** Batch 5 §启动: candidate check commands probed read-only from workspace manifests. */
 const PROBE_SCRIPT_NAMES = ['test', 'lint', 'typecheck', 'check', 'verify'] as const;
@@ -625,6 +629,35 @@ export class GuiSessionHost {
     const info = await stat(safe.abs).catch(() => null);
     if (!info?.isFile()) throw new GuiLiveError(404, '不是文件或不存在');
     return safe.abs;
+  }
+
+  /** Batch 7 §工作空间: lazy single-level directory listing of the task workspace, read-only.
+   *  Same safeResolve confinement as the file preview; .git metadata and sensitive entries are
+   *  never listed (expanding a symlinked dir revalidates the boundary through safeResolve). */
+  async listWorkspaceDir(id: string, value: unknown): Promise<GuiWorkspaceTree> {
+    await this.initialize();
+    const task = this.requireTask(id);
+    const path = typeof value === 'string' ? value.trim() : '';
+    if (path.length > FILE_PATH_MAX) throw new GuiLiveError(400, `path 必须是 ≤${FILE_PATH_MAX} 字的文本`);
+    const safe = await safeResolve(task.created.task.cwd, path === '' ? '.' : path);
+    if (!safe.ok) throw new GuiLiveError(403, safe.reason);
+    const info = await stat(safe.abs).catch(() => null);
+    if (!info?.isDirectory()) throw new GuiLiveError(404, '不是目录或不存在');
+    const dirents = await readdir(safe.abs, { withFileTypes: true });
+    const entries: GuiWorkspaceTree['entries'] = [];
+    for (const dirent of dirents) {
+      if (dirent.name === '.git') continue;
+      const abs = join(safe.abs, dirent.name);
+      if (isSensitivePath(abs)) continue;
+      const kind: GuiWorkspaceTree['entries'][number]['kind'] = dirent.isDirectory() ? 'dir' : dirent.isFile() ? 'file' : 'other';
+      let size: number | undefined;
+      if (kind === 'file') size = await stat(abs).then((item) => item.size, () => undefined);
+      entries.push({ name: dirent.name, kind, link: dirent.isSymbolicLink(), ...(size !== undefined ? { size } : {}) });
+    }
+    const KIND_ORDER: Record<GuiWorkspaceTree['entries'][number]['kind'], number> = { dir: 0, file: 1, other: 2 };
+    entries.sort((a, b) => KIND_ORDER[a.kind] - KIND_ORDER[b.kind] || a.name.localeCompare(b.name));
+    const truncated = entries.length > TREE_ENTRY_CAP;
+    return { path, entries: truncated ? entries.slice(0, TREE_ENTRY_CAP) : entries, truncated };
   }
 
   /** Models honestly derived from the real provider/config: single entry, never fabricated. */
