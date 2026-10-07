@@ -68,6 +68,7 @@ export function DetailPane({
   getFileView,
   getTree,
   openFileExternal,
+  onOpenWide,
 }: {
   readonly overview: GuiLiveOverview | null;
   readonly snapshot: GuiLiveSnapshot | null;
@@ -89,6 +90,7 @@ export function DetailPane({
   readonly getFileView: (taskId: string, path: string) => Promise<GuiFileView>;
   readonly getTree: (taskId: string, path: string) => Promise<GuiWorkspaceTree>;
   readonly openFileExternal: (taskId: string, path: string) => Promise<{ ok: true }>;
+  readonly onOpenWide: (path: string) => void;
 }) {
   return (
     <aside
@@ -134,6 +136,7 @@ export function DetailPane({
             taskId={taskId}
             getFileView={getFileView}
             openFileExternal={openFileExternal}
+            onOpenWide={onOpenWide}
           />
         ) : null}
         {evidenceTab === 'verification' ? <VerificationEvidence snapshot={snapshot} selectedTool={selectedTool} /> : null}
@@ -144,7 +147,7 @@ export function DetailPane({
           <TerminalPane snapshot={snapshot} pending={actionPending} runTerminal={runTerminal} cancelTerminal={cancelTerminal} />
         ) : null}
         {evidenceTab === 'files' ? (
-          <FileTreePane taskId={taskId} getTree={getTree} getFileView={getFileView} openFileExternal={openFileExternal} />
+          <FileTreePane taskId={taskId} getTree={getTree} getFileView={getFileView} openFileExternal={openFileExternal} onOpenWide={onOpenWide} />
         ) : null}
       </section>
     </aside>

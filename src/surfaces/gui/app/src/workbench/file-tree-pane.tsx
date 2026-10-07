@@ -30,11 +30,12 @@ function treeError(error: unknown): string {
   return error instanceof Error && error.message.trim() !== '' ? error.message : '目录读取失败。';
 }
 
-export function FileTreePane({ taskId, getTree, getFileView, openFileExternal }: {
+export function FileTreePane({ taskId, getTree, getFileView, openFileExternal, onOpenWide }: {
   readonly taskId: string | null;
   readonly getTree: (taskId: string, path: string) => Promise<GuiWorkspaceTree>;
   readonly getFileView: (taskId: string, path: string) => Promise<GuiFileView>;
   readonly openFileExternal: (taskId: string, path: string) => Promise<{ ok: true }>;
+  readonly onOpenWide: (path: string) => void;
 }) {
   const [nodes, setNodes] = useState<Record<string, DirNode>>({});
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
@@ -170,6 +171,7 @@ export function FileTreePane({ taskId, getTree, getFileView, openFileExternal }:
           onCopy={() => { void copyContent(); }}
           onOpenExternal={openExternal}
           onClose={() => setPreview(null)}
+          onOpenWide={() => onOpenWide(preview.path)}
         />
       ) : null}
     </div>

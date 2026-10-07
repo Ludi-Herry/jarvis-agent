@@ -14,12 +14,14 @@ export interface FilePreviewState {
   readonly externalPending?: boolean;
 }
 
-export function FilePreviewCard({ preview, copied, onCopy, onOpenExternal, onClose }: {
+export function FilePreviewCard({ preview, copied, onCopy, onOpenExternal, onClose, onOpenWide }: {
   readonly preview: FilePreviewState;
   readonly copied: boolean;
   readonly onCopy: () => void;
   readonly onOpenExternal: () => void;
   readonly onClose: () => void;
+  /** Batch 8 §阅读层: optional wide-reader entry; the inline card always stays as it is. */
+  readonly onOpenWide?: () => void;
 }) {
   return (
     <section className="wb-file-preview" aria-label={`文件预览 ${preview.path}`}>
@@ -29,6 +31,7 @@ export function FilePreviewCard({ preview, copied, onCopy, onOpenExternal, onClo
           {preview.status === 'ok' && preview.view?.kind === 'text' ? (
             <button type="button" onClick={onCopy}>{copied ? '已复制' : '复制'}</button>
           ) : null}
+          {onOpenWide !== undefined ? <button type="button" onClick={onOpenWide}>大视图</button> : null}
           <button type="button" disabled={preview.externalPending === true} onClick={onOpenExternal}>
             {preview.externalPending === true ? '打开中…' : '在外部打开'}
           </button>

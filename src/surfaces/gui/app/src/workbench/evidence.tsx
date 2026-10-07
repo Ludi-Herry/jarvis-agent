@@ -49,12 +49,13 @@ function previewError(error: unknown): string {
   return error instanceof Error && error.message.trim() !== '' ? error.message : '读取文件失败。';
 }
 
-export function DiffEvidence({ snapshot, selectedTool, taskId, getFileView, openFileExternal }: {
+export function DiffEvidence({ snapshot, selectedTool, taskId, getFileView, openFileExternal, onOpenWide }: {
   readonly snapshot: GuiLiveSnapshot | null;
   readonly selectedTool: GuiTool | null;
   readonly taskId: string | null;
   readonly getFileView: (taskId: string, path: string) => Promise<GuiFileView>;
   readonly openFileExternal: (taskId: string, path: string) => Promise<{ ok: true }>;
+  readonly onOpenWide: (path: string) => void;
 }) {
   const diff = snapshot?.diff ?? '';
   const summary = diffSummary(diff);
@@ -123,6 +124,16 @@ export function DiffEvidence({ snapshot, selectedTool, taskId, getFileView, open
                       打开
                     </button>
                   ) : null}
+                  {taskId !== null ? (
+                    <button
+                      type="button"
+                      className="wb-artifact-open"
+                      onClick={() => onOpenWide(artifact.path)}
+                      aria-label={`大视图打开 ${artifact.path}`}
+                    >
+                      大视图
+                    </button>
+                  ) : null}
                 </span>
                 <strong>{artifact.outcome}</strong>
               </li>
@@ -135,6 +146,7 @@ export function DiffEvidence({ snapshot, selectedTool, taskId, getFileView, open
               onCopy={() => { void copyContent(); }}
               onOpenExternal={openExternal}
               onClose={() => setFilePreview(null)}
+              onOpenWide={() => onOpenWide(filePreview.path)}
             />
           ) : null}
           {diff.trim() === '' ? (
@@ -169,6 +181,9 @@ export function DiffEvidence({ snapshot, selectedTool, taskId, getFileView, open
                       {block.binary ? <span className="wb-diff-count" data-kind="meta">二进制</span> : null}
                       {taskId !== null ? (
                         <button type="button" className="wb-artifact-open" onClick={() => openPreview(block.path)} aria-label={`打开 ${block.path} 的预览`}>打开</button>
+                      ) : null}
+                      {taskId !== null ? (
+                        <button type="button" className="wb-artifact-open" onClick={() => onOpenWide(block.path)} aria-label={`大视图打开 ${block.path}`}>大视图</button>
                       ) : null}
                     </header>
                     {!collapsed ? (

@@ -15,6 +15,7 @@ import {
 } from './controls.js';
 import { DetailPane } from './detail-pane.js';
 import { isActuallyRunning } from './format.js';
+import { ReaderOverlay } from './reader-overlay.js';
 import {
   draftKey,
   initialEvidenceTab,
@@ -48,6 +49,8 @@ export function Workbench({ input }: { readonly input: WorkbenchInput }) {
   const [branchFor, setBranchFor] = useState<string | null>(null);
   const [branchPending, setBranchPending] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  // Batch 8 §阅读层 (V1): the wide reader is overlay state only; it never touches layout state.
+  const [reader, setReader] = useState<string | null>(null);
 
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const historyRef = useRef<HTMLDivElement>(null);
@@ -194,6 +197,10 @@ export function Workbench({ input }: { readonly input: WorkbenchInput }) {
       announce(error instanceof Error && error.message.trim() !== '' ? error.message : '撤回失败。');
     });
   }, [announce, commands, composerStorageKey, snapshot?.pendingInputs]);
+
+  const openReader = useCallback((path: string) => setReader(path), []);
+  const closeReader = useCallback(() => setReader(null), []);
+  const switchReader = useCallback((path: string) => setReader(path), []);
 
   const openStop = useCallback(() => {
     setStopAttempted(false);
@@ -353,6 +360,7 @@ export function Workbench({ input }: { readonly input: WorkbenchInput }) {
             getFileView={commands.getFileView}
             getTree={commands.getWorkspaceTree}
             openFileExternal={commands.openFileExternal}
+            onOpenWide={openReader}
           />
         ) : null}
       </div>
@@ -363,6 +371,18 @@ export function Workbench({ input }: { readonly input: WorkbenchInput }) {
         error={stopAttempted ? notices.actionError : null}
         onConfirm={confirmStop}
       />
+
+      {reader !== null ? (
+        <ReaderOverlay
+          path={reader}
+          snapshot={snapshot}
+          taskId={selectedId}
+          getFileView={commands.getFileView}
+          openFileExternal={commands.openFileExternal}
+          onSwitch={switchReader}
+          onClose={closeReader}
+        />
+      ) : null}
 
       <dialog ref={branchDialogRef} className="wb-branch-dialog" aria-label="创建讨论分支">
         <h3>从此处创建讨论分支？</h3>
