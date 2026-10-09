@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added GUI workbench batches 0–8 on the frozen V13 discussion baseline: workspace/task registry, discussion branches, read-only Git status, contract-driven free tasks with validated create/start, workspace presets and read-only command probe, concurrency caps, subagent wiring, preview and desk-side terminal panes, Markdown message rendering with code copy, structured pending-approval change previews, openable artifacts with confined file views, a read-only workspace tree, per-file diff blocks, pending-input withdraw/edit, attention and run-vitals strips, and the Owner-signed full-width reading overlay. Live projection now covers 18 fixtures; full gates: typecheck/lint/1,857 tests (2 pre-existing skips) and both builds green. Real-model task verification remains an Owner-scheduled window; the old P3 result stays NOT ACCEPTED.
 - Changed deterministic-only results to `checksOnly`; routine project checks no longer authorize goal completion.
 - Added Git tamper-baseline enforcement with an explicit serial `--allow-no-git` checks-only override.
 - Added trustworthy loop/cron result propagation, stable exit codes, model/goal deadlines, and fail-closed refusal/unknown finish handling.

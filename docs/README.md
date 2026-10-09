@@ -12,7 +12,7 @@
 | 选择 run / goal / loop / cron | [Loop primitive 选择指南](loop-primitives-guide.md) | 按交付物和停止条件选择入口 |
 | 判断版本路线与发布门槛 | [CLI-first 路线](cli-first-plan.md) | 版本定位、信任合同和验收门槛 |
 | 回查冻结的 v0.1 证据 | [v0.1 MVP dogfood 手册](TODO-v01-evidence.md) | 三个真实任务、停止线、NO-GO 与历史 G5 决策 |
-| 开始下一阶段 GUI 工作 | [GUI MVP 重启交接](handoff-gui-mvp-reboot.md) | 已批准方向、参考对象、复用边界与 P0-P1 开工合同 |
+| 开始下一阶段 GUI 工作 | [GUI 重启总计划](PLAN-gui-v13-restart-2026-10-05.md) 与 [能力映射](MAP-v13-to-jarvis-gui.md) | 当前批次进度与 V13 基线；能力现状（2026-10-09 已同步） |
 | 查看已实现变更 | [Changelog](../CHANGELOG.md) | Unreleased 与已发布版本的变化 |
 | 查看仍成立的风险 | [Known Issues](../KNOWN_ISSUES.md) | 当前限制、影响和处理方向 |
 | 修改仓库 | [AGENTS](../AGENTS.md) | 工程规范、架构来源和硬边界 |
@@ -38,7 +38,10 @@
 
 ## 当前工作单与产品雷达
 
-- [handoff-gui-mvp-reboot.md](handoff-gui-mvp-reboot.md)：当前 GUI 产品路线、前端选型、三稿原型要求和新会话停止条件。
+- [PLAN-gui-v13-restart-2026-10-05.md](PLAN-gui-v13-restart-2026-10-05.md)：GUI 当前总计划与批次进度（批 0–8 已入库，下一节点为 P3 真实任务真人验收窗口）。
+- [MAP-v13-to-jarvis-gui.md](MAP-v13-to-jarvis-gui.md)：V13 讨论区 → 工作台能力映射现状（2026-10-09 按批 8 同步）。
+- [HANDOFF-gui-kimi-k3-max-2026-10-07.md](HANDOFF-gui-kimi-k3-max-2026-10-07.md)：GUI 迭代由 Codex 转 Mirasim Kimi K3 Max 的授权与边界。
+- [handoff-gui-mvp-reboot.md](handoff-gui-mvp-reboot.md)：历史：GUI MVP 重启方向、前端选型（现出现于重启总计划并被取代）。
 - [TODO-v01-evidence.md](TODO-v01-evidence.md)：冻结的 v0.1 三任务 dogfood 合同与 NO-GO 证据；当前不继续执行。
 - [v03-gui-plan.md](v03-gui-plan.md)：已完成 G1-G4 的日期化历史工作单；G5 与未来路线已被 GUI MVP 重启交接取代。
 - [ai-execution-routing-readiness.md](ai-execution-routing-readiness.md)：执行路由的现有边界和重开条件。

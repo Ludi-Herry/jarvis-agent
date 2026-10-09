@@ -2,7 +2,7 @@
 
 > 类型：截至 2026-08-24 的日期化交接快照。本文保留逐切片验证、Reviewer 结论、截图与 commit，方便审计和恢复上下文；测试数字和“当前”表述只对各自日期成立。
 >
-> **当前下一步已改为 V13 重启批 0–2（2026-10-05 立项）。新会话从 `docs/PLAN-gui-v13-restart-2026-10-05.md` 开工，上游是 `docs/HANDOFF-gui-workbench-v13.md` 与 `docs/PLAN-V13-discussion-true-parity-2026-09-26.md`；本页只用于回查 CLI-first 与 G1-G4 历史证据。**
+> **当前下一步（2026-10-09 更新）：GUI 功能批 0–8 已全部入库；新会话从 `docs/PLAN-gui-v13-restart-2026-10-05.md` 开工，能力现状以 `docs/MAP-v13-to-jarvis-gui.md`（2026-10-09 已同步）与总计划进度行为准（上游 `docs/HANDOFF-gui-workbench-v13.md`、`docs/HANDOFF-gui-kimi-k3-max-2026-10-07.md`）。待办只剩：P3 真实任务真人验收窗口（Owner 安排）与按需立项的条件项。本页只用于回查 CLI-first 与 G1-G4 历史证据。**
 >
 > 本快照当时的入口：版本线与信任合同见 `docs/cli-first-plan.md`；当时仍开放的 Recall A/B、真实任务、TTY 体验与 G5 决策见 `docs/TODO-v01-evidence.md`；命令能力以 `jarvis --help` 为准；实现变化见 `CHANGELOG.md`。历史 GUI-first 路线见 `docs/handoff-release.md`。
 >
