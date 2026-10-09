@@ -1,0 +1,26 @@
+{
+  "objective": "完成 Jarvis GUI 的首次使用引导。只修改 src/surfaces/gui/app/src/live/first-task-guide.tsx 的空组件，不修改其他文件。让第一次使用编码 Agent 的人看懂：左侧是任务与工作区，中间用于描述目标和持续对话，右侧证据抽屉用于检查 Diff、验证与上下文；从哪里开始创建第一项任务，什么时候需要允许一次、拒绝或要求调整，以及何时才算验证并获得完成授权。沿用黑白灰中性主题与既有布局，用简洁中文、清楚的层级和克制的样式完成一个可直接使用的组件。可以使用已有 React/DOM 能力与 CSS 变量，局部样式放在组件内且限定类名；不新增依赖，不伪造任务或成功数据，不安装、不删除、不提交。先阅读该文件的实际接入位置，再给出第一版写入请求供我在 GUI 中审阅。我可能通过拒绝理由提出一项具体调整，你需要据此修改。交付后调用 update_goal(complete)，由 Runtime 跑固定检查，再由我在 GUI 检查实际界面和证据。",
+  "cwd": "H:\\jarvis-agent",
+  "requirements": [
+    "首次使用引导说明左侧任务/工作区、中央目标与对话、右侧证据抽屉，并让小白知道从哪里开始；不把内部技术实现当成必须理解的操作知识。",
+    "引导说明允许一次、拒绝/要求调整、验证与完成授权的实际作用，不能把模型回复结束或按钮点击表示成任务完成。",
+    "组件沿用黑白灰中性主题，在 1440×900 和 1280×800 的真实 GUI 空态内清楚可读；只改约定组件，实际 GUI 介入后的要求已落实。"
+  ],
+  "writePaths": ["src/surfaces/gui/app/src/live/first-task-guide.tsx"],
+  "checkCommands": [
+    "npm run typecheck",
+    "npm run lint",
+    "npm test -- --maxWorkers=1",
+    "npm run build",
+    "npm --prefix src/surfaces/gui/app run typecheck",
+    "npm --prefix src/surfaces/gui/app run build"
+  ],
+  "maxRounds": 2,
+  "maxTurns": 12,
+  "wallClockMs": 900000,
+  "pricing": {
+    "inputCnyPerMillion": 6,
+    "outputCnyPerMillion": 30,
+    "source": "火山引擎 Doubao-Seed-2.1-pro 官方产品价目，2026-09-06 查询 https://www.volcengine.com/product/doubao"
+  }
+}

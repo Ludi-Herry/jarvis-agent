@@ -41,6 +41,8 @@
 - [PLAN-gui-v13-restart-2026-10-05.md](PLAN-gui-v13-restart-2026-10-05.md)：GUI 当前总计划与批次进度（批 0–8 已入库，下一节点为 P3 真实任务真人验收窗口）。
 - [MAP-v13-to-jarvis-gui.md](MAP-v13-to-jarvis-gui.md)：V13 讨论区 → 工作台能力映射现状（2026-10-09 按批 8 同步）。
 - [HANDOFF-gui-kimi-k3-max-2026-10-07.md](HANDOFF-gui-kimi-k3-max-2026-10-07.md)：GUI 迭代由 Codex 转 Mirasim Kimi K3 Max 的授权与边界。
+- [PROPOSAL-gui-conditional-items.md](PROPOSAL-gui-conditional-items.md)：条件项（worktree/多 pane/GUI 模型配置/Skill·MCP/受控浏览器）逐项立项书，待 Owner 裁决。
+- [PLAN-gui-real-task-window.md](PLAN-gui-real-task-window.md)：真实模型任务窗口的验收清单与操作脚本（备好待用，不消耗额度）。
 - [handoff-gui-mvp-reboot.md](handoff-gui-mvp-reboot.md)：历史：GUI MVP 重启方向、前端选型（现出现于重启总计划并被取代）。
 - [TODO-v01-evidence.md](TODO-v01-evidence.md)：冻结的 v0.1 三任务 dogfood 合同与 NO-GO 证据；当前不继续执行。
 - [v03-gui-plan.md](v03-gui-plan.md)：已完成 G1-G4 的日期化历史工作单；G5 与未来路线已被 GUI MVP 重启交接取代。
