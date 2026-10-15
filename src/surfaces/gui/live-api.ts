@@ -22,13 +22,15 @@ export async function handleLiveApi(
     if (req.method === 'POST' && wsAction === 'presets') return json(res, await host.saveWorkspacePresets(wsId, await body()));
     throw new GuiLiveError(405, 'method not allowed');
   }
-  const match = /^\/api\/live\/(gui-[a-f0-9-]+)(?:\/(events|input|decision|pause|continue|stop|resume|review|start|meta|git|terminal\/cancel|terminal|file|open-external|input-withdraw|tree))?$/u.exec(url.pathname);
+  const match = /^\/api\/live\/(gui-[a-f0-9-]+)(?:\/(events|input|decision|pause|continue|stop|resume|review|start|meta|git|terminal\/cancel|terminal|file|open-external|input-withdraw|tree|mode|undo|redo))?$/u.exec(url.pathname);
   if (!match) throw new GuiLiveError(404, 'live API not found');
   const [, id, action] = match;
   if (req.method === 'GET' && !action) return json(res, await host.snapshot(id));
   if (req.method === 'GET' && action === 'git') return json(res, await host.gitStatus(id));
   if (req.method === 'GET' && action === 'file') return json(res, await host.readFileView(id, url.searchParams.get('path') ?? ''));
   if (req.method === 'GET' && action === 'tree') return json(res, await host.listWorkspaceDir(id, url.searchParams.get('path') ?? ''));
+  // plain-v1 P2: what undo/redo would change right now (read-only; the token guards the POST).
+  if (req.method === 'GET' && action === 'undo') return json(res, await host.undoPlan(id));
   if (req.method === 'GET' && action === 'events') {
     // Verify identity/integrity before opening the stream. Reconnect always receives a full
     // persistent projection; Last-Event-ID never causes missing events to be discarded.
@@ -78,6 +80,8 @@ export async function handleLiveApi(
   if (action === 'open-external') {
     return json(res, await host.openFileExternal(id, typeof input.path === 'string' ? input.path : ''));
   }
+  if (action === 'mode') return json(res, await host.setPermissionMode(id, input.mode));
+  if (action === 'undo' || action === 'redo') return json(res, await host.undo(id, action, requiredText(input, 'token')));
   if (action === 'decision') return json(res, await host.decision(id, requiredText(input, 'requestId'), requiredText(input, 'decision'), typeof input.reason === 'string' ? input.reason : undefined));
   if (action === 'pause' || action === 'continue' || action === 'stop' || action === 'resume') {
     return json(res, await host.control(id, action, typeof input.reason === 'string' ? input.reason : undefined));

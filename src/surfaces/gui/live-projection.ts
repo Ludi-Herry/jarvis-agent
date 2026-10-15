@@ -1,4 +1,4 @@
-import type { GuiLiveSnapshot, GuiMessage, GuiTerminalEntry } from './live-types.js';
+import type { GuiLiveSnapshot, GuiMessage, GuiTerminalEntry, GuiUndoFile } from './live-types.js';
 
 /** Journal records are display observations, never a source of completion authority. */
 export interface GuiObservedEvent {
@@ -119,6 +119,19 @@ export function applyGuiEvent(state: GuiLiveSnapshot, event: GuiObservedEvent): 
       if (typeof event.archived === 'boolean') state.archived = event.archived;
       break;
     }
+    case 'gui_permission_mode':
+      // plain-v1 P2: replay restores the composer mode; an unknown value folds to a no-op.
+      if (event.mode === 'discuss' || event.mode === 'ask' || event.mode === 'auto') state.permissionMode = event.mode;
+      break;
+    case 'gui_undo':
+      state.undo = {
+        state: event.action === 'redo' ? 'redone' : 'undone',
+        at: String(event.at ?? ''),
+        files: Array.isArray(event.files) ? (event.files as GuiUndoFile[]).map((file) => ({ path: String(file.path), change: file.change })) : [],
+        restoredTree: String(event.restoredTree ?? ''),
+        savedTree: String(event.savedTree ?? ''),
+      };
+      break;
     case 'gui_inputs_consumed':
       state.pendingInputs.splice(0, Number(event.count));
       break;

@@ -331,7 +331,7 @@ export function useLiveSession() {
 
   const decide = useCallback(async (
     requestId: string,
-    decision: 'allow-once' | 'deny',
+    decision: 'allow-once' | 'allow-session' | 'deny',
     reason?: string,
   ) => {
     if (overview?.enabled !== true) throw new Error('真实运行入口当前未启用。');
@@ -339,7 +339,7 @@ export function useLiveSession() {
     const normalized = reason?.trim();
     if (decision === 'deny' && !normalized) throw new Error('拒绝或要求调整时必须说明理由。');
     return runMutation(
-      decision === 'allow-once' ? '正在批准' : '正在提交理由',
+      decision !== 'deny' ? '正在批准' : '正在提交理由',
       () => postLiveSnapshot(selectedPath('decision'), {
         requestId,
         decision,

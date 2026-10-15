@@ -246,14 +246,14 @@ export function useFixtureSession(fixtureId: string | null): FixtureSession {
         setActionError('拒绝或要求调整时必须说明理由。');
         throw new Error('缺少理由');
       }
-      advance(decision === 'allow-once' ? '正在批准' : '正在提交理由', (draft) => {
+      advance(decision !== 'deny' ? '正在批准' : '正在提交理由', (draft) => {
         const toolName = draft.approval?.toolName ?? 'write';
         const target = draft.tools.find((tool) => tool.status === 'proposed');
         draft.approvalHistory = [...draft.approvalHistory, { requestId, toolName, decision, ...(reason ? { reason } : {}) }];
         draft.approval = null;
         draft.status = 'running';
         draft.capabilities = RUNNING_CAPABILITIES;
-        if (decision === 'allow-once') {
+        if (decision !== 'deny') {
           draft.phase = '写入已执行；继续本次运行';
           draft.tools = draft.tools.map((tool) => tool === target ? { ...tool, status: 'committed', output: `已写入 ${tool.path ?? '目标文件'}` } : tool);
           if (target?.path !== undefined) draft.artifacts = [...draft.artifacts, { path: target.path, outcome: 'written' }];

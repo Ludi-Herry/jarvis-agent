@@ -55,6 +55,9 @@ export interface GuiWorkspacePresets {
   maxTurns: number;
   minutes: number;
   savedAt: string;
+  /** plain-v1 P3: local dev-server page the preview opens after a task changes UI files.
+   *  Loopback only (preview-policy); absent until the user saves one. */
+  previewUrl?: string;
 }
 
 export interface GuiWorkspaceProbe {
@@ -126,6 +129,42 @@ export interface GuiApproval {
   reason: string;
   detail: string;
   arguments: string;
+  /** plain-v1 P2: what 「这个任务都允许」 (allow-session) would cover — this tool for the rest of the
+   *  run, or only this exact command. Absent on pre-v1 journals. */
+  sessionScope?: 'tool' | 'command';
+}
+
+/** plain-v1 P2: composer permission mode. Absent on a snapshot means 'ask' (pre-v1 behavior).
+ *  - discuss: Jarvis may read but never writes files or runs commands.
+ *  - ask:     every write/command waits for 允许 / 这个任务都允许 / 不允许.
+ *  - auto:    writes to files the task contract lists go through without asking; commands still ask. */
+export type GuiPermissionMode = 'discuss' | 'ask' | 'auto';
+
+/** plain-v1 P2: one write path that undo/redo would change. */
+export interface GuiUndoFile {
+  path: string;
+  change: 'added' | 'modified' | 'deleted';
+}
+
+/** plain-v1 P2: GET /api/live/:id/undo. `token` must be echoed to POST undo/redo; it is the tree of
+ *  the files as they were when this plan was computed, so a confirm on a stale view is refused. */
+export interface GuiUndoPlan {
+  kind: 'undo' | 'redo';
+  available: boolean;
+  reason?: string;
+  files: GuiUndoFile[];
+  token: string | null;
+}
+
+/** plain-v1 P2: the last undo/redo, folded from gui_undo journal events. */
+export interface GuiUndoState {
+  state: 'undone' | 'redone';
+  at: string;
+  files: GuiUndoFile[];
+  /** Tree the write paths were restored to. */
+  restoredTree: string;
+  /** Tree of the write paths just before this operation (what redo would bring back). */
+  savedTree: string;
 }
 
 /** One desk-side terminal command, folded from gui_terminal events (contract §D14). Observation
@@ -185,6 +224,10 @@ export interface GuiLiveSnapshot {
   capabilities: { submit: boolean; pause: boolean; continue: boolean; stop: boolean; resume: boolean };
   /** Desk-side terminal state (batch 3 §D); absent when the journal carries no gui_terminal event. */
   terminal?: GuiTerminalState;
+  /** plain-v1 P2: composer permission mode; absent = 'ask'. */
+  permissionMode?: GuiPermissionMode;
+  /** plain-v1 P2: last undo/redo of this task's file changes; absent until the user undoes. */
+  undo?: GuiUndoState;
 }
 
 export interface GuiLiveOverviewSession {

@@ -44,3 +44,23 @@ export function resolvePreviewSource(url: string): GuiPreviewSource {
   if (LOOPBACK_HOSTS.has(parsed.hostname.toLowerCase())) return { kind: 'loopback', normalized };
   return { kind: 'external-confirm', normalized };
 }
+
+/** File types whose change is visible in a browser preview (plain-v1 P3 auto preview). */
+const UI_FILE = /\.(?:tsx|jsx|vue|svelte|css|scss|sass|less|html|svg)$/iu;
+
+/**
+ * plain-v1 P3: should the GUI open the preview tab by itself once a task settles? Only when the
+ * workspace saved a loopback preview page, the task actually changed a UI-facing file, and the
+ * user has not already been shown (or closed) the preview for this task. Pure; the app decides
+ * WHEN to ask (task settled), this decides WHETHER.
+ */
+export function shouldAutoOpenPreview(input: {
+  previewUrl?: string;
+  changedPaths: readonly string[];
+  settled: boolean;
+  alreadyHandled: boolean;
+}): boolean {
+  if (!input.settled || input.alreadyHandled || !input.previewUrl) return false;
+  if (resolvePreviewSource(input.previewUrl).kind !== 'loopback') return false;
+  return input.changedPaths.some((path) => UI_FILE.test(path));
+}

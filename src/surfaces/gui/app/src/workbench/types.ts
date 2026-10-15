@@ -28,7 +28,7 @@ export interface WorkbenchCommands {
   readonly continueRun: () => Promise<unknown>;
   readonly stop: (reason: string) => Promise<unknown>;
   readonly resume: () => Promise<unknown>;
-  readonly decide: (requestId: string, decision: 'allow-once' | 'deny', reason?: string) => Promise<unknown>;
+  readonly decide: (requestId: string, decision: 'allow-once' | 'allow-session' | 'deny', reason?: string) => Promise<unknown>;
   readonly submitReview: (decisions: readonly HumanReviewDecision[]) => Promise<unknown>;
   readonly updateMeta: (id: string, patch: GuiMetaPatch) => Promise<unknown>;
   readonly createWorkspace: (input: GuiWorkspaceInput) => Promise<unknown>;

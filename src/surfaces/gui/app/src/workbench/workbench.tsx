@@ -212,6 +212,16 @@ export function Workbench({ input }: { readonly input: WorkbenchInput }) {
     runAction(() => commands.decide(approval.requestId, 'allow-once'), '已允许这一次操作。');
   }, [commands, runAction, snapshot?.approval]);
 
+  // plain-v1 P2: 「这个任务都允许」 — the runtime scopes it (same tool for this run, or this exact command).
+  const allowSession = useCallback(() => {
+    const approval = snapshot?.approval;
+    if (approval === undefined || approval === null) return;
+    runAction(
+      () => commands.decide(approval.requestId, 'allow-session'),
+      approval.sessionScope === 'command' ? '已允许：本任务里这条命令不再询问。' : '已允许：本任务里同类写入不再询问。',
+    );
+  }, [commands, runAction, snapshot?.approval]);
+
   const submitReview = useCallback((decisions: readonly HumanReviewDecision[]) => {
     runAction(() => commands.submitReview(decisions), '人工验收已提交，完成状态等待可信链确认。');
   }, [commands, runAction]);
@@ -358,6 +368,7 @@ export function Workbench({ input }: { readonly input: WorkbenchInput }) {
             onStop={openStop}
             onPrepareDecision={prepareDecision}
             onAllow={allowOnce}
+            onAllowSession={allowSession}
             onSubmitReview={submitReview}
             onToggleDetail={() => { if (detailOpen) closeEvidence(); else openEvidence('overview'); }}
             onValidateTask={commands.validateTask}
