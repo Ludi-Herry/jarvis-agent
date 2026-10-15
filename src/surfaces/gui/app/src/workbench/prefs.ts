@@ -13,9 +13,9 @@ const RAIL_COLLAPSED_KEY = 'jarvis.gui.workbench.rail-collapsed';
 const MONITOR_OPEN_KEY = 'jarvis.gui.workbench.monitor-open';
 const PREVIEW_HISTORY_PREFIX = 'jarvis.gui.live.previewHistory:';
 
-export type EvidenceTab = 'diff' | 'verification' | 'context' | 'subagents' | 'preview' | 'terminal' | 'files';
+export type EvidenceTab = 'overview' | 'diff' | 'verification' | 'context' | 'subagents' | 'preview' | 'terminal' | 'files';
 
-const EVIDENCE_TABS: readonly EvidenceTab[] = ['diff', 'verification', 'context', 'subagents', 'preview', 'terminal', 'files'];
+const EVIDENCE_TABS: readonly EvidenceTab[] = ['overview', 'diff', 'verification', 'context', 'subagents', 'preview', 'terminal', 'files'];
 
 export function storageGet(key: string): string | null {
   try {
@@ -98,14 +98,16 @@ export function useRememberedScroll(
 
   /** Attach-time restore: the thread viewport auto-scrolls to the newest message in an effect, so the saved position must land before that. */
   const attach = useCallback((node: HTMLElement | null) => {
+    const remounted = ref.current !== node;
     ref.current = node;
-    if (node === null || appliedFor.current === key) return;
+    if (node === null || (!remounted && appliedFor.current === key)) return;
     appliedFor.current = key;
     userMoved.current = false;
     persistAfter.current = performance.now() + 800;
     const saved = Number(storageGet(key));
     if (Number.isFinite(saved) && saved > 0) node.scrollTop = saved;
-  }, [key, ref]);
+    else if (pane === 'context') node.scrollTop = 0;
+  }, [key, pane, ref]);
 
   // The thread viewport settles its own scroll-to-bottom after mount; re-assert the saved
   // position a few times unless the reader has already taken over the scroll.

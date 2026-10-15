@@ -1,9 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { GuiConnectionState, GuiLiveOverview, GuiLiveOverviewSession } from '../../../live-types.js';
 import type { GuiMetaPatch, GuiWorkspaceInput } from '../live/api.js';
 import type { ControlState } from './controls.js';
 import { statusPresentation } from './format.js';
-import { FolderIcon, GearIcon, PlusIcon, RailIcon, SearchIcon } from './icons.js';
+import { EllipsisIcon, FolderIcon, GearIcon, PinIcon, PlusIcon, RailIcon, SearchIcon } from './icons.js';
 
 export interface ConnectionBadge {
   readonly label: string;
@@ -39,7 +39,7 @@ function SettingsPanel({ onClose }: { readonly onClose: () => void }) {
         <span>未接入</span>
         <small>模型、权限策略、任务合同与密钥由 CLI 配置和 <code>.env</code> 决定；GUI 没有写入配置的命令，因此这里不提供开关，也不显示假设置项。</small>
       </p>
-      <p className="wb-settings-note">当前模型与执行上限在右栏「环境信息」和「上下文」中只读显示。</p>
+      <p className="wb-settings-note">当前模型与执行上限在右栏「上下文」的「运行环境」和「消耗与预算」中只读显示。</p>
     </div>
   );
 }
@@ -68,9 +68,10 @@ export function WorkspaceRail({
   readonly onCreateWorkspace: (input: GuiWorkspaceInput) => Promise<unknown>;
 }) {
   const [query, setQuery] = useState('');
-  const [searching, setSearching] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [menuFor, setMenuFor] = useState<string | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const menuTriggerRef = useRef<HTMLButtonElement | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
   const [archivedOpen, setArchivedOpen] = useState<string | null>(null);
@@ -81,6 +82,27 @@ export function WorkspaceRail({
   const [wsPending, setWsPending] = useState(false);
   const sessions = overview?.sessions ?? [];
   const workspaces = useMemo(() => (overview?.workspaces ?? []).filter((item) => !item.archived), [overview?.workspaces]);
+
+  useEffect(() => {
+    if (menuFor === null) return undefined;
+    const frame = window.requestAnimationFrame(() => menuRef.current?.querySelector<HTMLButtonElement>('button')?.focus());
+    const dismiss = (event: PointerEvent) => {
+      if (event.target instanceof Node && !menuRef.current?.contains(event.target) && !menuTriggerRef.current?.contains(event.target)) setMenuFor(null);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      setMenuFor(null);
+      menuTriggerRef.current?.focus();
+    };
+    document.addEventListener('pointerdown', dismiss);
+    document.addEventListener('keydown', escape);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      document.removeEventListener('pointerdown', dismiss);
+      document.removeEventListener('keydown', escape);
+    };
+  }, [menuFor]);
 
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -180,6 +202,12 @@ export function WorkspaceRail({
         </button>
       </header>
 
+      <label className="wb-search">
+        <SearchIcon />
+        <span className="wb-sr-only">搜索任务</span>
+        <input type="search" value={query} placeholder="搜索" onChange={(event) => setQuery(event.currentTarget.value)} />
+      </label>
+
       <div className="wb-surface-label">讨论区</div>
 
       <div className="wb-rail-actions">
@@ -194,27 +222,6 @@ export function WorkspaceRail({
           <span>新建任务</span>
           <kbd>{newTaskState.available ? '进入空态' : '不可用'}</kbd>
         </button>
-        <button
-          type="button"
-          className="wb-action-row"
-          aria-expanded={searching}
-          onClick={() => setSearching((open) => !open)}
-        >
-          <SearchIcon />
-          <span>搜索任务</span>
-          <kbd>{sessions.length} 条</kbd>
-        </button>
-        {searching ? (
-          <label className="wb-search">
-            <span className="wb-sr-only">按目标或 ID 过滤会话</span>
-            <input
-              type="search"
-              value={query}
-              placeholder="按目标或会话 ID 过滤"
-              onChange={(event) => setQuery(event.currentTarget.value)}
-            />
-          </label>
-        ) : null}
       </div>
 
       <div className="wb-workspace-heading">
@@ -225,6 +232,7 @@ export function WorkspaceRail({
       </div>
 
       <nav className="wb-groups" aria-label="工作区与任务">
+        {query.trim() !== '' && groups.length === 0 ? <p className="wb-group-empty" role="status">没有匹配的会话。</p> : null}
         {wsDialogOpen ? (
           <div className="wb-ws-dialog" role="dialog" aria-label="新建工作区">
             <label>
@@ -289,7 +297,7 @@ export function WorkspaceRail({
                       <strong>{session.sourceRef !== undefined && !session.title.startsWith('分支') ? '分支 · ' : ''}{session.title}</strong>
                       <small>{statusPresentation[session.status].label}</small>
                     </span>
-                    {session.pinned ? <span className="wb-pin" aria-label="已置顶" title="已置顶">●</span> : null}
+                    {session.pinned ? <span className="wb-pin" aria-label="已置顶" title="已置顶"><PinIcon size={12} /></span> : null}
                   </button>
                   <button
                     type="button"
@@ -297,12 +305,20 @@ export function WorkspaceRail({
                     aria-expanded={menuFor === session.id}
                     aria-haspopup="menu"
                     aria-label={`任务选项：${session.title}`}
-                    onClick={() => setMenuFor(menuFor === session.id ? null : session.id)}
+                    onClick={(event) => { menuTriggerRef.current = event.currentTarget; setMenuFor(menuFor === session.id ? null : session.id); }}
                   >
-                    …
+                    <EllipsisIcon />
                   </button>
                   {menuFor === session.id ? (
-                    <div className="wb-task-menu-pop" role="menu" aria-label="任务选项">
+                    <div ref={menuRef} className="wb-task-menu-pop" role="menu" aria-label="任务选项" onKeyDown={(event) => {
+                      if (!['ArrowDown', 'ArrowUp', 'Home', 'End', 'Tab'].includes(event.key)) return;
+                      if (event.key === 'Tab') { setMenuFor(null); return; }
+                      event.preventDefault();
+                      const items = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button'));
+                      const current = items.indexOf(document.activeElement as HTMLButtonElement);
+                      const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : (current + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+                      items[next]?.focus();
+                    }}>
                       <button type="button" role="menuitem" onClick={() => { setMenuFor(null); setRenamingId(session.id); setRenameDraft(session.title); }}>重命名</button>
                       <button type="button" role="menuitem" onClick={() => commitMeta(session.id, { pinned: !session.pinned })}>{session.pinned ? '取消置顶' : '置顶'}</button>
                       <button type="button" role="menuitem" onClick={() => commitMeta(session.id, { archived: true })}>归档</button>

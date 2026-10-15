@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { GuiFileView, GuiLiveSnapshot } from '../../../live-types.js';
 import { type FilePreviewState } from './file-preview.js';
-import { ChevronIcon } from './icons.js';
+import { ArrowLeftIcon, ChevronIcon, CloseIcon } from './icons.js';
 import { MarkdownBody } from './markdown.js';
 import { orderDiffBlocks } from './reader-diff.js';
 
@@ -88,7 +88,7 @@ export function ReaderOverlay({ path, snapshot, taskId, getFileView, openFileExt
   return (
     <div className="wb-reader" role="dialog" aria-modal="true" aria-label={`成果阅读：${path}`}>
       <div className="wb-reader-bar">
-        <button type="button" className="wb-reader-back" ref={backRef} onClick={onClose}>← 返回任务对话</button>
+        <button type="button" className="wb-reader-back" ref={backRef} onClick={onClose}><ArrowLeftIcon />返回任务对话</button>
         <code className="wb-reader-path">{path}</code>
         <span className="wb-reader-src">{source} · 只读</span>
         <span className="wb-reader-spacer" />
@@ -98,7 +98,7 @@ export function ReaderOverlay({ path, snapshot, taskId, getFileView, openFileExt
         <button type="button" disabled={preview.externalPending === true || taskId === null} onClick={openExternal}>
           {preview.externalPending === true ? '打开中…' : '在外部打开'}
         </button>
-        <button type="button" aria-label="关闭阅读层" onClick={onClose}>✕</button>
+        <button type="button" aria-label="关闭阅读层" onClick={onClose}><CloseIcon /></button>
       </div>
       <div className="wb-reader-body">
         <div className="wb-reader-doc">

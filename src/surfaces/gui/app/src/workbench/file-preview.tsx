@@ -1,4 +1,5 @@
 import type { GuiFileView } from '../../../live-types.js';
+import { CloseIcon } from './icons.js';
 
 /**
  * Batch 7 §工作空间: the shared inline file-preview card. Diff tab (batch 4) and the 文件 tree
@@ -35,7 +36,7 @@ export function FilePreviewCard({ preview, copied, onCopy, onOpenExternal, onClo
           <button type="button" disabled={preview.externalPending === true} onClick={onOpenExternal}>
             {preview.externalPending === true ? '打开中…' : '在外部打开'}
           </button>
-          <button type="button" onClick={onClose} aria-label="关闭预览">×</button>
+          <button type="button" onClick={onClose} aria-label="关闭预览"><CloseIcon /></button>
         </span>
       </header>
       {preview.status === 'loading' ? <p className="live-muted">读取中…</p> : null}

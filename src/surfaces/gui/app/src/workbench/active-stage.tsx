@@ -5,6 +5,7 @@ import { buildApprovalPreview } from './approval-diff.js';
 import type { ControlState } from './controls.js';
 import { parseUnifiedDiff } from './diff.js';
 import { statusPresentation, toolKindLabels } from './format.js';
+import { ChevronIcon } from './icons.js';
 import type { EvidenceTab } from './prefs.js';
 
 export type DecisionKind = 'deny' | 'revise';
@@ -42,7 +43,7 @@ export function ApprovalCard({
   // it is NOT the already-executed diff shown in the Diff tab, and the card says so explicitly.
   const preview = useMemo(() => buildApprovalPreview(approval.toolName, approval.arguments), [approval.toolName, approval.arguments]);
   const previewRows = useMemo(
-    () => (preview !== null && (preview.kind === 'write-create' || preview.kind === 'edit') ? parseUnifiedDiff(preview.diff) : null),
+    () => (preview !== null && (preview.kind === 'write-create' || preview.kind === 'edit') && preview.diff.trim() !== '' ? parseUnifiedDiff(preview.diff) : null),
     [preview],
   );
   return (
@@ -61,10 +62,15 @@ export function ApprovalCard({
         <div><dt>影响</dt><dd>{approval.detail}</dd></div>
       </dl>
       {preview !== null ? (
-        <section className="wb-approval-preview" aria-label="即将批准的变更">
-          <strong>即将批准的变更（预览，尚未执行）</strong>
+        <details className="wb-approval-preview">
+          <summary>
+            <span><strong>即将批准的变更（预览，尚未执行）</strong><code title={preview.kind === 'command' ? preview.command : preview.path}>{preview.kind === 'command' ? preview.command : preview.path}</code></span>
+            <ChevronIcon className="wb-chevron" />
+          </summary>
+          <div className="wb-approval-preview-body">
           <p className="wb-approval-preview-note">与右侧 Diff 页签的已执行改动不是同一份；此内容来自本次工具调用参数。</p>
-          {previewRows !== null ? (
+          {preview.kind === 'edit' && preview.note !== undefined ? <p className="wb-approval-preview-note">{preview.note}</p> : null}
+          {previewRows !== null && previewRows.rows.length > 0 ? (
             <pre className="mini-diff wb-diff">
               {previewRows.rows.map((row, index) => (
                 <span key={`${index}:${row.kind}`} className="wb-diff-row" data-kind={row.kind}>{row.text || ' '}</span>
@@ -82,7 +88,8 @@ export function ApprovalCard({
           {preview.kind === 'command' ? (
             <pre className="wb-approval-preview-content"><code>{preview.command}</code></pre>
           ) : null}
-        </section>
+          </div>
+        </details>
       ) : null}
       <details className="live-approval-detail">
         <summary>查看调用参数</summary>

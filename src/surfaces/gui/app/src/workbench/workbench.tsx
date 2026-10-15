@@ -41,6 +41,7 @@ export function Workbench({ input }: { readonly input: WorkbenchInput }) {
   const [expanded, setExpanded] = usePersistentFlag(prefKeys.reviewExpanded, initialExpanded);
   const [railCollapsed, setRailCollapsed] = usePersistentFlag(prefKeys.railCollapsed, initialRailCollapsed);
   const [detailOpen, setDetailOpen] = useState(false);
+  const [detailMounted, setDetailMounted] = useState(false);
   const [selectedToolId, setSelectedToolId] = useState<string | null>(null);
   const [composerIntent, setComposerIntent] = useState<ComposerIntent | null>(null);
   const [draftRecoveryToken, setDraftRecoveryToken] = useState(0);
@@ -59,6 +60,19 @@ export function Workbench({ input }: { readonly input: WorkbenchInput }) {
   const stopDialogRef = useRef<HTMLDialogElement>(null);
   const branchDialogRef = useRef<HTMLDialogElement>(null);
   const toastTimer = useRef<number | null>(null);
+  const detailReturnFocus = useRef<HTMLElement | null>(null);
+
+  // Keep the drawer alive only for its exit; a rapid reopen cancels that exit.
+  useEffect(() => {
+    if (detailOpen) {
+      setDetailMounted(true);
+      return undefined;
+    }
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const duration = detailRef.current === null ? 0 : Number.parseFloat(getComputedStyle(detailRef.current).getPropertyValue('--drawer-close-dur')) || 150;
+    const timer = window.setTimeout(() => setDetailMounted(false), reduced ? 0 : duration);
+    return () => window.clearTimeout(timer);
+  }, [detailOpen]);
 
   const messages = snapshot?.messages ?? [];
   const geometry = useHistoryGeometry(historyRef, messages);
@@ -150,13 +164,34 @@ export function Workbench({ input }: { readonly input: WorkbenchInput }) {
   }, [announce, commands, composerIntent, composerStorageKey, snapshot]);
 
   const openEvidence = useCallback((tab: EvidenceTab) => {
+    if (!detailOpen) detailReturnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    if (tab === 'overview') setSelectedToolId(null);
     setEvidenceTab(tab);
     storageSet(prefKeys.evidenceTab, tab);
     setDetailOpen(true);
     window.requestAnimationFrame(() => {
       if (detailRef.current !== null) detailRef.current.scrollTop = 0;
+      detailRef.current?.closest('.wb-detail')?.querySelector<HTMLElement>('.wb-detail-nav [aria-selected="true"], .wb-inspector-card summary')?.focus({ preventScroll: true });
+    });
+  }, [detailOpen]);
+
+  const closeEvidence = useCallback(() => {
+    setDetailOpen(false);
+    window.requestAnimationFrame(() => {
+      if (detailReturnFocus.current?.isConnected) detailReturnFocus.current.focus({ preventScroll: true });
     });
   }, []);
+
+  useEffect(() => {
+    if (!detailOpen) return undefined;
+    const escape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented || document.querySelector('dialog[open], [aria-modal="true"], [role="menu"]') !== null) return;
+      event.preventDefault();
+      closeEvidence();
+    };
+    document.addEventListener('keydown', escape);
+    return () => document.removeEventListener('keydown', escape);
+  }, [closeEvidence, detailOpen]);
 
   const activateEvidence = useCallback((toolId: string, tab: EvidenceTab) => {
     setSelectedToolId(toolId);
@@ -267,7 +302,7 @@ export function Workbench({ input }: { readonly input: WorkbenchInput }) {
       <div
         className="conversation-shell wb-shell"
         data-review-expanded={expanded}
-        data-detail-open={detailOpen}
+        data-detail-open={detailOpen || detailMounted}
         data-rail-collapsed={railCollapsed}
         data-run-state={snapshot?.status ?? 'idle'}
       >
@@ -324,7 +359,7 @@ export function Workbench({ input }: { readonly input: WorkbenchInput }) {
             onPrepareDecision={prepareDecision}
             onAllow={allowOnce}
             onSubmitReview={submitReview}
-            onToggleDetail={() => setDetailOpen((current) => !current)}
+            onToggleDetail={() => { if (detailOpen) closeEvidence(); else openEvidence('overview'); }}
             onValidateTask={commands.validateTask}
             onCreateTask={commands.createTask}
             onCreateAndStart={handleCreateAndStart}
@@ -338,23 +373,26 @@ export function Workbench({ input }: { readonly input: WorkbenchInput }) {
           />
         </LiveJarvisExternalStoreProvider>
 
-        {detailOpen ? (
+        {detailOpen ? <button type="button" className="wb-detail-scrim" aria-label="关闭证据栏" onClick={closeEvidence} /> : null}
+        {detailOpen || detailMounted ? (
           <DetailPane
             overview={overview}
             snapshot={snapshot}
             streamWarning={notices.streamWarning}
+            models={input.models}
             selectedTool={selectedTool as GuiTool | null}
             evidenceTab={evidenceTab}
             detailRef={detailScroll.attach}
             evidenceRef={evidenceRef}
             expanded={expanded}
+            open={detailOpen}
             taskId={selectedId}
             actionPending={pending}
             runTerminal={commands.runTerminal}
             cancelTerminal={commands.cancelTerminal}
             onTab={(tab) => { setEvidenceTab(tab); storageSet(prefKeys.evidenceTab, tab); }}
             onToggleExpanded={() => setExpanded(!expanded)}
-            onClose={() => setDetailOpen(false)}
+            onClose={closeEvidence}
             onContextScroll={detailScroll.onScroll}
             getGit={commands.getGit}
             getFileView={commands.getFileView}

@@ -374,6 +374,23 @@ export const workbenchFixtures: readonly WorkbenchFixture[] = [
       capabilities: { submit: true, pause: false, continue: false, stop: true, resume: false },
     }),
   }),
+  fixture('edit-large', '大型 Edit 审批', '401 行触发预览上限；仍显示目标，完整参数可展开，尚未执行。', {
+    snapshot: snapshot({
+      status: 'approval',
+      messages: RUNNING_MESSAGES,
+      tools: READ_TOOLS,
+      approval: {
+        requestId: 'req-fx-large', toolName: 'edit', capability: 'writes-files',
+        reason: '写入文件需要你的批准', detail: '仅允许本次请求；拒绝理由会传回模型',
+        arguments: JSON.stringify({
+          path: 'fixture/large-edit.txt',
+          oldText: Array.from({ length: 401 }, (_, index) => `旧行 ${index}`).join('\n'),
+          newText: '新的说明文字', expectedVersion: 'fv1:large-fixture',
+        }, null, 2),
+      },
+      capabilities: { submit: true, pause: false, continue: false, stop: true, resume: false },
+    }),
+  }),
   fixture('verification', '验证与人工验收', '检查已跑完，等待你逐项验收；完成授权仍未授予。', {
     snapshot: snapshot({
       status: 'blocked',

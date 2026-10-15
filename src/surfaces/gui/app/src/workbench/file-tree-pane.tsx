@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { GuiFileView, GuiWorkspaceTree } from '../../../live-types.js';
 import { FilePreviewCard, type FilePreviewState } from './file-preview.js';
-import { ChevronIcon } from './icons.js';
+import { ChevronIcon, ExternalLinkIcon } from './icons.js';
 
 /**
  * Batch 7 §工作空间: read-only lazy file tree of the task workspace. Each expanded directory is
@@ -144,7 +144,7 @@ export function FileTreePane({ taskId, getTree, getFileView, openFileExternal, o
               title={row.link ? '链接；展开时将重新校验边界' : undefined}
             >
               <ChevronIcon className="wb-chevron" />
-              <span className="wb-file-tree-name">{row.name}{row.link ? ' ↗' : ''}</span>
+              <span className="wb-file-tree-name">{row.name}{row.link ? <ExternalLinkIcon size={12} /> : null}</span>
             </button>
           ) : row.entryKind === 'file' ? (
             <button
@@ -159,7 +159,7 @@ export function FileTreePane({ taskId, getTree, getFileView, openFileExternal, o
             </button>
           ) : (
             <div key={row.path} className="wb-file-tree-row" style={{ paddingLeft: 8 + row.depth * 14 }}>
-              <span className="wb-file-tree-name wb-file-tree-leaf">{row.name}{row.link ? ' ↗' : ''}（无法预览）</span>
+              <span className="wb-file-tree-name wb-file-tree-leaf">{row.name}{row.link ? <ExternalLinkIcon size={12} /> : null}（无法预览）</span>
             </div>
           )))}
         </div>

@@ -6,7 +6,7 @@ import { defaultShellPath, runCommand } from '../../../src/core/index.js';
 import type { ModelDelta, ModelProvider, ModelResult } from '../../../src/core/model/types.js';
 import { GuiLiveError, GuiSessionHost, type GuiTaskDefinition } from '../../../src/surfaces/gui/live-session.js';
 import { parseInline, parseMarkdown, type MdInline } from '../../../src/surfaces/gui/app/src/workbench/markdown-blocks.js';
-import { buildApprovalPreview, WRITE_REPLACE_NOTE } from '../../../src/surfaces/gui/app/src/workbench/approval-diff.js';
+import { buildApprovalPreview, diffLines, WRITE_REPLACE_NOTE } from '../../../src/surfaces/gui/app/src/workbench/approval-diff.js';
 
 function model(): ModelProvider {
   const provider: ModelProvider = {
@@ -185,10 +185,17 @@ describe('批4 审批变更预览（纯函数）', () => {
     expect(buildApprovalPreview('bash', JSON.stringify({}))).toBeNull(); // no command
   });
 
-  it('refuses to compute an LCS past 400 lines per side', () => {
-    const oldText = Array.from({ length: 401 }, (_, index) => `old-${index}`).join('\n');
-    const newText = Array.from({ length: 401 }, (_, index) => `new-${index}`).join('\n');
-    expect(buildApprovalPreview('edit', JSON.stringify({ path: 'big.txt', oldText, newText }))).toBeNull();
+  it('keeps the target visible while refusing LCS beyond the 400-line boundary', () => {
+    const atLimit = Array.from({ length: 400 }, (_, index) => `line-${index}`).join('\n');
+    const within = buildApprovalPreview('edit', JSON.stringify({ path: 'big.txt', oldText: atLimit, newText: atLimit }));
+    expect(within?.kind === 'edit' && within.diff).toContain('--- a/big.txt');
+    const oversized = `${atLimit}\nline-400`;
+    for (const [oldText, newText] of [[oversized, atLimit], [atLimit, oversized]]) {
+      expect(diffLines(oldText, newText, 'big.txt')).toBeNull();
+      const preview = buildApprovalPreview('edit', JSON.stringify({ path: 'big.txt', oldText, newText }));
+      expect(preview).toMatchObject({ kind: 'edit', path: 'big.txt', diff: '' });
+      expect(preview?.kind === 'edit' && preview.note).toContain('尚未执行');
+    }
   });
 });
 

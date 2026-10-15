@@ -32,11 +32,14 @@ button {
     background-color var(--duration-quick) var(--ease-in-out),
     border-color var(--duration-quick) var(--ease-in-out),
     opacity var(--duration-quick) var(--ease-in-out),
-    transform var(--duration-quick) var(--ease-smooth-out);
+    transform var(--duration-quick) var(--ease-smooth-out),
+    scale 120ms var(--ease-smooth-out),
+    translate 120ms var(--ease-smooth-out);
 }
 
 button:active:not(:disabled) {
-  transform: translateY(1px);
+  translate: 0 1px;
+  scale: 0.98;
 }
 
 button:disabled {

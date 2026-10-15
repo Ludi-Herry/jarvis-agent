@@ -8,7 +8,7 @@
 export type ApprovalPreview =
   | { kind: 'write-create'; path: string; diff: string }          // unified diff, +all new lines
   | { kind: 'write-replace'; path: string; content: string; note: string }
-  | { kind: 'edit'; path: string; diff: string }                  // LCS line diff oldText→newText
+  | { kind: 'edit'; path: string; diff: string; note?: string }    // bounded LCS; path survives an oversized preview
   | { kind: 'command'; command: string }
   | null;
 
@@ -95,7 +95,9 @@ export function buildApprovalPreview(toolName: string, argsJson: string): Approv
   if (toolName === 'edit') {
     if (typeof args.path !== 'string' || typeof args.oldText !== 'string' || typeof args.newText !== 'string') return null;
     const diff = diffLines(args.oldText, args.newText, args.path);
-    return diff === null ? null : { kind: 'edit', path: args.path, diff };
+    return diff === null
+      ? { kind: 'edit', path: args.path, diff: '', note: '内容超过逐行预览上限；请展开「查看调用参数」检查完整内容。此请求尚未执行。' }
+      : { kind: 'edit', path: args.path, diff };
   }
 
   if (COMMAND_TOOLS.has(toolName)) {

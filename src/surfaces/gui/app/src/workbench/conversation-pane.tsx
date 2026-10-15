@@ -6,7 +6,7 @@ import { DecisionBar, type DecisionKind } from './active-stage.js';
 import type { ControlState, ComposerIntent, RunControls as RunControlState } from './controls.js';
 import { CreateTaskPanel } from './create-task-panel.js';
 import { shortObjective, statusPresentation, workspaceName } from './format.js';
-import { ArrowDownIcon, FolderIcon, PanelIcon, StopIcon } from './icons.js';
+import { ArrowDownIcon, FolderIcon, PanelIcon, PlusIcon, StopIcon } from './icons.js';
 import { MessageView } from './message-item.js';
 import type { EvidenceTab } from './prefs.js';
 import { describeRunVitals, RUN_VITALS_STATUSES } from './run-vitals.js';
@@ -316,7 +316,7 @@ export function ConversationPane(props: ConversationPaneProps) {
             </div>
           </ThreadPrimitive.Viewport>
 
-          {geometry.sticky !== null ? (
+          {snapshot !== null && geometry.sticky !== null ? (
             <button
               type="button"
               className="wb-sticky-prompt"
@@ -327,7 +327,7 @@ export function ConversationPane(props: ConversationPaneProps) {
             </button>
           ) : null}
 
-          {geometry.mapVisible ? (
+          {snapshot !== null && geometry.mapVisible ? (
             <nav className="wb-map" aria-label="对话定位刻度" onMouseLeave={() => setHoveredTick(null)}>
               {geometry.turns.map((turn, index) => (
                 <button
@@ -354,7 +354,7 @@ export function ConversationPane(props: ConversationPaneProps) {
             </nav>
           ) : null}
 
-          {geometry.scrollable && !geometry.atLatest ? (
+          {snapshot !== null && geometry.scrollable && !geometry.atLatest ? (
             <button type="button" className="wb-to-latest" onClick={geometry.scrollToLatest}>
               <ArrowDownIcon />
               回到最新
@@ -377,7 +377,10 @@ export function ConversationPane(props: ConversationPaneProps) {
 
         {snapshot !== null ? <ComposerPrimitive.Root className="composer-bar wb-composer">
           <label className="wb-sr-only" htmlFor="wb-conversation-input">{composerLabel}</label>
-          <div className="composer-surface">
+          <div className="composer-surface" onClick={(event) => {
+            if (event.target instanceof Element && event.target.closest('button, a, input, select, textarea') === null) composerRef.current?.focus();
+          }}>
+            <button type="button" className="wb-composer-files wb-icon-btn" onClick={() => onOpenEvidence('files')} aria-label="查看工作区文件" title="查看工作区文件"><PlusIcon /></button>
             <ComposerPrimitive.Input
               ref={composerRef}
               id="wb-conversation-input"
@@ -391,6 +394,12 @@ export function ConversationPane(props: ConversationPaneProps) {
               onInput={growComposer}
               data-draft-key={composerStorageKey}
             />
+            <ComposerPrimitive.Send className="wb-send-icon" aria-label={sendLabel} title={sendLabel}>
+              <ArrowDownIcon style={{ transform: 'rotate(180deg)' }} />
+            </ComposerPrimitive.Send>
+          </div>
+          <div className="composer-meta wb-composer-meta">
+            <span data-tone={connection !== 'connected' ? 'danger' : undefined}>{connection !== 'connected' ? '连接未就绪：草稿保留' : 'Ctrl Enter 发送'}</span>
             <div className="wb-composer-tools">
               <span className="wb-model-pill" title="模型与思考档在任务创建时确定，由 provider 真实配置生成">
                 {snapshot?.model ?? models?.defaultModel ?? '模型加载中'}
@@ -398,14 +407,7 @@ export function ConversationPane(props: ConversationPaneProps) {
               <span className="wb-model-pill" title="当前任务的思考档">
                 思考：{snapshot?.thinking ?? 'off'}
               </span>
-              <ComposerPrimitive.Send className="wb-send-icon" aria-label={sendLabel} title={sendLabel}>
-                <ArrowDownIcon style={{ transform: 'rotate(180deg)' }} />
-              </ComposerPrimitive.Send>
             </div>
-          </div>
-          <div className="composer-meta wb-composer-meta">
-            {connection !== 'connected' ? <span data-tone="danger">连接未就绪：可继续编辑，发送与控制暂不可用</span> : null}
-            <span>Ctrl Enter 发送</span>
           </div>
         </ComposerPrimitive.Root> : null}
       </ThreadPrimitive.Root>

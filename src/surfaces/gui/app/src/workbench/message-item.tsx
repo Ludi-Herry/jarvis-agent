@@ -122,7 +122,7 @@ export function MessageView({
 
   if (isUser) {
     return (
-      <MessagePrimitive.Root className="message-item wb-message" data-role={message.role}>
+      <MessagePrimitive.Root className="message-item wb-message" data-role={message.role} role="article" aria-label={`${name}，${time}`}>
         <div className="message-meta wb-message-meta">
           <strong>{name}</strong>
           <time dateTime={timeValue}>{time}</time>
@@ -136,7 +136,7 @@ export function MessageView({
   }
 
   return (
-    <MessagePrimitive.Root className="message-item wb-message" data-role={message.role}>
+    <MessagePrimitive.Root className="message-item wb-message" data-role={message.role} role="article" aria-label={`${name}，${time}`}>
       <div className="wb-msg-head">
         <span className="wb-msg-avatar" aria-hidden="true">J</span>
         <div className="wb-msg-ident">

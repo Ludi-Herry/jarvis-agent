@@ -4,6 +4,7 @@ import { submitTaskDraft, type GuiFreeTaskInput } from '../live/api.js';
 import type { ControlState } from './controls.js';
 import { PinnedTaskCard } from './empty-state.js';
 import { formatTimestamp } from './format.js';
+import { ArrowUpIcon, ChatIcon } from './icons.js';
 
 interface FieldErrors {
   readonly [field: string]: string;
@@ -225,21 +226,7 @@ export function CreateTaskPanel({ overview, models, canStart, pending, onValidat
   return (
     <section className="wb-empty wb-new-task" aria-labelledby="wb-empty-title">
       <header className="wb-new-task-heading">
-        <svg
-          className="wb-new-task-icon"
-          viewBox="0 0 29 29"
-          width="29"
-          height="29"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.7"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-          focusable="false"
-        >
-          <path d="M7 4.5h15a2 2 0 0 1 2 2v15a2 2 0 0 1-2 2H12l-7 3v-20a2 2 0 0 1 2-2z" />
-        </svg>
+        <ChatIcon className="wb-new-task-icon" size={29} />
         <h2 id="wb-empty-title">我们应该创造什么？</h2>
       </header>
 
@@ -251,7 +238,9 @@ export function CreateTaskPanel({ overview, models, canStart, pending, onValidat
       </label>
       {field('workspaceId')}
 
-      <div className="wb-new-composer">
+      <div className="wb-new-composer" onClick={(event) => {
+        if (event.target instanceof Element && event.target.closest('button, a, input, select, textarea, label') === null) objectiveRef.current?.focus();
+      }}>
         <label htmlFor="wb-new-task-objective">任务目标</label>
         <div>
           <textarea
@@ -307,9 +296,7 @@ export function CreateTaskPanel({ overview, models, canStart, pending, onValidat
             aria-controls="wb-create-contract"
             onClick={() => { void validate(); }}
           >
-            <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M8 13V3M4.25 6.75 8 3l3.75 3.75" />
-            </svg>
+            <ArrowUpIcon />
           </button>
         </div>
 
