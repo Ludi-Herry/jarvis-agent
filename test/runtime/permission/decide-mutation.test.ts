@@ -98,3 +98,14 @@ describe('decide — 给人看的理由', () => {
     });
   });
 });
+
+describe('decide — 通配规则 "*" 与只扫路径参数（第二轮变异补强）', () => {
+  it('拒绝规则 "*" 也拦多行命令：不能退回正则，正则里的 . 不匹配换行', () => {
+    const denyAll: PermissionRule = { action: 'deny', tool: 'bash', pattern: '*' };
+    expect(decide(req('bash', 'executes-code', { command: 'echo a\necho b' }), policy([denyAll])).action).toBe('deny');
+  });
+
+  it('搜索词恰好是 .env 不拦：它不是路径参数', () => {
+    expect(decide(req('grep', 'read-only', { pattern: '.env', path: 'src' }), policy()).action).toBe('allow');
+  });
+});
