@@ -1,5 +1,5 @@
 // The canvas: one view of the whole task. Flow (archify-style swimlanes), lifecycle, and timing, with a node passport and the todo list beside it.
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { Check, ChevronLeft, ChevronRight, CircleCheck, Crosshair, Eye, FileText, GitCompareArrows, Hand, Lightbulb, Maximize2, Minus, MessageSquare, CornerDownRight, Pause, Pencil, Play, Plus, RotateCcw, Search, ShieldCheck, Shapes, SquareTerminal, Undo2, Wrench, X } from "lucide-react";
 import SegmentedControl from "../arc/segmented-control/segmented-control";
@@ -9,12 +9,16 @@ import { UsageMeter } from "../arc/usage-meter/usage-meter";
 import { Diffstat, Orb, fmtElapsed } from "../ui/Bits";
 import type { Act } from "../store";
 import { LANES, STAGES, STATUS_LABEL, type Flow, type FlowNode, type Lane, type LifeKey, type NStatus, type Todo } from "./model";
+import { FadeScroll } from "../ui/scroll-area";
+import { KINDS, type ExplainKind, type ExplainOrigin } from "../artifact/explainer";
+
+const centre = (el: Element): ExplainOrigin => { const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; };
 
 export type MapMode = "flow" | "state" | "time";
 type Tab = "changes" | "preview" | "terminal";
 export interface CanvasProps {
   flow: Flow; theme: "light" | "dark"; map: MapMode; setMap: (m: MapMode) => void; budget: number;
-  act?: Act; phase: string; onOpenFile: (p: string) => void; onPanel: (t: Tab) => void; onExplain?: () => void;
+  act?: Act; phase: string; onOpenFile: (p: string) => void; onPanel: (t: Tab) => void; onExplain?: (k?: ExplainKind, from?: ExplainOrigin) => void;
 }
 
 const LANE_IX: Record<Lane, number> = { you: 0, jarvis: 1, files: 2, checks: 3 };
@@ -82,7 +86,7 @@ export function Canvas({ flow, theme, map, setMap, budget, act, phase, onOpenFil
       </div>
       <span className="grow" />
       <SegmentedControl label="画布视图" value={map} onValueChange={v => setMap(v as MapMode)} options={[{ value: "flow", label: "链路" }, { value: "state", label: "状态" }, { value: "time", label: "时间" }]} />
-      {onExplain && <Button size="sm" variant="secondary" onClick={onExplain}><Shapes size={14} />讲解图</Button>}
+      {onExplain && <Button size="sm" variant="secondary" onClick={e => onExplain(undefined, centre(e.currentTarget))}><Shapes size={14} />讲解图</Button>}
     </div>
     <div className="cv-body">
       <div className="cv-main">
@@ -90,12 +94,13 @@ export function Canvas({ flow, theme, map, setMap, budget, act, phase, onOpenFil
         {map === "state" && <StateMap flow={flow} onPick={k => { const id = lifeNode(flow, k); if (id) pick(id); }} />}
         {map === "time" && <TimeMap flow={flow} sel={sel} onPick={pick} budget={budget} />}
       </div>
-      <aside className="cv-side" aria-label="选中的一步和要做的事">
+      <FadeScroll as="aside" className="cv-side" aria-label="选中的一步和要做的事">
         <AnimatePresence mode="popLayout" initial={false}>
           {node && <Passport key={node.id} n={node} flow={flow} theme={theme} act={act} phase={phase} onOpenFile={onOpenFile} onPanel={onPanel} onExplain={onExplain} onStep={step} />}
         </AnimatePresence>
         <Todos flow={flow} sel={sel} onPick={pick} />
-      </aside>
+        <Outputs flow={flow} onPanel={onPanel} onExplain={onExplain} />
+      </FadeScroll>
     </div>
   </div>;
 }
@@ -110,13 +115,37 @@ function FlowMap({ flow, sel, onPick, theme, follow, setFollow, still, setStill 
   const H = TOP + flow.nodes.length * RH + 20;
   const fit = Math.max(.55, Math.min(1, (vw - 24) / W));
   const z = zoom === "fit" ? fit : zoom;
+  // Zoom keeps the point under the cursor (or the view's centre for buttons) still. Pinch/ctrl-wheel is exponential so it
+  // feels the same at every scale; it sticks briefly at 100% (±5%) so you can land there by feel.
+  const sizer = useRef<HTMLDivElement>(null);
+  const zNow = useRef(z); zNow.current = z;
+  const raw = useRef<number | null>(null);
+  const anchor = useRef<{ ax: number; ay: number; cx: number; cy: number } | null>(null);
+  const zoomAt = useCallback((next: number, ax?: number, ay?: number) => {
+    const el = vp.current, sz = sizer.current; if (!el || !sz) return;
+    const r = el.getBoundingClientRect(), s = sz.getBoundingClientRect();
+    const x = ax ?? r.left + r.width / 2, y = ay ?? r.top + r.height / 2;
+    anchor.current = { ax: x, ay: y, cx: (x - s.left) / zNow.current, cy: (y - s.top) / zNow.current };
+    const v = Math.max(.5, Math.min(1.6, next)); raw.current = v;
+    setZoom(+(Math.abs(v - 1) < .05 ? 1 : v).toFixed(3));
+  }, []);
+  useLayoutEffect(() => {
+    const a = anchor.current, el = vp.current, sz = sizer.current; anchor.current = null; if (!a || !el || !sz) return;
+    const s = sz.getBoundingClientRect();
+    el.scrollLeft += s.left - (a.ax - a.cx * z); el.scrollTop += s.top - (a.ay - a.cy * z);
+  }, [z]);
   useLayoutEffect(() => {
     const el = vp.current; if (!el) return;
     const ro = new ResizeObserver(() => setVw(el.clientWidth)); ro.observe(el); setVw(el.clientWidth);
-    const wheel = (e: WheelEvent) => { if (!e.ctrlKey && !e.metaKey) return; e.preventDefault(); setZoom(cur => { const c = cur === "fit" ? fit : cur; return Math.max(.5, Math.min(1.6, +(c * (e.deltaY < 0 ? 1.1 : 1 / 1.1)).toFixed(2))); }); };
+    const wheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return; e.preventDefault();
+      const d = Math.max(-40, Math.min(40, e.deltaY * (e.deltaMode === 1 ? 16 : 1)));
+      setFollow(false); // you're looking somewhere specific — stop auto-following the newest step
+      zoomAt((raw.current ?? zNow.current) * Math.exp(-d * .005), e.clientX, e.clientY);
+    };
     el.addEventListener("wheel", wheel, { passive: false });
     return () => { ro.disconnect(); el.removeEventListener("wheel", wheel); };
-  }, [fit]);
+  }, [fit, zoomAt, setFollow]);
   const pos = useMemo(() => new Map(flow.nodes.map((n, i) => [n.id, { x: G + LANE_IX[n.lane] * LW + (LW - NW) / 2, y: TOP + i * RH + (RH - NH) / 2 }])), [flow.nodes]);
   // Follow the newest step, like the thread scrolls to its end.
   useEffect(() => {
@@ -139,7 +168,7 @@ function FlowMap({ flow, sel, onPick, theme, follow, setFollow, still, setStill 
       <div className={`fm-heads${z < .75 ? " is-tight" : ""}`} style={{ minWidth: W * z }}><div className="fm-heads-in" style={{ width: W * z }}>
         {LANES.map((l, i) => <div key={l.id} className={`fm-lane-head${lens === l.id ? " is-on" : ""}`} style={{ left: (G + i * LW) * z, width: LW * z }}><b>{l.label}</b><small>{l.hint}</small></div>)}
       </div></div>
-      <div className="fm-sizer" style={{ width: W * z, height: H * z }}>
+      <div ref={sizer} className="fm-sizer" style={{ width: W * z, height: H * z }}>
         <div className="fm-content" style={{ width: W, height: H, transform: `scale(${z})` }}>
           <svg className="fm-svg" width={W} height={H} aria-hidden>
             <defs>
@@ -185,10 +214,10 @@ function FlowMap({ flow, sel, onPick, theme, follow, setFollow, still, setStill 
       <span className="tb-sep" />
       <div className="tb-group" role="group" aria-label="只看某一列">{([["all", "全部"], ["you", "你"], ["files", "改动"], ["checks", "检查"]] as const).map(([k, l]) => <button key={k} type="button" className={`tb-chip${lens === k ? " is-on" : ""}`} aria-pressed={lens === k} onClick={() => setLens(k)}>{l}</button>)}</div>
       <span className="tb-sep" />
-      <button type="button" className="tb-btn" aria-label="缩小" onClick={() => setZoom(Math.max(.5, +(z / 1.15).toFixed(2)))}><Minus size={14} /></button>
-      <button type="button" className="tb-zoom" onClick={() => setZoom(1)} title="回到 100%">{Math.round(z * 100)}%</button>
-      <button type="button" className="tb-btn" aria-label="放大" onClick={() => setZoom(Math.min(1.6, +(z * 1.15).toFixed(2)))}><Plus size={14} /></button>
-      <button type="button" className={`tb-btn${zoom === "fit" ? " is-on" : ""}`} aria-label="适应宽度" title="适应宽度" onClick={() => setZoom("fit")}><Maximize2 size={13} /></button>
+      <button type="button" className="tb-btn" aria-label="缩小" onClick={() => zoomAt(z / 1.15)}><Minus size={14} /></button>
+      <button type="button" className="tb-zoom" onClick={() => zoomAt(1)} title="回到 100%">{Math.round(z * 100)}%</button>
+      <button type="button" className="tb-btn" aria-label="放大" onClick={() => zoomAt(z * 1.15)}><Plus size={14} /></button>
+      <button type="button" className={`tb-btn${zoom === "fit" ? " is-on" : ""}`} aria-label="适应宽度" title="适应宽度" onClick={() => { raw.current = null; setZoom("fit"); }}><Maximize2 size={13} /></button>
       <span className="tb-sep" />
       <button type="button" className={`tb-btn${follow ? " is-on" : ""}`} aria-pressed={follow} title="跟着最新一步" aria-label="跟着最新一步" onClick={() => setFollow(!follow)}><Crosshair size={14} /></button>
       <button type="button" className={`tb-chip${still ? "" : " is-on"}`} aria-pressed={!still} onClick={() => setStill(!still)} title={still ? "动效已暂停" : "连线在流动"}>{still ? <Play size={12} /> : <Pause size={12} />}{still ? "静止" : "实时"}</button>
@@ -277,7 +306,7 @@ function TimeMap({ flow, sel, onPick, budget }: { flow: Flow; sel?: string; onPi
   const meter = flow.stageCost.length > 4 ? [...flow.stageCost.slice(0, 3), { key: "rest", label: "其余", value: +flow.stageCost.slice(3).reduce((a, x) => a + x.value, 0).toFixed(2) }] : flow.stageCost;
   const runs = flow.nodes.filter(n => n.kind === "check");
   const passed = runs.filter(n => n.status === "done").length, failed = runs.filter(n => n.status === "failed").length, skipped = runs.filter(n => n.status === "skipped" || n.status === "planned").length;
-  return <div className="tm">
+  return <FadeScroll className="tm">
     <section className="tm-card">
       <header className="tm-head"><b>每一步花了多久</b><span className="tm-badge">示意时长</span><span className="tm-sub">按剧本估算，不是真实计时 · 合计约 {secs(t)}</span></header>
       <div className="wf" role="list">
@@ -307,11 +336,11 @@ function TimeMap({ flow, sel, onPick, budget }: { flow: Flow; sel?: string; onPi
         </div>
       </section>
     </div>
-  </div>;
+  </FadeScroll>;
 }
 
 /* ---------- Passport ---------- */
-function Passport({ n, flow, theme, act, phase, onOpenFile, onPanel, onExplain, onStep }: { n: FlowNode; flow: Flow; theme: "light" | "dark"; act?: Act; phase: string; onOpenFile: (p: string) => void; onPanel: (t: Tab) => void; onExplain?: () => void; onStep: (d: number) => void }) {
+function Passport({ n, flow, theme, act, phase, onOpenFile, onPanel, onExplain, onStep }: { n: FlowNode; flow: Flow; theme: "light" | "dark"; act?: Act; phase: string; onOpenFile: (p: string) => void; onPanel: (t: Tab) => void; onExplain?: (k?: ExplainKind, from?: ExplainOrigin) => void; onStep: (d: number) => void }) {
   const i = flow.nodes.findIndex(x => x.id === n.id);
   const lane = LANES.find(l => l.id === n.lane)!;
   let actions: ReactNode = null;
@@ -323,7 +352,7 @@ function Passport({ n, flow, theme, act, phase, onOpenFile, onPanel, onExplain, 
   else if (act && n.kind === "result" && n.status === "failed" && phase === "failed") actions = <><Button size="sm" onClick={() => act({ type: "fix" })}><Wrench size={14} />让 Jarvis 修好</Button><Button size="sm" variant="secondary" onClick={() => onPanel("terminal")}>看输出</Button></>;
   else if (act && n.notice === "interrupted" && phase === "interrupted") actions = <Button size="sm" onClick={() => act({ type: "resume" })}>接着做</Button>;
   else if (act && n.notice === "stopped" && phase === "stopped") actions = <Button size="sm" variant="secondary" onClick={() => act({ type: "continue" })}>继续</Button>;
-  else if (n.kind === "result" && n.outcome === "done") actions = <><Button size="sm" variant="secondary" onClick={() => onPanel("preview")}><Eye size={14} />看预览</Button><Button size="sm" variant="ghost" onClick={() => onPanel("changes")}><GitCompareArrows size={14} />看改动</Button>{onExplain && <Button size="sm" variant="ghost" onClick={onExplain}><Shapes size={14} />讲解图</Button>}</>;
+  else if (n.kind === "result" && n.outcome === "done") actions = <><Button size="sm" variant="secondary" onClick={() => onPanel("preview")}><Eye size={14} />看预览</Button><Button size="sm" variant="ghost" onClick={() => onPanel("changes")}><GitCompareArrows size={14} />看改动</Button>{onExplain && <Button size="sm" variant="ghost" onClick={e => onExplain(undefined, centre(e.currentTarget))}><Shapes size={14} />讲解图</Button>}</>;
   else if (n.kind === "check" && n.output) actions = <Button size="sm" variant="secondary" onClick={() => onPanel("terminal")}><SquareTerminal size={14} />在终端里看</Button>;
   else if (n.kind === "gate" && n.status !== "planned") actions = <Button size="sm" variant="secondary" onClick={() => onPanel("changes")}><GitCompareArrows size={14} />看要改的文件</Button>;
   return <motion.section className={`cv-card pp is-${n.status}`} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={{ type: "spring", visualDuration: .26, bounce: 0 }} aria-live="polite">
@@ -356,12 +385,37 @@ function Passport({ n, flow, theme, act, phase, onOpenFile, onPanel, onExplain, 
   </motion.section>;
 }
 
+/* ---------- Outputs ---------- */
+function Outputs({ flow, onPanel, onExplain }: { flow: Flow; onPanel: (t: Tab) => void; onExplain?: (k?: ExplainKind, from?: ExplainOrigin) => void }) {
+  const delivered = flow.nodes.some(n => n.kind === "result" && n.outcome === "done");
+  const nFiles = flow.fileList.length;
+  const ran = flow.checks.pass + flow.checks.fail > 0;
+  const rows: { key: string; icon: ReactNode; label: string; note: ReactNode; on: boolean; go: (el: Element) => void }[] = [
+    ...(onExplain ? KINDS.map(k => ({ key: k.value, icon: <Shapes size={14} />, label: k.label, note: delivered ? "讲解图" : "改好后生成", on: delivered, go: (el: Element) => onExplain(k.value, centre(el)) })) : []),
+    { key: "changes", icon: <GitCompareArrows size={14} />, label: "改动", note: nFiles ? <>{nFiles} 个文件 <Diffstat add={flow.add} del={flow.del} /></> : "还没改文件", on: nFiles > 0, go: () => onPanel("changes") },
+    { key: "preview", icon: <Eye size={14} />, label: "预览", note: delivered ? "改好的样子" : "改好后能看", on: delivered, go: () => onPanel("preview") },
+    { key: "terminal", icon: <SquareTerminal size={14} />, label: "终端", note: ran ? `${flow.checks.pass} 过${flow.checks.fail ? ` · ${flow.checks.fail} 没过` : ""}` : "还没跑检查", on: ran, go: () => onPanel("terminal") },
+  ];
+  const ready = rows.filter(r => r.on).length;
+  return <section className="cv-card cv-outputs" aria-label="产物">
+    <header className="op-head"><h3>产物</h3><p>{ready ? `${ready} 样可以看` : "做完一步就会出现在这里"}</p></header>
+    <ul className="op-list">{rows.map(r => <li key={r.key}>
+      <button type="button" className="op-row" disabled={!r.on} onClick={e => r.go(e.currentTarget)}>
+        <span className="op-icon" aria-hidden>{r.icon}</span>
+        <span className="op-label">{r.label}</span>
+        <span className="op-note">{r.note}</span>
+        {r.on && <ChevronRight size={13} className="op-go" aria-hidden />}
+      </button>
+    </li>)}</ul>
+  </section>;
+}
+
 /* ---------- Todos ---------- */
 function TodoMark({ s }: { s: NStatus }) {
   if (s === "done") return <span className="td-mark is-done"><Check size={11} strokeWidth={3} /></span>;
   if (s === "running") return <span className="td-mark is-running"><span className="spin" /></span>;
   if (s === "failed") return <span className="td-mark is-failed"><X size={11} strokeWidth={3} /></span>;
-  if (s === "waiting") return <span className="td-mark is-waiting"><i /></span>;
+  if (s === "waiting") return <span className="td-mark is-waiting"><span className="pulse-dot is-sm" aria-hidden /></span>;
   if (s === "stopped") return <span className="td-mark is-stopped"><i /></span>;
   if (s === "skipped") return <span className="td-mark is-skipped"><Minus size={11} strokeWidth={3} /></span>;
   return <span className="td-mark is-planned" />;

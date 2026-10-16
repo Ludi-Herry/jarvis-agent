@@ -9,6 +9,7 @@ import { Button } from "../arc/button/button";
 import type { Flow } from "../canvas/model";
 import "./explainer.css";
 import EXPORT_CSS from "./explainer.css?raw";
+import { enter } from "../ui/motion";
 
 export type ExplainKind = "layers" | "delta" | "flow";
 const KINDS: { value: ExplainKind; label: string; title: string; lede: string }[] = [
@@ -207,14 +208,14 @@ function download(el: HTMLElement | null, title: string, kind: ExplainKind) {
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
 
-export function ExplainerDialog({ open, onOpenChange, kind, setKind, interjected, flow, nFiles }: { open: boolean; onOpenChange: (v: boolean) => void; kind: ExplainKind; setKind: (k: ExplainKind) => void; interjected: boolean; flow?: Flow; nFiles: number }) {
+export function ExplainerDialog({ open, onOpenChange, kind, setKind, interjected, flow, nFiles, origin }: { origin?: ExplainOrigin | null; open: boolean; onOpenChange: (v: boolean) => void; kind: ExplainKind; setKind: (k: ExplainKind) => void; interjected: boolean; flow?: Flow; nFiles: number }) {
   const [exploded, setExploded] = useState(false);
   const fig = useRef<HTMLElement>(null);
   const replay = () => { setExploded(false); window.setTimeout(() => setExploded(true), 380); };
   useEffect(() => { if (!open) { setExploded(false); return; } const id = window.setTimeout(() => setExploded(true), 450); return () => window.clearTimeout(id); }, [open, kind]);
   const k = KINDS.find(x => x.value === kind)!;
   return <Dialog open={open} onOpenChange={onOpenChange}>
-    <DialogContent className="explain-dialog" title="讲解图" description="按这次的改动画的示意图。可以下载成一个 HTML 文件发给别人。">
+    <DialogContent className="explain-dialog" origin={origin} title="讲解图" description="按这次的改动画的示意图。可以下载成一个 HTML 文件发给别人。">
       <div className="ex-bar">
         <SegmentedControl label="讲解图类型" value={kind} onValueChange={v => setKind(v as ExplainKind)} options={KINDS.map(x => ({ value: x.value, label: x.label }))} />
         <span className="grow" />
@@ -227,17 +228,19 @@ export function ExplainerDialog({ open, onOpenChange, kind, setKind, interjected
 }
 
 /** Thread card under the result: the artifact, with a small drawing that opens the viewer. */
-export function ArtifactCard({ onOpen }: { onOpen: (k: ExplainKind) => void }) {
+export type ExplainOrigin = { x: number; y: number };
+const centre = (el: Element): ExplainOrigin => { const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; };
+export function ArtifactCard({ onOpen }: { onOpen: (k: ExplainKind, from?: ExplainOrigin) => void }) {
   const I = (x: number, y: number, z: number): P => [52 + (x - y) * .32, 36 + (x + y) / 2 * .32 - z];
   const slab = (w: number, d: number, z: number, focal?: boolean) => <Box s={{ x: -w / 2, y: -d / 2, w, d, t: 3, focal }} z={z} I={I} />;
-  return <motion.section className="card artifact" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: .32, ease: [.16, 1, .3, 1] }} aria-label="讲解图">
-    <button type="button" className="artifact-thumb dd" onClick={() => onOpen("layers")} aria-label="打开分层拆解图">
+  return <motion.section className="card artifact" {...enter} aria-label="讲解图">
+    <button type="button" className="artifact-thumb dd" onClick={e => onOpen("layers", centre(e.currentTarget))} aria-label="打开分层拆解图">
       <svg viewBox="0 0 104 76" aria-hidden>{slab(120, 84, 0)}{slab(96, 66, 14)}{slab(64, 18, 28, true)}</svg>
     </button>
     <div className="artifact-body">
       <h3><Shapes size={14} />讲解图：这次改了什么</h3>
       <p>把设置页拆成几层，标出改在哪；再配一张改动前后和做法图。</p>
-      <div className="artifact-links">{KINDS.map(x => <button key={x.value} type="button" onClick={() => onOpen(x.value)}>{x.label}<ChevronRight size={12} /></button>)}</div>
+      <div className="artifact-links">{KINDS.map(x => <button key={x.value} type="button" onClick={e => onOpen(x.value, centre(e.currentTarget))}>{x.label}<ChevronRight size={12} /></button>)}</div>
     </div>
   </motion.section>;
 }

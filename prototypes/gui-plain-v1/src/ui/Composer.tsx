@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from "react";
+import React, { useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowUp, Camera, Check, ChevronDown, FileText, FolderClosed, FolderPlus, Hand, Image, MessageCircle, Paperclip, Plus, Sparkles, Upload, Wallet, X, Zap } from "lucide-react";
+import { ArrowUp, Camera, Check, ChevronDown, FileText, FolderClosed, FolderPlus, Hand, Image, MessageCircle, Paperclip, Plus, Sparkles, Upload, Wallet, WifiOff, X, Zap } from "lucide-react";
 import { BorderBeam } from "border-beam";
 import { Popover, PopoverContent, PopoverTrigger } from "../arc/popover/popover";
 import { Switch } from "../arc/switch/switch";
@@ -8,6 +8,8 @@ import { Tooltip } from "../arc/tooltip/tooltip";
 import { PERMISSIONS, type Attachment, type Mode, type Phase, type Project } from "../scenario";
 import { MOD, type Prefs } from "../prefs";
 import { useNotify } from "./feedback";
+import { isIme, Pop } from "./Bits";
+import { fade } from "./motion";
 
 const MODE_ICON: Record<Mode, any> = { discuss: MessageCircle, ask: Hand, auto: Zap };
 const MAX_ATTACH = 6;
@@ -30,8 +32,8 @@ export function toAttachments(list: FileList | File[]): Attachment[] {
   });
 }
 
-export function AttachChip({ a, onRemove }: { a: Attachment; onRemove?: () => void }) {
-  return <span className="attach-chip">
+export function AttachChip({ a, onRemove, i }: { a: Attachment; onRemove?: () => void; i?: number }) {
+  return <span className="attach-chip is-cascade" style={i !== undefined ? { "--i": i } as React.CSSProperties : undefined}>
     <span className={`attach-thumb${a.url ? " has-img" : ""}`}>{a.url ? <img src={a.url} alt="" /> : a.kind === "image" ? <Image size={13} /> : <FileText size={13} />}</span>
     <span className="attach-name">{a.label}</span>
     {onRemove && <button type="button" aria-label={`移除 ${a.label}`} onClick={onRemove}><X size={12} /></button>}
@@ -77,9 +79,10 @@ export function Composer(p: ComposerProps) {
   };
   const send = () => { if (showStop) { p.onStop(); return; } if (!canSend) return; p.onSend(draft); };
   const onKey = (e: KeyboardEvent) => {
-    if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
+    if (e.key !== "Enter" || isIme(e)) return;
     const mod = e.ctrlKey || e.metaKey;
-    if (p.sendKey === "enter" ? !e.shiftKey && !mod : mod) { e.preventDefault(); send(); }
+    // The keyboard only ever sends. Stopping a task is a deliberate click (or Esc) — Enter in an empty box must not stop work.
+    if (p.sendKey === "enter" ? !e.shiftKey && !mod : mod) { if (!canSend) { if (!mod) e.preventDefault(); return; } e.preventDefault(); p.onSend(draft); }
   };
   const onPaste = (e: ClipboardEvent) => {
     const imgs = Array.from(e.clipboardData.files).filter(f => f.type.startsWith("image/"));
@@ -104,9 +107,9 @@ export function Composer(p: ComposerProps) {
     <input ref={fileInput} type="file" multiple hidden onChange={e => { if (e.target.files) add(toAttachments(e.target.files)); e.target.value = ""; }} />
     <BorderBeam active={p.beam} size="md" colorVariant="ocean" theme={theme} strength={theme === "dark" ? .9 : .8} duration={2.6} className="beam">
       <div className={`composer${drag ? " is-drag" : ""}`}>
-        <AnimatePresence>{drag && <motion.div className="drop-cover" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: .15 }}><Upload size={18} />松开，添加到这条消息</motion.div>}</AnimatePresence>
+        <AnimatePresence>{drag && <motion.div className="drop-cover" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={fade}><Upload size={18} />松开，添加到这条消息</motion.div>}</AnimatePresence>
         <AnimatePresence initial={false}>{attachments.length > 0 && <motion.div className="attach-row" initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }}>
-          {attachments.map((a, i) => <AttachChip key={`${a.label}-${i}`} a={a} onRemove={() => p.setAttachments(cur => cur.filter((_, j) => j !== i))} />)}
+          {attachments.map((a, i) => <AttachChip key={`${a.label}-${i}`} a={a} i={i} onRemove={() => p.setAttachments(cur => cur.filter((_, j) => j !== i))} />)}
         </motion.div>}</AnimatePresence>
         <textarea ref={ta} rows={1} value={draft} onChange={e => setDraft(e.target.value)} onKeyDown={onKey} onPaste={onPaste} placeholder={placeholderFor(p.phase)} aria-label="给 Jarvis 的消息" />
         <div className="composer-bar">
@@ -134,7 +137,7 @@ export function Composer(p: ComposerProps) {
           </Popover>
           <span className="grow" />
           <Popover open={modelOpen} onOpenChange={setModelOpen}>
-            <PopoverTrigger asChild><button type="button" className="chip-btn" aria-label="模型与用量"><Sparkles size={14} className="muted-ico" /><span>V4.1 Flash</span>{p.cost > 0 && <span className="cost-tag">¥{p.cost.toFixed(2)}</span>}<ChevronDown size={13} className="muted-ico" /></button></PopoverTrigger>
+            <PopoverTrigger asChild><button type="button" className="chip-btn" aria-label="模型与用量"><Sparkles size={14} className="muted-ico" /><span>V4.1 Flash</span>{p.cost > 0 && <Pop value={p.cost.toFixed(2)} className="cost-tag">¥{p.cost.toFixed(2)}</Pop>}<ChevronDown size={13} className="muted-ico" /></button></PopoverTrigger>
             <PopoverContent className="menu model-menu" align="end" side="top">
               <div className="menu-label">模型</div>
               <button className="menu-item rich is-selected" onClick={() => setModelOpen(false)}><Sparkles size={16} /><span className="mi-text"><span className="mi-title">DeepSeek V4.1 Flash</span><span className="mi-desc">日常改动够用，速度快</span></span><Check size={15} className="mi-check" /></button>
@@ -177,4 +180,15 @@ export function Composer(p: ComposerProps) {
       <button type="button" className="sub-hint" onClick={() => p.onOpenSettings("general")} title="在设置里改发送方式">{sendHint}</button>
     </div>}
   </div>;
+}
+
+/** A message that couldn't go out (offline). It waits here — nothing is lost — until you resend, edit or drop it. */
+export function UnsentBar({ text, n, onRetry, onDiscard, onEdit }: { text: string; n: number; onRetry: () => void; onDiscard: () => void; onEdit: () => void }) {
+  return <motion.div className="unsent" role="status" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={fade}>
+    <span className="unsent-ico"><WifiOff size={14} /></span>
+    <span className="unsent-main"><b>没发出去</b><span className="unsent-text">{text.trim() || `${n} 个附件`}</span></span>
+    <button type="button" onClick={onEdit}>改一改</button>
+    <button type="button" onClick={onDiscard}>删掉</button>
+    <button type="button" className="is-primary" onClick={onRetry}>重发</button>
+  </motion.div>;
 }

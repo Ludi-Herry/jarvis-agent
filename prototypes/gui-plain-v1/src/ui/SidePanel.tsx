@@ -1,10 +1,12 @@
-import { useEffect, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, Camera, Copy, ExternalLink, FileCode2, GitCompareArrows, Globe, Lock, Monitor, RotateCcw, RotateCw, Settings2, Smartphone, SquareArrowOutUpRight, Undo2, X } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { ArrowLeft, ArrowRight, Camera, Columns2, ExternalLink, FileCode2, GitCompareArrows, Globe, Lock, Monitor, RotateCcw, RotateCw, Rows2, Settings2, Smartphone, SquareArrowOutUpRight, Undo2, X } from "lucide-react";
 import SegmentedControl from "../arc/segmented-control/segmented-control";
 import { Button } from "../arc/button/button";
 import type { Attachment, FileChange, Project, Step } from "../scenario";
 import { Diffstat, IconBtn } from "./Bits";
-import { copyText, useNotify } from "./feedback";
+import { CopyGlyph, useCopy, useNotify } from "./feedback";
+import { FadeScroll } from "./scroll-area";
+import { requestPanelWiden } from "./PanelResizer";
 
 export type PanelTab = "changes" | "preview" | "terminal";
 export type PageKind = "settings" | "home" | "input-dark" | "export" | "portfolio";
@@ -17,7 +19,37 @@ export interface PanelData {
   onRevert: (v: boolean) => void;
 }
 
-function DiffView({ f }: { f: FileChange }) {
+type DiffLine = FileChange["lines"][number];
+type DiffMode = "unified" | "split";
+const MODE_KEY = "jarvis.diffMode";
+const SPLIT_MIN = 560;
+
+/** Pair deletions with the additions that replace them so both sides line up row by row. */
+function splitRows(lines: DiffLine[]) {
+  const rows: ({ hunk: string } | { l?: DiffLine; r?: DiffLine })[] = [];
+  let dels: DiffLine[] = [], adds: DiffLine[] = [];
+  const flush = () => { for (let i = 0; i < Math.max(dels.length, adds.length); i++) rows.push({ l: dels[i], r: adds[i] }); dels = []; adds = []; };
+  for (const l of lines) {
+    if (l.t === "del") { if (adds.length) flush(); dels.push(l); }
+    else if (l.t === "add") adds.push(l);
+    else { flush(); rows.push(l.t === "hunk" ? { hunk: l.text } : { l, r: l }); }
+  }
+  flush();
+  return rows;
+}
+
+function Half({ l, side }: { l?: DiffLine; side: "l" | "r" }) {
+  if (!l) return <div className="diff-half is-empty" aria-hidden />;
+  return <div className={`diff-half is-${l.t}`}><span className="ln">{(side === "l" ? l.a : l.b) ?? ""}</span><span className="sign">{l.t === "add" ? "+" : l.t === "del" ? "−" : ""}</span><code>{l.text}</code></div>;
+}
+
+function DiffView({ f, mode }: { f: FileChange; mode: DiffMode }) {
+  if (mode === "split") return <div className="diff is-split" role="table" aria-label={`${f.name} 的改动，左边是改之前，右边是改之后`}>
+    <div className="diff-cols" aria-hidden><span>改之前</span><span>改之后</span></div>
+    {splitRows(f.lines).map((row, i) => "hunk" in row
+      ? <div key={i} className="diff-hunk">{row.hunk}</div>
+      : <div key={i} className="diff-pair"><Half l={row.l} side="l" /><Half l={row.r} side="r" /></div>)}
+  </div>;
   return <div className="diff" role="table" aria-label={`${f.name} 的改动`}>
     {f.lines.map((l, i) => l.t === "hunk"
       ? <div key={i} className="diff-hunk">{l.text}</div>
@@ -25,15 +57,48 @@ function DiffView({ f }: { f: FileChange }) {
   </div>;
 }
 
+/** Remembered unified/split choice; split only applies when the panel is wide enough to read both sides. */
+function useDiffMode() {
+  const [mode, setModeRaw] = useState<DiffMode>(() => { try { return localStorage.getItem(MODE_KEY) === "split" ? "split" : "unified"; } catch { return "unified"; } });
+  const setMode = (m: DiffMode) => { setModeRaw(m); try { localStorage.setItem(MODE_KEY, m); } catch { /* private mode */ } };
+  const [el, ref] = useState<HTMLDivElement | null>(null);
+  const [wide, setWide] = useState(true);
+  useEffect(() => {
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(([e]) => setWide(e.contentRect.width >= SPLIT_MIN));
+    ro.observe(el); return () => ro.disconnect();
+  }, [el]);
+  return { el, ref, mode, setMode, wide, shown: (mode === "split" && wide ? "split" : "unified") as DiffMode };
+}
+
+function DiffMode({ dm }: { dm: ReturnType<typeof useDiffMode> }) {
+  const notify = useNotify();
+  const pick = (m: DiffMode) => {
+    dm.setMode(m);
+    if (m !== "split" || dm.wide || !dm.el) return;
+    // Too narrow for two readable columns: widen the panel, and say so if the window can't make room.
+    requestPanelWiden(SPLIT_MIN - dm.el.getBoundingClientRect().width + 2);
+    window.setTimeout(() => { if (dm.el && dm.el.getBoundingClientRect().width < SPLIT_MIN) notify({ tone: "info", icon: <Columns2 size={15} />, text: "窗口有点窄，并排放不下，先用单栏看。窗口放宽后会自动并排。" }); }, 380);
+  };
+  const opt = (m: DiffMode, label: string, icon: ReactNode, tip: string) =>
+    <button type="button" className="diff-mode-btn" aria-pressed={dm.shown === m} title={tip} onClick={() => pick(m)}>{icon}<span>{label}</span></button>;
+  return <div className="diff-mode" role="group" aria-label="改动显示方式">
+    {opt("unified", "单栏", <Rows2 size={12} />, "改之前和改之后放在一栏里")}
+    {opt("split", "并排", <Columns2 size={12} />, "左边改之前，右边改之后")}
+  </div>;
+}
+
 function Changes({ d, file, setFile }: { d: PanelData; file: string | null; setFile: (p: string) => void }) {
   const notify = useNotify();
+  const pathCopy = useCopy();
+  const dm = useDiffMode();
   const n = d.files.length;
   if (d.reverted && n) return <div className="panel-empty"><Undo2 size={20} /><h4>改动已撤销</h4><p>{n} 个文件都回到了改之前的样子。</p><Button size="sm" variant="secondary" onClick={() => d.onRevert(false)}><RotateCcw size={14} />恢复修改</Button></div>;
   if ((!d.applied && !d.pending) || !n) return <div className="panel-empty"><GitCompareArrows size={20} /><h4>{d.emptyNote ? "这个任务没有改文件" : "还没有改动"}</h4><p>{d.emptyNote ?? "Jarvis 改了文件以后，会在这里逐行列出来。"}</p></div>;
   const cur = d.files.find(f => f.path === file || f.name === file) ?? d.files[0];
   const add = d.files.reduce((a, f) => a + f.add, 0), del = d.files.reduce((a, f) => a + f.del, 0);
   const full = `${d.project.path}\\${cur.path.replace(/\//g, "\\")}`;
-  return <div className="changes">
+  return <div className="changes" ref={dm.ref}>
     <div className="changes-head">
       <span>{d.pending && !d.applied ? "准备修改" : "修改了"} {n} 个文件</span><Diffstat add={add} del={del} />
       {d.pending && !d.applied ? <span className="pill tone-warning">等你确认</span> : <span className="grow" />}
@@ -41,10 +106,11 @@ function Changes({ d, file, setFile }: { d: PanelData; file: string | null; setF
     </div>
     <div className="file-tabs" role="tablist">{d.files.map(f => <button key={f.path} role="tab" aria-selected={f.path === cur.path} className="file-tab" onClick={() => setFile(f.path)}><FileCode2 size={14} /><span>{f.name}</span><Diffstat add={f.add} del={f.del} /></button>)}</div>
     <div className="file-path"><span className="mono">{cur.path}</span><span className="grow" />
-      <IconBtn className="sb-mini" label="复制路径" onClick={() => copyText(full).then(ok => notify(ok ? { text: "已复制文件路径" } : { tone: "info", text: "浏览器没允许复制" }))}><Copy size={13} /></IconBtn>
+      <DiffMode dm={dm} />
+      <IconBtn className="sb-mini" label={pathCopy.done ? "已复制路径" : "复制路径"} onClick={() => pathCopy.copy(full)}><CopyGlyph done={pathCopy.done} /></IconBtn>
       <IconBtn className="sb-mini" label="在编辑器里打开" onClick={() => notify({ tone: "info", icon: <SquareArrowOutUpRight size={15} />, text: `演示稿：会用你的编辑器打开 ${cur.name}` })}><SquareArrowOutUpRight size={13} /></IconBtn>
     </div>
-    <DiffView f={cur} />
+    <DiffView f={cur} mode={dm.shown} />
   </div>;
 }
 
@@ -147,12 +213,12 @@ function Preview({ d, onShot, onSetUrl }: { d: PanelData; onShot: (a: Attachment
 }
 
 function Terminal({ d }: { d: PanelData }) {
-  const notify = useNotify();
+  const termCopy = useCopy();
   if (!d.runs.length) return <div className="panel-empty"><span className="mono big">&gt;_</span><h4>还没跑过命令</h4><p>Jarvis 跑测试、类型检查时，完整输出都在这里。</p></div>;
   const body = d.runs.map(r => `$ ${r.target}\n${r.status === "running" ? "…" : (r.output ?? []).join("\n")}\n${r.status === "running" ? "" : r.status === "failed" ? "× 没通过（退出码 1）" : "√ 完成"}\n`).join("\n");
   return <div className="term">
     <div className="term-head"><Lock size={12} />只在 {d.project.name} 文件夹里运行<span className="grow" />
-      <button type="button" className="term-copy" onClick={() => copyText(body).then(ok => notify(ok ? { text: "已复制终端输出" } : { tone: "info", text: "浏览器没允许复制" }))}><Copy size={12} />复制</button></div>
+      <button type="button" className={`term-copy${termCopy.done ? " is-done" : ""}`} onClick={() => termCopy.copy(body)}><CopyGlyph done={termCopy.done} size={12} />{termCopy.done ? "已复制" : "复制"}</button></div>
     <pre className="term-body">{body}</pre>
   </div>;
 }
@@ -165,10 +231,10 @@ export function SidePanel({ d, tab, setTab, file, setFile, onClose, onShot, onSe
       <span className="grow" />
       <IconBtn label="关闭面板" onClick={onClose}><X size={16} /></IconBtn>
     </div>
-    <div className="panel-body">
+    <FadeScroll key={tab} className="panel-body">
       {tab === "changes" && <Changes d={d} file={file} setFile={setFile} />}
       {tab === "preview" && <Preview key={d.key} d={d} onShot={onShot} onSetUrl={onSetUrl} />}
       {tab === "terminal" && <Terminal d={d} />}
-    </div>
+    </FadeScroll>
   </aside>;
 }

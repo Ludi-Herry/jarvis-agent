@@ -39,6 +39,15 @@
   --card-outline: lch(0% 0 0 / .088);
   --card-shadow: 0 0 0 .5px var(--card-outline), 0 3px 6px -2px lch(0% 0 0/.02), 0 1px 1px 0 lch(0% 0 0/.04);
   --composer-shadow: 0 0 0 .5px var(--card-outline), 0 8px 24px -6px lch(0% 0 0/.08), 0 2px 4px -1px lch(0% 0 0/.04);
+  /* One closed edge per surface: a hairline ring drawn with box-shadow (no layout shift), plus soft elevation. */
+  --ring: lch(0% 0 0 / .1);
+  --ring-strong: lch(0% 0 0 / .18);
+  --ring-inset: 0 0 #0000;
+  --card-edge: 0 0 0 var(--hairline) var(--ring), 0 3px 6px -2px lch(0% 0 0/.03), 0 1px 1px 0 lch(0% 0 0/.04);
+  --composer-edge: 0 0 0 var(--hairline) var(--ring), 0 8px 24px -6px lch(0% 0 0/.08), 0 2px 4px -1px lch(0% 0 0/.04);
+  --composer-edge-hover: 0 0 0 var(--hairline) var(--ring-strong), 0 10px 28px -6px lch(0% 0 0/.1), 0 2px 4px -1px lch(0% 0 0/.05);
+  --composer-edge-focus: 0 0 0 1px var(--ring-strong), 0 12px 32px -8px lch(0% 0 0/.12), 0 2px 4px -1px lch(0% 0 0/.05);
+  --wght-400: 400; --wght-500: 500; --wght-550: 550; --wght-600: 600; --wght-650: 650; --wght-700: 700;
   --term-bg: oklch(18% 0 0);
   --term-fg: oklch(88% 0 0);
   /* Chart series stay in the product's own palette: the one blue accent, then neutral steps. */
@@ -86,6 +95,16 @@
   --card-outline: lch(100% 0 0 / .088);
   --card-shadow: 0 0 0 .5px var(--card-outline), 0 3px 6px -2px lch(0% 0 0/.2);
   --composer-shadow: 0 0 0 .5px var(--card-outline), 0 10px 30px -8px lch(0% 0 0/.5);
+  --ring: lch(100% 0 0 / .1);
+  --ring-strong: lch(100% 0 0 / .2);
+  /* Dark surfaces get a faint inner chamfer instead of a hard light frame. */
+  --ring-inset: inset 0 1px 0 lch(100% 0 0 / .045);
+  --card-edge: 0 0 0 var(--hairline) var(--ring), var(--ring-inset), 0 3px 6px -2px lch(0% 0 0/.2);
+  --composer-edge: 0 0 0 var(--hairline) var(--ring), var(--ring-inset), 0 10px 30px -8px lch(0% 0 0/.5);
+  --composer-edge-hover: 0 0 0 var(--hairline) var(--ring-strong), var(--ring-inset), 0 12px 34px -8px lch(0% 0 0/.55);
+  --composer-edge-focus: 0 0 0 1px var(--ring-strong), var(--ring-inset), 0 14px 38px -8px lch(0% 0 0/.6);
+  /* Light text on dark blooms; pull Latin and digit weights back a step (CJK fallback fonts snap to their own weights). */
+  --wght-400: 380; --wght-500: 470; --wght-550: 520; --wght-600: 570; --wght-650: 615; --wght-700: 665;
   --term-bg: oklch(13% 0 0);
   --term-fg: oklch(86% 0 0);
   --series-1: var(--info);
@@ -99,6 +118,10 @@
   --font-display: var(--font-body);
   --font-mono: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, Consolas, "Noto Sans Mono CJK SC", monospace;
   --radius-pill: 9999px;
+  /* Radius ladder. Nested corners follow inner = outer - inset, so a 22px card with 14px padding holds 8px rows. */
+  --radius-1: 6px; --radius-2: 8px; --radius-3: 10px; --radius-4: 12px; --radius-5: 14px;
+  --radius-bubble: 20px; --radius-card: 22px; --radius-composer: 24px;
+  --hairline: 1px;
   --radius-control: 1.125rem;
   --radius-panel: 1.625rem;
   --radius-surface: 2.125rem;
@@ -108,15 +131,24 @@
   --text-xs: .75rem; --text-sm: .875rem; --text-base: 1rem; --text-lg: 1.125rem; --text-xl: 1.375rem; --text-2xl: 1.75rem; --text-3xl: 2.25rem;
   --leading-body: 1.4; --leading-display: 1.1; --tracking-body: -.005em; --tracking-display: -.025em;
   --space-1: .25rem; --space-2: .5rem; --space-3: .75rem; --space-4: 1rem; --space-5: 1.25rem; --space-6: 1.5rem; --space-8: 2rem; --space-12: 3rem;
-  --duration-instant: .12s; --duration-fast: .16s; --duration-standard: .24s; --duration-considered: .48s; --duration-spring: .58s;
-  --ease-standard: cubic-bezier(.22,1,.36,1); --ease-enter: cubic-bezier(.16,1,.3,1); --ease-in-out: cubic-bezier(.65,0,.35,1);
+  --duration-press: .06s; --duration-instant: .12s; --duration-fast: .16s; --duration-standard: .24s; --duration-considered: .48s; --duration-spring: .58s;
+  --ease-overshoot: cubic-bezier(.34,1.3,.64,1); --ease-standard: cubic-bezier(.22,1,.36,1); --ease-enter: cubic-bezier(.16,1,.3,1); --ease-in-out: cubic-bezier(.65,0,.35,1);
   --ease-spring: linear(0,.0258,.09,.1763,.2732,.3724,.4683,.5573,.6376,.7082,.7689,.8202,.8628,.8976,.9256,.9476,.9648,.9778,.9875,.9945,.9994,1.0026,1.0047,1.0058,1.0062,1.0062,1.0059,1.0055,1.0049,1.0043,1.0036,1.0031,1.0025,1.002,1.0016,1.0013,1);
   --focus-ring: color-mix(in oklab, var(--info) 55%, transparent);
 }
+@media (min-resolution: 2dppx) { :root { --hairline: .5px; } }
+@property --fade-top { syntax: "<length>"; inherits: false; initial-value: 0px; }
+@property --fade-bottom { syntax: "<length>"; inherits: false; initial-value: 0px; }
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }
-body { background: var(--background); color: var(--foreground); font-family: var(--font-body); font-size: 14px; line-height: 1.5; letter-spacing: var(--tracking-body); -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+body { background: var(--background); color: var(--foreground); font-family: var(--font-body); font-weight: var(--wght-400); font-size: 14px; line-height: 1.5; letter-spacing: var(--tracking-body); -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
 button { font: inherit; color: inherit; letter-spacing: inherit; }
 :focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+/* Two-layer focus ring: the 2px gap is filled with the page colour so the ring reads on images, fills and tinted rows. Text fields keep their own focus style. */
+:focus-visible:not(input, textarea, select, [contenteditable]) { box-shadow: 0 0 0 2px var(--background); }
 ::selection { background: color-mix(in oklab, var(--info) 22%, transparent); }
+h1, h2, h3, h4, h5 { text-wrap: balance; }
+p, li { text-wrap: pretty; }
+/* Lucide icons sitting in running text line up with the x-height; flex items ignore vertical-align. */
+svg.lucide { vertical-align: -.125em; }
 code, .mono { font-family: var(--font-mono); font-size: .92em; letter-spacing: 0; }

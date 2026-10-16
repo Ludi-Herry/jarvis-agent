@@ -1,26 +1,37 @@
 import React, { useEffect, useRef, useState } from "react";
-import { AnimatePresence, motion } from "motion/react";
-import { Check, ChevronRight, CircleAlert, CircleCheck, Copy, CornerDownRight, Eye, FileCode2, FileText, GitCompareArrows, ListChecks, MessageCircle, Pencil, PencilLine, RotateCcw, Search, SquareTerminal, Undo2, Wrench, X } from "lucide-react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { Check, ChevronRight, CircleAlert, CircleCheck, CornerDownRight, Eye, FileCode2, FileText, GitCompareArrows, ListChecks, MessageCircle, Pencil, PencilLine, RotateCcw, Search, SquareTerminal, Undo2, Wrench, X } from "lucide-react";
 import type { Act, S } from "../store";
 import { files, TASK_PROMPT, type Attachment, type Item, type Step } from "../scenario";
 import { Button } from "../arc/button/button";
 import { ConfirmMorph } from "../arc/confirm-morph/confirm-morph";
 import { TextShimmer } from "../arc/text-shimmer/text-shimmer";
-import { Diffstat, IconBtn, Orb, fmtElapsed } from "./Bits";
+import { Diffstat, IconBtn, Orb, arrowNav, fmtElapsed } from "./Bits";
 import { AttachChip } from "./Composer";
-import { copyText, useNotify } from "./feedback";
-import { ArtifactCard, type ExplainKind } from "../artifact/explainer";
+import { CopyGlyph, useCopy } from "./feedback";
+import { Lightbox, type LightboxOpen } from "./Lightbox";
+import { ArtifactCard, type ExplainKind, type ExplainOrigin } from "../artifact/explainer";
 
-export const enter = { initial: { opacity: 0, y: 6, filter: "blur(3px)" }, animate: { opacity: 1, y: 0, filter: "blur(0px)" }, transition: { duration: .32, ease: [.16, 1, .3, 1] as any } };
+import { bubbleIn, enter } from "./motion";
+import { motionTokens } from "../arc/motion-tokens";
+export { enter };
 
+const STEP = 2, TICK = 28, TAIL = 16; // chars per tick · ms per tick · how many trailing chars are still "landing"
+/** Streams text in. The newest few characters blur in (~180ms) so the edge reads as arriving, not flickering; a thin caret breathes at the end. */
 export function Typewriter({ text, animate }: { text: string; animate?: boolean }) {
-  const [n, setN] = useState(animate ? 0 : text.length);
+  const reduced = useReducedMotion();
+  const live = !!animate && !reduced;
+  const [n, setN] = useState(live ? 0 : text.length);
   useEffect(() => {
-    if (!animate) { setN(text.length); return; }
-    let i = 0; const id = window.setInterval(() => { i += 2; setN(Math.min(i, text.length)); if (i >= text.length) window.clearInterval(id); }, 28);
+    if (!live) { setN(text.length); return; }
+    let i = 0; const id = window.setInterval(() => { i += STEP; setN(Math.min(i, text.length)); if (i >= text.length) window.clearInterval(id); }, TICK);
     return () => window.clearInterval(id);
-  }, [text, animate]);
-  return <p className="msg-text">{text.slice(0, n)}{n < text.length && <span className="caret" />}</p>;
+  }, [text, live]);
+  if (n >= text.length) return <p className="msg-text">{text}</p>;
+  const settled = Math.max(0, n - TAIL - (n % STEP));
+  const chunks: React.ReactNode[] = [];
+  for (let i = settled; i < n; i += STEP) chunks.push(<span key={i} className="tw-chunk">{text.slice(i, Math.min(i + STEP, n))}</span>);
+  return <p className="msg-text">{text.slice(0, settled)}{chunks}<span className="caret" aria-hidden /></p>;
 }
 
 const STEP_ICON: Record<Step["type"], any> = { read: FileText, search: Search, edit: Pencil, run: SquareTerminal, think: MessageCircle };
@@ -32,17 +43,23 @@ function summarize(steps: Step[]) {
 
 /** Hover actions under a message (PastaUI chat-01): copy for everything, edit for your own words. */
 export function MsgActions({ text, onEdit, align = "start" }: { text: string; onEdit?: () => void; align?: "start" | "end" }) {
-  const notify = useNotify();
-  return <div className={`msg-actions is-${align}`}>
-    <IconBtn className="sb-mini" label="复制" onClick={() => copyText(text).then(ok => notify(ok ? { text: "已复制" } : { tone: "info", text: "浏览器没允许复制" }))}><Copy size={13} /></IconBtn>
+  const { done, copy } = useCopy();
+  return <div className={`msg-actions is-${align}${done ? " is-pinned" : ""}`}>
+    <IconBtn className="sb-mini" label={done ? "已复制" : "复制"} onClick={() => copy(text)}><CopyGlyph done={done} /></IconBtn>
     {onEdit && <IconBtn className="sb-mini" label="改一改再发" onClick={onEdit}><PencilLine size={13} /></IconBtn>}
   </div>;
 }
 
 export function UserBubble({ text, attachments, tag, onEdit }: { text: string; attachments?: Attachment[]; tag?: string; onEdit?: () => void }) {
-  return <motion.div {...enter} className="msg-user-wrap">
+  const [lb, setLb] = useState<LightboxOpen | null>(null);
+  const thumbs = useRef<(HTMLButtonElement | null)[]>([]);
+  const imgs = (attachments ?? []).filter(a => a.url).map(a => ({ url: a.url!, label: a.label }));
+  const openAt = (i: number) => { const el = thumbs.current[i]; const im = el?.querySelector("img"); setLb({ index: i, from: el?.getBoundingClientRect() ?? null, ratio: im && im.naturalWidth ? im.naturalWidth / im.naturalHeight : 4 / 3 }); };
+  let k = -1;
+  return <motion.div {...bubbleIn} className="msg-user-wrap">
     {tag && <span className="interject-tag"><CornerDownRight size={12} />{tag}</span>}
-    {attachments?.length ? <div className="msg-attach">{attachments.map((a, i) => a.url ? <a key={i} className="msg-img" href={a.url} target="_blank" rel="noreferrer" aria-label={`打开 ${a.label}`}><img src={a.url} alt={a.label} /></a> : <AttachChip key={i} a={a} />)}</div> : null}
+    {attachments?.length ? <div className="msg-attach">{attachments.map((a, i) => { if (!a.url) return <AttachChip key={i} a={a} i={i} />; const j = ++k; return <button key={i} ref={el => { thumbs.current[j] = el; }} type="button" className={`msg-img is-cascade${lb?.index === j ? " is-source" : ""}`} style={{ "--i": i } as React.CSSProperties} aria-label={`放大看 ${a.label}`} onClick={() => openAt(j)}><img src={a.url} alt={a.label} /></button>; })}</div> : null}
+    <Lightbox images={imgs} open={lb} onClose={() => { setLb(v => v && { ...v, from: thumbs.current[v.index]?.getBoundingClientRect() ?? null }); requestAnimationFrame(() => setLb(null)); }} onIndex={i => openAt(i)} returnFocus={i => thumbs.current[i]?.focus({ preventScroll: true })} />
     <div className="msg-user">{text}</div>
     <MsgActions text={text} onEdit={onEdit} align="end" />
   </motion.div>;
@@ -53,16 +70,18 @@ export function StepsGroup({ steps, live, liveNode, onOpenFile }: { steps: Step[
   const [openRun, setOpenRun] = useState<string | null>(null);
   const running = steps.find(s => s.status === "running");
   const failed = steps.filter(s => s.status === "failed").length;
-  useEffect(() => { if (failed) setOpen(true); }, [failed]);
+  const total = steps.reduce((a, st) => a + (st.status === "running" ? 0 : st.ms), 0);
+  // A failure opens the group and the first failed step's output, so the reason is visible without hunting.
+  useEffect(() => { if (!failed) return; setOpen(true); const f = steps.find(st => st.status === "failed" && st.output); if (f) setOpenRun(r => r ?? f.id); }, [failed]); // eslint-disable-line react-hooks/exhaustive-deps
   const Icon = running ? STEP_ICON[running.type] : ListChecks;
   return <div className="steps">
     <button type="button" className="steps-summary" aria-expanded={open} onClick={() => setOpen(o => !o)}>
-      {live && liveNode ? liveNode : <><Icon size={15} className="muted-ico" /><span>{summarize(steps)}</span></>}
+      {live && liveNode ? liveNode : <><Icon size={15} className="muted-ico" /><span>{summarize(steps)}</span>{!running && total > 0 && <span className="steps-time">{total < 10000 ? `${(total / 1000).toFixed(1)} 秒` : fmtElapsed(total)}</span>}</>}
       {failed > 0 && <span className="steps-attn">{failed} 项没通过</span>}
       <ChevronRight size={14} className={`chev${open ? " is-open" : ""}`} />
     </button>
     <AnimatePresence initial={false}>
-      {open && <motion.ul className="steps-list" initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ type: "spring", visualDuration: .34, bounce: 0 }}>
+      {open && <motion.ul onKeyDown={e => arrowNav(e, ".step-row")} className="steps-list" initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ type: "spring", visualDuration: .34, bounce: 0 }}>
         {steps.map(st => { const I = STEP_ICON[st.type]; const expandable = !!st.output; const opens = !expandable && st.type === "edit" && !!onOpenFile && st.status !== "running" && !!st.target; return <li key={st.id} className={`step is-${st.status}`}>
           <button type="button" className={`step-row${opens ? " is-link" : ""}`} disabled={!expandable && !opens} onClick={() => opens ? onOpenFile!(st.target!) : setOpenRun(r => r === st.id ? null : st.id)} aria-expanded={expandable ? openRun === st.id : undefined} title={opens ? `看 ${st.target} 的改动` : undefined}>
             <span className="step-ico">{st.status === "running" ? <span className="spin" /> : st.status === "failed" ? <X size={13} /> : st.type === "run" ? <Check size={13} /> : <I size={13} />}</span>
@@ -79,13 +98,30 @@ export function StepsGroup({ steps, live, liveNode, onOpenFile }: { steps: Step[
   </div>;
 }
 
-function ApprovalCard({ item, s, act, onOpenFile, onAdjust, onPanel }: { item: Extract<Item, { kind: "approval" }>; s: S; act: Act; onOpenFile: (p: string) => void; onAdjust: () => void; onPanel: (t: "changes" | "preview" | "terminal") => void }) {
+/** The approval card collapses into a one-line record once you answer — same spot, height glides, so your eye never loses the place. */
+function ApprovalCard(props: { item: Extract<Item, { kind: "approval" }>; s: S; act: Act; onOpenFile: (p: string) => void; onAdjust: () => void; onPanel: (t: "changes" | "preview" | "terminal") => void }) {
+  const { item } = props;
+  const [mounted] = useState(() => !item.resolved); // only morph if we saw the card; old resolved lines just appear
+  return <motion.div layout="size" className="approval-slot" transition={motionTokens.spring.smooth as any}>
+    <AnimatePresence mode="popLayout" initial={false}>
+      {item.resolved
+        ? <motion.div key="line" layout="position" {...(mounted ? { initial: { opacity: 0, y: -4 }, animate: { opacity: 1, y: 0 }, transition: { ...motionTokens.spring.smooth, delay: .06 } as any } : enter)}><ResolvedLine {...props} /></motion.div>
+        : <motion.div key="card" {...enter} exit={{ opacity: 0, scale: .985, filter: `blur(${motionTokens.blur.subtle}px)`, transition: { duration: motionTokens.duration.exit, ease: motionTokens.ease.exit as any } }}><ApprovalBody {...props} /></motion.div>}
+    </AnimatePresence>
+  </motion.div>;
+}
+
+function ResolvedLine({ item, s }: { item: Extract<Item, { kind: "approval" }>; s: S }) {
+  const ok = item.resolved !== "denied" && item.resolved !== "adjusted";
+  const editing = ok && s.phase === "running" && !!s.status?.startsWith("正在修改");
+  return <div className="resolved-line">{ok ? <Check size={14} /> : <X size={14} />}<span>{item.resolved === "allowed-all" ? "你允许了修改，并且这个任务里不再问" : item.resolved === "adjusted" ? "你要求换个改法，这一版没有改" : ok ? "你允许了修改 2 个文件" : "你没有允许这次修改"}</span>
+    <AnimatePresence>{editing && <motion.span key="live" className="resolved-live" initial={{ opacity: 0, x: -4 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0 }} transition={motionTokens.spring.snappy as any}>· <TextShimmer>正在改…</TextShimmer></motion.span>}</AnimatePresence>
+  </div>;
+}
+
+function ApprovalBody({ s, act, onOpenFile, onAdjust, onPanel }: { item: Extract<Item, { kind: "approval" }>; s: S; act: Act; onOpenFile: (p: string) => void; onAdjust: () => void; onPanel: (t: "changes" | "preview" | "terminal") => void }) {
   const fs = files(s.interjected);
-  if (item.resolved) {
-    const ok = item.resolved !== "denied" && item.resolved !== "adjusted";
-    return <motion.div {...enter} className="resolved-line">{ok ? <Check size={14} /> : <X size={14} />}<span>{item.resolved === "allowed-all" ? "你允许了修改，并且这个任务里不再问" : item.resolved === "adjusted" ? "你要求换个改法，这一版没有改" : ok ? "你允许了修改 2 个文件" : "你没有允许这次修改"}</span></motion.div>;
-  }
-  return <motion.section {...enter} className="card approval" aria-label="需要你确认">
+  return <section className="card approval" aria-label="需要你确认">
     <header className="card-head"><span className="card-ico tone-warning"><Pencil size={15} /></span><div><h3>要修改 {fs.length} 个文件，可以吗？</h3><p>改完会自动跑设置页的测试和类型检查。</p></div></header>
     <ul className="file-list">{fs.map(f => <li key={f.path}><button type="button" className="file-row" onClick={() => onOpenFile(f.path)}><FileCode2 size={15} className="muted-ico" /><span className="file-name">{f.name}</span><span className="file-dir">{f.dir}</span><Diffstat add={f.add} del={f.del} /><span className="file-open">看改动<ChevronRight size={13} /></span></button></li>)}
       <li><button type="button" className="file-row is-preview" onClick={() => onPanel("preview")}><Eye size={15} className="muted-ico" /><span className="file-name">先看看改完的效果</span><span className="file-dir">预览会按方案先渲染出来</span><span className="file-open">看预览<ChevronRight size={13} /></span></button></li></ul>
@@ -95,7 +131,7 @@ function ApprovalCard({ item, s, act, onOpenFile, onAdjust, onPanel }: { item: E
       <Button size="sm" variant="ghost" onClick={() => act({ type: "deny" })}>不允许</Button>
       <button type="button" className="card-hint link" onClick={onAdjust}>换个改法？直接在下面说</button>
     </footer>
-  </motion.section>;
+  </section>;
 }
 
 function ResultCard({ item, s, act, onPanel }: { item: Extract<Item, { kind: "result" }>; s: S; act: Act; onPanel: (t: "changes" | "preview" | "terminal") => void }) {
@@ -161,13 +197,7 @@ function StatusLine({ s, theme, inline }: { s: S; theme: "light" | "dark"; inlin
   return inline ? <span className="status-inline" role="status" aria-live="polite">{body}</span> : <div className="status-line" role="status" aria-live="polite">{body}</div>;
 }
 
-export function Thread({ s, act, theme, onOpenFile, onPanel, onAdjust, onEdit, onExplain }: { s: S; act: Act; theme: "light" | "dark"; onOpenFile: (p: string) => void; onPanel: (t: "changes" | "preview" | "terminal") => void; onAdjust: () => void; onEdit: (text: string) => void; onExplain?: (k: ExplainKind) => void }) {
-  const end = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const go = () => end.current?.scrollIntoView({ block: "end", behavior: "smooth" });
-    go(); const a = setTimeout(go, 120), b = setTimeout(go, 450);
-    return () => { clearTimeout(a); clearTimeout(b); };
-  }, [s.items.length, s.phase]);
+export function Thread({ s, act, theme, onOpenFile, onPanel, onAdjust, onEdit, onExplain }: { s: S; act: Act; theme: "light" | "dark"; onOpenFile: (p: string) => void; onPanel: (t: "changes" | "preview" | "terminal") => void; onAdjust: () => void; onEdit: (text: string) => void; onExplain?: (k: ExplainKind, from?: ExplainOrigin) => void }) {
   const live = s.phase === "running";
   const lastIsSteps = s.items[s.items.length - 1]?.kind === "steps";
   const inlineStatus = live && lastIsSteps;
@@ -183,6 +213,5 @@ export function Thread({ s, act, theme, onOpenFile, onPanel, onAdjust, onEdit, o
       }
     })}
     {!inlineStatus && <StatusLine s={s} theme={theme} />}
-    <div ref={end} className="thread-end" />
   </div>;
 }
