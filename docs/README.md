@@ -16,6 +16,7 @@
 | 查看已实现变更 | [Changelog](../CHANGELOG.md) | Unreleased 与已发布版本的变化 |
 | 查看仍成立的风险 | [Known Issues](../KNOWN_ISSUES.md) | 当前限制、影响和处理方向 |
 | 修改仓库 | [AGENTS](../AGENTS.md) | 工程规范、架构来源和硬边界 |
+| 看 CI、红线和变异测试 | [质量门禁](quality-gates.md) | 云端独立裁判、红线文件、变异分数与真实任务成本表 |
 
 ## 文档类型
 
@@ -35,6 +36,8 @@
 - [headless-a0-contract.md](headless-a0-contract.md)：headless agent-event、A0 corpus、runner、manifest 与 report 合同。
 - [os-sandbox-research.md](os-sandbox-research.md)：OS sandbox 的研究结论、已实现范围和仍未覆盖的边界。
 - [security-review-baseline.md](security-review-baseline.md)：权限与命令安全审查的严重度尺子和复核方法。
+- [quality-gates.md](quality-gates.md)：CI 门禁、红线检查（`红线已确认` 标签）与变异测试的用法、基线和存活变异分类。
+- [real-task-window-cost-sheet.md](real-task-window-cost-sheet.md)：真实任务窗口的四项成本（时间、额度、审批次数、误完成）记录表与采纳规则。
 
 ## 当前工作单与产品雷达
 
