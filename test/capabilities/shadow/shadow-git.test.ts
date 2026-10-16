@@ -17,7 +17,10 @@ beforeEach(async () => {
   shadow = new ShadowGit({ shellPath: shell, cwd: dir, gitDir: join(dir, 'data', 'shadow') });
 });
 afterEach(async () => {
-  await rm(dir, { recursive: true, force: true });
+  // Recent Git ends `git commit` by starting a detached `git maintenance run --auto` that can still
+  // be touching data/shadow/objects for a moment after the snapshot returned; on a busy CI runner
+  // that raced this cleanup (ENOTEMPTY on Linux). Retry briefly instead of racing it.
+  await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
 
 describe('ShadowGit — real git round-trip', () => {
