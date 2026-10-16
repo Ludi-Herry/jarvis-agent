@@ -2,7 +2,7 @@
 
 2026-10-15 · Notion AI 云端代做 · 分支 `gui-plain-v1`，草稿 PR，**不合并**。
 
-性质：P0 是静态对照稿，等 Ludi 签收；P2/P3 是代码草稿。云端拿不到完整仓库，只跑了纯函数与真实 Git 的单测（`gui-plain-controls.test.ts` 8 条全过、strict tsc 通过）和 GUI 前端构建；**根目录 typecheck / lint / test / build 与 GuiSessionHost 集成测试**以 PR 上的门禁（CI，Linux + Windows，见 `docs/quality-gates.md`）为准，通过前不算完成；§6 第 4、5 条仍需 Ludi 本机。UI 试件与演示稿不计为 Jarvis 真实任务成功。
+性质：P0 是静态对照稿，等 Ludi 签收；P2/P3 是代码草稿。云端拿不到完整仓库，只跑了纯函数与真实 Git 的单测（`gui-plain-controls.test.ts` 9 条全过、strict tsc 通过）和 GUI 前端构建；**根目录 typecheck / lint / test / build 与 GuiSessionHost 集成测试**以 PR 上的门禁（CI，Linux + Windows，见 `docs/quality-gates.md`）为准，通过前不算完成；§6 第 5 条仍需 Ludi 本机（第 4 条已由 CI 覆盖）。UI 试件与演示稿不计为 Jarvis 真实任务成功。
 
 ## 0. 状态一览
 
@@ -68,7 +68,7 @@
 
 1. 只撤合同 writePaths 内的文件；命令造成的其他副作用（装包、生成文件）不在范围。
 2. 撤销用的树对象没有被 ref 引用，`git gc` 清理过期对象后可能丢失；届时撤销失败并提示，不会乱写。
-3. Windows `core.autocrlf=true` 时检出会转换换行，可能出现「不完全一致」警告，需本机验证（§6）。
+3. Windows 换行（Git for Windows 默认 `core.autocrlf=true`）：撤销按 Git 自己的检出规则写回。仓库里本来就是 CRLF 的文件（Windows 检出的常态）逐字节复原；原本是 LF 的文件会变成 CRLF——文字相同，Git 也认为没有变化，所以不会出现「不完全一致」警告。两种情况都在 `gui-plain-controls.test.ts` 里，CI 的 Linux 和 Windows 都跑。要让 LF 文件也逐字节还原，得改成记录原始字节的基线，暂不做。
 4. 撤销不改 Session 和日志事实，也不撤销完成授权；界面要写清楚「文件已退回」，而不是「任务没做过」。
 
 ### 3.4 本分支的前端接线
@@ -103,7 +103,7 @@
 1. 根目录 `npm run typecheck`、`npm run lint`、`npm test`、`npm run build`，以及 `npm --prefix src/surfaces/gui/app run build`。
 2. 新测试：`npx vitest run test/surfaces/gui/gui-plain-controls.test.ts test/surfaces/gui/gui-plain-v1-p2.test.ts`。后者是 6 条 GuiSessionHost 集成测试，云端没跑过。
 3. 既有 GUI 测试若断言审批卡按钮数量或文案，可能因新增「这个任务都允许」失败，按新文案更新断言即可，不要删按钮绕过。
-4. Windows 换行：在 `core.autocrlf=true` 的仓库里跑一次撤销 → 恢复，确认文件内容回到原样，并记录是否出现「不完全一致」警告。
+4. ~~Windows 换行~~：已由 CI 覆盖（§3.3 已知限制 3）。只有你的仓库另设了 `.gitattributes` 换行规则时，才值得在本机再撤销 → 恢复一次。
 5. 试件 `?fixture=approval`：审批卡出现「这个任务都允许」，点了与「允许一次」一样推进。
 
 ## 7. 与真实任务窗口的关系

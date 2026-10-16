@@ -79,7 +79,9 @@ describe('plain-v1 task-scoped undo (real Git, throwaway index)', () => {
     await mkdir(join(cwd, 'src', 'ui'), { recursive: true });
     await writeFile(join(cwd, 'src', 'ui', 'my panel.tsx'), 'export const v = 1;\n', 'utf8');
     await writeFile(join(cwd, 'keep.txt'), 'outside the contract\n', 'utf8');
-    for (const command of ['git init -q', 'git add -A', 'git -c user.name=Fixture -c user.email=fixture@example.test commit -qm fixture']) {
+    // Byte-exact case: line-ending conversion pinned off so the result does not depend on the
+    // machine's global Git config (Windows runners default to core.autocrlf=true; see the next case).
+    for (const command of ['git init -q', 'git config core.autocrlf false', 'git add -A', 'git -c user.name=Fixture -c user.email=fixture@example.test commit -qm fixture']) {
       const result = await sh(command);
       expect(result.code, result.output).toBe(0);
     }
@@ -119,6 +121,63 @@ describe('plain-v1 task-scoped undo (real Git, throwaway index)', () => {
     await restoreWritePaths({ ...git, tree: after, remove });
     expect(await readFile(join(cwd, 'src', 'ui', 'my panel.tsx'), 'utf8')).toBe('export const v = 2;\n');
     expect(await readFile(join(cwd, 'src', 'ui', 'button.css'), 'utf8')).toBe('.primary { border-radius: 10px; }\n');
+    expect(await captureWritePathsTree({ ...git, baseTree: baseline, exists })).toBe(after);
+
+    expect(await readFile(join(cwd, '.git', 'index'))).toEqual(userIndexBefore);
+  }, 30_000);
+
+  it('under Git\'s Windows default core.autocrlf=true, restores a CRLF checkout byte-for-byte; an LF file comes back in Git\'s checkout form', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'jarvis-gui-undo-crlf-'));
+    const sh = (command: string, index?: string) => runCommand(defaultShellPath(), command, cwd, 15_000, 200_000, undefined,
+      { scrubGitEnv: true, ...(index ? { extraEnv: { GIT_INDEX_FILE: index.replaceAll('\\', '/') } } : {}) });
+    const panel = join(cwd, 'src', 'ui', 'panel.tsx');
+    const lfFile = join(cwd, 'src', 'ui', 'lf.ts');
+    await mkdir(join(cwd, 'src', 'ui'), { recursive: true });
+    // What a Windows clone with autocrlf=true normally has on disk: CRLF working files (LF in Git).
+    await writeFile(panel, 'export const v = 1;\r\nexport const w = 1;\r\n', 'utf8');
+    // The edge: an LF file in the same repo (e.g. saved by an LF-only editor).
+    await writeFile(lfFile, 'export const lf = 1;\n', 'utf8');
+    for (const command of ['git init -q', 'git config core.autocrlf true', 'git add -A', 'git -c user.name=Fixture -c user.email=fixture@example.test commit -qm fixture']) {
+      const result = await sh(command);
+      expect(result.code, result.output).toBe(0);
+    }
+    const userIndexBefore = await readFile(join(cwd, '.git', 'index'));
+    const baselineIndex = join(cwd, '..', `${cwd.split(/[\\/]/u).at(-1)}-baseline.index`);
+    expect((await sh('git read-tree HEAD', baselineIndex)).code).toBe(0);
+    const baseline = (await sh('git write-tree', baselineIndex)).output.trim();
+
+    const paths = ['src/ui/panel.tsx', 'src/ui/lf.ts'];
+    const undoIndex = join(cwd, '..', `${cwd.split(/[\\/]/u).at(-1)}-undo.index`);
+    const git: UndoGitDeps = { run: (command) => sh(command, undoIndex), quote: shellQuote, paths };
+    const exists = (path: string) => existsSync(resolve(cwd, path));
+    const removed: string[] = [];
+    const remove = async (path: string) => { removed.push(path); await rm(resolve(cwd, path), { force: true }); };
+
+    // Line endings alone are not a change: the untouched CRLF checkout fingerprints as the baseline.
+    expect(await captureWritePathsTree({ ...git, baseTree: baseline, exists })).toBe(baseline);
+
+    // The "task" rewrites both files with LF text.
+    await writeFile(panel, 'export const v = 2;\n', 'utf8');
+    await writeFile(lfFile, 'export const lf = 2;\n', 'utf8');
+    const after = await captureWritePathsTree({ ...git, baseTree: baseline, exists });
+    expect(await diffWritePaths(git, baseline, after)).toEqual([
+      { path: 'src/ui/panel.tsx', change: 'modified' },
+      { path: 'src/ui/lf.ts', change: 'modified' },
+    ]);
+
+    await restoreWritePaths({ ...git, tree: baseline, remove });
+    // The usual Windows file comes back exactly as it was, byte for byte.
+    expect(await readFile(panel, 'utf8')).toBe('export const v = 1;\r\nexport const w = 1;\r\n');
+    // Known edge (docs/PLAN-gui-plain-v1.md): the LF file comes back in Git's own checkout form,
+    // CRLF. Same text, and Git sees no difference from the baseline.
+    expect(await readFile(lfFile, 'utf8')).toBe('export const lf = 1;\r\n');
+    expect(await captureWritePathsTree({ ...git, baseTree: baseline, exists })).toBe(baseline);
+    expect(removed).toEqual([]);
+
+    // Redo is the same operation in reverse, in the same checkout form.
+    await restoreWritePaths({ ...git, tree: after, remove });
+    expect(await readFile(panel, 'utf8')).toBe('export const v = 2;\r\n');
+    expect(await readFile(lfFile, 'utf8')).toBe('export const lf = 2;\r\n');
     expect(await captureWritePathsTree({ ...git, baseTree: baseline, exists })).toBe(after);
 
     expect(await readFile(join(cwd, '.git', 'index'))).toEqual(userIndexBefore);
