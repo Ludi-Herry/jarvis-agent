@@ -1607,7 +1607,7 @@ export class GuiSessionHost {
 
   private async refreshDiff(task: LiveTask): Promise<void> {
     const paths = task.created.task.writePaths.map(shellQuote).join(' ');
-    const result = await runCommand(defaultShellPath(), `git -c core.fsmonitor=false diff --no-ext-diff --no-textconv --no-color ${task.started!.baseline.headSha} -- ${paths}`,
+    const result = await runCommand(defaultShellPath(), `git -c core.fsmonitor=false -c core.safecrlf=false diff --no-ext-diff --no-textconv --no-color ${task.started!.baseline.headSha} -- ${paths}`,
       task.created.task.cwd, 15_000, 80_000, undefined, { scrubGitEnv: true, extraEnv: { GIT_INDEX_FILE: join(this.options.dataDir, 'gui-baselines', `${task.created.id}.index`).replaceAll('\\', '/') } });
     await this.record(task, { type: 'gui_diff', diff: result.code === 0 ? result.output : `Diff 读取失败：${result.output}` });
     if (result.truncated) await this.record(task, { type: 'gui_warning', message: 'Diff 预览已截断，请检查工作区原文件' });
@@ -1853,7 +1853,11 @@ export class GuiSessionHost {
   }
 
   private async evidenceFingerprint(task: LiveTask, signal?: AbortSignal): Promise<string> {
-    const diff = await runCommand(defaultShellPath(), `git -c core.fsmonitor=false diff --no-ext-diff --no-textconv --binary --no-color ${task.started!.baseline.headSha}`,
+    // runCommand merges stderr into output. With core.autocrlf=true (Git for Windows' default) the first
+    // diff against a fresh private index prints "LF will be replaced by CRLF" warnings and later diffs do
+    // not, so the before/after fingerprints of an unchanged tree differed. safecrlf=false silences only
+    // those warnings; the diff content and real changes still count.
+    const diff = await runCommand(defaultShellPath(), `git -c core.fsmonitor=false -c core.safecrlf=false diff --no-ext-diff --no-textconv --binary --no-color ${task.started!.baseline.headSha}`,
       task.created.task.cwd, 15_000, 500_000, signal,
       { scrubGitEnv: true, extraEnv: { GIT_INDEX_FILE: join(this.options.dataDir, 'gui-baselines', `${task.created.id}.index`).replaceAll('\\', '/') } });
     if (diff.code !== 0 || diff.truncated) throw new GuiLiveError(409, '无法完整确认验证对应的工作树');

@@ -691,6 +691,54 @@ describe('jarvis root CLI', () => {
     expect(signals.listenerCount('SIGTERM')).toBe(0);
   });
 
+  it('keeps the child exit code when fd 4 resets after the secret was delivered', async () => {
+    const child = new IgnoringHeadlessChild();
+    const stdout = new ControlledWritable();
+    const stderr = new ControlledWritable();
+    const signals = new EventEmitter();
+    const result = forwardChildProcess(['unused'], repo, signals, {
+      headless: true,
+      stdout: asWritable(stdout),
+      stderr: asWritable(stderr),
+      spawnChild: () => child as unknown as ChildProcess,
+    });
+    await new Promise<void>((resolveFinish) => child.auth.once('finish', () => resolveFinish()));
+
+    // Linux/macOS: a child that exits without reading fd 4 resets the socket pair.
+    child.auth.emit('error', Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' }));
+    child.agentEvents.end();
+    await new Promise<void>((resolveTurn) => setImmediate(resolveTurn));
+    child.emit('close', 2, null);
+
+    expect(await result).toBe(2);
+    expect(child.killSignals).toEqual([]);
+    expect(stderr.writes.join('')).not.toContain('transport failed');
+    expect(child.auth.listenerCount('error')).toBe(0);
+    expect(child.auth.listenerCount('finish')).toBe(0);
+  });
+
+  it('still fails closed when fd 4 errors before the secret was delivered', async () => {
+    const child = new IgnoringHeadlessChild();
+    const stdout = new ControlledWritable();
+    const stderr = new ControlledWritable();
+    const signals = new EventEmitter();
+    const result = forwardChildProcess(['unused'], repo, signals, {
+      headless: true,
+      stdout: asWritable(stdout),
+      stderr: asWritable(stderr),
+      spawnChild: () => child as unknown as ChildProcess,
+      transportFailureGraceMs: 10,
+    });
+
+    child.auth.emit('error', Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }));
+    await waitFor(() => child.killSignals.includes('SIGKILL'));
+
+    expect(await result).toBe(5);
+    expect(child.killSignals).toEqual(['SIGTERM', 'SIGKILL']);
+    expect(stderr.writes.join('')).toContain('authentication failed');
+    expect(child.auth.listenerCount('error')).toBe(0);
+  });
+
   it('closes a started headless goal with a failed terminal when the provider rejects the request', async () => {
     const workspace = await mkdtemp(join(tmpdir(), 'jarvis-headless-goal-'));
     tempDirs.push(workspace);

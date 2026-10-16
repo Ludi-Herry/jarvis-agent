@@ -109,6 +109,24 @@ describe('GUI real Runtime connection (deterministic provider, real tools and pe
     } finally { await host.dispose(); }
   }, 30_000);
 
+  it('keeps checks green when Git prints line-ending warnings only on the first diff (core.autocrlf=true)', async () => {
+    // Git for Windows defaults to core.autocrlf=true; the evidence fingerprint must not change just
+    // because the first diff against the private index warned about LF/CRLF and the next one did not.
+    const { host, cwd } = await fixture(model((_messages, wave) => wave === 0
+      ? [call('write', 'write', { path: 'answer.mjs', content: 'export const value=2;', createOnly: true })]
+      : wave === 1 ? [call('claim', 'update_goal', { status: 'complete' })] : '等待验收'));
+    const configured = await runCommand(defaultShellPath(), 'git config core.autocrlf true', cwd, 15_000, 4000);
+    expect(configured.code, configured.output).toBe(0);
+    try {
+      const started = await startPinned(host);
+      const pending = await until(host, started.id, (s) => s.approval !== null);
+      await host.decision(started.id, pending.approval!.requestId, 'allow-once');
+      const parked = await until(host, started.id, (s) => !s.capabilities.stop && s.review !== null);
+      expect(parked.checks).toMatchObject([{ command: 'node --check answer.mjs', code: 0 }]);
+      expect(parked.completion).toMatchObject({ granted: false, verdict: 'couldNotVerify' });
+    } finally { await host.dispose(); }
+  }, 30_000);
+
   it('preserves the user Git index and detects an oracle change relative to the private baseline', async () => {
     let release!: () => void;
     const held = new Promise<void>((resolve) => { release = resolve; });
