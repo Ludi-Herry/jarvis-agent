@@ -1,0 +1,60 @@
+# 门禁：每个 PR、每次推到 main 都在 GitHub 的干净机器上从零跑一遍全部检查。
+# 它是"独立裁判"：AI 自己本地跑的绿不算数，以这里的结果为准。
+name: 门禁
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gates:
+    name: 门禁 (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # Ludi 在 Windows 上开发，所以两边都跑；Windows 分钟数按 2 倍计费，跑稳后再决定是否保留。
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            src/surfaces/gui/app/package-lock.json
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 安装 GUI 依赖
+        run: npm ci --prefix src/surfaces/gui/app
+
+      - name: 类型检查
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: 测试
+        run: npx vitest run --maxWorkers=2
+
+      - name: 构建
+        run: npm run build
+
+      - name: GUI 构建
+        run: npm --prefix src/surfaces/gui/app run build
