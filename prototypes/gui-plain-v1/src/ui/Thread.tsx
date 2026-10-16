@@ -9,6 +9,7 @@ import { TextShimmer } from "../arc/text-shimmer/text-shimmer";
 import { Diffstat, IconBtn, Orb, fmtElapsed } from "./Bits";
 import { AttachChip } from "./Composer";
 import { copyText, useNotify } from "./feedback";
+import { ArtifactCard, type ExplainKind } from "../artifact/explainer";
 
 export const enter = { initial: { opacity: 0, y: 6, filter: "blur(3px)" }, animate: { opacity: 1, y: 0, filter: "blur(0px)" }, transition: { duration: .32, ease: [.16, 1, .3, 1] as any } };
 
@@ -160,7 +161,7 @@ function StatusLine({ s, theme, inline }: { s: S; theme: "light" | "dark"; inlin
   return inline ? <span className="status-inline" role="status" aria-live="polite">{body}</span> : <div className="status-line" role="status" aria-live="polite">{body}</div>;
 }
 
-export function Thread({ s, act, theme, onOpenFile, onPanel, onAdjust, onEdit }: { s: S; act: Act; theme: "light" | "dark"; onOpenFile: (p: string) => void; onPanel: (t: "changes" | "preview" | "terminal") => void; onAdjust: () => void; onEdit: (text: string) => void }) {
+export function Thread({ s, act, theme, onOpenFile, onPanel, onAdjust, onEdit, onExplain }: { s: S; act: Act; theme: "light" | "dark"; onOpenFile: (p: string) => void; onPanel: (t: "changes" | "preview" | "terminal") => void; onAdjust: () => void; onEdit: (text: string) => void; onExplain?: (k: ExplainKind) => void }) {
   const end = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const go = () => end.current?.scrollIntoView({ block: "end", behavior: "smooth" });
@@ -177,7 +178,7 @@ export function Thread({ s, act, theme, onOpenFile, onPanel, onAdjust, onEdit }:
         case "text": return <motion.div {...enter} key={it.id} className="msg-bot"><Typewriter text={it.text} animate={it.animate} /><MsgActions text={it.text} /></motion.div>;
         case "steps": return <motion.div {...enter} key={it.id}><StepsGroup steps={it.steps} live={inlineStatus && idx === s.items.length - 1} liveNode={<StatusLine s={s} theme={theme} inline />} onOpenFile={onOpenFile} /></motion.div>;
         case "approval": return <ApprovalCard key={it.id} item={it} s={s} act={act} onOpenFile={onOpenFile} onAdjust={onAdjust} onPanel={onPanel} />;
-        case "result": return <ResultCard key={it.id} item={it} s={s} act={act} onPanel={onPanel} />;
+        case "result": return <React.Fragment key={it.id}><ResultCard item={it} s={s} act={act} onPanel={onPanel} />{onExplain && !it.reverted && idx === s.items.length - 1 && <ArtifactCard onOpen={onExplain} />}</React.Fragment>;
         case "notice": return <Notice key={it.id} item={it} s={s} act={act} />;
       }
     })}

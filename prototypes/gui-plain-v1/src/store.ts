@@ -13,11 +13,11 @@ export interface S {
   seq: number;
 }
 
-const MAIN = ["ack", "read1", "read2", "read3", "plan", "gateDiscuss", "preEdit", "gateApproval", "edit1", "edit2", "editEnd", "checkStart", "checkEnd", "typesStart", "typesEnd", "finish"];
-const AFTER_DISCUSS = ["preEdit", "gateApproval", "edit1", "edit2", "editEnd", "checkStart", "checkEnd", "typesStart", "typesEnd", "finish"];
-const FIX = ["fixAck", "fixEdit", "fixEditEnd", "checkStart", "checkEnd", "typesStart", "typesEnd", "finish"];
-const RESUME = ["resume", "checkStart", "checkEnd", "typesStart", "typesEnd", "finish"];
-const FOLLOW = ["fuAck", "fuEdit", "fuEditEnd", "checkStart", "checkEnd", "finish"];
+export const MAIN = ["ack", "read1", "read2", "read3", "plan", "gateDiscuss", "preEdit", "gateApproval", "edit1", "edit2", "editEnd", "checkStart", "checkEnd", "typesStart", "typesEnd", "finish"];
+export const AFTER_DISCUSS = ["preEdit", "gateApproval", "edit1", "edit2", "editEnd", "checkStart", "checkEnd", "typesStart", "typesEnd", "finish"];
+export const FIX = ["fixAck", "fixEdit", "fixEditEnd", "checkStart", "checkEnd", "typesStart", "typesEnd", "finish"];
+export const RESUME = ["resume", "checkStart", "checkEnd", "typesStart", "typesEnd", "finish"];
+export const FOLLOW = ["fuAck", "fuEdit", "fuEditEnd", "checkStart", "checkEnd", "finish"];
 
 const DELAY: Record<string, number> = { ack: 650, read1: 700, read2: 650, read3: 750, plan: 900, gateDiscuss: 900, preEdit: 600, gateApproval: 500, edit1: 700, edit2: 800, editEnd: 700, checkStart: 500, checkEnd: 1700, typesStart: 300, typesEnd: 1300, finish: 600, fixAck: 700, fixEdit: 800, fixEditEnd: 900, resume: 1300, fuAck: 700, fuEdit: 800, fuEditEnd: 900 };
 
