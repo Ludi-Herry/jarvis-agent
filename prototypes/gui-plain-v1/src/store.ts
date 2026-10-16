@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useReducer } from "react";
-import { COPY, CHECK_FAIL, CHECK_OK, CHECK_TYPES, INTERJECT, READ_STEPS, TASK_PROMPT, type Item, type Mode, type Phase, type Step } from "./scenario";
+import { COPY, CHECK_FAIL, CHECK_OK, CHECK_TYPES, INTERJECT, READ_STEPS, TASK_PROMPT, type Attachment, type Item, type Mode, type Phase, type Step } from "./scenario";
 
 export type Snapshot = "empty" | "running" | "approval" | "complete" | "failed" | "interrupted";
 export type OrbKind = "working" | "searching" | "solving" | "composing" | "connecting" | "breathing";
@@ -10,7 +10,7 @@ export interface S {
   interjected: boolean; allowAll: boolean; outcome: "done" | "failed";
   applied: boolean; reverted: boolean; pendingFiles: boolean;
   cost: number; tokens: number; startedAt: number | null; endedAt: number | null;
-  seq: number; attachments: string[];
+  seq: number;
 }
 
 const MAIN = ["ack", "read1", "read2", "read3", "plan", "gateDiscuss", "preEdit", "gateApproval", "edit1", "edit2", "editEnd", "checkStart", "checkEnd", "typesStart", "typesEnd", "finish"];
@@ -21,7 +21,7 @@ const FOLLOW = ["fuAck", "fuEdit", "fuEditEnd", "checkStart", "checkEnd", "finis
 
 const DELAY: Record<string, number> = { ack: 650, read1: 700, read2: 650, read3: 750, plan: 900, gateDiscuss: 900, preEdit: 600, gateApproval: 500, edit1: 700, edit2: 800, editEnd: 700, checkStart: 500, checkEnd: 1700, typesStart: 300, typesEnd: 1300, finish: 600, fixAck: 700, fixEdit: 800, fixEditEnd: 900, resume: 1300, fuAck: 700, fuEdit: 800, fuEditEnd: 900 };
 
-export const initial = (mode: Mode = "ask"): S => ({ phase: "empty", mode, items: [], status: null, orb: "breathing", script: MAIN, cursor: 0, live: false, interjected: false, allowAll: false, outcome: "done", applied: false, reverted: false, pendingFiles: false, cost: 0, tokens: 0, startedAt: null, endedAt: null, seq: 0, attachments: [] });
+export const initial = (mode: Mode = "ask"): S => ({ phase: "empty", mode, items: [], status: null, orb: "breathing", script: MAIN, cursor: 0, live: false, interjected: false, allowAll: false, outcome: "done", applied: false, reverted: false, pendingFiles: false, cost: 0, tokens: 0, startedAt: null, endedAt: null, seq: 0 });
 
 const uid = (s: S, p: string) => `${p}${s.seq + 1}`;
 function push(s: S, item: Item): S { return { ...s, seq: s.seq + 1, items: [...s.items, item] }; }
@@ -89,11 +89,11 @@ function beat(s0: S, name: string, anim: boolean): S {
 }
 
 type A =
-  | { type: "beat" } | { type: "send"; text: string } | { type: "snapshot"; snap: Snapshot }
+  | { type: "beat" } | { type: "send"; text: string; attachments?: Attachment[]; project?: string } | { type: "snapshot"; snap: Snapshot }
   | { type: "mode"; mode: Mode } | { type: "allowAll"; value: boolean }
   | { type: "approve"; all: boolean } | { type: "deny" } | { type: "stop" } | { type: "continue" }
   | { type: "fix" } | { type: "resume" } | { type: "startFromDiscuss" }
-  | { type: "revert"; value: boolean } | { type: "play" } | { type: "attach"; label: string } | { type: "detach"; i: number };
+  | { type: "revert"; value: boolean } | { type: "play" } | { type: "restore"; state: S };
 
 function startRun(s: S, script: string[], phase: Phase = "running"): S { return { ...s, phase, script, cursor: 0, live: true, status: "正在想", orb: "composing", endedAt: null }; }
 
@@ -106,29 +106,31 @@ function reducer(s: S, a: A): S {
       return n;
     }
     case "send": {
-      const t = a.text.trim(); if (!t && !s.attachments.length) return s;
-      const body = t || "看看这张截图";
+      const t = a.text.trim(); const att = a.attachments?.length ? a.attachments : undefined;
+      if (!t && !att) return s;
+      const body = t || (att!.length > 1 ? `看看这 ${att!.length} 个附件` : "看看这个附件");
+      const user = (id: string, extra?: { interject?: boolean }) => ({ kind: "user" as const, id, text: body, attachments: att, ...extra });
       if (s.phase === "empty") {
         const base = { ...initial(s.mode), allowAll: s.allowAll, startedAt: Date.now() };
-        let n = push(base, { kind: "user", id: "u0", text: body });
-        // The prototype only has one script; be upfront when the typed task differs from it.
-        if (body !== TASK_PROMPT) n = push(n, { kind: "notice", id: "n-demo", tone: "demo" });
+        let n = push(base, user("u0"));
+        // The prototype only has one script; be upfront when the typed task or project differs from it.
+        if (body !== TASK_PROMPT || (a.project && a.project !== "jarvis-agent")) n = push(n, { kind: "notice", id: "n-demo", tone: "demo" });
         return startRun(n, MAIN);
       }
       if (s.phase === "approval") {
         // Typing during an approval is "要求调整": the pending request is withdrawn and Jarvis re-plans before asking again.
         const items = s.items.map(it => it.kind === "approval" && !it.resolved ? { ...it, resolved: "adjusted" as const } : it);
-        let n = push({ ...s, items, attachments: [] }, { kind: "user", id: uid(s, "u"), text: body, interject: true });
+        let n = push({ ...s, items }, user(uid(s, "u"), { interject: true }));
         n = text(n, "收到，我按你说的改一下方案，改好再给你确认。", true);
         const at = n.script.indexOf("preEdit");
         return { ...n, interjected: true, phase: "running", live: true, pendingFiles: false, status: "正在调整方案", orb: "composing", cursor: at >= 0 ? at : n.cursor };
       }
       if (s.phase === "running") {
-        let n = push({ ...s, attachments: [] }, { kind: "user", id: uid(s, "u"), text: body, interject: true });
+        let n = push(s, user(uid(s, "u"), { interject: true }));
         n = text(n, body.includes("取消") ? COPY.interjectAck : "收到，我按你说的调整。", true);
         return { ...n, interjected: true };
       }
-      const n = push({ ...s, attachments: [], reverted: false }, { kind: "user", id: uid(s, "u"), text: body });
+      const n = push({ ...s, reverted: false }, user(uid(s, "u")));
       return startRun({ ...n, outcome: "done" }, FOLLOW);
     }
     case "snapshot": return snapshot(a.snap, s.mode === "discuss" ? "ask" : s.mode, s.allowAll);
@@ -158,8 +160,7 @@ function reducer(s: S, a: A): S {
     case "startFromDiscuss": return startRun(push({ ...s, mode: s.mode === "discuss" ? "ask" : s.mode }, { kind: "user", id: uid(s, "u"), text: "可以，动手吧" }), AFTER_DISCUSS);
     case "revert": return { ...s, reverted: a.value, items: s.items.map(it => it.kind === "result" ? { ...it, reverted: a.value } : it) };
     case "play": return { ...initial(s.mode), allowAll: false };
-    case "attach": return { ...s, attachments: [...s.attachments, a.label] };
-    case "detach": return { ...s, attachments: s.attachments.filter((_, i) => i !== a.i) };
+    case "restore": return a.state;
   }
 }
 

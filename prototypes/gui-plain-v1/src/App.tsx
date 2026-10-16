@@ -1,33 +1,57 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Copy, FolderOpen, Menu, MoreHorizontal, PanelLeftOpen, PanelRight, PencilLine, SlidersHorizontal, Undo2, Lightbulb, Bug, Type } from "lucide-react";
-import { useDemo, type Snapshot } from "./store";
-import { files, INTERJECT, TASK_PROMPT } from "./scenario";
-import { Sidebar } from "./ui/Sidebar";
+import { Archive, Copy, FolderOpen, Lightbulb, Menu, MoreHorizontal, PanelLeftOpen, PanelRight, PencilLine, SlidersHorizontal, Undo2, Bug, Type } from "lucide-react";
+import { useDemo, type Act, type S, type Snapshot } from "./store";
+import { files, INTERJECT, PAST_TASKS, PROJECTS, TASK_PROMPT, type Attachment, type Item, type PastTask, type Project, type Step } from "./scenario";
+import { Sidebar, type LiveTask, type SettingsSection, type View } from "./ui/Sidebar";
 import { Thread } from "./ui/Thread";
+import { PastThread, type PastFollow } from "./ui/History";
 import { Composer } from "./ui/Composer";
-import { SidePanel, type PanelTab } from "./ui/SidePanel";
+import { PAGE_LABEL, SidePanel, type PageKind, type PanelData, type PanelTab } from "./ui/SidePanel";
 import { CompareOverlay, ReviewDock, type CompareMode } from "./ui/ReviewDock";
+import { AddProjectDialog, AdvancedDialog, SettingsDialog, ShortcutsDialog } from "./ui/Dialogs";
 import { Diffstat, IconBtn, Orb } from "./ui/Bits";
-import { Popover, PopoverContent, PopoverTrigger } from "./arc/popover/popover";
-import { Dialog, DialogContent } from "./arc/dialog/dialog";
-import { Button } from "./arc/button/button";
+import { Popover, PopoverClose, PopoverContent, PopoverTrigger } from "./arc/popover/popover";
+import { copyText, NotifyContext, useNotifier } from "./ui/feedback";
+import { MOD, usePrefs, useSystemDark } from "./prefs";
 
 const SUGGEST = [
   { icon: SlidersHorizontal, title: "调整组件样式", text: "把设置页的「保存」按钮改成主按钮样式，圆角跟输入框一致" },
   { icon: Type, title: "把文案改清楚", text: "首页空状态的提示文字改得更友好，别用技术词" },
   { icon: Bug, title: "修一个界面问题", text: "深色模式下输入框的边框看不见，帮我修一下" },
 ];
+const PAGE_OF: Record<string, PageKind> = { t2: "home", t3: "input-dark", t4: "export", p1: "portfolio" };
+const MAX_ATTACH = 6;
 
 function useMedia(q: string) { const [m, setM] = useState(() => window.matchMedia(q).matches); useEffect(() => { const mq = window.matchMedia(q); const f = () => setM(mq.matches); mq.addEventListener("change", f); return () => mq.removeEventListener("change", f); }, [q]); return m; }
-
 function snapOf(phase: string): Snapshot {
   return phase === "empty" ? "empty" : phase === "running" ? "running" : phase === "approval" ? "approval" : phase === "failed" ? "failed" : phase === "interrupted" ? "interrupted" : "complete";
+}
+function autoTitle(s: S) {
+  if (s.phase === "empty") return "新任务";
+  const u = s.items.find(i => i.kind === "user");
+  if (!u || u.text === TASK_PROMPT) return "保存按钮改成主按钮样式";
+  return u.text.length > 18 ? `${u.text.slice(0, 18)}…` : u.text;
+}
+const runsOf = (items: Item[]) => items.flatMap(i => i.kind === "steps" ? i.steps.filter(x => x.type === "run") : []) as Step[];
+const isOverlayOpen = () => !!document.querySelector('[role="dialog"], [data-radix-popper-content-wrapper]');
+
+function TopTitle({ title, canEdit, editing, setEditing, onRename }: { title: string; canEdit: boolean; editing: boolean; setEditing: (v: boolean) => void; onRename: (t: string) => void }) {
+  const [v, setV] = useState(title);
+  const ref = useRef<HTMLInputElement>(null);
+  useLayoutEffect(() => { if (editing) setV(title); }, [editing, title]);
+  useEffect(() => { if (editing) requestAnimationFrame(() => { ref.current?.focus(); ref.current?.select(); }); }, [editing]);
+  const commit = () => { const x = v.trim(); if (x && x !== title) onRename(x); setEditing(false); };
+  if (editing) return <input ref={ref} autoFocus className="tt-input" value={v} aria-label="任务名称" onChange={e => setV(e.target.value)} onBlur={commit} onKeyDown={e => { if (e.key === "Enter") commit(); if (e.key === "Escape") { e.stopPropagation(); setEditing(false); } }} />;
+  return <span className={`tt-main${canEdit ? " is-editable" : ""}`} onDoubleClick={canEdit ? () => setEditing(true) : undefined} title={canEdit ? "双击重命名" : undefined}>{title}</span>;
 }
 
 export default function App() {
   const [s, act] = useDemo();
-  const [theme, setTheme] = useState<"light" | "dark">(() => (new URLSearchParams(location.search).get("theme") === "dark" ? "dark" : "light"));
+  const [prefs, patch] = usePrefs();
+  const sysDark = useSystemDark();
+  const theme: "light" | "dark" = prefs.theme === "system" ? (sysDark ? "dark" : "light") : prefs.theme;
+  const { notify, node: toastNode } = useNotifier();
   const narrow = useMedia("(max-width: 820px)");
   const mid = useMedia("(max-width: 1180px)");
   const [sidebar, setSidebar] = useState(!narrow);
@@ -35,30 +59,132 @@ export default function App() {
   const [tab, setTab] = useState<PanelTab>("changes");
   const [file, setFile] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [focusSignal, setFocus] = useState(0);
   const [compare, setCompare] = useState<CompareMode>("new");
   const [cx, setCx] = useState(50);
   const [snap, setSnap] = useState<Snapshot>("empty");
-  const [advanced, setAdvanced] = useState(false);
-  const [toast, setToast] = useState<null | "reverted">(null);
   const [playing, setPlaying] = useState(false);
-  const sRef = useRef(s); sRef.current = s;
-  useEffect(() => { const q = new URLSearchParams(location.search); const st = q.get("state") as Snapshot | null; if (st && st !== "empty") { act({ type: "snapshot", snap: st }); setSnap(st); } const p = q.get("panel") as PanelTab | null; if (p) { setTab(p); setPanel(true); } const c = q.get("compare") as CompareMode | null; if (c) setCompare(c); }, [act]);
+  const [view, setView] = useState<View>({ kind: "current" });
+  const [projects, setProjects] = useState<Project[]>(PROJECTS);
+  const [past, setPast] = useState<PastTask[]>(PAST_TASKS);
+  const [pastRev, setPastRev] = useState<Record<string, boolean>>({});
+  const [follows, setFollows] = useState<Record<string, PastFollow[]>>({});
+  const [curProject, setCurProject] = useState("jarvis-agent");
+  const [curTitle, setCurTitle] = useState<string | null>(null);
+  const [parked, setParked] = useState<LiveTask[]>([]);
+  const [settings, setSettings] = useState<{ open: boolean; section: SettingsSection; focus?: string }>({ open: false, section: "general" });
+  const [addOpen, setAddOpen] = useState(false);
+  const [keysOpen, setKeysOpen] = useState(false);
+  const [advanced, setAdvanced] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [dockSignal, setDockSignal] = useState(0);
 
+  const curName = curTitle ?? autoTitle(s);
+  const visiblePast = past.filter(t => projects.some(p => p.id === t.project));
+  const pastTask = view.kind === "past" ? visiblePast.find(t => t.id === view.id) : undefined;
+  const projOf = (id: string) => projects.find(p => p.id === id) ?? projects[0];
+  const curProj = projOf(curProject);
+  const viewProj = pastTask ? projOf(pastTask.project) : curProj;
+  const busy = s.phase === "running" || s.phase === "approval";
+  const live = useRef({ s, curName, curProject }); live.current = { s, curName, curProject };
+  const sRef = useRef(s); sRef.current = s;
+
+  useEffect(() => {
+    const q = new URLSearchParams(location.search); const st = q.get("state") as Snapshot | null;
+    if (st && st !== "empty") { act({ type: "snapshot", snap: st }); setSnap(st); } else act({ type: "mode", mode: prefs.defaultMode });
+    const p = q.get("panel") as PanelTab | null; if (p) { setTab(p); setPanel(true); }
+    const c = q.get("compare") as CompareMode | null; if (c) setCompare(c);
+    const h = q.get("past"); if (h) setView({ kind: "past", id: h });
+    const pr = q.get("project"); if (pr) setCurProject(pr);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [act]);
   useEffect(() => { document.documentElement.dataset.theme = theme; }, [theme]);
   useEffect(() => { setSidebar(!narrow); }, [narrow]);
   useEffect(() => { if (s.phase !== "empty") setSnap(snapOf(s.phase)); }, [s.phase]);
-  // Undo feedback lives in one toast with a way back.
-  const prevRev = useRef(s.reverted);
-  useEffect(() => { if (s.reverted && !prevRev.current) setToast("reverted"); if (!s.reverted) setToast(null); prevRev.current = s.reverted; }, [s.reverted]);
-  useEffect(() => { if (!toast) return; const id = setTimeout(() => setToast(null), 5000); return () => clearTimeout(id); }, [toast]);
-  // P3: when a live run finishes, the preview opens by itself on wide screens.
+  useEffect(() => { if (view.kind === "past" && !pastTask) setView({ kind: "current" }); }, [view, pastTask]);
+  // P3: when a live run finishes, the preview opens by itself on wide screens (only for a local preview address).
   const prevPhase = useRef(s.phase);
-  useEffect(() => { if (prevPhase.current === "running" && s.phase === "complete" && !mid) { setTab("preview"); setPanel(true); } prevPhase.current = s.phase; }, [s.phase, mid]);
+  useEffect(() => {
+    if (prevPhase.current === "running" && s.phase === "complete" && !mid && prefs.autoPreview && curProj.previewUrl && view.kind === "current") { setTab("preview"); setPanel(true); }
+    prevPhase.current = s.phase;
+  }, [s.phase, mid, prefs.autoPreview, curProj.previewUrl, view.kind]);
 
-  const openPanel = useCallback((t: PanelTab) => { setTab(t); setPanel(true); }, []);
-  const openFile = useCallback((p: string) => { setFile(p); setTab("changes"); setPanel(true); }, []);
-  const pickSnap = (v: Snapshot) => { setPlaying(false); act({ type: "snapshot", snap: v }); setSnap(v); setDraft(""); setPanel(false); setFile(null); };
+  const fs = files(s.interjected);
+  const revertToast = (n: number, undo: () => void) => notify({ icon: <Undo2 size={15} />, text: `已撤销 ${n} 个文件的修改`, action: { label: "恢复", run: undo } });
+  const actUI = useCallback<Act>(a => { act(a); if (a.type === "revert" && a.value) revertToast(files(sRef.current.interjected).length, () => act({ type: "revert", value: false })); },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [act, notify]);
+  const revertPast = (id: string, v: boolean) => {
+    setPastRev(r => ({ ...r, [id]: v }));
+    const t = past.find(x => x.id === id);
+    if (v && t) revertToast(t.files.length, () => setPastRev(r => ({ ...r, [id]: false })));
+  };
+
+  const surfaceReset = () => { setPanel(false); setFile(null); setRenaming(false); };
+  const closeOnNarrow = () => { if (narrow) setSidebar(false); };
+  const parkCurrent = () => {
+    const c = live.current;
+    if (c.s.phase === "empty") return;
+    setParked(ps => [{ key: `k${Date.now().toString(36)}`, title: c.curName, project: c.curProject, s: c.s }, ...ps]);
+  };
+  const clearCurrent = () => { act({ type: "snapshot", snap: "empty" }); act({ type: "mode", mode: prefs.defaultMode }); setSnap("empty"); setCurTitle(null); };
+  const startNew = (project?: string, text = "") => {
+    setPlaying(false); parkCurrent(); clearCurrent();
+    if (project) setCurProject(project);
+    setView({ kind: "current" }); setDraft(text); setAttachments([]); surfaceReset(); setFocus(n => n + 1); closeOnNarrow();
+  };
+  const restore = (t: LiveTask) => {
+    parkCurrent();
+    act({ type: "restore", state: t.s }); setCurTitle(t.title); setCurProject(t.project); setSnap(snapOf(t.s.phase));
+    setView({ kind: "current" }); setDraft(""); setAttachments([]); surfaceReset();
+  };
+  const openLive = (key: string) => {
+    setPlaying(false);
+    if (key === "cur") { if (view.kind !== "current") { setView({ kind: "current" }); surfaceReset(); } closeOnNarrow(); return; }
+    const t = parked.find(x => x.key === key); if (!t) return;
+    setParked(ps => ps.filter(x => x.key !== key)); restore(t); closeOnNarrow();
+  };
+  const renameLive = (key: string, t: string) => { if (key === "cur") setCurTitle(t); else setParked(ps => ps.map(x => x.key === key ? { ...x, title: t } : x)); };
+  const archiveLive = (key: string) => {
+    if (key === "cur") {
+      const saved: LiveTask = { key: "cur", title: live.current.curName, project: live.current.curProject, s: live.current.s };
+      setPlaying(false); clearCurrent(); setView({ kind: "current" }); surfaceReset();
+      notify({ icon: <Archive size={15} />, text: `已归档「${saved.title}」`, action: { label: "撤销", run: () => restore(saved) } });
+      return;
+    }
+    const i = parked.findIndex(x => x.key === key); const t = parked[i]; if (!t) return;
+    setParked(ps => ps.filter(x => x.key !== key));
+    notify({ icon: <Archive size={15} />, text: `已归档「${t.title}」`, action: { label: "撤销", run: () => setParked(ps => [...ps.slice(0, i), t, ...ps.slice(i)]) } });
+  };
+  const openPast = (id: string) => { setPlaying(false); if (!(view.kind === "past" && view.id === id)) { setView({ kind: "past", id }); surfaceReset(); setDraft(""); setAttachments([]); } closeOnNarrow(); };
+  const renamePast = (id: string, title: string) => setPast(ps => ps.map(x => x.id === id ? { ...x, title } : x));
+  const archivePast = (id: string) => {
+    const i = past.findIndex(x => x.id === id); const t = past[i]; if (!t) return;
+    setPast(ps => ps.filter(x => x.id !== id));
+    notify({ icon: <Archive size={15} />, text: `已归档「${t.title}」`, action: { label: "撤销", run: () => setPast(ps => [...ps.slice(0, i), t, ...ps.slice(i)]) } });
+  };
+  const removeProject = (id: string) => {
+    const p = projects.find(x => x.id === id); if (!p) return;
+    if (projects.length <= 1) { notify({ tone: "info", text: "至少要留一个项目" }); return; }
+    if ((curProject === id && s.phase !== "empty") || parked.some(x => x.project === id)) { notify({ tone: "info", text: `${p.name} 里还有进行中的任务，先把它归档` }); return; }
+    const prev = projects;
+    setProjects(ps => ps.filter(x => x.id !== id));
+    if (curProject === id) setCurProject(prev.find(x => x.id !== id)!.id);
+    notify({ text: `已从列表移除 ${p.name}，文件夹不会删`, action: { label: "撤销", run: () => setProjects(prev) } });
+  };
+  const addProject = (p: Project) => {
+    setProjects(ps => [...ps, p]); setAddOpen(false);
+    if (view.kind === "current" && s.phase === "empty") setCurProject(p.id);
+    notify({ text: `已添加 ${p.name}` });
+  };
+  const openSettings = (section: SettingsSection = "general", focus?: string) => setSettings({ open: true, section, focus });
+  const openPanel = (t: PanelTab) => { setTab(t); setPanel(true); };
+  const openFile = (p: string) => { setFile(p); setTab("changes"); setPanel(true); };
+  const pickSnap = (v: Snapshot) => { setPlaying(false); act({ type: "snapshot", snap: v }); setSnap(v); setDraft(""); setAttachments([]); setPanel(false); setFile(null); setView({ kind: "current" }); setCurTitle(null); setCurProject("jarvis-agent"); };
+  const editText = (t: string) => { setDraft(t); setFocus(n => n + 1); };
+  const shot = (a: Attachment) => { setAttachments(cur => cur.length >= MAX_ATTACH ? cur : [...cur, a]); setFocus(n => n + 1); if (mid) setPanel(false); notify({ text: "已把预览截图放进输入框" }); };
 
   // Auto demo: types the task, interjects once, approves, then hands back.
   useEffect(() => {
@@ -67,7 +193,7 @@ export default function App() {
     const wait = (ms: number) => new Promise<void>(r => T.push(window.setTimeout(r, ms)));
     const type = async (t: string) => { for (let i = 1; i <= t.length; i++) { if (dead) return; setDraft(t.slice(0, i)); await wait(38); } };
     (async () => {
-      act({ type: "play" }); setPanel(false); setDraft(""); setSnap("empty");
+      act({ type: "play" }); setPanel(false); setDraft(""); setAttachments([]); setSnap("empty"); setView({ kind: "current" }); setCurTitle(null); setCurProject("jarvis-agent");
       await wait(700); await type(TASK_PROMPT); await wait(450); if (dead) return;
       act({ type: "send", text: TASK_PROMPT }); setDraft("");
       await wait(4300); await type(INTERJECT); await wait(400); if (dead) return;
@@ -82,74 +208,132 @@ export default function App() {
     return () => { dead = true; T.forEach(clearTimeout); window.removeEventListener("pointerdown", stop, true); };
   }, [playing, act]);
 
-  const title = s.phase === "empty" ? "新任务" : "保存按钮改成主按钮样式";
-  const fs = files(s.interjected);
-  const add = fs.reduce((a, f) => a + f.add, 0), del = fs.reduce((a, f) => a + f.del, 0);
-  const showChanges = s.applied && !s.reverted;
+  // Keyboard: the same shortcuts listed in 键盘快捷键. Single keys never fire while typing.
+  const keys = useRef<(e: KeyboardEvent) => void>(() => {});
+  keys.current = (e: KeyboardEvent) => {
+    if (e.isComposing) return;
+    const mod = e.ctrlKey || e.metaKey; const k = e.key.toLowerCase();
+    const typing = !!(e.target as HTMLElement | null)?.closest?.("input, textarea, [contenteditable='true']");
+    if (e.key === "Escape") { if (view.kind === "current" && busy && !isOverlayOpen() && !playing) { e.preventDefault(); act({ type: "stop" }); } return; }
+    if (document.querySelector('[role="dialog"]')) return;
+    if (mod && k === "k") { e.preventDefault(); setSidebar(true); setSearchOpen(true); return; }
+    if (mod && k === "b") { e.preventDefault(); setSidebar(v => !v); return; }
+    if (mod && e.key === "\\") { e.preventDefault(); setPanel(v => !v); return; }
+    if (mod && e.key === ",") { e.preventDefault(); openSettings(); return; }
+    if ((mod && k === "n") || (e.altKey && e.code === "KeyN")) { e.preventDefault(); startNew(); return; }
+    if (e.key === "?" && !typing && !mod) { e.preventDefault(); setKeysOpen(true); }
+  };
+  useEffect(() => { const h = (e: KeyboardEvent) => keys.current(e); window.addEventListener("keydown", h); return () => window.removeEventListener("keydown", h); }, []);
+
+  const panelData: PanelData = pastTask ? {
+    key: pastTask.id, files: pastTask.files, applied: pastTask.files.length > 0, pending: false, reverted: !!pastRev[pastTask.id], canRevertAll: pastTask.files.length > 0 && !pastRev[pastTask.id],
+    runs: pastTask.steps.filter(x => x.type === "run"), project: viewProj, path: pastTask.previewPath, page: PAGE_OF[pastTask.id] ?? "settings", interjected: false,
+    emptyNote: pastTask.outcome === "stopped" ? "这个任务在动手前就停了，没有改任何文件。" : undefined, onRevert: v => revertPast(pastTask.id, v),
+  } : {
+    key: `cur-${curProject}`, files: fs, applied: s.applied, pending: s.pendingFiles, reverted: s.reverted, canRevertAll: !s.pendingFiles && s.applied && !s.reverted && (s.phase === "complete" || s.phase === "failed"),
+    runs: runsOf(s.items), project: curProj, path: "/settings", page: "settings", interjected: s.interjected, onRevert: v => actUI({ type: "revert", value: v }),
+  };
+  const shotLabel = viewProj.previewUrl ? `预览截图 · ${PAGE_LABEL[panelData.page]}` : undefined;
+  const pAdd = panelData.files.reduce((a, f) => a + f.add, 0), pDel = panelData.files.reduce((a, f) => a + f.del, 0);
+  const showChanges = panelData.applied && !panelData.reverted && panelData.files.length > 0;
+  const title = pastTask ? pastTask.title : curName;
+  const hasTask = !!pastTask || s.phase !== "empty";
   const hour = new Date().getHours();
   const hello = hour < 11 ? "早上好" : hour < 14 ? "中午好" : hour < 18 ? "下午好" : "晚上好";
 
-  return <div className={`app${sidebar ? " has-sidebar" : ""}${panel ? " has-panel" : ""}${narrow ? " is-narrow" : ""}${mid ? " is-mid" : ""}`}>
+  const copyConversation = () => {
+    const lines = pastTask
+      ? [`你：${pastTask.prompt}`, `Jarvis：${pastTask.reply}`, ...(follows[pastTask.id] ?? []).map(f => `你：${f.text}`)]
+      : s.items.flatMap(i => i.kind === "user" ? [`你：${i.text}`] : i.kind === "text" ? [`Jarvis：${i.text}`] : i.kind === "result" ? [i.reverted ? "（改动已撤销）" : i.outcome === "failed" ? "（改完了，但检查没通过）" : "（改好了，检查都通过了）"] : []);
+    copyText(`${title}\n\n${lines.join("\n\n")}`).then(ok => notify(ok ? { text: "已复制整段对话" } : { tone: "info", text: "浏览器没允许复制" }));
+  };
+  const common = {
+    theme, mode: s.mode, onMode: (m: S["mode"]) => act({ type: "mode", mode: m }), allowAll: s.allowAll, onAllowAll: (v: boolean) => act({ type: "allowAll", value: v }),
+    budget: prefs.budget, sendKey: prefs.sendKey, draft, setDraft, focusSignal, attachments, setAttachments, shotLabel, onOpenSettings: (sec: "usage" | "general") => openSettings(sec),
+  };
+  const sendCurrent = (text: string) => { act({ type: "send", text, attachments, project: curProject }); setDraft(""); setAttachments([]); };
+  const sendPast = (text: string) => {
+    if (!pastTask) return;
+    const body = text.trim() || (attachments.length > 1 ? `看看这 ${attachments.length} 个附件` : "看看这个附件");
+    setFollows(f => ({ ...f, [pastTask.id]: [...(f[pastTask.id] ?? []), { id: `f${Date.now()}`, text: body, attachments: attachments.length ? attachments : undefined }] }));
+    setDraft(""); setAttachments([]);
+  };
+
+  return <NotifyContext.Provider value={notify}>
+  <div className={`app${sidebar ? " has-sidebar" : ""}${panel ? " has-panel" : ""}${narrow ? " is-narrow" : ""}${mid ? " is-mid" : ""}`}>
     <AnimatePresence initial={false}>
       {sidebar && <motion.div className="sidebar-shell" initial={narrow ? { x: -290 } : { opacity: 0 }} animate={narrow ? { x: 0 } : { opacity: 1 }} exit={narrow ? { x: -290 } : { opacity: 0 }} transition={{ type: "spring", visualDuration: .32, bounce: 0 }}>
-        <Sidebar s={s} theme={theme} title={title} onNew={() => { pickSnap("empty"); if (narrow) setSidebar(false); }} onCollapse={() => setSidebar(false)} onPickCurrent={() => narrow && setSidebar(false)} />
+        <Sidebar s={s} theme={theme} view={pastTask ? view : { kind: "current" }} projects={projects} past={visiblePast} live={[{ key: "cur", title: curName, project: curProject, s }, ...parked]}
+          searchOpen={searchOpen} setSearchOpen={setSearchOpen} themePref={prefs.theme} setThemePref={t => patch({ theme: t })}
+          onNew={p => startNew(p)} onCollapse={() => setSidebar(false)} onOpenLive={openLive} onOpenPast={openPast}
+          onRenameLive={renameLive} onRenamePast={renamePast} onArchiveLive={archiveLive} onArchivePast={archivePast}
+          onRemoveProject={removeProject} onSettings={openSettings} onAddProject={() => setAddOpen(true)} onShortcuts={() => setKeysOpen(true)} />
       </motion.div>}
     </AnimatePresence>
     {narrow && sidebar && <div className="scrim" onClick={() => setSidebar(false)} />}
     <main className="main">
       <header className="topbar">
-        {!sidebar && <IconBtn label={narrow ? "打开菜单" : "展开侧栏"} onClick={() => setSidebar(true)}>{narrow ? <Menu size={17} /> : <PanelLeftOpen size={17} />}</IconBtn>}
-        <div className="topbar-title"><span className="tt-main">{title}</span>{s.phase !== "empty" && !narrow && <span className="tt-crumb">jarvis-agent</span>}</div>
+        {!sidebar && <IconBtn label={narrow ? "打开菜单" : `展开侧栏（${MOD} B）`} onClick={() => setSidebar(true)}>{narrow ? <Menu size={17} /> : <PanelLeftOpen size={17} />}</IconBtn>}
+        <div className="topbar-title">
+          <TopTitle title={title} canEdit={hasTask} editing={renaming} setEditing={setRenaming} onRename={t => pastTask ? renamePast(pastTask.id, t) : setCurTitle(t)} />
+          {hasTask && !narrow && !renaming && <span className="tt-crumb">{viewProj.name}</span>}
+        </div>
         <span className="grow" />
-        <ReviewDock snap={snap} onSnap={pickSnap} mode={compare} setMode={setCompare} theme={theme} setTheme={setTheme} onPlay={() => setPlaying(p => !p)} playing={playing} />
+        <ReviewDock snap={snap} onSnap={pickSnap} mode={compare} setMode={setCompare} theme={theme} setTheme={t => patch({ theme: t })} onPlay={() => setPlaying(p => !p)} playing={playing} openSignal={dockSignal} />
         <span className="grow" />
-        {showChanges && <button type="button" className="changes-pill" onClick={() => openPanel("changes")}><span>{fs.length} 个文件</span><Diffstat add={add} del={del} /></button>}
-        {s.phase !== "empty" && <Popover>
-          <PopoverTrigger asChild><button type="button" className="icon-btn" aria-label="更多"><MoreHorizontal size={17} /></button></PopoverTrigger>
+        {showChanges && <button type="button" className="changes-pill" onClick={() => openPanel("changes")}><span>{panelData.files.length} 个文件</span><Diffstat add={pAdd} del={pDel} /></button>}
+        {hasTask && <Popover>
+          <PopoverTrigger asChild><button type="button" className="icon-btn" aria-label="这个任务的更多操作"><MoreHorizontal size={17} /></button></PopoverTrigger>
           <PopoverContent className="menu" align="end">
-            <button className="menu-item"><PencilLine size={15} />重命名</button>
-            <button className="menu-item"><FolderOpen size={15} />在文件夹中打开项目</button>
-            <button className="menu-item"><Copy size={15} />复制对话</button>
+            <PopoverCloseItem icon={<PencilLine size={15} />} onClick={() => setRenaming(true)}>重命名</PopoverCloseItem>
+            <PopoverCloseItem icon={<FolderOpen size={15} />} onClick={() => notify({ tone: "info", icon: <FolderOpen size={15} />, text: `演示稿：会在资源管理器里打开 ${viewProj.path}` })}>在文件夹中打开项目</PopoverCloseItem>
+            <PopoverCloseItem icon={<Copy size={15} />} onClick={copyConversation}>复制对话</PopoverCloseItem>
             <div className="menu-sep" />
-            <button className="menu-item" onClick={() => setAdvanced(true)}><SlidersHorizontal size={15} />范围与预算…</button>
+            <PopoverCloseItem icon={<SlidersHorizontal size={15} />} onClick={() => setAdvanced(true)}>范围与预算…</PopoverCloseItem>
+            <PopoverCloseItem icon={<Archive size={15} />} danger onClick={() => pastTask ? archivePast(pastTask.id) : archiveLive("cur")}>归档</PopoverCloseItem>
           </PopoverContent>
         </Popover>}
-        <IconBtn label={panel ? "收起面板" : "更改 · 预览 · 终端"} active={panel} onClick={() => setPanel(p => !p)} badge={showChanges && !panel}><PanelRight size={17} /></IconBtn>
+        <IconBtn label={panel ? `收起面板（${MOD} \\）` : `更改 · 预览 · 终端（${MOD} \\）`} active={panel} onClick={() => setPanel(p => !p)} badge={showChanges && !panel}><PanelRight size={17} /></IconBtn>
       </header>
 
-      {s.phase === "empty" ? <div className="hero">
+      {pastTask ? <>
+        <div className="scroll"><PastThread key={pastTask.id} t={pastTask} reverted={!!pastRev[pastTask.id]} onRevert={v => revertPast(pastTask.id, v)} follows={follows[pastTask.id] ?? []}
+          onOpenFile={openFile} onPanel={openPanel} onEdit={editText} onRestart={text => startNew(pastTask.project, text)} /></div>
+        <div className="dock-composer"><Composer {...common} phase="past" beam={false} cost={pastTask.cost} tokens={Math.round(pastTask.cost * 62000)} onSend={sendPast} onStop={() => {}} canStop={false} /></div>
+      </> : s.phase === "empty" ? <div className="hero">
         <div className="hero-orb"><Orb state="breathing" size={64} theme={theme} /></div>
         <h1>{hello}，Ludi。今天想改点什么？</h1>
-        <Composer s={s} act={act} theme={theme} variant="hero" draft={draft} setDraft={setDraft} focusSignal={focusSignal} />
-        <div className="suggest">{SUGGEST.map(x => <button key={x.title} type="button" className="suggest-card" onClick={() => { setDraft(x.text); setFocus(n => n + 1); }}><x.icon size={16} className="muted-ico" /><span className="sg-title">{x.title}</span><span className="sg-text">{x.text}</span></button>)}</div>
+        <Composer {...common} variant="hero" phase="empty" beam={false} cost={0} tokens={0} onSend={sendCurrent} onStop={() => {}} canStop={false}
+          projects={projects} project={curProject} onProject={setCurProject} onAddProject={() => setAddOpen(true)} />
+        <div className="suggest">{SUGGEST.map(x => <button key={x.title} type="button" className="suggest-card" onClick={() => editText(x.text)}><x.icon size={16} className="muted-ico" /><span className="sg-title">{x.title}</span><span className="sg-text">{x.text}</span></button>)}</div>
         <p className="hero-tip"><Lightbulb size={13} />想先聊聊再动手？把输入框里的「改之前问我」切成「只讨论」。</p>
       </div> : <>
-        <div className="scroll"><Thread s={s} act={act} theme={theme} onOpenFile={openFile} onPanel={openPanel} onAdjust={() => setFocus(n => n + 1)} /></div>
-        <div className="dock-composer"><Composer s={s} act={act} theme={theme} draft={draft} setDraft={setDraft} focusSignal={focusSignal} /></div>
+        <div className="scroll"><Thread s={s} act={actUI} theme={theme} onOpenFile={openFile} onPanel={openPanel} onAdjust={() => setFocus(n => n + 1)} onEdit={editText} /></div>
+        <div className="dock-composer"><Composer {...common} phase={s.phase} beam={s.phase === "running"} cost={s.cost} tokens={s.tokens} onSend={sendCurrent} onStop={() => act({ type: "stop" })} canStop={busy} /></div>
       </>}
-      <div className="toast-wrap"><AnimatePresence>{toast && <motion.div className="toast" role="status" initial={{ opacity: 0, y: 10, scale: .97 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 6, scale: .98 }} transition={{ type: "spring", visualDuration: .3, bounce: .12 }}>
-        <Undo2 size={15} /><span>已撤销 {fs.length} 个文件的修改</span><button type="button" onClick={() => act({ type: "revert", value: false })}>恢复</button>
-      </motion.div>}</AnimatePresence></div>
+      {toastNode}
     </main>
     <AnimatePresence initial={false}>
       {panel && <motion.div className="panel-shell" initial={mid ? { x: 480 } : { opacity: 0, x: 24 }} animate={{ opacity: 1, x: 0 }} exit={mid ? { x: 480 } : { opacity: 0, x: 24 }} transition={{ type: "spring", visualDuration: .34, bounce: 0 }}>
-        <SidePanel s={s} act={act} tab={tab} setTab={setTab} file={file} setFile={setFile} onClose={() => setPanel(false)} onShot={() => { setFocus(n => n + 1); if (mid) setPanel(false); }} />
+        <SidePanel d={panelData} tab={tab} setTab={setTab} file={file} setFile={setFile} onClose={() => setPanel(false)} onShot={shot} onSetUrl={() => openSettings("projects", viewProj.id)} />
       </motion.div>}
     </AnimatePresence>
     {mid && panel && <div className="scrim" onClick={() => setPanel(false)} />}
 
-    <Dialog open={advanced} onOpenChange={setAdvanced}>
-      <DialogContent title="范围与预算" description="平时不用管：Jarvis 会按任务自动推断。这些限制在后台照常生效。">
-        <dl className="adv">
-          <div><dt>可以改的文件</dt><dd><code>src/settings/**</code> <code>src/styles/**</code><span className="auto">自动</span></dd></div>
-          <div><dt>完成前要跑的检查</dt><dd><code>npm test -- settings</code> <code>npx tsc --noEmit</code><span className="auto">自动</span></dd></div>
-          <div><dt>预算</dt><dd>¥2.00 · 最长 15 分钟<span className="auto">默认</span></dd></div>
-          <div><dt>运行位置</dt><dd>只在 jarvis-agent 文件夹里</dd></div>
-        </dl>
-        <div className="adv-foot"><Button size="sm" variant="secondary" onClick={() => setAdvanced(false)}>好的</Button></div>
-      </DialogContent>
-    </Dialog>
+    <SettingsDialog open={settings.open} onOpenChange={v => setSettings(x => ({ ...x, open: v }))} section={settings.section} setSection={sec => setSettings(x => ({ ...x, section: sec, focus: undefined }))} focusProject={settings.focus}
+      prefs={prefs} patch={patch} themePref={prefs.theme} setThemePref={t => patch({ theme: t })} projects={projects}
+      onPreviewUrl={(id, url) => setProjects(ps => ps.map(p => p.id === id ? { ...p, previewUrl: url } : p))} onRemoveProject={removeProject}
+      onAddProject={() => { setSettings(x => ({ ...x, open: false })); setAddOpen(true); }} onOpenDock={() => setDockSignal(n => n + 1)} />
+    <AddProjectDialog open={addOpen} onOpenChange={setAddOpen} projects={projects} onAdd={addProject} />
+    <ShortcutsDialog open={keysOpen} onOpenChange={setKeysOpen} />
+    <AdvancedDialog open={advanced} onOpenChange={setAdvanced} project={viewProj} budget={prefs.budget} onEditPreview={() => { setAdvanced(false); openSettings("projects", viewProj.id); }} />
 
     <CompareOverlay mode={compare} snap={snap} x={cx} onX={setCx} />
-  </div>;
+  </div>
+  </NotifyContext.Provider>;
+}
+
+/** A menu row that closes its popover before acting. */
+function PopoverCloseItem({ icon, children, onClick, danger }: { icon: React.ReactNode; children: React.ReactNode; onClick: () => void; danger?: boolean }) {
+  return <PopoverClose asChild><button className={`menu-item${danger ? " is-danger" : ""}`} onClick={onClick}>{icon}{children}</button></PopoverClose>;
 }

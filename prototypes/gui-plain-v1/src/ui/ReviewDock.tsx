@@ -1,4 +1,4 @@
-import { useRef, useState, type PointerEvent as RPE } from "react";
+import { useEffect, useRef, useState, type PointerEvent as RPE } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { ChevronDown, Moon, Play, Sun, Pause } from "lucide-react";
 import SegmentedControl from "../arc/segmented-control/segmented-control";
@@ -60,8 +60,9 @@ export function CompareOverlay({ mode, snap, onX, x }: { mode: CompareMode; snap
   </div>;
 }
 
-export function ReviewDock({ snap, onSnap, mode, setMode, theme, setTheme, onPlay, playing }: { snap: Snapshot; onSnap: (s: Snapshot) => void; mode: CompareMode; setMode: (m: CompareMode) => void; theme: "light" | "dark"; setTheme: (t: "light" | "dark") => void; onPlay: () => void; playing: boolean }) {
+export function ReviewDock({ snap, onSnap, mode, setMode, theme, setTheme, onPlay, playing, openSignal = 0 }: { snap: Snapshot; onSnap: (s: Snapshot) => void; mode: CompareMode; setMode: (m: CompareMode) => void; theme: "light" | "dark"; setTheme: (t: "light" | "dark") => void; onPlay: () => void; playing: boolean; openSignal?: number }) {
   const [open, setOpen] = useState(() => new URLSearchParams(location.search).get("dock") !== "0" && window.innerWidth > 760);
+  useEffect(() => { if (openSignal) setOpen(true); }, [openSignal]);
   const n = NOTES[snap];
   return <div className={`dock${open ? " is-open" : ""}`}>
     <button type="button" className="dock-pill" onClick={() => setOpen(o => !o)} aria-expanded={open}><i className="dot" /><span className="dock-pill-name">走查台</span><span className="dock-pill-sub">{playing ? "自动演示中 · " : ""}{STATES.find(x => x.value === snap)?.label} · {mode === "new" ? "新稿" : mode === "old" ? "旧版" : "对照"}</span><ChevronDown size={14} className={`chev-up${open ? " is-open" : ""}`} /></button>

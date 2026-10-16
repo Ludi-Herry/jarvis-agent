@@ -4,6 +4,7 @@
 
 - 技术：Vite + React 19，`vite-plugin-singlefile` 打成一个自包含 HTML（`npm install && npm run build` → `dist/index.html`）。
 - 结构：`src/App.tsx` 三栏骨架与走查台；`src/ui/` 侧栏、对话、输入框、右栏（更改 / 预览 / 终端）、走查台；`src/store.ts` 状态机与自动演示；`src/theme.css` 色彩与字体 token；`src/arc/` 只保留用到的 Arc 控件。
+- 第二轮（同日）：按 PastaUI / Arc 补齐所有可点入口——左栏品牌菜单、搜索（`Ctrl K`）、项目分组折叠与「…」菜单、任务行重命名 / 归档（可撤销）、添加项目、头像菜单（外观）、设置（通用 / 外观 / 项目预览地址 / 模型与用量 / 关于）、快捷键表、顶栏重命名与「…」菜单、历史任务回放、真实的图片 / 文件附件（选择、粘贴、拖入）、预览栏刷新 / 手机宽度 / 在浏览器中打开。新文件：`src/prefs.ts`、`src/ui/{Dialogs,History,feedback}.tsx`。
 - 来源：PastaUI 布局与输入框形态；Arc（uiarc.dev registry，未见独立许可证声明，进正式 GUI 前需确认）；`thinking-orbs`、`border-beam`（均 MIT）。
 
 ## 未随提交的二进制文件

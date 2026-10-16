@@ -8,9 +8,9 @@ export function Orb({ state, size = 20, theme }: { state: any; size?: 20 | 32 | 
 export function Diffstat({ add, del, muted }: { add: number; del: number; muted?: boolean }) {
   return <span className={`diffstat${muted ? " muted" : ""}`}><span className="add">+{add}</span><span className="del">−{del}</span></span>;
 }
-export function IconBtn({ label, onClick, children, active, tip = true, className, badge }: { label: string; onClick?: () => void; children: ReactNode; active?: boolean; tip?: boolean; className?: string; badge?: boolean }) {
-  const b = <button type="button" className={`icon-btn${active ? " is-active" : ""}${className ? " " + className : ""}`} aria-label={label} aria-pressed={active} onClick={onClick}>{children}{badge && <span className="icon-btn-badge" />}</button>;
-  return tip ? <Tooltip content={label} side="bottom">{b}</Tooltip> : b;
+export function IconBtn({ label, onClick, children, active, tip = true, className, badge, disabled }: { label: string; onClick?: () => void; children: ReactNode; active?: boolean; tip?: boolean; className?: string; badge?: boolean; disabled?: boolean }) {
+  const b = <button type="button" className={`icon-btn${active ? " is-active" : ""}${className ? " " + className : ""}`} aria-label={label} aria-pressed={active} onClick={onClick} disabled={disabled}>{children}{badge && <span className="icon-btn-badge" />}</button>;
+  return tip && !disabled ? <Tooltip content={label} side="bottom">{b}</Tooltip> : b;
 }
 export function fmtElapsed(ms: number) {
   const sec = Math.max(0, Math.round(ms / 1000));

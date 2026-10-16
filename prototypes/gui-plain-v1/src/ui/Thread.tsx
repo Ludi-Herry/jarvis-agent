@@ -1,16 +1,18 @@
 import React, { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Check, ChevronRight, CircleAlert, CircleCheck, CornerDownRight, Eye, FileCode2, FileText, GitCompareArrows, ListChecks, MessageCircle, Pencil, RotateCcw, Search, SquareTerminal, Undo2, Wrench, X } from "lucide-react";
+import { Check, ChevronRight, CircleAlert, CircleCheck, Copy, CornerDownRight, Eye, FileCode2, FileText, GitCompareArrows, ListChecks, MessageCircle, Pencil, PencilLine, RotateCcw, Search, SquareTerminal, Undo2, Wrench, X } from "lucide-react";
 import type { Act, S } from "../store";
-import { files, TASK_PROMPT, type Item, type Step } from "../scenario";
+import { files, TASK_PROMPT, type Attachment, type Item, type Step } from "../scenario";
 import { Button } from "../arc/button/button";
 import { ConfirmMorph } from "../arc/confirm-morph/confirm-morph";
 import { TextShimmer } from "../arc/text-shimmer/text-shimmer";
-import { Diffstat, Orb, fmtElapsed } from "./Bits";
+import { Diffstat, IconBtn, Orb, fmtElapsed } from "./Bits";
+import { AttachChip } from "./Composer";
+import { copyText, useNotify } from "./feedback";
 
-const enter = { initial: { opacity: 0, y: 6, filter: "blur(3px)" }, animate: { opacity: 1, y: 0, filter: "blur(0px)" }, transition: { duration: .32, ease: [.16, 1, .3, 1] as any } };
+export const enter = { initial: { opacity: 0, y: 6, filter: "blur(3px)" }, animate: { opacity: 1, y: 0, filter: "blur(0px)" }, transition: { duration: .32, ease: [.16, 1, .3, 1] as any } };
 
-function Typewriter({ text, animate }: { text: string; animate?: boolean }) {
+export function Typewriter({ text, animate }: { text: string; animate?: boolean }) {
   const [n, setN] = useState(animate ? 0 : text.length);
   useEffect(() => {
     if (!animate) { setN(text.length); return; }
@@ -27,7 +29,25 @@ function summarize(steps: Step[]) {
   return parts.join("，");
 }
 
-function StepsGroup({ steps, live, liveNode }: { steps: Step[]; live: boolean; liveNode?: React.ReactNode }) {
+/** Hover actions under a message (PastaUI chat-01): copy for everything, edit for your own words. */
+export function MsgActions({ text, onEdit, align = "start" }: { text: string; onEdit?: () => void; align?: "start" | "end" }) {
+  const notify = useNotify();
+  return <div className={`msg-actions is-${align}`}>
+    <IconBtn className="sb-mini" label="复制" onClick={() => copyText(text).then(ok => notify(ok ? { text: "已复制" } : { tone: "info", text: "浏览器没允许复制" }))}><Copy size={13} /></IconBtn>
+    {onEdit && <IconBtn className="sb-mini" label="改一改再发" onClick={onEdit}><PencilLine size={13} /></IconBtn>}
+  </div>;
+}
+
+export function UserBubble({ text, attachments, tag, onEdit }: { text: string; attachments?: Attachment[]; tag?: string; onEdit?: () => void }) {
+  return <motion.div {...enter} className="msg-user-wrap">
+    {tag && <span className="interject-tag"><CornerDownRight size={12} />{tag}</span>}
+    {attachments?.length ? <div className="msg-attach">{attachments.map((a, i) => a.url ? <a key={i} className="msg-img" href={a.url} target="_blank" rel="noreferrer" aria-label={`打开 ${a.label}`}><img src={a.url} alt={a.label} /></a> : <AttachChip key={i} a={a} />)}</div> : null}
+    <div className="msg-user">{text}</div>
+    <MsgActions text={text} onEdit={onEdit} align="end" />
+  </motion.div>;
+}
+
+export function StepsGroup({ steps, live, liveNode, onOpenFile }: { steps: Step[]; live: boolean; liveNode?: React.ReactNode; onOpenFile?: (name: string) => void }) {
   const [open, setOpen] = useState(false);
   const [openRun, setOpenRun] = useState<string | null>(null);
   const running = steps.find(s => s.status === "running");
@@ -42,13 +62,14 @@ function StepsGroup({ steps, live, liveNode }: { steps: Step[]; live: boolean; l
     </button>
     <AnimatePresence initial={false}>
       {open && <motion.ul className="steps-list" initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ type: "spring", visualDuration: .34, bounce: 0 }}>
-        {steps.map(st => { const I = STEP_ICON[st.type]; const expandable = !!st.output; return <li key={st.id} className={`step is-${st.status}`}>
-          <button type="button" className="step-row" disabled={!expandable} onClick={() => setOpenRun(r => r === st.id ? null : st.id)} aria-expanded={expandable ? openRun === st.id : undefined}>
+        {steps.map(st => { const I = STEP_ICON[st.type]; const expandable = !!st.output; const opens = !expandable && st.type === "edit" && !!onOpenFile && st.status !== "running" && !!st.target; return <li key={st.id} className={`step is-${st.status}`}>
+          <button type="button" className={`step-row${opens ? " is-link" : ""}`} disabled={!expandable && !opens} onClick={() => opens ? onOpenFile!(st.target!) : setOpenRun(r => r === st.id ? null : st.id)} aria-expanded={expandable ? openRun === st.id : undefined} title={opens ? `看 ${st.target} 的改动` : undefined}>
             <span className="step-ico">{st.status === "running" ? <span className="spin" /> : st.status === "failed" ? <X size={13} /> : st.type === "run" ? <Check size={13} /> : <I size={13} />}</span>
             <span className="step-label">{st.label}</span>
             {st.target && <span className={`step-target${st.type === "run" ? " mono" : ""}`}>{st.target}</span>}
             <span className="step-ms">{st.status === "running" ? "" : `${(st.ms / 1000).toFixed(1)} 秒`}</span>
             {expandable && <ChevronRight size={13} className={`chev${openRun === st.id ? " is-open" : ""}`} />}
+            {opens && <span className="step-open">看改动<ChevronRight size={12} /></span>}
           </button>
           {expandable && openRun === st.id && <pre className="step-output">{st.output!.join("\n")}</pre>}
         </li>; })}
@@ -139,7 +160,7 @@ function StatusLine({ s, theme, inline }: { s: S; theme: "light" | "dark"; inlin
   return inline ? <span className="status-inline" role="status" aria-live="polite">{body}</span> : <div className="status-line" role="status" aria-live="polite">{body}</div>;
 }
 
-export function Thread({ s, act, theme, onOpenFile, onPanel, onAdjust }: { s: S; act: Act; theme: "light" | "dark"; onOpenFile: (p: string) => void; onPanel: (t: "changes" | "preview" | "terminal") => void; onAdjust: () => void }) {
+export function Thread({ s, act, theme, onOpenFile, onPanel, onAdjust, onEdit }: { s: S; act: Act; theme: "light" | "dark"; onOpenFile: (p: string) => void; onPanel: (t: "changes" | "preview" | "terminal") => void; onAdjust: () => void; onEdit: (text: string) => void }) {
   const end = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const go = () => end.current?.scrollIntoView({ block: "end", behavior: "smooth" });
@@ -152,9 +173,9 @@ export function Thread({ s, act, theme, onOpenFile, onPanel, onAdjust }: { s: S;
   return <div className="thread">
     {s.items.map((it, idx) => {
       switch (it.kind) {
-        case "user": return <motion.div {...enter} key={it.id} className="msg-user-wrap">{it.interject && <span className="interject-tag"><CornerDownRight size={12} />{s.items[idx - 1]?.kind === "approval" ? "要求调整" : "运行中补充"}</span>}<div className="msg-user">{it.text}</div></motion.div>;
-        case "text": return <motion.div {...enter} key={it.id}><Typewriter text={it.text} animate={it.animate} /></motion.div>;
-        case "steps": return <motion.div {...enter} key={it.id}><StepsGroup steps={it.steps} live={inlineStatus && idx === s.items.length - 1} liveNode={<StatusLine s={s} theme={theme} inline />} /></motion.div>;
+        case "user": return <UserBubble key={it.id} text={it.text} attachments={it.attachments} tag={it.interject ? (s.items[idx - 1]?.kind === "approval" ? "要求调整" : "运行中补充") : undefined} onEdit={() => onEdit(it.text)} />;
+        case "text": return <motion.div {...enter} key={it.id} className="msg-bot"><Typewriter text={it.text} animate={it.animate} /><MsgActions text={it.text} /></motion.div>;
+        case "steps": return <motion.div {...enter} key={it.id}><StepsGroup steps={it.steps} live={inlineStatus && idx === s.items.length - 1} liveNode={<StatusLine s={s} theme={theme} inline />} onOpenFile={onOpenFile} /></motion.div>;
         case "approval": return <ApprovalCard key={it.id} item={it} s={s} act={act} onOpenFile={onOpenFile} onAdjust={onAdjust} onPanel={onPanel} />;
         case "result": return <ResultCard key={it.id} item={it} s={s} act={act} onPanel={onPanel} />;
         case "notice": return <Notice key={it.id} item={it} s={s} act={act} />;
