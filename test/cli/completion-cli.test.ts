@@ -88,7 +88,9 @@ describe('jarvis completion', () => {
         expect(command.subcommands, `group help subcommand ${command.name} ${sub} missing from the completion table`).toContain(sub);
       }
     }
-  }, 30_000);
+    // More than ten real CLI processes start here (root help, three scripts, every group help); under
+    // parallel test load the Windows CI runner needed over 30 s, so the budget is sized for CI.
+  }, 120_000);
 
   it('completes subcommands and partial words when the bash/powershell scripts are actually invoked', async () => {
     const bash = await runJarvis(['completion', 'bash']);
