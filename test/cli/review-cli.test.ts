@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
+import { spawnBudget } from './spawn-budget.js';
 import {
   composeVerifierReport,
   decideVerdict,
@@ -20,7 +21,7 @@ const tempDirs: string[] = [];
 
 // This file intentionally launches several real CLI subprocesses per test. Full-suite worker
 // contention can exceed Vitest's 5 s unit-test default even though each child has its own 20 s cap.
-vi.setConfig({ testTimeout: 15_000 });
+vi.setConfig({ testTimeout: spawnBudget(15_000) });
 afterAll(() => vi.resetConfig());
 const ESC = String.fromCharCode(27);
 const KEY_SENTINEL = 'ark-sentinel-key-value-never-print';
@@ -57,7 +58,7 @@ describe('jarvis review (terminal human review)', () => {
       expect(result.stderr).not.toContain(KEY_SENTINEL);
       expect(result.stderr).not.toContain('ARK_API_KEY');
     }
-  }, 20_000);
+  }, spawnBudget(20_000));
 
   it('lists an empty workspace with exit 0 and the versioned contract', async () => {
     const workspace = await tempWorkspace('empty ');
@@ -358,7 +359,7 @@ function runJarvis(
     const child = execFile(
       process.execPath,
       ['--import', 'tsx', entry, ...args],
-      { cwd: repo, env, encoding: 'utf8', timeout: 20_000, windowsHide: true, maxBuffer: 4 * 1024 * 1024 },
+      { cwd: repo, env, encoding: 'utf8', timeout: spawnBudget(20_000), windowsHide: true, maxBuffer: 4 * 1024 * 1024 },
       (error, stdout, stderr) => {
         const rawCode: unknown = error === null ? 0 : (error as { code?: unknown }).code;
         const code = typeof rawCode === 'number' ? rawCode : null;

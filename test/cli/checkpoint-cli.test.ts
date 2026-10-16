@@ -5,6 +5,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
+import { spawnBudget } from './spawn-budget.js';
 import {
   FileCheckpointAuditStore,
   SessionCheckpointRecorder,
@@ -28,7 +29,7 @@ const ESC = String.fromCharCode(27);
 
 // This file launches several real CLI subprocesses per test. Full-suite worker
 // contention can exceed Vitest's 5 s default while every child keeps its 20 s cap.
-vi.setConfig({ testTimeout: 15_000 });
+vi.setConfig({ testTimeout: spawnBudget(15_000) });
 afterAll(() => vi.resetConfig());
 
 afterEach(async () => {
@@ -146,7 +147,7 @@ describe('jarvis checkpoint surfaces', () => {
       expect.objectContaining({ t: 'rewind', mode: 'conversation-and-files', outcome: 'planned' }),
       expect.objectContaining({ t: 'rewind', mode: 'conversation-and-files', outcome: 'created' }),
     ]);
-  }, 20_000);
+  }, spawnBudget(20_000));
 
   it('restores a project-ignored file through the real rewind --files path instead of reporting a false success', async () => {
     const fixture = await createFixture({ files: true, projectIgnored: 'ignored.log' });
@@ -159,7 +160,7 @@ describe('jarvis checkpoint surfaces', () => {
     expect(result.code).toBe(CLI_EXIT.SUCCESS);
     expect(result.stdout).toContain('files restored');
     expect(await readFile(join(fixture.cwd, 'ignored.log'), 'utf8')).toBe('checkpoint');
-  }, 20_000);
+  }, spawnBudget(20_000));
 
   it('keeps files and Session count unchanged when file rewind is not approved', async () => {
     const fixture = await createFixture({ files: true });
@@ -174,7 +175,7 @@ describe('jarvis checkpoint surfaces', () => {
     expect(await readFile(join(fixture.cwd, 'tracked.txt'), 'utf8')).toBe('later');
     expect(await readFile(join(fixture.cwd, 'later.txt'), 'utf8')).toBe('new');
     expect(await readdir(join(fixture.cwd, 'data', 'sessions'))).toEqual(sessionsBefore);
-  }, 20_000);
+  }, spawnBudget(20_000));
 
   it('classifies explicit absence as exit 2 and corrupt checkpoint state as exit 7', async () => {
     const cwd = await tempWorkspace('checkpoint errors ');
@@ -228,7 +229,7 @@ describe('jarvis checkpoint surfaces', () => {
         CLI_EXIT.USAGE,
       ]);
     }
-  }, 20_000);
+  }, spawnBudget(20_000));
 
   it('records both automatic boundaries through the real root headless run path', async () => {
     const cwd = await tempWorkspace('checkpoint root run ');
@@ -263,7 +264,7 @@ describe('jarvis checkpoint surfaces', () => {
     const records = (await readFile(join(cwd, 'data', 'checkpoints', auditFiles[0]), 'utf8'))
       .trim().split('\n').map((line) => JSON.parse(line) as Record<string, unknown>);
     expect(records.map((record) => record.phase)).toEqual(['before-user-prompt', 'before-model-wave']);
-  }, 20_000);
+  }, spawnBudget(20_000));
 });
 
 async function createFixture(options: { files?: boolean; projectIgnored?: string } = {}) {
@@ -342,7 +343,7 @@ function runJarvis(
     const child = execFile(
       process.execPath,
       ['--import', 'tsx', entry, ...args],
-      { cwd: repo, env, encoding: 'utf8', timeout: 20_000, windowsHide: true, maxBuffer: 4 * 1024 * 1024 },
+      { cwd: repo, env, encoding: 'utf8', timeout: spawnBudget(20_000), windowsHide: true, maxBuffer: 4 * 1024 * 1024 },
       (error, stdout, stderr) => {
         const rawCode: unknown = error === null ? 0 : (error as { code?: unknown }).code;
         done({ code: typeof rawCode === 'number' ? rawCode : null, stdout, stderr });
