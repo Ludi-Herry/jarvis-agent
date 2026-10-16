@@ -82,36 +82,55 @@ jobs:
           set -euo pipefail
           out="$RUNNER_TEMP/report.md"
           gh api "repos/$REPO/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs" --paginate \
-            --jq '.jobs[] | select(.name | startswith("门禁 (")) | [(.id|tostring), .name, (.conclusion // "unknown"), ([.steps[] | select(.conclusion == "failure") | .name] | join("、"))] | @tsv' \
+            --jq '.jobs[] | select(.name | startswith("门禁 (")) | [(.id|tostring), .name, (.conclusion // "unknown"), ([.steps[] | select(.conclusion == "failure") | .name] | join("、") | if . == "" then "—" else . end), (if .started_at and .completed_at then (((.completed_at|fromdateiso8601) - (.started_at|fromdateiso8601)) / 60 | floor | tostring) else "?" end)] | @tsv' \
             > "$RUNNER_TEMP/jobs.tsv"
 
+          sys() { case "$1" in *ubuntu*) echo Linux ;; *windows*) echo Windows ;; *) echo "$1" ;; esac; }
           all_ok=true
           { echo "<!-- ci-report -->"; echo "## 门禁结果（\`${SHA:0:7}\`）"; echo ""
-            echo "| 系统 | 结果 | 没过的步骤 |"; echo "| --- | --- | --- |"; } > "$out"
-          sys() { case "$1" in *ubuntu*) echo Linux ;; *windows*) echo Windows ;; *) echo "$1" ;; esac; }
-          while IFS=$'\t' read -r id name conclusion failed; do
+            echo "| 系统 | 结果 | 没过的步骤 | 用时 |"; echo "| --- | --- | --- | ---: |"; } > "$out"
+          while IFS=$'\t' read -r id name conclusion failed mins; do
             case "$conclusion" in
               success) mark="✅ 通过" ;;
               failure) mark="❌ 没通过"; all_ok=false ;;
               *) mark="⚠️ $conclusion"; all_ok=false ;;
             esac
-            echo "| $(sys "$name") | $mark | ${failed:-—} |" >> "$out"
+            echo "| $(sys "$name") | $mark | ${failed:-—} | ${mins} 分钟 |" >> "$out"
           done < "$RUNNER_TEMP/jobs.tsv"
           echo "" >> "$out"
           if $all_ok; then echo "两个系统都通过。" >> "$out"; else echo "运行记录：$RUN_URL" >> "$out"; fi
 
-          # 没过的系统：附上第一个报错之前的 120 行日志（去掉时间戳和颜色码）
-          while IFS=$'\t' read -r id name conclusion failed; do
+          # 日志在任务结束后要过一会儿才能下载，最多等 1 分钟
+          # （tab 是空白分隔符，连续的 tab 会被合并，所以上面每列都保证非空）
+          fetch_log() {
+            for _ in 1 2 3 4 5 6; do
+              curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+                "$GITHUB_API_URL/repos/$REPO/actions/jobs/$1/logs" -o "$2" 2> "$2.err" && return 0
+              sleep 10
+            done
+            return 1
+          }
+
+          # 没过的系统：先列出失败的测试，再附第一个报错之前的 150 行（去掉时间戳和颜色码）
+          while IFS=$'\t' read -r id name conclusion failed mins; do
             [ "$conclusion" = "failure" ] || continue
             log="$RUNNER_TEMP/job-$id.log"
-            gh api "repos/$REPO/actions/jobs/$id/logs" > "$log" 2>/dev/null || { echo "" >> "$out"; echo "（$(sys "$name") 的日志没取到）" >> "$out"; continue; }
+            if ! fetch_log "$id" "$log"; then
+              { echo ""; echo "（$(sys "$name") 的日志没取到：$(head -c 300 "$log.err" | tr '\n' ' ')）"; } >> "$out"
+              continue
+            fi
             sed -i -E 's/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z ?//; s/\x1b\[[0-9;]*[A-Za-z]//g; s/```/ʼʼʼ/g' "$log"
             stop=$(grep -n -m1 '##\[error\]' "$log" | cut -d: -f1 || true)
             [ -n "$stop" ] || stop=$(wc -l < "$log")
-            start=$(( stop > 120 ? stop - 119 : 1 ))
-            { echo ""; echo "<details><summary>$(sys "$name")：出错前的日志</summary>"; echo ""; echo '```text'
-              sed -n "${start},${stop}p" "$log" | cut -c1-300; echo '```'; echo ""; echo "</details>"; } >> "$out"
+            start=$(( stop > 150 ? stop - 149 : 1 ))
+            { echo ""; echo "<details><summary>$(sys "$name")：没过的测试和出错前的日志</summary>"; echo ""; echo '```text'
+              grep -E '^ *(FAIL|×|✗) ' "$log" | sort -u | head -n 40 | cut -c1-200 || true
+              echo "-----"
+              sed -n "${start},${stop}p" "$log" | cut -c1-200; echo '```'; echo ""; echo "</details>"; } >> "$out"
           done < "$RUNNER_TEMP/jobs.tsv"
+
+          # 评论上限 65536 字符，留余量
+          if [ "$(wc -c < "$out")" -gt 60000 ]; then head -c 60000 "$out" > "$out.cut"; printf '\n```\n\n（太长，已截断）\n' >> "$out.cut"; mv "$out.cut" "$out"; fi
 
           cat "$out" >> "$GITHUB_STEP_SUMMARY"
           id=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
