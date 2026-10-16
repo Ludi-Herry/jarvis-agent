@@ -289,6 +289,19 @@ describe('renderReport', () => {
     expect(md).toContain("`a'b.md`");
   });
 
+  it('直接推送的报告给推送专用的处理说明，不提加标签', () => {
+    const md = renderReport([{ kind: 'redline-file', path: 'AGENTS.md', reason: '修改了红线文件', detail: 'AGENTS.md' }], {
+      ...ctx,
+      event: 'push',
+      decision: decide(1, false, 'push'),
+    });
+    expect(md).toContain('⛔ 这次推送');
+    expect(md).toContain('关掉这个 issue');
+    expect(md).toContain('revert');
+    expect(md).not.toContain('Labels');
+    expect(md).not.toContain('Files changed');
+  });
+
   it('没有发现时一句话说明', () => {
     const md = renderReport([], { ...ctx, decision: decide(0, false, 'opened') });
     expect(md).toContain('✅');

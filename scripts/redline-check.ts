@@ -331,6 +331,8 @@ export function renderReport(findings: Finding[], ctx: ReportContext): string {
     );
   } else if (status === 'confirmation-reset') {
     lines.push(`⚠️ 新推上来的提交又碰到了红线，之前的「${CONFIRM_LABEL}」已自动撤销 —— 需要重新确认。`);
+  } else if (ctx.event === 'push') {
+    lines.push(`⛔ 这次推送（${code(range)}）碰到了红线，而且没有经过已确认的 PR。`);
   } else {
     lines.push(`⛔ 这次改动碰到了红线，需要 Ludi 人工确认后才能变绿。`);
   }
@@ -344,7 +346,17 @@ export function renderReport(findings: Finding[], ctx: ReportContext): string {
     lines.push('', '### 疑似"降规则"', '', '| 文件 | 原因 | 片段 |', '| --- | --- | --- |');
     for (const f of weak) lines.push(`| ${code(f.path)} | ${f.reason} | ${f.detail ? code(f.detail) : '—'} |`);
   }
-  if (status !== 'confirmed') {
+  if (status !== 'confirmed' && ctx.event === 'push') {
+    // 直接推送没有 PR 可加标签：说明怎么核实、怎么收尾
+    lines.push(
+      '',
+      '### 怎么处理',
+      '',
+      '1. 点上面的「推送」链接，看这次改动是不是你本人授权的：有没有放松检查、跳过测试、改判定？',
+      '2. 是你授权的 → 在这里留一句说明，然后关掉这个 issue。',
+      '3. 不是 → 不要关。先把这次推送撤回（revert），再查是谁用了你的权限推送。',
+    );
+  } else if (status !== 'confirmed') {
     lines.push(
       '',
       '### 怎么处理',
