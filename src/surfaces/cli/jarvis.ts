@@ -1494,9 +1494,24 @@ function wireHeadlessTransport(
   ];
   const auth = child.stdio[4];
   if (isWritableStream(auth)) {
-    const onAuthError = (): void => failTransport('authentication');
-    auth.once('error', onAuthError);
-    cleanups.push(() => auth.removeListener('error', onAuthError));
+    // fd 4 only delivers the one-time secret. Until it is flushed, any error fails closed.
+    // After that, Linux/macOS report ECONNRESET on this socket pair whenever the child exits
+    // without reading it (for example a usage error before the transport starts). Frames on
+    // fd 3 are still HMAC-checked, so a late reset cannot weaken authentication and must not
+    // replace the child's own exit code with a transport failure.
+    let secretDelivered = false;
+    const onAuthFinish = (): void => {
+      secretDelivered = true;
+    };
+    const onAuthError = (): void => {
+      if (!secretDelivered) failTransport('authentication');
+    };
+    auth.once('finish', onAuthFinish);
+    auth.on('error', onAuthError);
+    cleanups.push(() => {
+      auth.removeListener('finish', onAuthFinish);
+      auth.removeListener('error', onAuthError);
+    });
     try {
       auth.end(transportSecret);
     } catch {

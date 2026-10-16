@@ -1,0 +1,4 @@
+# eval/ 下的语料和证据是按字节算哈希的。Windows 上 Git 默认（core.autocrlf=true）会在检出时
+# 把换行改成 CRLF，哈希就对不上了（CI 的 Windows 机器就因此报 "evidence bundle hash drift"）。
+# 这里固定为 LF：检出、提交都不改换行。二进制文件由 text=auto 自动识别，不受影响。
+eval/** text=auto eol=lf

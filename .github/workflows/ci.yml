@@ -52,6 +52,12 @@ jobs:
 
       - name: 测试
         run: npx vitest run --maxWorkers=2
+        env:
+          # Windows 机器的默认临时目录是 8.3 短名（C:\Users\RUNNER~1\...），git 报的是长名，
+          # 两边路径对不上会让工作区相关测试误报。换成机器自带的长路径临时目录。
+          # 普通电脑的临时目录是长名，不受影响；Linux 读 TMPDIR，这两项对它无效。
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
 
       - name: 构建
         run: npm run build
