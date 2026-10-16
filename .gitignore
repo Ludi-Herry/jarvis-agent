@@ -4,6 +4,10 @@ dist/
 *.tsbuildinfo
 output/playwright/
 
+# mutation testing (scripts/mutation)
+reports/mutation/
+.stryker-tmp/
+
 # runtime state (A 阶段暂未用)
 data/*
 !data/.gitkeep

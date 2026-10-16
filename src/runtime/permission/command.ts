@@ -295,8 +295,10 @@ function classifyProgram(prog: string, args: string[], argDescs: WordDesc[], dep
       if (wasTerminator) break;
     }
     const action = argDescs[i];
-    if (!action || action.value === '' || action.value === '-') return clean;
+    if (!action) return clean;
+    // Static check first: a bare `"$X"` has an empty literal value and must not pass as `trap '' SIG`.
     if (!isStatic(action)) return danger('trap installs a non-literal action — cannot verify');
+    if (action.value === '' || action.value === '-') return clean;
     return walkSource(action.value, depth + 1);
   }
   if (prog === 'env') {
@@ -384,7 +386,12 @@ function classifyProgram(prog: string, args: string[], argDescs: WordDesc[], dep
       const rawVal = args[i + 1].slice(eq + 1);
       const bang = rawVal.startsWith('!');
       if (/^core\.(hookspath|fsmonitor)$/.test(key)) g = combine(g, danger(`git -c ${key} points at an executable run on git operations`));
-      else if (bang || GIT_COMMAND_CONFIG.test(key)) g = combine(g, walkSource(bang ? rawVal.slice(1) : rawVal, depth + 1));
+      else if (bang || GIT_COMMAND_CONFIG.test(key)) {
+        // `$X` in the value is dropped from the literal text, so walking it would see '' → fail closed instead.
+        g = isStatic(argDescs[i + 1])
+          ? combine(g, walkSource(bang ? rawVal.slice(1) : rawVal, depth + 1))
+          : combine(g, danger(`git -c ${key} with a non-literal value — cannot verify`));
+      }
     }
     if (g.danger || g.sensitive) return g;
   }
