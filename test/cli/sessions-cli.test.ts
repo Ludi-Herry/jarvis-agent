@@ -5,6 +5,7 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
+import { spawnBudget } from './spawn-budget.js';
 import { CLI_EXIT } from '../../src/surfaces/cli/exit-codes.js';
 
 const repo = process.cwd();
@@ -13,7 +14,7 @@ const tempDirs: string[] = [];
 
 // This file intentionally launches several real CLI subprocesses per test. Full-suite worker
 // contention can exceed Vitest's 5 s unit-test default even though each child has its own 20 s cap.
-vi.setConfig({ testTimeout: 15_000 });
+vi.setConfig({ testTimeout: spawnBudget(15_000) });
 afterAll(() => vi.resetConfig());
 const ESC = String.fromCharCode(27);
 const KEY_SENTINEL = 'ark-sentinel-key-value-never-print';
@@ -46,7 +47,7 @@ describe('jarvis sessions (read-only product surface)', () => {
       expect(result.stderr).not.toContain(KEY_SENTINEL);
       expect(result.stderr).not.toContain('ARK_API_KEY');
     }
-  }, 20_000);
+  }, spawnBudget(20_000));
 
   it('maps a headless run without provider configuration to usage exit 2 before any session starts', async () => {
     const workspace = await tempWorkspace('headless missing provider ');
@@ -162,7 +163,7 @@ describe('jarvis sessions (read-only product surface)', () => {
       expect(resume.code).toBe(CLI_EXIT.USAGE);
       expect(resume.stderr).toContain('session id');
     }
-  }, 20_000);
+  }, spawnBudget(20_000));
 
   it('reports a directory at the requested .jsonl path as unreadable partial state with exit 7', async () => {
     const workspace = await tempWorkspace('non-file ');
@@ -261,7 +262,7 @@ describe('jarvis sessions (read-only product surface)', () => {
     expect(resume.stdout).toContain('[resume] compatibility: exact; dynamic composition matched:');
     expect(resume.stdout).toContain(`已恢复会话 ${sessionId}`);
     expect(resume.stderr).not.toContain('session composition changed');
-  }, 30_000);
+  }, spawnBudget(30_000));
 
   it('keeps pre-Recall composition resumable with --no-recall and gives a conservative drift hint', async () => {
     const workspace = await tempWorkspace('pre recall resume ');
@@ -285,7 +286,7 @@ describe('jarvis sessions (read-only product surface)', () => {
     expect(defaultResume.stdout).not.toContain('compatibility: exact');
     expect(compatibleResume.code).toBe(CLI_EXIT.SUCCESS);
     expect(compatibleResume.stdout).toContain('[resume] compatibility: exact');
-  }, 30_000);
+  }, spawnBudget(30_000));
 
   it('binds explicit typed model and endpoint identity into exact resume composition', async () => {
     const workspace = await tempWorkspace('typed config resume ');
@@ -308,7 +309,7 @@ describe('jarvis sessions (read-only product surface)', () => {
     expect(drift.code).toBe(CLI_EXIT.NEEDS_HUMAN);
     expect(drift.stderr).toContain('session composition changed (systemPromptHash)');
     expect(drift.stdout).not.toContain('compatibility: exact');
-  }, 30_000);
+  }, spawnBudget(30_000));
 
   it('refuses an environment model change even when legacy prompt composition is unchanged', async () => {
     const workspace = await tempWorkspace('environment model resume ');
@@ -332,7 +333,7 @@ describe('jarvis sessions (read-only product surface)', () => {
     expect(resume.code).toBe(CLI_EXIT.NEEDS_HUMAN);
     expect(resume.stderr).toContain('session model/cwd differs from the current invocation');
     expect(resume.stdout).not.toContain('compatibility: exact');
-  }, 30_000);
+  }, spawnBudget(30_000));
 
   it('refuses environment endpoint drift before contacting the new provider', async () => {
     const workspace = await tempWorkspace('environment endpoint resume ');
@@ -390,7 +391,7 @@ describe('jarvis sessions (read-only product surface)', () => {
     expect(drift.stderr).toContain('session composition changed (systemPromptHash)');
     expect(drift.stdout).not.toContain('compatibility: exact');
     expect(providerRequests).toBe(0);
-  }, 30_000);
+  }, spawnBudget(30_000));
 
   it('maps actual resume composition drift to exit 3 without claiming exact compatibility', async () => {
     const workspace = await tempWorkspace('drift resume ');
@@ -413,7 +414,7 @@ describe('jarvis sessions (read-only product surface)', () => {
     expect(resume.code).toBe(CLI_EXIT.NEEDS_HUMAN);
     expect(resume.stderr).toContain('session composition changed (dynamicAddendumManifestHash)');
     expect(resume.stdout).not.toContain('compatibility: exact');
-  }, 30_000);
+  }, spawnBudget(30_000));
 
   it('single-lines ESC, clear-screen, color, CR, and LF from session text while JSON stays valid', async () => {
     const workspace = await tempWorkspace('terminal ');
@@ -599,7 +600,7 @@ function runJarvis(
     const child = execFile(
       process.execPath,
       ['--import', 'tsx', entry, ...args],
-      { cwd: repo, env, encoding: 'utf8', timeout: 20_000, windowsHide: true, maxBuffer: 4 * 1024 * 1024 },
+      { cwd: repo, env, encoding: 'utf8', timeout: spawnBudget(20_000), windowsHide: true, maxBuffer: 4 * 1024 * 1024 },
       (error, stdout, stderr) => {
         const rawCode: unknown = error === null ? 0 : (error as { code?: unknown }).code;
         const code = typeof rawCode === 'number' ? rawCode : null;

@@ -5,6 +5,7 @@ import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
+import { spawnBudget } from './spawn-budget.js';
 import { runA0Evaluation, type A0VerifierCall } from '../../src/capabilities/eval/a0-runner.js';
 import { CLI_EXIT } from '../../src/surfaces/cli/exit-codes.js';
 import type { Message } from '../../src/core/types.js';
@@ -15,7 +16,7 @@ const tempDirs: string[] = [];
 
 // This file launches several real CLI subprocesses per test; keep the per-file
 // budget above Vitest's 5 s default while each child keeps its own 20 s cap.
-vi.setConfig({ testTimeout: 15_000 });
+vi.setConfig({ testTimeout: spawnBudget(15_000) });
 afterAll(() => vi.resetConfig());
 
 afterEach(async () => {
@@ -76,7 +77,7 @@ describe('jarvis a0 surfaces', () => {
       authority: { mode: 'observation-only', canCompleteGoals: false, canCompleteLoops: false },
       provenanceIssues: [],
     });
-  }, 20_000);
+  }, spawnBudget(20_000));
 
   it('classifies missing observations as exit 2 and tampered artifacts as exit 7', async () => {
     const cwd = await fixtureWorkspace();
@@ -95,7 +96,7 @@ describe('jarvis a0 surfaces', () => {
     expect(missing.code).toBe(CLI_EXIT.USAGE);
     expect(tampered.code).toBe(CLI_EXIT.STATE_CORRUPT);
     expect(tampered.stdout).toContain('do not match the run manifest');
-  }, 20_000);
+  }, spawnBudget(20_000));
 
   it('classifies semantic artifact corruption (unknown case, duplicate observation) as exit 7', async () => {
     const cwd = await fixtureWorkspace();
@@ -125,7 +126,7 @@ describe('jarvis a0 surfaces', () => {
     expect(unknown.stderr).toContain('unknown case');
     expect(duplicate.code).toBe(CLI_EXIT.STATE_CORRUPT);
     expect(duplicate.stderr).toContain('duplicate observation');
-  }, 20_000);
+  }, spawnBudget(20_000));
 
   it('refuses a real run without a provider key', async () => {
     const cwd = await fixtureWorkspace();
@@ -165,7 +166,7 @@ describe('jarvis a0 surfaces', () => {
     expect(observations.trim().split('\n')).toHaveLength(18);
     const manifest = JSON.parse(await readFile(join(cwd, 'data', 'a0', 'run', 'observations.manifest.json'), 'utf8')) as Record<string, unknown>;
     expect(manifest).toMatchObject({ schemaVersion: 1, kind: 'a0-run-manifest' });
-  }, 20_000);
+  }, spawnBudget(20_000));
 });
 
 async function runJarvis(
@@ -181,7 +182,7 @@ async function runJarvis(
     const child = execFile(
       process.execPath,
       ['--import', 'tsx', entry, ...args],
-      { cwd: repo, env, encoding: 'utf8', timeout: 20_000, windowsHide: true, maxBuffer: 4 * 1024 * 1024 },
+      { cwd: repo, env, encoding: 'utf8', timeout: spawnBudget(20_000), windowsHide: true, maxBuffer: 4 * 1024 * 1024 },
       (error, stdout, stderr) => {
         const rawCode: unknown = error === null ? 0 : (error as { code?: unknown }).code;
         done({ code: typeof rawCode === 'number' ? rawCode : null, stdout, stderr });
