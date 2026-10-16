@@ -1,22 +1,25 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Archive, Copy, FolderOpen, Lightbulb, Menu, MessageSquare, MoreHorizontal, PanelLeftOpen, PanelRight, PencilLine, SlidersHorizontal, Undo2, Bug, Type, Workflow } from "lucide-react";
+import { Wifi, WifiOff, Archive, Copy, FolderOpen, Lightbulb, Menu, MessageSquare, MoreHorizontal, PanelLeftOpen, PanelRight, PencilLine, SlidersHorizontal, Undo2, Bug, Type, Workflow } from "lucide-react";
 import { useDemo, type Act, type S, type Snapshot } from "./store";
 import { files, INTERJECT, PAST_TASKS, PROJECTS, TASK_PROMPT, type Attachment, type Item, type PastTask, type Project, type Step } from "./scenario";
 import { Sidebar, type LiveTask, type SettingsSection, type View } from "./ui/Sidebar";
 import { Thread } from "./ui/Thread";
 import { PastThread, type PastFollow } from "./ui/History";
-import { Composer } from "./ui/Composer";
+import { Composer, UnsentBar } from "./ui/Composer";
 import { PAGE_LABEL, SidePanel, type PageKind, type PanelData, type PanelTab } from "./ui/SidePanel";
 import { CompareOverlay, ReviewDock, type CompareMode } from "./ui/ReviewDock";
 import { AddProjectDialog, AdvancedDialog, SettingsDialog, ShortcutsDialog } from "./ui/Dialogs";
-import { Diffstat, IconBtn, Orb } from "./ui/Bits";
+import { Diffstat, IconBtn, Orb, Pop, isIme } from "./ui/Bits";
 import { Popover, PopoverClose, PopoverContent, PopoverTrigger } from "./arc/popover/popover";
 import { copyText, NotifyContext, useNotifier } from "./ui/feedback";
 import { MOD, usePrefs, useSystemDark } from "./prefs";
 import { Canvas, type MapMode } from "./canvas/canvas-view";
+import { ThreadScroll } from "./ui/scroll-area";
+import { drafts } from "./ui/drafts";
+import { PanelResizer, usePanelWidth } from "./ui/PanelResizer";
 import { buildFlow, buildPastFlow } from "./canvas/model";
-import { ExplainerDialog, type ExplainKind } from "./artifact/explainer";
+import { ExplainerDialog, type ExplainKind, type ExplainOrigin } from "./artifact/explainer";
 import "./canvas/canvas.css";
 
 const SUGGEST = [
@@ -46,7 +49,7 @@ function TopTitle({ title, canEdit, editing, setEditing, onRename }: { title: st
   useLayoutEffect(() => { if (editing) setV(title); }, [editing, title]);
   useEffect(() => { if (editing) requestAnimationFrame(() => { ref.current?.focus(); ref.current?.select(); }); }, [editing]);
   const commit = () => { const x = v.trim(); if (x && x !== title) onRename(x); setEditing(false); };
-  if (editing) return <input ref={ref} autoFocus className="tt-input" value={v} aria-label="任务名称" onChange={e => setV(e.target.value)} onBlur={commit} onKeyDown={e => { if (e.key === "Enter") commit(); if (e.key === "Escape") { e.stopPropagation(); setEditing(false); } }} />;
+  if (editing) return <input ref={ref} autoFocus className="tt-input" value={v} aria-label="任务名称" onChange={e => setV(e.target.value)} onBlur={commit} onKeyDown={e => { if (e.key === "Enter" && !isIme(e)) commit(); if (e.key === "Escape") { e.stopPropagation(); setEditing(false); } }} />;
   return <span className={`tt-main${canEdit ? " is-editable" : ""}`} onDoubleClick={canEdit ? () => setEditing(true) : undefined} title={canEdit ? "双击重命名" : undefined}>{title}</span>;
 }
 
@@ -58,11 +61,14 @@ export default function App() {
   const { notify, node: toastNode } = useNotifier();
   const narrow = useMedia("(max-width: 820px)");
   const mid = useMedia("(max-width: 1180px)");
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [panelW, setPanelW] = usePanelWidth();
   const [sidebar, setSidebar] = useState(!narrow);
   const [panel, setPanel] = useState(false);
   const [tab, setTab] = useState<PanelTab>("changes");
   const [file, setFile] = useState<string | null>(null);
-  const [draft, setDraft] = useState("");
+  const [draft, setDraft] = useState(() => drafts.get("current"));
+  const [unsent, setUnsent] = useState<{ text: string; attachments: Attachment[]; where: string } | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [focusSignal, setFocus] = useState(0);
   const [compare, setCompare] = useState<CompareMode>("new");
@@ -70,6 +76,8 @@ export default function App() {
   const [snap, setSnap] = useState<Snapshot>("empty");
   const [playing, setPlaying] = useState(false);
   const [view, setView] = useState<View>({ kind: "current" });
+  const draftKey = view.kind === "past" ? view.id : "current";
+  useEffect(() => { drafts.set(draftKey, draft); }, [draft, draftKey]);
   const [projects, setProjects] = useState<Project[]>(PROJECTS);
   const [past, setPast] = useState<PastTask[]>(PAST_TASKS);
   const [pastRev, setPastRev] = useState<Record<string, boolean>>({});
@@ -86,8 +94,8 @@ export default function App() {
   const [dockSignal, setDockSignal] = useState(0);
   const [stage, setStage] = useState<"thread" | "canvas">("thread");
   const [map, setMap] = useState<MapMode>("flow");
-  const [explain, setExplain] = useState<{ open: boolean; kind: ExplainKind }>({ open: false, kind: "layers" });
-  const openExplain = (kind: ExplainKind = "layers") => setExplain({ open: true, kind });
+  const [explain, setExplain] = useState<{ open: boolean; kind: ExplainKind; from?: ExplainOrigin }>({ open: false, kind: "layers" });
+  const openExplain = (kind: ExplainKind = "layers", from?: ExplainOrigin) => setExplain({ open: true, kind, from });
 
   const curName = curTitle ?? autoTitle(s);
   const visiblePast = past.filter(t => projects.some(p => p.id === t.project));
@@ -138,7 +146,8 @@ export default function App() {
   const parkCurrent = () => {
     const c = live.current;
     if (c.s.phase === "empty") return;
-    setParked(ps => [{ key: `k${Date.now().toString(36)}`, title: c.curName, project: c.curProject, s: c.s }, ...ps]);
+    const key = `k${Date.now().toString(36)}`; drafts.move("current", key);
+    setParked(ps => [{ key, title: c.curName, project: c.curProject, s: c.s }, ...ps]);
   };
   const clearCurrent = () => { act({ type: "snapshot", snap: "empty" }); act({ type: "mode", mode: prefs.defaultMode }); setSnap("empty"); setCurTitle(null); };
   const startNew = (project?: string, text = "") => {
@@ -149,11 +158,12 @@ export default function App() {
   const restore = (t: LiveTask) => {
     parkCurrent();
     act({ type: "restore", state: t.s }); setCurTitle(t.title); setCurProject(t.project); setSnap(snapOf(t.s.phase));
-    setView({ kind: "current" }); setDraft(""); setAttachments([]); surfaceReset();
+    const d = drafts.get(t.key); drafts.set(t.key, "");
+    setView({ kind: "current" }); setDraft(d); setAttachments([]); surfaceReset();
   };
   const openLive = (key: string) => {
     setPlaying(false);
-    if (key === "cur") { if (view.kind !== "current") { setView({ kind: "current" }); surfaceReset(); } closeOnNarrow(); return; }
+    if (key === "cur") { if (view.kind !== "current") { setView({ kind: "current" }); setDraft(drafts.get("current")); surfaceReset(); } closeOnNarrow(); return; }
     const t = parked.find(x => x.key === key); if (!t) return;
     setParked(ps => ps.filter(x => x.key !== key)); restore(t); closeOnNarrow();
   };
@@ -169,7 +179,7 @@ export default function App() {
     setParked(ps => ps.filter(x => x.key !== key));
     notify({ icon: <Archive size={15} />, text: `已归档「${t.title}」`, action: { label: "撤销", run: () => setParked(ps => [...ps.slice(0, i), t, ...ps.slice(i)]) } });
   };
-  const openPast = (id: string) => { setPlaying(false); if (!(view.kind === "past" && view.id === id)) { setView({ kind: "past", id }); surfaceReset(); setDraft(""); setAttachments([]); } closeOnNarrow(); };
+  const openPast = (id: string) => { setPlaying(false); if (!(view.kind === "past" && view.id === id)) { setView({ kind: "past", id }); surfaceReset(); setDraft(drafts.get(id)); setAttachments([]); } closeOnNarrow(); };
   const renamePast = (id: string, title: string) => setPast(ps => ps.map(x => x.id === id ? { ...x, title } : x));
   const archivePast = (id: string) => {
     const i = past.findIndex(x => x.id === id); const t = past[i]; if (!t) return;
@@ -222,11 +232,13 @@ export default function App() {
   // Keyboard: the same shortcuts listed in 键盘快捷键. Single keys never fire while typing.
   const keys = useRef<(e: KeyboardEvent) => void>(() => {});
   keys.current = (e: KeyboardEvent) => {
-    if (e.isComposing) return;
+    if (isIme(e)) return;
     const mod = e.ctrlKey || e.metaKey; const k = e.key.toLowerCase();
     const typing = !!(e.target as HTMLElement | null)?.closest?.("input, textarea, [contenteditable='true']");
     if (e.key === "Escape") { if (view.kind === "current" && busy && !isOverlayOpen() && !playing) { e.preventDefault(); act({ type: "stop" }); } return; }
     if (document.querySelector('[role="dialog"]')) return;
+    // ⌘/Ctrl Enter answers the approval card with 允许 — only when the composer is empty, so it can't swallow a message you meant to send.
+    if (mod && e.key === "Enter" && view.kind === "current" && s.phase === "approval" && !draft.trim() && attachments.length === 0) { e.preventDefault(); act({ type: "approve", all: false }); return; }
     if (mod && k === "k") { e.preventDefault(); setSidebar(true); setSearchOpen(true); return; }
     if (mod && k === "b") { e.preventDefault(); setSidebar(v => !v); return; }
     if (mod && e.key === "\\") { e.preventDefault(); setPanel(v => !v); return; }
@@ -266,13 +278,33 @@ export default function App() {
     theme, mode: s.mode, onMode: (m: S["mode"]) => act({ type: "mode", mode: m }), allowAll: s.allowAll, onAllowAll: (v: boolean) => act({ type: "allowAll", value: v }),
     budget: prefs.budget, sendKey: prefs.sendKey, draft, setDraft, focusSignal, attachments, setAttachments, shotLabel, onOpenSettings: (sec: "usage" | "general") => openSettings(sec),
   };
-  const sendCurrent = (text: string) => { act({ type: "send", text, attachments, project: curProject }); setDraft(""); setAttachments([]); };
+  // Offline: keep the message instead of losing it. It waits above the composer with 重发 / 删掉.
+  const holdIfOffline = (text: string) => {
+    if (navigator.onLine) return false;
+    setUnsent({ text, attachments, where: draftKey }); setDraft(""); setAttachments([]);
+    return true;
+  };
+  const sendCurrent = (text: string) => { if (holdIfOffline(text)) return; act({ type: "send", text, attachments, project: curProject }); setDraft(""); setAttachments([]); };
   const sendPast = (text: string) => {
-    if (!pastTask) return;
+    if (!pastTask || holdIfOffline(text)) return;
     const body = text.trim() || (attachments.length > 1 ? `看看这 ${attachments.length} 个附件` : "看看这个附件");
     setFollows(f => ({ ...f, [pastTask.id]: [...(f[pastTask.id] ?? []), { id: `f${Date.now()}`, text: body, attachments: attachments.length ? attachments : undefined }] }));
     setDraft(""); setAttachments([]);
   };
+
+  const retryUnsent = () => {
+    if (!unsent) return;
+    if (!navigator.onLine) { notify({ tone: "info", icon: <WifiOff size={15} />, text: "还是没连上网，连上后再点重发" }); return; }
+    const u = unsent; setUnsent(null);
+    if (pastTask && u.where === pastTask.id) { const body = u.text.trim() || "看看这个附件"; setFollows(f => ({ ...f, [pastTask.id]: [...(f[pastTask.id] ?? []), { id: `f${Date.now()}`, text: body, attachments: u.attachments.length ? u.attachments : undefined }] })); }
+    else act({ type: "send", text: u.text, attachments: u.attachments, project: curProject });
+  };
+  useEffect(() => {
+    if (!unsent) return;
+    const on = () => notify({ tone: "info", icon: <Wifi size={15} />, text: "网络恢复了", action: { label: "重发", run: retryUnsent } });
+    window.addEventListener("online", on); return () => window.removeEventListener("online", on);
+  }); // re-bind every render so the retry sees the latest view
+  const unsentBar = unsent && unsent.where === draftKey ? <UnsentBar text={unsent.text} n={unsent.attachments.length} onRetry={retryUnsent} onDiscard={() => setUnsent(null)} onEdit={() => { setDraft(unsent.text); setAttachments(() => unsent.attachments); setUnsent(null); setFocus(n => n + 1); }} /> : null;
 
   return <NotifyContext.Provider value={notify}>
   <div className={`app${sidebar ? " has-sidebar" : ""}${panel ? " has-panel" : ""}${narrow ? " is-narrow" : ""}${mid ? " is-mid" : ""}`}>
@@ -298,7 +330,7 @@ export default function App() {
         <span className="grow" />
         {hasTask && <div className="stage-switch" role="group" aria-label="对话或画布">
           <button type="button" className={stage === "thread" ? "is-on" : undefined} aria-pressed={stage === "thread"} onClick={() => setStage("thread")} title={`对话（${MOD} G 切换）`}><MessageSquare size={14} /><span>对话</span></button>
-          <button type="button" className={stage === "canvas" ? "is-on" : undefined} aria-pressed={stage === "canvas"} onClick={() => setStage("canvas")} title={`画布：整条链路和进度（${MOD} G 切换）`}><Workflow size={14} /><span>画布</span>{showFrac && <b className="ts-frac">{flow.done}/{flow.total}</b>}</button>
+          <button type="button" className={stage === "canvas" ? "is-on" : undefined} aria-pressed={stage === "canvas"} onClick={() => setStage("canvas")} title={`画布：整条链路和进度（${MOD} G 切换）`}><Workflow size={14} /><span>画布</span>{showFrac && <Pop as="b" value={flow.done} className="ts-frac">{flow.done}/{flow.total}</Pop>}</button>
         </div>}
         {showChanges && <button type="button" className="changes-pill" onClick={() => openPanel("changes")}><span>{panelData.files.length} 个文件</span><Diffstat add={pAdd} del={pDel} /></button>}
         {hasTask && <Popover>
@@ -317,25 +349,27 @@ export default function App() {
 
       {pastTask ? <>
         {onCanvas ? <Canvas key={pastTask.id} flow={flow} theme={theme} map={map} setMap={setMap} budget={prefs.budget} phase={pastTask.outcome === "stopped" ? "stopped" : "complete"} onOpenFile={openFile} onPanel={openPanel} />
-        : <div className="scroll"><PastThread key={pastTask.id} t={pastTask} reverted={!!pastRev[pastTask.id]} onRevert={v => revertPast(pastTask.id, v)} follows={follows[pastTask.id] ?? []}
-          onOpenFile={openFile} onPanel={openPanel} onEdit={editText} onRestart={text => startNew(pastTask.project, text)} /></div>}
-        <div className="dock-composer"><Composer {...common} phase="past" beam={false} cost={pastTask.cost} tokens={Math.round(pastTask.cost * 62000)} onSend={sendPast} onStop={() => {}} canStop={false} /></div>
+        : <ThreadScroll key={pastTask.id} startAtBottom={false} pin={(follows[pastTask.id] ?? []).length}><PastThread t={pastTask} reverted={!!pastRev[pastTask.id]} onRevert={v => revertPast(pastTask.id, v)} follows={follows[pastTask.id] ?? []}
+          onOpenFile={openFile} onPanel={openPanel} onEdit={editText} onRestart={text => startNew(pastTask.project, text)} /></ThreadScroll>}
+        <div className="dock-composer">{unsentBar}<Composer {...common} phase="past" beam={false} cost={pastTask.cost} tokens={Math.round(pastTask.cost * 62000)} onSend={sendPast} onStop={() => {}} canStop={false} /></div>
       </> : s.phase === "empty" ? <div className="hero">
         <div className="hero-orb"><Orb state="breathing" size={64} theme={theme} /></div>
         <h1>{hello}，Ludi。今天想改点什么？</h1>
+        {unsentBar}
         <Composer {...common} variant="hero" phase="empty" beam={false} cost={0} tokens={0} onSend={sendCurrent} onStop={() => {}} canStop={false}
           projects={projects} project={curProject} onProject={setCurProject} onAddProject={() => setAddOpen(true)} />
-        <div className="suggest">{SUGGEST.map(x => <button key={x.title} type="button" className="suggest-card" onClick={() => editText(x.text)}><x.icon size={16} className="muted-ico" /><span className="sg-title">{x.title}</span><span className="sg-text">{x.text}</span></button>)}</div>
+        <div className="suggest">{SUGGEST.map((x, i) => <button key={x.title} type="button" className="suggest-card is-cascade" style={{ "--i": i + 2 } as CSSProperties} onClick={() => editText(x.text)}><x.icon size={16} className="muted-ico" /><span className="sg-title">{x.title}</span><span className="sg-text">{x.text}</span></button>)}</div>
         <p className="hero-tip"><Lightbulb size={13} />想先聊聊再动手？把输入框里的「改之前问我」切成「只讨论」。</p>
       </div> : <>
-        {onCanvas ? <Canvas flow={flow} theme={theme} map={map} setMap={setMap} budget={prefs.budget} act={actUI} phase={s.phase} onOpenFile={openFile} onPanel={openPanel} onExplain={() => openExplain("layers")} />
-        : <div className="scroll"><Thread s={s} act={actUI} theme={theme} onOpenFile={openFile} onPanel={openPanel} onAdjust={() => setFocus(n => n + 1)} onEdit={editText} onExplain={openExplain} /></div>}
-        <div className="dock-composer"><Composer {...common} phase={s.phase} beam={s.phase === "running"} cost={s.cost} tokens={s.tokens} onSend={sendCurrent} onStop={() => act({ type: "stop" })} canStop={busy} /></div>
+        {onCanvas ? <Canvas flow={flow} theme={theme} map={map} setMap={setMap} budget={prefs.budget} act={actUI} phase={s.phase} onOpenFile={openFile} onPanel={openPanel} onExplain={(k, f) => openExplain(k ?? "layers", f)} />
+        : <ThreadScroll pin={s.items.filter(i => i.kind === "user").length}><Thread s={s} act={actUI} theme={theme} onOpenFile={openFile} onPanel={openPanel} onAdjust={() => setFocus(n => n + 1)} onEdit={editText} onExplain={openExplain} /></ThreadScroll>}
+        <div className="dock-composer">{unsentBar}<Composer {...common} phase={s.phase} beam={s.phase === "running"} cost={s.cost} tokens={s.tokens} onSend={sendCurrent} onStop={() => act({ type: "stop" })} canStop={busy} /></div>
       </>}
       {toastNode}
     </main>
     <AnimatePresence initial={false}>
-      {panel && <motion.div className="panel-shell" initial={mid ? { x: 480 } : { opacity: 0, x: 24 }} animate={{ opacity: 1, x: 0 }} exit={mid ? { x: 480 } : { opacity: 0, x: 24 }} transition={{ type: "spring", visualDuration: .34, bounce: 0 }}>
+      {panel && <motion.div ref={panelRef} className="panel-shell" initial={mid ? { x: 480 } : { opacity: 0, x: 24 }} animate={{ opacity: 1, x: 0 }} exit={mid ? { x: 480 } : { opacity: 0, x: 24 }} transition={{ type: "spring", visualDuration: .34, bounce: 0 }}>
+        {!mid && <PanelResizer panel={panelRef} width={panelW} setWidth={setPanelW} onCollapse={() => setPanel(false)} />}
         <SidePanel d={panelData} tab={tab} setTab={setTab} file={file} setFile={setFile} onClose={() => setPanel(false)} onShot={shot} onSetUrl={() => openSettings("projects", viewProj.id)} />
       </motion.div>}
     </AnimatePresence>
@@ -347,7 +381,7 @@ export default function App() {
       onAddProject={() => { setSettings(x => ({ ...x, open: false })); setAddOpen(true); }} onOpenDock={() => setDockSignal(n => n + 1)} />
     <AddProjectDialog open={addOpen} onOpenChange={setAddOpen} projects={projects} onAdd={addProject} />
     <ShortcutsDialog open={keysOpen} onOpenChange={setKeysOpen} />
-    <ExplainerDialog open={explain.open} onOpenChange={v => setExplain(x => ({ ...x, open: v }))} kind={explain.kind} setKind={k => setExplain(x => ({ ...x, kind: k }))} interjected={s.interjected} flow={pastTask ? undefined : flow} nFiles={files(s.interjected).length} />
+    <ExplainerDialog origin={explain.from} open={explain.open} onOpenChange={v => setExplain(x => ({ ...x, open: v }))} kind={explain.kind} setKind={k => setExplain(x => ({ ...x, kind: k }))} interjected={s.interjected} flow={pastTask ? undefined : flow} nFiles={files(s.interjected).length} />
     <AdvancedDialog open={advanced} onOpenChange={setAdvanced} project={viewProj} budget={prefs.budget} onEditPreview={() => { setAdvanced(false); openSettings("projects", viewProj.id); }} />
 
     <CompareOverlay mode={compare} snap={snap} x={cx} onX={setCx} />

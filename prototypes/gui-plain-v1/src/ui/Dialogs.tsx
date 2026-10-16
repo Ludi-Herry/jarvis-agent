@@ -8,6 +8,7 @@ import { checkPreviewUrl, PERMISSIONS, type Mode, type Project } from "../scenar
 import { MOD, type Prefs, type ThemePref } from "../prefs";
 import type { SettingsSection } from "./Sidebar";
 import { useNotify } from "./feedback";
+import { isIme } from "./Bits";
 
 const SECTIONS: { value: SettingsSection; label: string; icon: any }[] = [
   { value: "general", label: "通用", icon: SlidersHorizontal },
@@ -39,7 +40,7 @@ function ProjectCard({ p, focus, onSave, onRemove, canRemove }: { p: Project; fo
     <label className="field">
       <span className="field-label">预览地址</span>
       <span className={`field-row${err ? " is-error" : ""}`}>
-        <input value={v} autoFocus={focus} onChange={e => { setV(e.target.value); setErr(null); }} onKeyDown={e => { if (e.key === "Enter") save(); }} placeholder="http://localhost:5173" aria-invalid={!!err} aria-label={`${p.name} 的预览地址`} />
+        <input value={v} autoFocus={focus} onChange={e => { setV(e.target.value); setErr(null); }} onKeyDown={e => { if (e.key === "Enter" && !isIme(e)) save(); }} placeholder="http://localhost:5173" aria-invalid={!!err} aria-label={`${p.name} 的预览地址`} />
         <Button size="sm" variant={dirty ? "primary" : "secondary"} disabled={!dirty} onClick={save}>保存</Button>
       </span>
       <span className={`field-hint${err ? " tone-danger" : ""}`}>{err ?? (p.previewUrl ? "改了界面文件后，预览会自动打开这个本机页面" : "填上本机开发服务器的地址后，改了界面才能自动看预览")}</span>
@@ -122,11 +123,11 @@ export function AddProjectDialog({ open, onOpenChange, projects, onAdd }: { open
     <DialogContent title="添加项目" description="Jarvis 只会在这个文件夹里读写文件、跑命令。演示稿不会真的读取你的硬盘。">
       <div className="form">
         <label className="field"><span className="field-label">文件夹路径</span>
-          <span className={`field-row${err.path ? " is-error" : ""}`}><input autoFocus value={path} onChange={e => { setPath(e.target.value); setErr(v => ({ ...v, path: undefined })); }} onKeyDown={e => e.key === "Enter" && submit()} placeholder="H:\my-site" aria-invalid={!!err.path} /></span>
+          <span className={`field-row${err.path ? " is-error" : ""}`}><input autoFocus value={path} onChange={e => { setPath(e.target.value); setErr(v => ({ ...v, path: undefined })); }} onKeyDown={e => e.key === "Enter" && !isIme(e) && submit()} placeholder="H:\my-site" aria-invalid={!!err.path} /></span>
           <span className={`field-hint${err.path ? " tone-danger" : ""}`}>{err.path ?? (name ? `会显示为「${name}」` : "粘贴文件夹地址即可")}</span>
         </label>
         <label className="field"><span className="field-label">预览地址（可选）</span>
-          <span className={`field-row${err.url ? " is-error" : ""}`}><input value={url} onChange={e => { setUrl(e.target.value); setErr(v => ({ ...v, url: undefined })); }} onKeyDown={e => e.key === "Enter" && submit()} placeholder="http://localhost:5173" aria-invalid={!!err.url} /></span>
+          <span className={`field-row${err.url ? " is-error" : ""}`}><input value={url} onChange={e => { setUrl(e.target.value); setErr(v => ({ ...v, url: undefined })); }} onKeyDown={e => e.key === "Enter" && !isIme(e) && submit()} placeholder="http://localhost:5173" aria-invalid={!!err.url} /></span>
           <span className={`field-hint${err.url ? " tone-danger" : ""}`}>{err.url ?? "只接受本机地址；之后也能在设置里改"}</span>
         </label>
       </div>
@@ -144,6 +145,8 @@ export const SHORTCUTS: { keys: string[]; label: string; note?: string }[] = [
   { keys: [MOD, "G"], label: "切换对话 / 画布", note: "画布里用方向键走上一步、下一步" },
   { keys: ["Enter"], label: "发送（可在设置里改成 " + MOD + " Enter）" },
   { keys: ["Shift", "Enter"], label: "换行" },
+  { keys: [MOD, "Enter"], label: "允许这次修改", note: "等你确认、并且输入框是空的时候" },
+  { keys: ["↑", "↓"], label: "在任务列表、步骤列表、画布里移动" },
   { keys: ["Esc"], label: "停止正在做的任务" },
   { keys: ["?"], label: "显示这张表" },
 ];

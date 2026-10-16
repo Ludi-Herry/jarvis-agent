@@ -26,6 +26,8 @@ export interface DialogContentProps extends ComponentPropsWithoutRef<typeof Dial
   title: string;
   description?: string;
   children: ReactNode;
+  /** Viewport point the dialog grows out of and shrinks back into (e.g. the thumbnail that opened it). Jarvis addition. */
+  origin?: { x: number; y: number } | null;
 }
 
 const fade: Transition = { duration: motionTokens.duration.instant };
@@ -39,7 +41,7 @@ function SwapText({ text }: { text: string }) {
   </AnimatePresence>;
 }
 
-export function DialogContent({ title, description, children, className, onPointerDownOutside, ...props }: DialogContentProps) {
+export function DialogContent({ title, description, children, className, onPointerDownOutside, origin, ...props }: DialogContentProps) {
   const open = useContext(OpenContext);
   const reduced = useReducedMotion();
   // When the open state last changed. Radix waits for the click before treating a press as outside, and a press on the trigger
@@ -51,6 +53,8 @@ export function DialogContent({ title, description, children, className, onPoint
     if (open !== null && (!change.current.open || event.detail.originalEvent.timeStamp < change.current.at)) event.preventDefault();
   };
   const classes = [styles.content, className].filter(Boolean).join(" ");
+  // The box is centred with auto margins, so an origin offset from the viewport centre maps straight onto transform-origin.
+  const grow = origin && typeof window !== "undefined" ? { x: Math.round(origin.x - window.innerWidth / 2), y: Math.round(origin.y - window.innerHeight / 2) } : null;
   const inner = <>
     <div className={styles.header}><div><DialogPrimitive.Title className={styles.title}><SwapText text={title}/></DialogPrimitive.Title>{description ? <DialogPrimitive.Description className={styles.description}><SwapText text={description}/></DialogPrimitive.Description> : null}</div><DialogPrimitive.Close className={styles.close} aria-label="关闭"><X size={16} strokeWidth={1.75} aria-hidden="true"/></DialogPrimitive.Close></div>
     <div className={styles.body}>{children}</div>
@@ -65,7 +69,7 @@ export function DialogContent({ title, description, children, className, onPoint
     {open && <DialogPrimitive.Portal key="dialog" forceMount>
       <DialogPrimitive.Overlay asChild forceMount><motion.div className={styles.overlay} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, transition: reduced ? fade : leave }} transition={reduced ? fade : { duration: motionTokens.duration.standard, ease: [...motionTokens.ease.enter] }}/></DialogPrimitive.Overlay>
       <DialogPrimitive.Content {...props} onPointerDownOutside={pressOutside} asChild forceMount>
-        <motion.div className={classes} initial={reduced ? { opacity: 0 } : { opacity: 0, y: 8, scale: .96 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={reduced ? { opacity: 0, transition: fade } : { opacity: 0, y: 4, scale: .98, transition: leave }} transition={reduced ? fade : { default: motionTokens.spring.smooth, opacity: { duration: motionTokens.duration.fast, ease: [...motionTokens.ease.enter] } }}>{inner}</motion.div>
+        <motion.div className={classes} style={grow ? { transformOrigin: `calc(50% + ${grow.x}px) calc(50% + ${grow.y}px)` } : undefined} initial={reduced ? { opacity: 0 } : grow ? { opacity: 0, scale: .42 } : { opacity: 0, y: 8, scale: .96 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={reduced ? { opacity: 0, transition: fade } : grow ? { opacity: 0, scale: .42, transition: leave } : { opacity: 0, y: 4, scale: .98, transition: leave }} transition={reduced ? fade : { default: motionTokens.spring.smooth, opacity: { duration: motionTokens.duration.fast, ease: [...motionTokens.ease.enter] } }}>{inner}</motion.div>
       </DialogPrimitive.Content>
     </DialogPrimitive.Portal>}
   </AnimatePresence>;

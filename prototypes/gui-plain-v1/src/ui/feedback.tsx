@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Check, Info } from "lucide-react";
+import { Check, Copy, Info } from "lucide-react";
 
 export interface Note { text: string; icon?: ReactNode; tone?: "ok" | "info"; action?: { label: string; run: () => void }; ms?: number }
 type Notify = (note: Note) => void;
@@ -28,4 +28,27 @@ export async function copyText(text: string) {
     const ta = document.createElement("textarea"); ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0"; document.body.appendChild(ta); ta.select();
     let ok = false; try { ok = document.execCommand("copy"); } catch { ok = false; } ta.remove(); return ok;
   }
+}
+
+/** Copy with in-place feedback: the icon turns into a ✓ for 2.5s. Only a failure raises a toast. */
+export function useCopy(ms = 2500) {
+  const notify = useNotify();
+  const [done, setDone] = useState(false);
+  const timer = useRef(0);
+  const copy = useCallback(async (text: string) => {
+    const ok = await copyText(text);
+    if (!ok) { notify({ tone: "info", text: "浏览器没允许复制" }); return; }
+    setDone(true); window.clearTimeout(timer.current); timer.current = window.setTimeout(() => setDone(false), ms);
+  }, [ms, notify]);
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+  return { done, copy };
+}
+
+/** Copy ↔ Check crossfade (scale + blur, popLayout so the button never changes size). */
+export function CopyGlyph({ done, size = 13 }: { done: boolean; size?: number }) {
+  return <span className="copy-glyph" style={{ width: size, height: size }}><AnimatePresence mode="popLayout" initial={false}>
+    <motion.span key={done ? "ok" : "copy"} className={done ? "is-done" : undefined} initial={{ opacity: 0, scale: .6, filter: "blur(2px)" }} animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }} exit={{ opacity: 0, scale: .6, filter: "blur(2px)" }} transition={{ type: "spring", visualDuration: .22, bounce: .2 }}>
+      {done ? <Check size={size} /> : <Copy size={size} />}
+    </motion.span>
+  </AnimatePresence></span>;
 }

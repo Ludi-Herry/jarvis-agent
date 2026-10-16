@@ -1,5 +1,5 @@
 /* Press scale is driven by Motion (whileTap) alone, so transform never gets a CSS transition here. */
-.button { position: relative; display: inline-flex; min-height: var(--control-height-md); align-items: center; justify-content: center; gap: var(--space-2); border: 1px solid transparent; border-radius: var(--radius-control); padding: 0 var(--space-4); font: inherit; font-size: var(--text-sm); font-weight: 500; line-height: var(--leading-body); white-space: nowrap; cursor: pointer; -webkit-tap-highlight-color: transparent; transition: color var(--duration-fast) var(--ease-standard), background var(--duration-fast) var(--ease-standard), border-color var(--duration-fast) var(--ease-standard), opacity var(--duration-fast) var(--ease-standard), box-shadow var(--duration-fast) var(--ease-standard); }
+.button { position: relative; display: inline-flex; min-height: var(--control-height-md); align-items: center; justify-content: center; gap: var(--space-2); border: 1px solid transparent; border-radius: var(--radius-control); padding: 0 var(--space-4); font: inherit; font-size: var(--text-sm); font-weight: var(--wght-500, 500); line-height: var(--leading-body); white-space: nowrap; cursor: pointer; -webkit-tap-highlight-color: transparent; transition: color var(--duration-fast) var(--ease-standard), background var(--duration-fast) var(--ease-standard), border-color var(--duration-fast) var(--ease-standard), opacity var(--duration-fast) var(--ease-standard), box-shadow var(--duration-fast) var(--ease-standard); }
 .button:disabled { cursor: not-allowed; opacity: .52; }
 .button[aria-busy="true"] { cursor: progress; }
 /* Anchors of floating layers never scale: Radix opens on pointerdown and would measure a shrunken trigger. */
@@ -12,23 +12,25 @@
 .labelPhase { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); white-space: nowrap; }
 .labelPhase svg { flex: none; }
 .primary { color: var(--background); background: var(--foreground); border-color: var(--foreground); }
-.secondary { color: var(--foreground); background: var(--surface); border-color: var(--border); }
+/* Jarvis prototype change: secondary and danger are quiet fills, not outlines, so a button inside a card or dialog never adds a second frame (one closed edge per surface). */
+.secondary { color: var(--foreground); background: color-mix(in oklab, var(--foreground) 6%, transparent); border-color: transparent; }
 .ghost { color: var(--text-secondary); background: transparent; border-color: transparent; }
-.danger { color: var(--danger); background: var(--surface); border-color: var(--border); }
-/* A disabled outlined button keeps its shape and fades only its label, so it still reads as a button that is off, not as plain text. */
-.secondary:disabled, .danger:disabled { opacity: 1; color: var(--text-muted); background: var(--surface-muted); border-color: var(--border); }
+.danger { color: var(--danger); background: color-mix(in oklab, var(--danger) 9%, transparent); border-color: transparent; }
+/* A disabled filled button keeps its shape and fades only its label, so it still reads as a button that is off, not as plain text. */
+.secondary:disabled, .danger:disabled { opacity: 1; color: var(--text-muted); background: color-mix(in oklab, var(--foreground) 4%, transparent); border-color: transparent; }
 .danger:disabled { color: color-mix(in oklab, var(--danger) 55%, var(--surface-muted)); }
 .ghost:disabled { opacity: 1; color: var(--text-muted); }
 @media (hover: hover) and (pointer: fine) {
   .primary:hover:not(:disabled) { opacity: .91; box-shadow: var(--shadow-resting); }
-  .secondary:hover:not(:disabled) { background: var(--surface-muted); box-shadow: var(--shadow-resting); }
+  .secondary:hover:not(:disabled) { background: color-mix(in oklab, var(--foreground) 10%, transparent); }
   .ghost:hover:not(:disabled) { color: var(--foreground); background: var(--surface-muted); }
-  .danger:hover:not(:disabled) { border-color: var(--danger); background: var(--surface-muted); }
+  .danger:hover:not(:disabled) { background: color-mix(in oklab, var(--danger) 14%, transparent); }
 }
 /* Color feedback on press, so touch and menu triggers (which never scale) still answer the finger. */
 .primary:active:not(:disabled) { opacity: .84; }
-.secondary:active:not(:disabled), .ghost:active:not(:disabled) { color: var(--foreground); background: var(--surface-muted); }
-.danger:active:not(:disabled) { border-color: var(--danger); background: var(--surface-muted); }
+.secondary:active:not(:disabled) { color: var(--foreground); background: color-mix(in oklab, var(--foreground) 12%, transparent); }
+.ghost:active:not(:disabled) { color: var(--foreground); background: var(--surface-muted); }
+.danger:active:not(:disabled) { background: color-mix(in oklab, var(--danger) 17%, transparent); }
 .sm { min-height: var(--control-height-sm); padding-inline: var(--space-3); font-size: var(--text-sm); }
 .md { min-height: var(--control-height-md); }
 .lg { min-height: var(--control-height-lg); padding-inline: var(--space-5); font-size: var(--text-sm); }

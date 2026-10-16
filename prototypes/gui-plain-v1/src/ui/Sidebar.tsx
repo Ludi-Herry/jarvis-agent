@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as RKeyboardEvent, type ReactNode } from "react";
 import { buildFlow } from "../canvas/model";
 import { AnimatePresence, motion } from "motion/react";
 import { Archive, BookOpen, ChevronDown, ChevronRight, Copy, Folder, FolderOpen, FolderPlus, Globe, Keyboard, MoreHorizontal, PanelLeftClose, PencilLine, Plus, Search, Settings, SquarePen, Trash2, X, Monitor } from "lucide-react";
@@ -8,16 +8,20 @@ import type { ThemePref } from "../prefs";
 import { MOD } from "../prefs";
 import { Popover, PopoverContent, PopoverTrigger } from "../arc/popover/popover";
 import SegmentedControl from "../arc/segmented-control/segmented-control";
-import { Diffstat, IconBtn, Orb } from "./Bits";
+import { Diffstat, IconBtn, Orb, Pop, arrowNav, isIme } from "./Bits";
 import { copyText, useNotify } from "./feedback";
+import { FadeScroll } from "./scroll-area";
+import { useSortable, useTaskOrder } from "./sortable";
 
 export type View = { kind: "current" } | { kind: "past"; id: string };
+type Filter = "all" | "running" | "attention" | "done";
+const FILTERS: { value: Filter; label: string }[] = [{ value: "all", label: "全部" }, { value: "running", label: "进行中" }, { value: "attention", label: "等我处理" }, { value: "done", label: "已完成" }];
 export type SettingsSection = "general" | "appearance" | "projects" | "usage" | "about";
 
 export function TaskStatus({ s, theme }: { s: S; theme: "light" | "dark" }) {
   switch (s.phase) {
-    case "running": { const f = buildFlow(s); return <span className="task-status" title={`要做的事 ${f.done}/${f.total}`}><span className="ts-frac">{f.done}/{f.total}</span><Orb state="working" size={20} theme={theme} /></span>; }
-    case "approval": return <span className="task-status tone-warning"><i className="dot" />等你确认</span>;
+    case "running": { const f = buildFlow(s); return <span className="task-status" title={`要做的事 ${f.done}/${f.total}`}><Pop value={f.done} className="ts-frac">{f.done}/{f.total}</Pop><Orb state="working" size={20} theme={theme} /></span>; }
+    case "approval": return <span className="task-status tone-warning"><span className="pulse-dot is-sm" aria-hidden />等你确认</span>;
     case "failed": return <span className="task-status tone-danger"><i className="dot" />没通过</span>;
     case "interrupted": return <span className="task-status tone-warning"><i className="dot" />没做完</span>;
     case "stopped": return <span className="task-status">已停止</span>;
@@ -27,7 +31,7 @@ export function TaskStatus({ s, theme }: { s: S; theme: "light" | "dark" }) {
 }
 
 /** One task line: click opens, double-click renames, the hover menu renames or archives. */
-function TaskRow({ title, active, right, onOpen, onRename, onArchive, onCopy }: { title: string; active: boolean; right: ReactNode; onOpen: () => void; onRename: (t: string) => void; onArchive: () => void; onCopy: () => void }) {
+function TaskRow({ title, active, right, onOpen, onRename, onArchive, onCopy, sortId }: { sortId?: string; title: string; active: boolean; right: ReactNode; onOpen: () => void; onRename: (t: string) => void; onArchive: () => void; onCopy: () => void }) {
   const [editing, setEditing] = useState(false);
   const [menu, setMenu] = useState(false);
   const [val, setVal] = useState(title);
@@ -35,9 +39,9 @@ function TaskRow({ title, active, right, onOpen, onRename, onArchive, onCopy }: 
   useLayoutEffect(() => { if (editing) setVal(title); }, [editing, title]);
   useEffect(() => { if (editing) requestAnimationFrame(() => { input.current?.focus(); input.current?.select(); }); }, [editing]);
   const commit = () => { const v = val.trim(); if (v && v !== title) onRename(v); setEditing(false); };
-  return <div className={`task-row${active ? " is-active" : ""}${menu ? " is-menu" : ""}${editing ? " is-editing" : ""}`}>
+  return <div data-sort-id={sortId} className={`task-row${active ? " is-active" : ""}${menu ? " is-menu" : ""}${editing ? " is-editing" : ""}`}>
     {editing
-      ? <input ref={input} autoFocus className="task-rename" value={val} aria-label="任务名称" onChange={e => setVal(e.target.value)} onBlur={commit} onKeyDown={e => { if (e.key === "Enter") commit(); if (e.key === "Escape") { e.stopPropagation(); setEditing(false); } }} />
+      ? <input ref={input} autoFocus className="task-rename" value={val} aria-label="任务名称" onChange={e => setVal(e.target.value)} onBlur={commit} onKeyDown={e => { if (e.key === "Enter" && !isIme(e)) commit(); if (e.key === "Escape") { e.stopPropagation(); setEditing(false); } }} />
       : <button type="button" className="task-main" aria-current={active ? "page" : undefined} onClick={onOpen} onDoubleClick={() => setEditing(true)} title="双击重命名">
           <span className="task-title">{title}</span><span className="task-right">{right}</span>
         </button>}
@@ -53,11 +57,24 @@ function TaskRow({ title, active, right, onOpen, onRename, onArchive, onCopy }: 
   </div>;
 }
 
-function ProjectGroup({ p, children, count, forceOpen, onNewIn, onRemove, onPreview }: { p: Project; children: ReactNode; count: number; forceOpen: boolean; onNewIn: () => void; onRemove: () => void; onPreview: () => void }) {
+function ProjectGroup({ p, children, count, forceOpen, onNewIn, onRemove, onPreview, ids, onReorder }: { p: Project; children: ReactNode; count: number; forceOpen: boolean; onNewIn: () => void; onRemove: () => void; onPreview: () => void; ids: string[]; onReorder?: (id: string, before: string | null) => void }) {
   const [open, setOpen] = useState(true);
+  const rowsRef = useRef<HTMLDivElement>(null);
+  const refocus = (id: string) => requestAnimationFrame(() => rowsRef.current?.querySelector<HTMLElement>(`[data-sort-id="${id}"] .task-main`)?.focus());
+  // Alt ↑ / Alt ↓ moves the focused task within its project — the keyboard twin of dragging.
+  const keyMove = (e: RKeyboardEvent) => {
+    if (!onReorder || !e.altKey || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
+    const id = (e.target as HTMLElement).closest<HTMLElement>("[data-sort-id]")?.dataset.sortId; if (!id) return;
+    e.preventDefault(); e.stopPropagation();
+    const i = ids.indexOf(id), j = e.key === "ArrowUp" ? i - 1 : i + 2;
+    if (e.key === "ArrowUp" && i <= 0) return; if (e.key === "ArrowDown" && i >= ids.length - 1) return;
+    onReorder(id, ids[j] ?? null); refocus(id);
+  };
   const [menu, setMenu] = useState(false);
   const notify = useNotify();
   const shown = open || forceOpen;
+  const sorting = useSortable(rowsRef, (id, before) => onReorder?.(id, before), shown && !!onReorder);
+  useEffect(() => { rowsRef.current?.querySelectorAll<HTMLElement>("[data-sort-id]").forEach(r => r.classList.toggle("is-ghost", r.dataset.sortId === sorting?.id)); }, [sorting?.id]);
   const Ico = shown ? FolderOpen : Folder;
   return <div className="sb-section">
     <div className={`sb-label${menu ? " is-menu" : ""}`}>
@@ -82,8 +99,9 @@ function ProjectGroup({ p, children, count, forceOpen, onNewIn, onRemove, onPrev
       </span>
     </div>
     <AnimatePresence initial={false}>
-      {shown && <motion.div className="sb-rows" initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ type: "spring", visualDuration: .28, bounce: 0 }}>
+      {shown && <motion.div ref={rowsRef} onKeyDown={keyMove} data-dragging={sorting?.id} className={`sb-rows${sorting ? " is-sorting" : ""}`} initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ type: "spring", visualDuration: .28, bounce: 0 }}>
         {children}
+        {sorting && <span className="sort-line" style={{ top: sorting.line }} aria-hidden />}
         {count === 0 && !forceOpen && <button type="button" className="sb-empty-row" onClick={onNewIn}><Plus size={13} />还没有任务，新建一个</button>}
       </motion.div>}
     </AnimatePresence>
@@ -105,20 +123,29 @@ export function Sidebar(p: SidebarProps) {
   const { s, theme, view, projects, past, live } = p;
   const notify = useNotify();
   const [q, setQ] = useState("");
+  const [filter, setFilter] = useState<Filter>("all");
+  const order = useTaskOrder();
   const [brand, setBrand] = useState(false);
   const [me, setMe] = useState(false);
   const hasCurrent = s.phase !== "empty";
   const needle = p.searchOpen ? q.trim().toLowerCase() : "";
   const match = (t: string) => !needle || t.toLowerCase().includes(needle);
-  useEffect(() => { if (!p.searchOpen) setQ(""); }, [p.searchOpen]);
+  useEffect(() => { if (!p.searchOpen) { setQ(""); setFilter("all"); } }, [p.searchOpen]);
   const copy = (t: string) => copyText(t).then(ok => notify(ok ? { text: "已复制任务名称" } : { tone: "info", text: "浏览器没允许复制" }));
+  const catOf = (ph: S["phase"]): Exclude<Filter, "all"> | "other" => ph === "running" ? "running" : ph === "approval" || ph === "failed" || ph === "interrupted" ? "attention" : ph === "complete" ? "done" : "other";
   const groups = projects.map(pr => {
-    const rows: ReactNode[] = [];
-    for (const lt of live) if (lt.project === pr.id && lt.s.phase !== "empty" && match(lt.title)) rows.push(<TaskRow key={lt.key} title={lt.title} active={lt.key === "cur" && view.kind === "current"} right={<TaskStatus s={lt.s} theme={theme} />} onOpen={() => p.onOpenLive(lt.key)} onRename={v => p.onRenameLive(lt.key, v)} onArchive={() => p.onArchiveLive(lt.key)} onCopy={() => copy(lt.title)} />);
-    for (const t of past) if (t.project === pr.id && match(t.title)) rows.push(<TaskRow key={t.id} title={t.title} active={view.kind === "past" && view.id === t.id} right={t.outcome === "stopped" ? <span className="task-status">已停止</span> : <span className="task-meta">{t.meta}</span>} onOpen={() => p.onOpenPast(t.id)} onRename={v => p.onRenamePast(t.id, v)} onArchive={() => p.onArchivePast(t.id)} onCopy={() => copy(t.title)} />);
-    return { pr, rows };
+    let rows: { id: string; cat: string; node: ReactNode }[] = [];
+    for (const lt of live) if (lt.project === pr.id && lt.s.phase !== "empty" && match(lt.title)) rows.push({ id: lt.key, cat: catOf(lt.s.phase), node: <TaskRow key={lt.key} sortId={lt.key} title={lt.title} active={lt.key === "cur" && view.kind === "current"} right={<TaskStatus s={lt.s} theme={theme} />} onOpen={() => p.onOpenLive(lt.key)} onRename={v => p.onRenameLive(lt.key, v)} onArchive={() => p.onArchiveLive(lt.key)} onCopy={() => copy(lt.title)} /> });
+    for (const t of past) if (t.project === pr.id && match(t.title)) rows.push({ id: t.id, cat: t.outcome === "stopped" ? "other" : "done", node: <TaskRow key={t.id} sortId={t.id} title={t.title} active={view.kind === "past" && view.id === t.id} right={t.outcome === "stopped" ? <span className="task-status">已停止</span> : <span className="task-meta">{t.meta}</span>} onOpen={() => p.onOpenPast(t.id)} onRename={v => p.onRenamePast(t.id, v)} onArchive={() => p.onArchivePast(t.id)} onCopy={() => copy(t.title)} /> });
+    rows = order.sort(pr.id, rows);
+    const counts = { running: 0, attention: 0, done: 0 } as Record<string, number>; for (const r of rows) counts[r.cat] = (counts[r.cat] ?? 0) + 1;
+    const ids = rows.map(r => r.id);
+    const shownRows = filter === "all" ? rows : rows.filter(r => r.cat === filter);
+    return { pr, rows: shownRows.map(r => r.node), ids, counts };
   });
-  const visible = needle ? groups.filter(g => g.rows.length > 0) : groups;
+  const total = (c: Exclude<Filter, "all">) => groups.reduce((a, g) => a + (g.counts[c] ?? 0), 0);
+  const narrowing = !!needle || filter !== "all";
+  const visible = narrowing ? groups.filter(g => g.rows.length > 0) : groups;
   const pick = (fn: () => void, close: (v: boolean) => void) => () => { close(false); fn(); };
   return <aside className="sidebar" aria-label="项目与任务">
     <div className="sb-top">
@@ -149,16 +176,19 @@ export function Sidebar(p: SidebarProps) {
           <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="搜索任务" aria-label="搜索任务" onKeyDown={e => { if (e.key === "Escape") { e.stopPropagation(); p.setSearchOpen(false); } }} />
           {q && <button type="button" aria-label="清空" onClick={() => setQ("")}><X size={13} /></button>}
         </label>
+        <div className="sb-filters" role="radiogroup" aria-label="按状态筛选">
+          {FILTERS.map(f => { const n = f.value === "all" ? 0 : total(f.value); return <button key={f.value} type="button" role="radio" aria-checked={filter === f.value} className={`sb-filter${filter === f.value ? " is-on" : ""}`} onClick={() => setFilter(f.value)} disabled={f.value !== "all" && n === 0 && filter !== f.value}>{f.label}{n > 0 && <span>{n}</span>}</button>; })}
+        </div>
       </motion.div>}
     </AnimatePresence>
     <nav className="sb-nav">
       <button type="button" className={`sb-item${!hasCurrent && view.kind === "current" ? " is-active" : ""}`} onClick={() => p.onNew()}><SquarePen size={16} /><span>新建任务</span><kbd>{MOD} N</kbd></button>
     </nav>
-    <div className="sb-scroll">
-      {visible.map(({ pr, rows }) => <ProjectGroup key={pr.id} p={pr} count={rows.length} forceOpen={!!needle} onNewIn={() => p.onNew(pr.id)} onRemove={() => p.onRemoveProject(pr.id)} onPreview={() => p.onSettings("projects", pr.id)}>{rows}</ProjectGroup>)}
-      {needle && visible.length === 0 && <p className="sb-none">没有找到「{q.trim()}」</p>}
+    <FadeScroll className="sb-scroll" onKeyDown={e => arrowNav(e, ".task-main")}>
+      {visible.map(({ pr, rows, ids }) => <ProjectGroup key={pr.id} p={pr} count={rows.length} forceOpen={narrowing} ids={ids} onReorder={narrowing ? undefined : (id, before) => order.move(pr.id, ids, id, before)} onNewIn={() => p.onNew(pr.id)} onRemove={() => p.onRemoveProject(pr.id)} onPreview={() => p.onSettings("projects", pr.id)}>{rows}</ProjectGroup>)}
+      {narrowing && visible.length === 0 && <p className="sb-none">{needle ? `没有找到「${q.trim()}」` : "这一类里还没有任务"}</p>}
       {!needle && <button type="button" className="sb-add-project" onClick={p.onAddProject}><FolderPlus size={14} />添加项目</button>}
-    </div>
+    </FadeScroll>
     <div className="sb-foot">
       {s.phase === "interrupted" && <div className="conn-warn"><i className="dot" />Jarvis 上次被关掉了</div>}
       <div className="me">
