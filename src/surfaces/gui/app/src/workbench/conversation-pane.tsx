@@ -86,6 +86,8 @@ export interface ConversationPaneProps {
   readonly onStop: () => void;
   readonly onPrepareDecision: (kind: DecisionKind, requestId: string) => void;
   readonly onAllow: () => void;
+  /** plain-v1 P2: 「这个任务都允许」. */
+  readonly onAllowSession?: () => void;
   readonly onSubmitReview: (decisions: readonly HumanReviewDecision[]) => void;
   readonly onToggleDetail: () => void;
   readonly onValidateTask: (input: GuiFreeTaskInput) => Promise<{ ok: boolean; errors: Array<{ field: string; message: string }> }>;
@@ -105,7 +107,7 @@ export function ConversationPane(props: ConversationPaneProps) {
     overview, snapshot, notices, connection, actionPending, provenance, models, gate, canStart, controls,
     decideState, composerState, composerIntent, composerRef, historyRef, geometry, composerStorageKey,
     detailOpen, latestAssistantId, onComposerChange, onEvidence, onOpenEvidence, onPause, onContinue,
-    onResume, onStop, onPrepareDecision, onAllow, onSubmitReview, onToggleDetail,
+    onResume, onStop, onPrepareDecision, onAllow, onAllowSession, onSubmitReview, onToggleDetail,
     onValidateTask, onCreateTask, onCreateAndStart, onStart, onBranch, onSavePresets, onProbeCommands,
     onWithdrawInput, onEditPendingInput, onSelectTask,
   } = props;
@@ -370,6 +372,7 @@ export function ConversationPane(props: ConversationPaneProps) {
           pending={actionPending !== null}
           onPrepareDecision={onPrepareDecision}
           onAllow={onAllow}
+          {...(onAllowSession !== undefined ? { onAllowSession } : {})}
           onSubmitReview={onSubmitReview}
           onResume={onResume}
           onEvidence={onOpenEvidence}

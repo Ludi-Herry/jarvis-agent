@@ -29,6 +29,7 @@ export function ApprovalCard({
   pending,
   onPrepareDecision,
   onAllow,
+  onAllowSession,
   onEvidence,
 }: {
   readonly approval: GuiApproval;
@@ -36,6 +37,8 @@ export function ApprovalCard({
   readonly pending: boolean;
   readonly onPrepareDecision: (kind: DecisionKind, requestId: string) => void;
   readonly onAllow: () => void;
+  /** plain-v1 P2: 「这个任务都允许」 (allow-session); hidden when the host does not offer it. */
+  readonly onAllowSession?: () => void;
   readonly onEvidence: (tab: EvidenceTab) => void;
 }) {
   const disabled = !gate.available || pending;
@@ -103,11 +106,25 @@ export function ApprovalCard({
         <button type="button" disabled={disabled} onClick={() => onPrepareDecision('revise', approval.requestId)}>
           要求调整
         </button>
+        {onAllowSession !== undefined ? (
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={onAllowSession}
+            title={approval.sessionScope === 'command' ? '本任务里这条完全相同的命令不再询问' : '本任务里后续的同类写入不再询问（仍只限任务合同内的文件）'}
+          >
+            这个任务都允许
+          </button>
+        ) : null}
         <button className="primary" type="button" disabled={disabled} onClick={onAllow}>
           允许一次
         </button>
       </div>
-      <p className="wb-decision-foot">允许一次只推进这一次请求；拒绝与调整的理由会回到 Jarvis。完成授权仍由既有可信链决定。</p>
+      <p className="wb-decision-foot">
+        允许一次只推进这一次请求{onAllowSession !== undefined
+          ? (approval.sessionScope === 'command' ? '；「这个任务都允许」只对这条完全相同的命令生效' : '；「这个任务都允许」让本任务后续的同类写入不再询问')
+          : ''}；拒绝与调整的理由会回到 Jarvis。完成授权仍由既有可信链决定。
+      </p>
     </section>
   );
 }
@@ -272,6 +289,7 @@ export function DecisionBar({
   pending,
   onPrepareDecision,
   onAllow,
+  onAllowSession,
   onSubmitReview,
   onResume,
   onEvidence,
@@ -283,6 +301,7 @@ export function DecisionBar({
   readonly pending: boolean;
   readonly onPrepareDecision: (kind: DecisionKind, requestId: string) => void;
   readonly onAllow: () => void;
+  readonly onAllowSession?: () => void;
   readonly onSubmitReview: (decisions: readonly HumanReviewDecision[]) => void;
   readonly onResume: () => void;
   readonly onEvidence: (tab: EvidenceTab) => void;
@@ -296,6 +315,7 @@ export function DecisionBar({
         pending={pending}
         onPrepareDecision={onPrepareDecision}
         onAllow={onAllow}
+        {...(onAllowSession !== undefined ? { onAllowSession } : {})}
         onEvidence={onEvidence}
       />
     );

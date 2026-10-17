@@ -226,7 +226,11 @@ describe('GUI real Runtime connection (deterministic provider, real tools and pe
       expect(parked.completion).toMatchObject({ granted: false, verdict: 'couldNotVerify' });
       expect(await readFile(join(cwd, 'answer.mjs'), 'utf8')).toBe('export const value = 2;\n');
       expect(parked.checks).toMatchObject([{ command: 'node --check answer.mjs', code: 0 }]);
-      const approved = await host.review(started.id, [{ requirementId: 'R1', decision: 'approve', note: '核对实际文件与语法检查，确为 value=2' }], { sequence: parked.sequence, evidenceToken: parked.evidenceToken! });
+      // Re-read the page right before submitting: the run's own gui_settled record can land just after
+      // the poll above already reads as parked (seen on Windows CI), and the guard under test is that
+      // only the human review grants completion, not paging.
+      const fresh = await host.snapshot(started.id);
+      const approved = await host.review(started.id, [{ requirementId: 'R1', decision: 'approve', note: '核对实际文件与语法检查，确为 value=2' }], { sequence: fresh.sequence, evidenceToken: fresh.evidenceToken! });
       expect(approved.completion).toMatchObject({ granted: true, verdict: 'verified' });
       const reloaded = await new GuiSessionHost(options).snapshot(started.id);
       expect(reloaded.messages).toEqual(approved.messages);

@@ -1,0 +1,111 @@
+/* Tokens: Arc UI semantic roles (uiarc.dev/docs/theming) + PastaUI extras (Manrope, card outline, blue accent). */
+@font-face { font-family: "Manrope Variable"; font-style: normal; font-display: swap; font-weight: 200 800; src: url("./assets/fonts/manrope-latin.woff2") format("woff2-variations"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+
+:root, [data-theme="light"] {
+  color-scheme: light;
+  --background: oklch(100% 0 0);
+  --foreground: oklch(15% 0 0);
+  --surface: oklch(100% 0 0);
+  --surface-muted: oklch(97.8% 0 0);
+  --surface-raised: oklch(100% 0 0);
+  --surface-sunken: oklch(98.6% 0 0);
+  --border: oklch(93.5% 0 0);
+  --border-subtle: oklch(96.5% 0 0);
+  --border-strong: oklch(82% 0 0);
+  --text-secondary: oklch(46% 0 0);
+  --text-muted: oklch(59% 0 0);
+  --accent: oklch(33% 0 0);
+  --accent-strong: oklch(24% 0 0);
+  --accent-foreground: oklch(100% 0 0);
+  --accent-subtle: oklch(33% 0 0 / .1);
+  --danger: oklch(54% .21 25);
+  --success: oklch(49% .19 150);
+  --warning: oklch(58% .18 75);
+  --info: oklch(62.6% .205 254.9);
+  --info-subtle: oklch(62.6% .205 254.9 / .1);
+  --diff-add-bg: oklch(62% .15 155 / .1);
+  --diff-del-bg: oklch(62% .18 22 / .1);
+  --diff-add: oklch(55% .15 155);
+  --diff-del: oklch(57% .2 22);
+  --control-on: oklch(23% 0 0);
+  --control-thumb: oklch(100% 0 0);
+  --control-thumb-on: oklch(100% 0 0);
+  --control-thumb-shadow: 0 0 0 .5px oklch(0% 0 0/.07), 0 1px 2px oklch(0% 0 0/.14), 0 2px 6px oklch(0% 0 0/.06);
+  --control-track: oklch(89.5% 0 0);
+  --control-track-hover: oklch(86% 0 0);
+  --shadow-resting: 0 1px 2px oklch(0% 0 0/.035);
+  --shadow-raised: 0 6px 18px oklch(0% 0 0/.065), 0 1px 3px oklch(0% 0 0/.035);
+  --shadow-floating: 0 20px 48px oklch(0% 0 0/.105), 0 3px 10px oklch(0% 0 0/.045);
+  --card-outline: lch(0% 0 0 / .088);
+  --card-shadow: 0 0 0 .5px var(--card-outline), 0 3px 6px -2px lch(0% 0 0/.02), 0 1px 1px 0 lch(0% 0 0/.04);
+  --composer-shadow: 0 0 0 .5px var(--card-outline), 0 8px 24px -6px lch(0% 0 0/.08), 0 2px 4px -1px lch(0% 0 0/.04);
+  --term-bg: oklch(18% 0 0);
+  --term-fg: oklch(88% 0 0);
+}
+[data-theme="dark"] {
+  color-scheme: dark;
+  --background: oklch(17% 0 0);
+  --foreground: oklch(96% 0 0);
+  --surface: oklch(20% 0 0);
+  --surface-muted: oklch(24.5% 0 0);
+  --surface-raised: oklch(23% 0 0);
+  --surface-sunken: oklch(15.5% 0 0);
+  --border: oklch(29% 0 0);
+  --border-subtle: oklch(25% 0 0);
+  --border-strong: oklch(40% 0 0);
+  --text-secondary: oklch(77% 0 0);
+  --text-muted: oklch(64% 0 0);
+  --accent: oklch(80% 0 0);
+  --accent-strong: oklch(91% 0 0);
+  --accent-foreground: oklch(19% 0 0);
+  --accent-subtle: oklch(80% 0 0 / .13);
+  --danger: oklch(76% .2 25);
+  --success: oklch(78% .18 150);
+  --warning: oklch(83% .17 80);
+  --info: oklch(72% .16 254.9);
+  --info-subtle: oklch(72% .16 254.9 / .14);
+  --diff-add-bg: oklch(70% .15 155 / .12);
+  --diff-del-bg: oklch(70% .18 22 / .13);
+  --diff-add: oklch(78% .15 155);
+  --diff-del: oklch(76% .17 22);
+  --control-on: oklch(93% 0 0);
+  --control-thumb: oklch(97% 0 0);
+  --control-thumb-on: oklch(19% 0 0);
+  --control-thumb-shadow: 0 0 0 .5px oklch(0% 0 0/.3), 0 1px 2px oklch(0% 0 0/.35), 0 2px 6px oklch(0% 0 0/.2);
+  --control-track: oklch(33% 0 0);
+  --control-track-hover: oklch(37% 0 0);
+  --shadow-resting: 0 1px 2px oklch(0% 0 0/.18);
+  --shadow-raised: 0 8px 22px oklch(0% 0 0/.22);
+  --shadow-floating: 0 22px 55px oklch(0% 0 0/.34);
+  --card-outline: lch(100% 0 0 / .088);
+  --card-shadow: 0 0 0 .5px var(--card-outline), 0 3px 6px -2px lch(0% 0 0/.2);
+  --composer-shadow: 0 0 0 .5px var(--card-outline), 0 10px 30px -8px lch(0% 0 0/.5);
+  --term-bg: oklch(13% 0 0);
+  --term-fg: oklch(86% 0 0);
+}
+:root {
+  --font-body: "Manrope Variable", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif;
+  --font-display: var(--font-body);
+  --font-mono: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, Consolas, "Noto Sans Mono CJK SC", monospace;
+  --radius-pill: 9999px;
+  --radius-control: 1.125rem;
+  --radius-panel: 1.625rem;
+  --radius-surface: 2.125rem;
+  --control-height-sm: 2.25rem;
+  --control-height-md: 2.75rem;
+  --control-height-lg: 3.125rem;
+  --text-xs: .75rem; --text-sm: .875rem; --text-base: 1rem; --text-lg: 1.125rem; --text-xl: 1.375rem; --text-3xl: 2.25rem;
+  --leading-body: 1.4; --leading-display: 1.1; --tracking-body: -.005em; --tracking-display: -.025em;
+  --space-1: .25rem; --space-2: .5rem; --space-3: .75rem; --space-4: 1rem; --space-5: 1.25rem; --space-6: 1.5rem; --space-8: 2rem; --space-12: 3rem;
+  --duration-instant: .12s; --duration-fast: .16s; --duration-standard: .24s; --duration-considered: .48s; --duration-spring: .58s;
+  --ease-standard: cubic-bezier(.22,1,.36,1); --ease-enter: cubic-bezier(.16,1,.3,1); --ease-in-out: cubic-bezier(.65,0,.35,1);
+  --ease-spring: linear(0,.0258,.09,.1763,.2732,.3724,.4683,.5573,.6376,.7082,.7689,.8202,.8628,.8976,.9256,.9476,.9648,.9778,.9875,.9945,.9994,1.0026,1.0047,1.0058,1.0062,1.0062,1.0059,1.0055,1.0049,1.0043,1.0036,1.0031,1.0025,1.002,1.0016,1.0013,1);
+  --focus-ring: color-mix(in oklab, var(--info) 55%, transparent);
+}
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+body { background: var(--background); color: var(--foreground); font-family: var(--font-body); font-size: 14px; line-height: 1.5; letter-spacing: var(--tracking-body); -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+button { font: inherit; color: inherit; letter-spacing: inherit; }
+:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+::selection { background: color-mix(in oklab, var(--info) 22%, transparent); }
+code, .mono { font-family: var(--font-mono); font-size: .92em; letter-spacing: 0; }

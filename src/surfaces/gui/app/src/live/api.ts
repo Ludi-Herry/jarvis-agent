@@ -4,7 +4,9 @@ import type {
   GuiLiveOverview,
   GuiLiveSnapshot,
   GuiModelsResponse,
+  GuiPermissionMode,
   GuiTaskValidateResponse,
+  GuiUndoPlan,
   GuiWorkspaceInfo,
   GuiWorkspacePresets,
   GuiWorkspaceProbe,
@@ -228,4 +230,24 @@ export async function getLiveModels(signal?: AbortSignal): Promise<GuiModelsResp
     signal,
   });
   return readJson<GuiModelsResponse>(response);
+}
+
+/** plain-v1 P2: switch the composer permission mode (只讨论 / 改之前问我 / 自动). Applies from the
+ *  next tool call; a pending approval still waits for the user. */
+export async function postPermissionMode(id: string, mode: GuiPermissionMode, signal?: AbortSignal): Promise<GuiLiveSnapshot> {
+  return postLiveJson<GuiLiveSnapshot>(`/api/live/${encodeURIComponent(id)}/mode`, { mode }, signal);
+}
+
+/** plain-v1 P2: what 撤销 (or 恢复 after an undo) would change right now; read-only. */
+export async function getUndoPlan(id: string, signal?: AbortSignal): Promise<GuiUndoPlan> {
+  const response = await fetch(`/api/live/${encodeURIComponent(id)}/undo`, {
+    headers: { accept: 'application/json' },
+    signal,
+  });
+  return readJson<GuiUndoPlan>(response);
+}
+
+/** plain-v1 P2: apply 撤销 / 恢复. `token` is the plan token the user confirmed; a stale one is refused (409). */
+export async function postUndo(id: string, kind: 'undo' | 'redo', token: string, signal?: AbortSignal): Promise<GuiLiveSnapshot> {
+  return postLiveJson<GuiLiveSnapshot>(`/api/live/${encodeURIComponent(id)}/${kind}`, { token }, signal);
 }
