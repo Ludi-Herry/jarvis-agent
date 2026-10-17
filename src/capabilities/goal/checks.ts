@@ -34,64 +34,8 @@ const CHECK_OUTPUT_CHARS = 20_000;
 const DIFF_OUTPUT_CHARS = 500_000;
 const WORKTREE_STATUS_COMMAND = 'git status --porcelain --untracked-files=all' as const;
 const WORKTREE_STATUS_OUTPUT_CHARS = 200_000;
-
-/**
- * The tracked-diff fingerprint. Verification records it here and `loop:finalize` recomputes it before
- * merging, so BOTH sides must use exactly this command, this git environment and this hash — any drift
- * makes every verified goal look tampered with (`goal-mismatch`). Exported so finalize can't fork it.
- */
-export const TRACKED_DIFF_HASH_COMMAND = 'git diff --no-ext-diff --no-textconv --binary --no-color HEAD' as const;
-export const TRACKED_DIFF_HASH_OUTPUT_CHARS = 2_000_000;
-
-/** Fixed harness settings: no pager, no fsmonitor/hook programs, no interactive filters. */
-const HARNESS_GIT_CONFIG: ReadonlyArray<readonly [string, string]> = [
-  ['core.pager', 'cat'],
-  ['core.fsmonitor', 'false'],
-  ['core.hooksPath', '/dev/null'],
-  ['interactive.diffFilter', ''],
-];
-/** Line-ending settings carried over from the user's own git config (validated before use). */
-const FORWARDED_LINE_ENDING_CONFIG: ReadonlyArray<readonly [string, RegExp]> = [
-  ['core.autocrlf', /^(?:true|false|input|yes|no|on|off|1|0)$/i],
-  ['core.eol', /^(?:lf|crlf|native)$/i],
-];
-
-/**
- * The isolated git environment for harness-owned git reads/writes (pass with `scrubGitEnv: true`).
- * System/global config is ignored (no user aliases, pagers, diff prefixes or external programs), but
- * the user's effective line-ending settings are carried over: they decide how files on disk compare
- * with the repository, and Git for Windows turns `core.autocrlf=true` on by default in its SYSTEM
- * config. Dropping it made a re-saved CRLF file look modified and produced a different diff than the
- * one verification saw. `core.safecrlf=false` keeps "LF will be replaced by CRLF" warnings (stderr,
- * merged into the output) out of the hashed text.
- */
-export async function harnessGitEnv(shellPath: string, cwd: string, signal?: AbortSignal): Promise<Record<string, string>> {
-  const config: Array<readonly [string, string]> = [...HARNESS_GIT_CONFIG];
-  for (const [key, valid] of FORWARDED_LINE_ENDING_CONFIG) {
-    const res = await runCommand(shellPath, `git config --get ${key}`, cwd, 10_000, 1_000, signal);
-    const value = res.output.trim();
-    if (res.code === 0 && valid.test(value)) config.push([key, value]);
-  }
-  config.push(['core.safecrlf', 'false']);
-  const env: Record<string, string> = {
-    GIT_OPTIONAL_LOCKS: '0',
-    GIT_CONFIG_NOSYSTEM: '1',
-    GIT_CONFIG_GLOBAL: '/dev/null',
-    GIT_PAGER: 'cat',
-    PAGER: 'cat',
-    GIT_CONFIG_COUNT: String(config.length),
-  };
-  config.forEach(([key, value], i) => {
-    env[`GIT_CONFIG_KEY_${i}`] = key;
-    env[`GIT_CONFIG_VALUE_${i}`] = value;
-  });
-  return env;
-}
-
-/** sha256 of the {@link TRACKED_DIFF_HASH_COMMAND} output — the value both sides compare. */
-export function hashTrackedDiff(output: string): string {
-  return createHash('sha256').update(output, 'utf8').digest('hex');
-}
+const WORKTREE_DIFF_HASH_COMMAND = 'git diff --no-ext-diff --no-textconv --binary --no-color HEAD' as const;
+const WORKTREE_DIFF_HASH_OUTPUT_CHARS = 2_000_000;
 
 /** Project canonical checks when a goal doesn't override (Jarvis's own four gates). */
 export const DEFAULT_CHECK_COMMANDS = ['npm run typecheck', 'npm run lint', 'npm test', 'npm run build'];
@@ -323,16 +267,15 @@ async function scanWorktreeStatus(
 async function trackedDiffHash(deps: CheckDeps): Promise<{ hash: string } | { error: string }> {
   const res = await runCommand(
     deps.shellPath,
-    TRACKED_DIFF_HASH_COMMAND,
+    WORKTREE_DIFF_HASH_COMMAND,
     deps.cwd,
     60_000,
-    TRACKED_DIFF_HASH_OUTPUT_CHARS,
+    WORKTREE_DIFF_HASH_OUTPUT_CHARS,
     deps.signal,
-    { scrubGitEnv: true, extraEnv: await harnessGitEnv(deps.shellPath, deps.cwd, deps.signal) },
   );
   if (res.code !== 0) return { error: `git diff failed (code ${res.code ?? 'killed'})` };
-  if (res.truncated) return { error: `git diff exceeded the ${TRACKED_DIFF_HASH_OUTPUT_CHARS}-char cap` };
-  return { hash: hashTrackedDiff(res.output) };
+  if (res.truncated) return { error: `git diff exceeded the ${WORKTREE_DIFF_HASH_OUTPUT_CHARS}-char cap` };
+  return { hash: createHash('sha256').update(res.output, 'utf8').digest('hex') };
 }
 
 function normalizePorcelainStatus(text: string): string {

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { appendFile, lstat, mkdir, mkdtemp, readFile, realpath, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
@@ -6,16 +7,12 @@ import {
   assertWorktreeRootOutsideCwd,
   buildLoopFinalizeReport,
   decideVerdict,
-  harnessGitEnv,
-  hashTrackedDiff,
   isGoalRecord,
   isHumanReviewAuditRecord,
   isLoopRecord,
   loopWorktreeRoot,
   replayGoal,
   resolveExistingGoalWorktree,
-  TRACKED_DIFF_HASH_COMMAND,
-  TRACKED_DIFF_HASH_OUTPUT_CHARS,
   type FinalizeWorktreeStatus,
   type LoopCreatedRecord,
   type LoopFinalizeGoalEvidence,
@@ -36,15 +33,27 @@ const GIT_WRITE_TIMEOUT_MS = 30_000;
 const GIT_WRITE_OUTPUT_LIMIT = 50_000;
 const GIT_PATCH_OUTPUT_LIMIT = 5_000_000;
 const FINALIZE_DIFF_STAT_COMMAND = 'git diff --no-ext-diff --no-textconv --stat HEAD';
+const FINALIZE_DIFF_HASH_COMMAND = 'git diff --no-ext-diff --no-textconv --binary --no-color HEAD';
+const FINALIZE_DIFF_HASH_OUTPUT_LIMIT = 2_000_000;
 /** The one status line a worktree dependency link produces on Linux/macOS (see withoutDependencyBridgeEntry). */
 const DEPENDENCY_BRIDGE_STATUS_LINE = '?? node_modules';
 const FINALIZE_PATCH_COMMAND = 'git diff --no-ext-diff --no-textconv --binary HEAD';
-
-/** Every finalize git call runs with the same isolated environment verification hashed under. */
-interface FinalizeGit {
-  shellPath: string;
-  env: Record<string, string>;
-}
+const FINALIZE_GIT_ENV = {
+  GIT_OPTIONAL_LOCKS: '0',
+  GIT_CONFIG_NOSYSTEM: '1',
+  GIT_CONFIG_GLOBAL: '/dev/null',
+  GIT_CONFIG_COUNT: '4',
+  GIT_CONFIG_KEY_0: 'core.pager',
+  GIT_CONFIG_VALUE_0: 'cat',
+  GIT_CONFIG_KEY_1: 'core.fsmonitor',
+  GIT_CONFIG_VALUE_1: 'false',
+  GIT_CONFIG_KEY_2: 'core.hooksPath',
+  GIT_CONFIG_VALUE_2: '/dev/null',
+  GIT_CONFIG_KEY_3: 'interactive.diffFilter',
+  GIT_CONFIG_VALUE_3: '',
+  GIT_PAGER: 'cat',
+  PAGER: 'cat',
+} as const;
 
 async function main(): Promise<void> {
   let args;
@@ -87,10 +96,9 @@ async function main(): Promise<void> {
   }
 
   const shellPath = defaultShellPath();
-  const git: FinalizeGit = { shellPath, env: await harnessGitEnv(shellPath, cwd) };
   let report: LoopFinalizeReport;
   try {
-    const statuses = await collectWorktreeStatuses({ created, cwd, worktreeBaseRoot, git });
+    const statuses = await collectWorktreeStatuses({ created, cwd, worktreeBaseRoot, shellPath });
     const goalEvidence = await collectGoalEvidence(dataDir, records);
     report = buildLoopFinalizeReport(records, statuses, goalEvidence);
   } catch (err) {
@@ -112,7 +120,7 @@ async function main(): Promise<void> {
     try {
       const freshRecords = await readLoopRecords(loopPath);
       const freshCreated = latestLoopCreated(freshRecords, loopPath, args.loopId);
-      const freshStatuses = await collectWorktreeStatuses({ created: freshCreated, cwd, worktreeBaseRoot, git });
+      const freshStatuses = await collectWorktreeStatuses({ created: freshCreated, cwd, worktreeBaseRoot, shellPath });
       const freshGoalEvidence = await collectGoalEvidence(dataDir, freshRecords);
       freshReport = buildLoopFinalizeReport(freshRecords, freshStatuses, freshGoalEvidence);
     } catch (err) {
@@ -123,7 +131,7 @@ async function main(): Promise<void> {
 
     const auditPath = join(cwd, 'data', 'loops', `${freshReport.loopId}.finalize.jsonl`);
     try {
-      await applyMergeProposals({ cwd, git, report: freshReport, auditPath });
+      await applyMergeProposals({ cwd, shellPath, report: freshReport, auditPath });
     } catch (err) {
       console.error(`[loop finalize] ${err instanceof Error ? err.message : String(err)}`);
       process.exitCode = 1;
@@ -151,12 +159,12 @@ async function main(): Promise<void> {
     try {
       const freshRecords = await readLoopRecords(loopPath);
       const freshCreated = latestLoopCreated(freshRecords, loopPath, args.loopId);
-      const freshStatuses = await collectWorktreeStatuses({ created: freshCreated, cwd, worktreeBaseRoot, git });
+      const freshStatuses = await collectWorktreeStatuses({ created: freshCreated, cwd, worktreeBaseRoot, shellPath });
       const freshGoalEvidence = await collectGoalEvidence(dataDir, freshRecords);
       const freshReport = buildLoopFinalizeReport(freshRecords, freshStatuses, freshGoalEvidence);
       const freshAudit = await readMergeAppliedAudit(auditPath, freshReport.loopId);
       const cleanupReport = buildCleanupReport(freshReport, freshAudit);
-      await applyCleanupCandidates({ cwd, git, cleanupReport, auditPath });
+      await applyCleanupCandidates({ cwd, shellPath, cleanupReport, auditPath });
     } catch (err) {
       console.error(`[loop finalize] ${err instanceof Error ? err.message : String(err)}`);
       process.exitCode = 1;
@@ -319,14 +327,14 @@ async function collectWorktreeStatuses(opts: {
   created: LoopCreatedRecord;
   cwd: string;
   worktreeBaseRoot: string;
-  git: FinalizeGit;
+  shellPath: string;
 }): Promise<Map<number, FinalizeWorktreeStatus>> {
   const statuses = new Map<number, FinalizeWorktreeStatus>();
   for (let index = 0; index < opts.created.objectives.length; index++) {
     const fallbackPath = join(loopWorktreeRoot(opts.worktreeBaseRoot, opts.created.id), `g${index}`);
     try {
       const worktreePath = await resolveExistingGoalWorktree({ cwd: opts.cwd, root: opts.worktreeBaseRoot, loopId: opts.created.id, index });
-      statuses.set(index, await readWorktreeStatus(worktreePath, opts.git));
+      statuses.set(index, await readWorktreeStatus(worktreePath, opts.shellPath));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       if (!/missing resumed worktree|not a directory/.test(message)) throw err;
@@ -337,14 +345,14 @@ async function collectWorktreeStatuses(opts: {
   return statuses;
 }
 
-async function readWorktreeStatus(path: string, git: FinalizeGit): Promise<FinalizeWorktreeStatus> {
+async function readWorktreeStatus(path: string, shellPath: string): Promise<FinalizeWorktreeStatus> {
   const info = await stat(path).catch(() => null);
   if (info === null || !info.isDirectory()) {
     return missingWorktreeStatus(path);
   }
-  const status = await runGitRead(git, 'git status --porcelain=v1 --untracked-files=all', path);
-  const diffStat = await runGitRead(git, FINALIZE_DIFF_STAT_COMMAND, path);
-  const diffHash = await runGitRead(git, TRACKED_DIFF_HASH_COMMAND, path, TRACKED_DIFF_HASH_OUTPUT_CHARS);
+  const status = await runGitRead(shellPath, 'git status --porcelain=v1 --untracked-files=all', path);
+  const diffStat = await runGitRead(shellPath, FINALIZE_DIFF_STAT_COMMAND, path);
+  const diffHash = await runGitRead(shellPath, FINALIZE_DIFF_HASH_COMMAND, path, FINALIZE_DIFF_HASH_OUTPUT_LIMIT);
   const statusText =
     status.code === 0
       ? await withoutDependencyBridgeEntry(path, status.output.trim())
@@ -353,7 +361,9 @@ async function readWorktreeStatus(path: string, git: FinalizeGit): Promise<Final
   const classified = status.code === 0 ? classifyStatus(statusText) : { conflicted: false, hasTrackedChanges: false, hasUntracked: false };
   const clean = status.code === 0 && statusText === '' && !classified.conflicted;
   const trackedDiffHash =
-    diffHash.code === 0 && !diffHash.truncated ? hashTrackedDiff(diffHash.output) : undefined;
+    diffHash.code === 0 && !diffHash.truncated
+      ? createHash('sha256').update(diffHash.output, 'utf8').digest('hex')
+      : undefined;
   return {
     path,
     exists: true,
@@ -399,10 +409,10 @@ function missingWorktreeStatus(path: string): FinalizeWorktreeStatus {
   };
 }
 
-function runGitRead(git: FinalizeGit, command: string, cwd: string, maxOutputChars = GIT_READ_OUTPUT_LIMIT) {
-  return runCommand(git.shellPath, command, cwd, GIT_READ_TIMEOUT_MS, maxOutputChars, undefined, {
+function runGitRead(shellPath: string, command: string, cwd: string, maxOutputChars = GIT_READ_OUTPUT_LIMIT) {
+  return runCommand(shellPath, command, cwd, GIT_READ_TIMEOUT_MS, maxOutputChars, undefined, {
     scrubGitEnv: true,
-    extraEnv: git.env,
+    extraEnv: FINALIZE_GIT_ENV,
   });
 }
 
@@ -460,7 +470,7 @@ async function readOneLine(input: NodeJS.ReadableStream): Promise<string | null>
   }
 }
 
-async function applyMergeProposals(opts: { cwd: string; git: FinalizeGit; report: LoopFinalizeReport; auditPath: string }): Promise<void> {
+async function applyMergeProposals(opts: { cwd: string; shellPath: string; report: LoopFinalizeReport; auditPath: string }): Promise<void> {
   if (opts.report.proposals.length === 0) {
     await appendAudit(opts.auditPath, { t: 'merge-confirmed', loopId: opts.report.loopId, proposals: 0, at: new Date().toISOString() });
     await appendAudit(opts.auditPath, { t: 'finalize-stopped', loopId: opts.report.loopId, reason: 'no-proposals', at: new Date().toISOString() });
@@ -468,7 +478,7 @@ async function applyMergeProposals(opts: { cwd: string; git: FinalizeGit; report
     return;
   }
 
-  await assertMainCwdClean(opts.cwd, opts.git);
+  await assertMainCwdClean(opts.cwd, opts.shellPath);
   await appendAudit(opts.auditPath, {
     t: 'merge-confirmed',
     loopId: opts.report.loopId,
@@ -575,7 +585,7 @@ function cleanupAuditKey(index: number, goalId: string): string {
   return `${index}\0${goalId}`;
 }
 
-async function applyCleanupCandidates(opts: { cwd: string; git: FinalizeGit; cleanupReport: CleanupReport; auditPath: string }): Promise<void> {
+async function applyCleanupCandidates(opts: { cwd: string; shellPath: string; cleanupReport: CleanupReport; auditPath: string }): Promise<void> {
   await appendAudit(opts.auditPath, {
     t: 'cleanup-confirmed',
     loopId: opts.cleanupReport.loopId,
@@ -605,7 +615,7 @@ async function applyCleanupCandidates(opts: { cwd: string; git: FinalizeGit; cle
       });
       throw new Error(`cleanup-remove-failed: ${detail}`, { cause: err });
     }
-    const removed = await runGitWrite(opts.git, `git worktree remove ${shellQuote(candidate.worktreePath)}`, opts.cwd);
+    const removed = await runGitWrite(opts.shellPath, `git worktree remove ${shellQuote(candidate.worktreePath)}`, opts.cwd);
     if (removed.code !== 0) {
       const detail = compactGitOutput(removed);
       await appendAudit(opts.auditPath, {
@@ -672,26 +682,26 @@ function message(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-async function assertMainCwdClean(cwd: string, git: FinalizeGit): Promise<void> {
-  const status = await runGitRead(git, 'git status --porcelain=v1 --untracked-files=all', cwd);
+async function assertMainCwdClean(cwd: string, shellPath: string): Promise<void> {
+  const status = await runGitRead(shellPath, 'git status --porcelain=v1 --untracked-files=all', cwd);
   if (status.code !== 0) throw new Error(`main cwd status failed: ${compactGitOutput(status)}`);
   if (status.output.trim() !== '') throw new Error(`main cwd is dirty; merge stopped:\n${status.output.trim()}`);
 }
 
 async function applyOneProposal(
-  opts: { cwd: string; git: FinalizeGit; report: LoopFinalizeReport; auditPath: string },
+  opts: { cwd: string; shellPath: string; report: LoopFinalizeReport; auditPath: string },
   proposal: LoopFinalizeProposal,
 ): Promise<void> {
   const item = opts.report.items.find((candidate) => candidate.index === proposal.index);
   const worktreePath = item?.worktree?.path ?? proposal.worktreePath;
-  const patch = await runGitPatch(opts.git, FINALIZE_PATCH_COMMAND, worktreePath);
+  const patch = await runGitPatch(opts.shellPath, FINALIZE_PATCH_COMMAND, worktreePath);
   if (patch.code !== 0 || patch.truncated) {
     await parkAndThrow(opts.auditPath, opts.report.loopId, proposal, 'patch-generation-failed', compactGitOutput(patch));
   }
   if (patch.output.trim() === '') {
     await parkAndThrow(opts.auditPath, opts.report.loopId, proposal, 'empty-patch', `${FINALIZE_PATCH_COMMAND} produced no patch`);
   }
-  const patchHash = hashTrackedDiff(patch.output);
+  const patchHash = createHash('sha256').update(patch.output, 'utf8').digest('hex');
   if (patchHash !== proposal.worktreeDiffHash) {
     await parkAndThrow(
       opts.auditPath,
@@ -702,21 +712,21 @@ async function applyOneProposal(
     );
   }
 
-  const headBefore = await readGitHead(opts.cwd, opts.git);
+  const headBefore = await readGitHead(opts.cwd, opts.shellPath);
   const tempDir = await mkdtemp(join(tmpdir(), 'jarvis-finalize-patch-'));
   try {
     const patchPath = join(tempDir, `${opts.report.loopId}-g${proposal.index}.patch`);
     await writeFile(patchPath, patch.output, 'utf8');
     const quotedPatchPath = shellQuote(patchPath);
-    const check = await runGitWrite(opts.git, `git apply --check --index ${quotedPatchPath}`, opts.cwd);
+    const check = await runGitWrite(opts.shellPath, `git apply --check --index ${quotedPatchPath}`, opts.cwd);
     if (check.code !== 0) await parkAndThrow(opts.auditPath, opts.report.loopId, proposal, 'patch-check-failed', compactGitOutput(check));
-    const applied = await runGitWrite(opts.git, `git apply --index ${quotedPatchPath}`, opts.cwd);
+    const applied = await runGitWrite(opts.shellPath, `git apply --index ${quotedPatchPath}`, opts.cwd);
     if (applied.code !== 0) await parkAndThrow(opts.auditPath, opts.report.loopId, proposal, 'patch-apply-failed', compactGitOutput(applied));
   } finally {
     await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
   }
 
-  const headAfter = await readGitHead(opts.cwd, opts.git);
+  const headAfter = await readGitHead(opts.cwd, opts.shellPath);
   await appendAudit(opts.auditPath, {
     t: 'merge-applied',
     loopId: opts.report.loopId,
@@ -732,8 +742,8 @@ async function applyOneProposal(
   console.log(`[loop finalize] merge-applied [${proposal.index}] ${safeInline(proposal.goalId)}`);
 }
 
-async function readGitHead(cwd: string, git: FinalizeGit): Promise<string> {
-  const head = await runGitRead(git, 'git rev-parse HEAD', cwd);
+async function readGitHead(cwd: string, shellPath: string): Promise<string> {
+  const head = await runGitRead(shellPath, 'git rev-parse HEAD', cwd);
   if (head.code !== 0) throw new Error(`git rev-parse HEAD failed: ${compactGitOutput(head)}`);
   return head.output.trim();
 }
@@ -758,17 +768,17 @@ async function parkAndThrow(
   throw new Error(`${reason}: ${detail}`);
 }
 
-function runGitPatch(git: FinalizeGit, command: string, cwd: string) {
-  return runCommand(git.shellPath, command, cwd, GIT_WRITE_TIMEOUT_MS, GIT_PATCH_OUTPUT_LIMIT, undefined, {
+function runGitPatch(shellPath: string, command: string, cwd: string) {
+  return runCommand(shellPath, command, cwd, GIT_WRITE_TIMEOUT_MS, GIT_PATCH_OUTPUT_LIMIT, undefined, {
     scrubGitEnv: true,
-    extraEnv: git.env,
+    extraEnv: FINALIZE_GIT_ENV,
   });
 }
 
-function runGitWrite(git: FinalizeGit, command: string, cwd: string) {
-  return runCommand(git.shellPath, command, cwd, GIT_WRITE_TIMEOUT_MS, GIT_WRITE_OUTPUT_LIMIT, undefined, {
+function runGitWrite(shellPath: string, command: string, cwd: string) {
+  return runCommand(shellPath, command, cwd, GIT_WRITE_TIMEOUT_MS, GIT_WRITE_OUTPUT_LIMIT, undefined, {
     scrubGitEnv: true,
-    extraEnv: git.env,
+    extraEnv: FINALIZE_GIT_ENV,
   });
 }
 

@@ -9,16 +9,7 @@ import { afterAll, describe, expect, it, vi } from 'vitest';
 // exceed Vitest's 5 s default even though each child has its own cap.
 vi.setConfig({ testTimeout: 20_000 });
 afterAll(() => vi.resetConfig());
-import {
-  hashObjective,
-  runDeterministicChecks,
-  serializeGoalRecord,
-  serializeLoopRecord,
-  snapshotWorktreeStatus,
-  type LoopContract,
-  type WorktreeStatusCheck,
-} from '../../src/capabilities/goal/index.js';
-import { defaultShellPath } from '../../src/core/tools/run-command.js';
+import { hashObjective, serializeGoalRecord, serializeLoopRecord, type LoopContract } from '../../src/capabilities/goal/index.js';
 import {
   SESSION_SCHEMA_VERSION,
   FileSessionStore,
@@ -75,73 +66,6 @@ describe('loop finalize CLI smoke', () => {
       await rm(externalDiffDir, { recursive: true, force: true });
     }
   }, 20_000);
-
-  it('merges a verified goal when core.autocrlf=true comes from user-level git config (the Git for Windows default)', async () => {
-    // Git for Windows sets core.autocrlf=true in its SYSTEM config; a global config file stands in for it
-    // on every platform. finalize hides system/global config, so the line-ending setting must be carried
-    // over explicitly or the hash it recomputes no longer matches the one verification recorded.
-    const cwd = await mkdtemp(join(tmpdir(), 'jarvis-finalize-cwd-'));
-    const worktreeRoot = await mkdtemp(join(tmpdir(), 'jarvis-finalize-worktrees-'));
-    const configDir = await mkdtemp(join(tmpdir(), 'jarvis-finalize-gitconfig-'));
-    const globalConfig = join(configDir, 'gitconfig');
-    const previousGlobal = process.env.GIT_CONFIG_GLOBAL;
-    const loopId = 'L-autocrlf-merge';
-    try {
-      await writeFile(globalConfig, '[core]\n\tautocrlf = true\n', 'utf8');
-      process.env.GIT_CONFIG_GLOBAL = globalConfig;
-      await runGit(cwd, ['init']);
-      await runGit(cwd, ['config', 'user.name', 'Jarvis Test']);
-      await runGit(cwd, ['config', 'user.email', 'jarvis@example.test']);
-      await writeFile(join(cwd, '.gitignore'), '/data/\n', 'utf8');
-      await writeFile(join(cwd, 'file.txt'), 'base\n', 'utf8');
-      await writeFile(join(cwd, 'crlf.txt'), 'one\n', 'utf8');
-      await writeFile(join(cwd, 'resaved.txt'), 'same\n', 'utf8');
-      await runGit(cwd, ['add', '.']);
-      await runGit(cwd, ['commit', '-m', 'init']);
-
-      const worktreePath = join(worktreeRoot, loopId, 'g0');
-      await mkdir(dirname(worktreePath), { recursive: true });
-      await runGit(cwd, ['worktree', 'add', '--detach', worktreePath, 'HEAD']);
-      const shellPath = defaultShellPath();
-      const baseline = await snapshotWorktreeStatus(shellPath, worktreePath);
-      await writeFile(join(worktreePath, 'file.txt'), 'base\nworktree\n', 'utf8'); // agent writes LF
-      await writeFile(join(worktreePath, 'crlf.txt'), 'one\r\ntwo\r\n', 'utf8'); // agent keeps CRLF
-      await writeFile(join(worktreePath, 'resaved.txt'), 'same\r\n', 'utf8'); // untouched file re-saved as CRLF
-
-      const checks = await runDeterministicChecks({
-        shellPath,
-        cwd: worktreePath,
-        checkCommands: ['exit 0'],
-        worktreeBaseline: baseline,
-        worktreeChangePolicy: 'audit',
-      });
-      expect(checks.worktreeStatus?.trackedDiffHash).toBeDefined();
-      await writeLoopLog(cwd, loopId, worktreePath, 'g0', checks.worktreeStatus);
-
-      const result = await runFinalizeCli(
-        ['--loop', loopId, '--worktree-root', worktreeRoot, '--merge'],
-        cwd,
-        `merge ${loopId}\n`,
-        { GIT_CONFIG_GLOBAL: globalConfig },
-      );
-
-      expect(result.code, `${result.stdout}\n${result.stderr}`).toBe(0);
-      expect(result.stdout).toContain('merge-applied');
-      expect(`${result.stdout}\n${result.stderr}`).not.toContain('goal-mismatch');
-      const merged = async (name: string) => (await readFile(join(cwd, name), 'utf8')).replace(/\r\n/g, '\n');
-      await expect(merged('file.txt')).resolves.toBe('base\nworktree\n');
-      await expect(merged('crlf.txt')).resolves.toBe('one\ntwo\n');
-      await expect(merged('resaved.txt')).resolves.toBe('same\n');
-      const staged = await runGitOutput(cwd, ['diff', '--cached', '--name-only']);
-      expect(staged.split(/\r?\n/).filter(Boolean).sort()).toEqual(['crlf.txt', 'file.txt']);
-    } finally {
-      if (previousGlobal === undefined) delete process.env.GIT_CONFIG_GLOBAL;
-      else process.env.GIT_CONFIG_GLOBAL = previousGlobal;
-      await rm(cwd, { recursive: true, force: true });
-      await rm(worktreeRoot, { recursive: true, force: true });
-      await rm(configDir, { recursive: true, force: true });
-    }
-  }, 30_000);
 
   it('parks a verified worktree when its v2 session has an unresolved tool effect', async () => {
     const fixture = await setupMergeFixture('L-pending-effect');
@@ -785,15 +709,9 @@ async function setupCleanWorktreeFixture(loopId: string, opts: { audit: boolean 
   }
 }
 
-async function writeLoopLog(
-  cwd: string,
-  loopId: string,
-  worktreePath?: string,
-  goalId = 'g0',
-  worktreeStatus?: WorktreeStatusCheck,
-): Promise<void> {
+async function writeLoopLog(cwd: string, loopId: string, worktreePath?: string, goalId = 'g0'): Promise<void> {
   await mkdir(join(cwd, 'data', 'loops'), { recursive: true });
-  await writeVerifiedGoalLog(cwd, goalId, worktreePath, undefined, worktreeStatus);
+  await writeVerifiedGoalLog(cwd, goalId, worktreePath);
   await writeFile(
     join(cwd, 'data', 'loops', `${loopId}.jsonl`),
     serializeLoopRecord({ t: 'loop-created', id: loopId, contract: CONTRACT, objectives: ['inspect README'], createdAt: 't0' }) +
@@ -803,14 +721,8 @@ async function writeLoopLog(
   );
 }
 
-async function writeVerifiedGoalLog(
-  cwd: string,
-  goalId: string,
-  sessionCwd?: string,
-  objective = 'inspect README',
-  recordedWorktreeStatus?: WorktreeStatusCheck,
-): Promise<void> {
-  const worktreeStatus = recordedWorktreeStatus ?? (sessionCwd === undefined ? undefined : await worktreeStatusCheck(sessionCwd));
+async function writeVerifiedGoalLog(cwd: string, goalId: string, sessionCwd?: string, objective = 'inspect README'): Promise<void> {
+  const worktreeStatus = sessionCwd === undefined ? undefined : await worktreeStatusCheck(sessionCwd);
   await mkdir(join(cwd, 'data', 'goals'), { recursive: true });
   if (sessionCwd !== undefined) await writeSessionLog(cwd, goalId, sessionCwd);
   await writeFile(
@@ -1147,13 +1059,8 @@ async function listTree(root: string): Promise<string[]> {
   return out.sort();
 }
 
-function runFinalizeCli(
-  args: string[],
-  cwd: string,
-  input = '',
-  extraEnv: NodeJS.ProcessEnv = {},
-): Promise<{ code: number | null; stdout: string; stderr: string }> {
-  const env = { ...withoutArkKey(), ...extraEnv };
+function runFinalizeCli(args: string[], cwd: string, input = ''): Promise<{ code: number | null; stdout: string; stderr: string }> {
+  const env = withoutArkKey();
   const child = spawn(process.execPath, [resolve('node_modules/tsx/dist/cli.mjs'), resolve('src/surfaces/cli/loop-finalize-cli.ts'), ...args], {
     cwd,
     env,
