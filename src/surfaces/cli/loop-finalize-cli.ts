@@ -35,6 +35,8 @@ const GIT_PATCH_OUTPUT_LIMIT = 5_000_000;
 const FINALIZE_DIFF_STAT_COMMAND = 'git diff --no-ext-diff --no-textconv --stat HEAD';
 const FINALIZE_DIFF_HASH_COMMAND = 'git diff --no-ext-diff --no-textconv --binary --no-color HEAD';
 const FINALIZE_DIFF_HASH_OUTPUT_LIMIT = 2_000_000;
+/** The one status line a worktree dependency link produces on Linux/macOS (see withoutDependencyBridgeEntry). */
+const DEPENDENCY_BRIDGE_STATUS_LINE = '?? node_modules';
 const FINALIZE_PATCH_COMMAND = 'git diff --no-ext-diff --no-textconv --binary HEAD';
 const FINALIZE_GIT_ENV = {
   GIT_OPTIONAL_LOCKS: '0',
@@ -351,7 +353,10 @@ async function readWorktreeStatus(path: string, shellPath: string): Promise<Fina
   const status = await runGitRead(shellPath, 'git status --porcelain=v1 --untracked-files=all', path);
   const diffStat = await runGitRead(shellPath, FINALIZE_DIFF_STAT_COMMAND, path);
   const diffHash = await runGitRead(shellPath, FINALIZE_DIFF_HASH_COMMAND, path, FINALIZE_DIFF_HASH_OUTPUT_LIMIT);
-  const statusText = status.code === 0 ? status.output.trim() : `git status failed: ${status.output.trim() || status.spawnError || String(status.code)}`;
+  const statusText =
+    status.code === 0
+      ? await withoutDependencyBridgeEntry(path, status.output.trim())
+      : `git status failed: ${status.output.trim() || status.spawnError || String(status.code)}`;
   const diffText = diffStat.code === 0 ? diffStat.output.trim() : `git diff failed: ${diffStat.output.trim() || diffStat.spawnError || String(diffStat.code)}`;
   const classified = status.code === 0 ? classifyStatus(statusText) : { conflicted: false, hasTrackedChanges: false, hasUntracked: false };
   const clean = status.code === 0 && statusText === '' && !classified.conflicted;
@@ -372,6 +377,21 @@ async function readWorktreeStatus(path: string, shellPath: string): Promise<Fina
     diffStat: diffText,
     ...(trackedDiffHash === undefined ? {} : { trackedDiffHash }),
   };
+}
+
+/**
+ * Git reports a POSIX symlink as a file, so a directory-only `node_modules/` ignore rule does not hide
+ * the worktree's dependency link on Linux/macOS, while a Windows junction is a directory and stays
+ * ignored. Drop exactly that one untracked root entry when it really is a link, so every platform hands
+ * the link to {@link detachDependencyBridge}, which verifies the target before anything is removed and
+ * fails closed otherwise. A regular file or directory named node_modules still counts as untracked.
+ */
+async function withoutDependencyBridgeEntry(worktreePath: string, statusText: string): Promise<string> {
+  const lines = statusText.split(/\r?\n/);
+  if (!lines.includes(DEPENDENCY_BRIDGE_STATUS_LINE)) return statusText;
+  const info = await lstatIfExists(join(worktreePath, 'node_modules'));
+  if (info === undefined || !info.isSymbolicLink()) return statusText;
+  return lines.filter((line) => line !== DEPENDENCY_BRIDGE_STATUS_LINE).join('\n');
 }
 
 function missingWorktreeStatus(path: string): FinalizeWorktreeStatus {

@@ -1,0 +1,146 @@
+# 红线检查：改动碰到"门禁/裁判/权限/证据"等红线文件，或疑似"降规则"（跳过测试、关类型检查、删断言）时，
+# 必须由 Ludi 加标签「红线已确认」才变绿；确认后若新提交又碰到红线，标签自动撤掉，需重新确认。
+#
+# 安全设计：用 pull_request_target，检查脚本和规则永远来自默认分支 main（可信版本；GitHub 规定这类工作流只用 main 上的文件），
+# PR 里的代码只被 git diff 当数据读，绝不执行。所以 PR 改了本文件、脚本或规则，也影响不了对它自己的检查。
+name: 红线检查
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, labeled, unlabeled, ready_for_review]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: redline-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  LABEL: 红线已确认
+
+jobs:
+  redline:
+    name: 红线检查
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # pull_request_target 检出 main（可信）；push 检出刚推上来的提交
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: PR：检查并判定
+        if: github.event_name == 'pull_request_target'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          ACTION: ${{ github.event.action }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PREV_HEAD: ${{ github.event.before }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          # 比较起点用 PR 自己的目标分支（不一定是 main），叠在别的分支上的 PR 也只看它自己的改动
+          BASE_SHA="$PR_BASE_SHA"
+          git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null || git fetch --no-tags --quiet origin "$BASE_SHA" 2>/dev/null || BASE_SHA=$(git rev-parse HEAD)
+          # 只把 PR 的提交取下来当数据，不检出、不执行
+          git fetch --no-tags --quiet origin "+refs/pull/${PR}/head:refs/remotes/pr/head"
+          git cat-file -e "${HEAD_SHA}^{commit}" 2>/dev/null || HEAD_SHA=$(git rev-parse refs/remotes/pr/head)
+
+          has_label=false
+          if gh api "repos/$REPO/issues/$PR/labels" --jq '.[].name' | grep -Fxq "$LABEL"; then has_label=true; fi
+          confirmed_by=$(gh api "repos/$REPO/issues/$PR/events" --paginate \
+            --jq ".[] | select(.event == \"labeled\" and .label.name == \"$LABEL\") | .actor.login" | tail -n 1)
+
+          # synchronize 时：取上一次的 PR 头，只看"新推上来的那批提交"有没有碰红线
+          since_args=()
+          if [ "$ACTION" = "synchronize" ] && [ -n "${PREV_HEAD:-}" ]; then
+            git cat-file -e "${PREV_HEAD}^{commit}" 2>/dev/null || git fetch --no-tags --quiet origin "$PREV_HEAD" 2>/dev/null || true
+            since_args=(--since "$PREV_HEAD")
+          fi
+
+          node scripts/redline-check.ts --rules .github/redlines.txt --base "$BASE_SHA" --head "$HEAD_SHA" "${since_args[@]}" \
+            --event pr --action "$ACTION" --has-label "$has_label" --confirmed-by "${confirmed_by:-}" \
+            --out-json "$RUNNER_TEMP/redline.json" --out-md "$RUNNER_TEMP/redline.md" --quiet
+
+          status=$(jq -r .status "$RUNNER_TEMP/redline.json")
+          pass=$(jq -r .pass "$RUNNER_TEMP/redline.json")
+          cat "$RUNNER_TEMP/redline.md" >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$(jq -r .removeLabel "$RUNNER_TEMP/redline.json")" = "true" ]; then
+            gh api -X DELETE "repos/$REPO/issues/$PR/labels/$(jq -rn --arg l "$LABEL" '$l|@uri')" > /dev/null || true
+          fi
+
+          # 更新（或新建）一条固定评论；没有发现且从没评论过时不打扰
+          id=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
+            --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("<!-- redline-check -->"))) | .id' | tail -n 1)
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$id" -F body=@"$RUNNER_TEMP/redline.md" > /dev/null
+          elif [ "$status" != "clean" ]; then
+            gh api -X POST "repos/$REPO/issues/$PR/comments" -F body=@"$RUNNER_TEMP/redline.md" > /dev/null
+          fi
+
+          echo "status=$status"
+          [ "$pass" = "true" ] || { echo "::error::碰到红线，需要 Ludi 加标签「$LABEL」确认"; exit 1; }
+
+      - name: 直接推到 main：检查并报警
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if ! git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then BEFORE=$(git rev-parse "${AFTER}~1"); fi
+
+          # 用推送"之前"的脚本和规则（可信版本）；第一次引入时之前没有，才用当前的
+          trusted="$RUNNER_TEMP/trusted"; mkdir -p "$trusted"
+          git show "$BEFORE:scripts/redline-check.ts" > "$trusted/redline-check.ts" 2>/dev/null || cp scripts/redline-check.ts "$trusted/redline-check.ts"
+          git show "$BEFORE:.github/redlines.txt" > "$trusted/redlines.txt" 2>/dev/null || cp .github/redlines.txt "$trusted/redlines.txt"
+
+          # 如果这次推送来自一个已合并、且已人工确认的 PR，就视为已确认
+          confirmed_pr=$(gh api "repos/$REPO/commits/$AFTER/pulls" \
+            --jq ".[] | select(.merged_at != null and ([.labels[].name] | index(\"$LABEL\"))) | .number" | head -n 1)
+          has_label=false; [ -n "$confirmed_pr" ] && has_label=true
+          merged_pr=$(gh api "repos/$REPO/commits/$AFTER/pulls" --jq '.[] | select(.merged_at != null) | .number' | head -n 1)
+
+          node "$trusted/redline-check.ts" --rules "$trusted/redlines.txt" --base "$BEFORE" --head "$AFTER" \
+            --event push --action push --has-label "$has_label" \
+            --out-json "$RUNNER_TEMP/redline.json" --out-md "$RUNNER_TEMP/redline.md" --quiet
+          cat "$RUNNER_TEMP/redline.md" >> "$GITHUB_STEP_SUMMARY"
+
+          pass=$(jq -r .pass "$RUNNER_TEMP/redline.json")
+          if [ "$pass" = "true" ]; then
+            [ -n "$confirmed_pr" ] && echo "红线改动已在 PR #$confirmed_pr 中确认"
+            exit 0
+          fi
+          if [ -n "$merged_pr" ]; then
+            how="通过 PR #${merged_pr} 合并进了 \`${GITHUB_REF_NAME}\`，但那个 PR **没有「${LABEL}」标签**"
+            title="⛔ 红线改动未经确认就合并（PR #${merged_pr}，${AFTER:0:7}）"
+          else
+            how="**没走 PR、直接推到了 \`${GITHUB_REF_NAME}\`**"
+            title="⛔ 红线改动未经 PR 直接推送（${AFTER:0:7}）"
+          fi
+          {
+            echo "有提交${how}，而且碰到了红线。请 Ludi 尽快看一下这次改动是否是你本人授权的。"
+            echo ""
+            echo "- 推送：\`${BEFORE:0:7}...${AFTER:0:7}\`（${GITHUB_SERVER_URL}/${REPO}/compare/${BEFORE}...${AFTER}）"
+            echo "- 推送人：@${GITHUB_ACTOR}"
+            echo "- 运行记录：${GITHUB_SERVER_URL}/${REPO}/actions/runs/${GITHUB_RUN_ID}"
+            echo ""
+            tail -n +2 "$RUNNER_TEMP/redline.md"
+          } > "$RUNNER_TEMP/issue.md"
+          gh api -X POST "repos/$REPO/issues" -f title="$title" -F body=@"$RUNNER_TEMP/issue.md" > /dev/null
+          echo "::error::${title}，已开 issue 报警"
+          exit 1

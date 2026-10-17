@@ -16,6 +16,7 @@
 - **Cron daemon 使用单工作区锁。** 进程被强制终止后，下一次启动可能先执行 stale-lock 恢复。锁与恢复逻辑由 `src/capabilities/goal/loop-cron.ts` 的 `FileLoopCronLock` 负责。
 - **Human review 只写本地 JSONL。** 当前没有多用户身份、远程通知、connector 或团队工作流；人工裁决入口是 `jarvis review` 与本地 GUI。
 - **Attended Bash 的 scheduler-command 仍有 TOCTOU 窗口。** 命令级 session allow 无法把检查后的命令文本与外部 scheduler 的最终执行绑定；安全严重度和接受边界见 [docs/security-review-baseline.md](docs/security-review-baseline.md)。
+- **命令分析器仍有已知漏报，只影响"直接拒绝"，不影响"要人批准"。** `sed` 的 `e` 命令 / `s///e` 标志、`awk` 的非字面量程序或 `-f` 脚本文件不会被标成危险；配置的 deny 规则里 `*` 不跨换行，多行命令可能落不到 deny 规则上。Bash 本来就逐条要人批准，后果是"该拒绝的变成弹审批"（[安全评审基线](docs/security-review-baseline.md)：deny→ask 不算高危）。2026-10 变异测试顺带发现，记录见 [质量门禁](docs/quality-gates.md)；修复需按 AGENTS.md 走安全评审。
 - **Token 统计覆盖不完整。** Off-bus verifier 与 pinned-requirement derivation 调用未计量；`status` 会显示 `partial` 和 `unknown`，并分开呈现 loop rollup 与 goal 明细。格式化逻辑在 `src/capabilities/goal/observability.ts` 的 `formatObservationReport`。
 
 ## 文件与会话完整性边界

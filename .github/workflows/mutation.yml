@@ -1,0 +1,81 @@
+# 变异测试："裁判的裁判"。故意把权限判定、完成判定的代码改坏，看测试能不能抓住。
+# 比较慢（十几分钟），所以不自动跑：在 PR 上加标签 `mutation`，或在 Actions 页手动点 Run workflow。
+name: 变异测试
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: mutation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mutation:
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'mutation'
+    name: 变异测试
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: 安装依赖
+        run: npm ci
+
+      # 不写进 package.json：只在这里临时装，免得给日常开发增加依赖
+      - name: 安装 Stryker
+        run: npm i --no-save --no-audit --no-fund --ignore-scripts @stryker-mutator/core@10.0.0 @stryker-mutator/vitest-runner@10.0.0
+
+      - name: 跑变异测试
+        run: npx stryker run scripts/mutation/stryker.config.mjs
+
+      - name: 生成中文摘要
+        if: always()
+        run: |
+          if [ -f reports/mutation/mutation.json ]; then
+            node scripts/mutation/summary.ts reports/mutation/mutation.json > mutation-summary.md
+          else
+            printf '<!-- mutation-report -->\n## 变异测试\n\n⛔ 没有生成报告，请看运行日志。\n' > mutation-summary.md
+          fi
+          cat mutation-summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 上传完整报告
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mutation-report
+          path: reports/mutation/
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: 更新 PR 评论并撤掉标签
+        if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          echo "" >> mutation-summary.md
+          echo "运行记录：${GITHUB_SERVER_URL}/${REPO}/actions/runs/${GITHUB_RUN_ID}" >> mutation-summary.md
+          id=$(gh api "repos/$REPO/issues/$PR/comments" --paginate --jq '.[] | select(.body | startswith("<!-- mutation-report -->")) | .id' | tail -n 1)
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$id" -F body=@mutation-summary.md > /dev/null
+          else
+            gh api -X POST "repos/$REPO/issues/$PR/comments" -F body=@mutation-summary.md > /dev/null
+          fi
+          # 撤掉标签，下次想再跑时重新加即可
+          gh api -X DELETE "repos/$REPO/issues/$PR/labels/mutation" > /dev/null || true

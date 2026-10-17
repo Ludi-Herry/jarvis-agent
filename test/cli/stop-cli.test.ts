@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
+import { spawnBudget } from './spawn-budget.js';
 import { CLI_EXIT } from '../../src/surfaces/cli/exit-codes.js';
 
 const repo = process.cwd();
@@ -11,7 +12,7 @@ const tempDirs: string[] = [];
 
 // This file intentionally launches several real CLI subprocesses per test. Full-suite worker
 // contention can exceed Vitest's 5 s unit-test default even though each child has its own 20 s cap.
-vi.setConfig({ testTimeout: 20_000 });
+vi.setConfig({ testTimeout: spawnBudget(20_000) });
 afterAll(() => vi.resetConfig());
 const ESC = String.fromCharCode(27);
 const KEY_SENTINEL = 'ark-sentinel-key-value-never-print';
@@ -36,7 +37,7 @@ describe('jarvis stop (workspace emergency stop)', () => {
       expect(result.stderr).not.toContain(KEY_SENTINEL);
       expect(result.stderr).not.toContain('ARK_API_KEY');
     }
-  }, 10_000);
+  }, spawnBudget(10_000));
 
   it('writes the stop record, appends the audit, and reports it in JSON', async () => {
     const workspace = await tempWorkspace('basic ');
@@ -153,7 +154,7 @@ describe('jarvis stop (workspace emergency stop)', () => {
     } finally {
       daemon.proc.kill();
     }
-  }, 30_000);
+  }, spawnBudget(30_000));
 
   it('does not affect runs started after the stop request (time gating)', async () => {
     const workspace = await tempWorkspace('gating ');
@@ -186,7 +187,7 @@ describe('jarvis stop (workspace emergency stop)', () => {
       daemon.proc.kill();
       await daemon.result.catch(() => undefined);
     }
-  }, 30_000);
+  }, spawnBudget(30_000));
 
   it('never loads a provider or echoes the credential value', async () => {
     const source = await readFile(join(repo, 'src', 'surfaces', 'cli', 'stop.ts'), 'utf8');
@@ -220,7 +221,7 @@ function runJarvis(
     const child = execFile(
       process.execPath,
       ['--import', 'tsx', entry, ...args],
-      { cwd: repo, env, encoding: 'utf8', timeout: 20_000, windowsHide: true, maxBuffer: 4 * 1024 * 1024 },
+      { cwd: repo, env, encoding: 'utf8', timeout: spawnBudget(20_000), windowsHide: true, maxBuffer: 4 * 1024 * 1024 },
       (error, stdout, stderr) => {
         const rawCode: unknown = error === null ? 0 : (error as { code?: unknown }).code;
         const code = typeof rawCode === 'number' ? rawCode : null;
@@ -268,7 +269,7 @@ function waitForOutput(
   return new Promise((resolvePromise, reject) => {
     const timer = setTimeout(() => {
       reject(new Error(`timed out waiting for ${pattern}\n${child.getOutput()}`));
-    }, 20_000);
+    }, spawnBudget(20_000));
     const poll = setInterval(() => {
       if (pattern.test(child.getOutput())) {
         clearTimeout(timer);

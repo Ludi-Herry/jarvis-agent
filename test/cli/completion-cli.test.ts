@@ -3,6 +3,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it, vi } from 'vitest';
+import { spawnBudget } from './spawn-budget.js';
 import {
   COMPLETION_COMMANDS,
   COMPLETION_GLOBAL_FLAGS,
@@ -13,7 +14,7 @@ import { CLI_EXIT } from '../../src/surfaces/cli/exit-codes.js';
 const repo = process.cwd();
 const entry = join(repo, 'src', 'surfaces', 'cli', 'jarvis.ts');
 
-vi.setConfig({ testTimeout: 15_000 });
+vi.setConfig({ testTimeout: spawnBudget(15_000) });
 afterAll(() => vi.resetConfig());
 const KEY_SENTINEL = 'ark-sentinel-key-value-never-print';
 
@@ -88,7 +89,9 @@ describe('jarvis completion', () => {
         expect(command.subcommands, `group help subcommand ${command.name} ${sub} missing from the completion table`).toContain(sub);
       }
     }
-  }, 30_000);
+    // More than ten real CLI processes start here (root help, three scripts, every group help); under
+    // parallel test load the Windows CI runner needed over 30 s, which spawnBudget covers there.
+  }, spawnBudget(30_000));
 
   it('completes subcommands and partial words when the bash/powershell scripts are actually invoked', async () => {
     const bash = await runJarvis(['completion', 'bash']);
@@ -113,7 +116,7 @@ describe('jarvis completion', () => {
     const psProbe = await execShell(probe, 'pwsh');
     expect(psProbe).toContain('SUB-OK');
     expect(psProbe).toContain('PARTIAL-OK');
-  }, 30_000);
+  }, spawnBudget(30_000));
 
   it('rejects unknown shells and missing arguments with exit 2', async () => {
     const missing = await runJarvis(['completion']);
@@ -168,7 +171,7 @@ function parseOptionsSection(help: string): string[] {
 function execShell(command: string, shell: 'bash' | 'pwsh'): Promise<string> {
   return new Promise((resolveShell, rejectShell) => {
     const args = shell === 'bash' ? ['-c', command] : ['-NoProfile', '-Command', command];
-    execFile(shell, args, { encoding: 'utf8', timeout: 20_000, windowsHide: true }, (error, stdout, stderr) => {
+    execFile(shell, args, { encoding: 'utf8', timeout: spawnBudget(20_000), windowsHide: true }, (error, stdout, stderr) => {
       if (error !== null) {
         rejectShell(new Error(`${shell} probe failed: ${stderr || error.message}`));
         return;
@@ -180,7 +183,7 @@ function execShell(command: string, shell: 'bash' | 'pwsh'): Promise<string> {
 
 function execBashStdin(script: string): Promise<string> {
   return new Promise((resolveShell, rejectShell) => {
-    const child = execFile('bash', ['-s', '--'], { encoding: 'utf8', timeout: 20_000, windowsHide: true }, (error, stdout, stderr) => {
+    const child = execFile('bash', ['-s', '--'], { encoding: 'utf8', timeout: spawnBudget(20_000), windowsHide: true }, (error, stdout, stderr) => {
       if (error !== null) {
         rejectShell(new Error(`bash probe failed: ${stderr || error.message}`));
         return;
@@ -194,7 +197,7 @@ function execBashStdin(script: string): Promise<string> {
 
 function which(tool: string): Promise<string | null> {
   return new Promise((resolveWhich) => {
-    execFile(tool, ['--version'], { timeout: 10_000, windowsHide: true }, (error) => {
+    execFile(tool, ['--version'], { timeout: spawnBudget(10_000), windowsHide: true }, (error) => {
       resolveWhich(error === null ? tool : null);
     });
   });
@@ -213,7 +216,7 @@ function runJarvis(
     const child = execFile(
       process.execPath,
       ['--import', 'tsx', entry, ...args],
-      { cwd: repo, env, encoding: 'utf8', timeout: 20_000, windowsHide: true, maxBuffer: 4 * 1024 * 1024 },
+      { cwd: repo, env, encoding: 'utf8', timeout: spawnBudget(20_000), windowsHide: true, maxBuffer: 4 * 1024 * 1024 },
       (error, stdout, stderr) => {
         const rawCode: unknown = error === null ? 0 : (error as { code?: unknown }).code;
         const code = typeof rawCode === 'number' ? rawCode : null;

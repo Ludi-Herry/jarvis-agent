@@ -1,0 +1,42 @@
+# 红线文件清单 —— 改到这些文件，必须由 Ludi 加标签「红线已确认」才算通过。
+#
+# 格式：每行 `规则 | 说明`
+#   - `**` 跨目录匹配，`*` 只匹配一层，`?` 匹配一个字符；路径用 `/`，从仓库根开始写
+#   - 前缀 `改删:` = 只在"修改 / 删除 / 改名"时报（新增不报），用于"只许追加"的证据目录
+#   - `#` 开头是注释
+#
+# 为什么是这些：它们是"门禁、裁判、规则本身"。AI 改业务代码很正常；
+# 但 AI 改"判它对错的东西"，就等于运动员改记分牌，必须有人看一眼。
+#
+# 除了这些文件，检查还会自动标出 src/ 和 test/ 里的"降规则"迹象：
+# 新增 .skip/.only/.todo/skipIf、@ts-ignore/@ts-nocheck/@ts-expect-error、eslint-disable，
+# 删除测试文件，或修改过的测试文件里 expect 断言净减少。
+
+# —— 门禁与规则本身 ——
+.github/** | CI、红线、变异测试的工作流和本清单
+AGENTS.md | AI 的工作规则
+scripts/redline-check.ts | 红线检查脚本
+scripts/mutation/** | 变异测试配置
+
+# —— 检查工具的配置（放松它们 = 放松门禁）——
+package.json | 依赖与命令（改 scripts 可能绕过检查）
+vitest.config.ts | 测试范围
+eslint.config.js | lint 规则
+tsconfig.json | 类型检查严格度
+tsconfig.build.json | 构建范围
+src/surfaces/gui/app/package.json | GUI 依赖与构建命令
+src/surfaces/gui/app/tsconfig.json | GUI 类型检查严格度
+
+# —— 裁判：判定"完成没有" ——
+src/capabilities/goal/verdict.ts | 完成判定（verified / rejected）
+src/capabilities/goal/checks.ts | 确定性检查（跑测试、跑命令）
+src/capabilities/goal/verifier.ts | 验证者
+
+# —— 安全边界：判定"能不能做" ——
+src/runtime/permission/** | 权限判定、命令分析、审批
+src/capabilities/hooks/** | 钩子（可拦截或放行工具调用）
+src/surfaces/gui/plain-controls.ts | 简洁版 GUI 的权限模式与撤销边界
+
+# —— 证据：只许追加，不许改 ——
+改删:docs/evidence/** | 历史证据只增不改
+docs/TODO-v01-evidence.md | 证据清单

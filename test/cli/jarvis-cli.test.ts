@@ -8,10 +8,11 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
+import { spawnBudget } from './spawn-budget.js';
 
 // This file launches real CLI subprocesses; full-suite worker contention can
 // exceed Vitest's 5 s default even though each child has its own cap.
-vi.setConfig({ testTimeout: 20_000 });
+vi.setConfig({ testTimeout: spawnBudget(20_000) });
 afterAll(() => vi.resetConfig());
 import {
   HEADLESS_MAX_FRAME_BYTES,
@@ -43,7 +44,7 @@ describe('jarvis root CLI', () => {
     expect(version).toMatchObject({ code: 0, stdout: '0.1.0\n' });
     // Full-suite worker contention can push these cold CLI spawns past Vitest's
     // 5 s default while every child keeps its own hard timeout.
-  }, 15_000);
+  }, spawnBudget(15_000));
 
   it('shows subcommand help without launching the model-facing entry point', async () => {
     const result = await runJarvis(['goal', '--help']);
@@ -196,7 +197,7 @@ describe('jarvis root CLI', () => {
     expect(requestToolNames(requests[1])).toEqual(expect.arrayContaining([
       'read', 'write', 'edit', 'grep', 'bash', 'history_search', 'history_turn', 'vision', 'task',
     ]));
-  }, 20_000);
+  }, spawnBudget(20_000));
 
   it('uses 8 turns by default for inspect and honors an explicit max-turns override', async () => {
     const workspace = await mkdtemp(join(tmpdir(), 'jarvis-headless-inspect-turns-'));
@@ -238,7 +239,7 @@ describe('jarvis root CLI', () => {
     expect(defaultResult.code).toBe(3);
     expect(overrideResult.code).toBe(3);
     expect(requestCount).toBe(2);
-  }, 20_000);
+  }, spawnBudget(20_000));
 
   it('applies --cwd before forwarding status, including when the flag follows the command', async () => {
     const workspace = await mkdtemp(join(tmpdir(), 'jarvis cwd with spaces '));
@@ -414,7 +415,7 @@ describe('jarvis root CLI', () => {
     expect(disabledNames).not.toContain('history_turn');
     expect(requestSystemText(requests[0])).toContain('低权威历史数据');
     expect(requestSystemText(requests[1])).not.toContain('低权威历史数据');
-  }, 20_000);
+  }, spawnBudget(20_000));
 
   it('executes Recall as read-only history without approval or completion authority and persists the bounded result', async () => {
     const workspace = await mkdtemp(join(tmpdir(), 'jarvis-headless-recall-execution-'));
@@ -466,7 +467,7 @@ describe('jarvis root CLI', () => {
     expect(content).toContain('"level":"historical-low"');
     expect(content).toContain('"currentStateProof":false');
     expect(content).not.toContain('[jarvis-file-receipt]');
-  }, 20_000);
+  }, spawnBudget(20_000));
 
   it('routes only fd 3 agent events to stdout and moves child human output to stderr', async () => {
     const stdout = new PassThrough();
@@ -691,6 +692,54 @@ describe('jarvis root CLI', () => {
     expect(signals.listenerCount('SIGTERM')).toBe(0);
   });
 
+  it('keeps the child exit code when fd 4 resets after the secret was delivered', async () => {
+    const child = new IgnoringHeadlessChild();
+    const stdout = new ControlledWritable();
+    const stderr = new ControlledWritable();
+    const signals = new EventEmitter();
+    const result = forwardChildProcess(['unused'], repo, signals, {
+      headless: true,
+      stdout: asWritable(stdout),
+      stderr: asWritable(stderr),
+      spawnChild: () => child as unknown as ChildProcess,
+    });
+    await new Promise<void>((resolveFinish) => child.auth.once('finish', () => resolveFinish()));
+
+    // Linux/macOS: a child that exits without reading fd 4 resets the socket pair.
+    child.auth.emit('error', Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' }));
+    child.agentEvents.end();
+    await new Promise<void>((resolveTurn) => setImmediate(resolveTurn));
+    child.emit('close', 2, null);
+
+    expect(await result).toBe(2);
+    expect(child.killSignals).toEqual([]);
+    expect(stderr.writes.join('')).not.toContain('transport failed');
+    expect(child.auth.listenerCount('error')).toBe(0);
+    expect(child.auth.listenerCount('finish')).toBe(0);
+  });
+
+  it('still fails closed when fd 4 errors before the secret was delivered', async () => {
+    const child = new IgnoringHeadlessChild();
+    const stdout = new ControlledWritable();
+    const stderr = new ControlledWritable();
+    const signals = new EventEmitter();
+    const result = forwardChildProcess(['unused'], repo, signals, {
+      headless: true,
+      stdout: asWritable(stdout),
+      stderr: asWritable(stderr),
+      spawnChild: () => child as unknown as ChildProcess,
+      transportFailureGraceMs: 10,
+    });
+
+    child.auth.emit('error', Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }));
+    await waitFor(() => child.killSignals.includes('SIGKILL'));
+
+    expect(await result).toBe(5);
+    expect(child.killSignals).toEqual(['SIGTERM', 'SIGKILL']);
+    expect(stderr.writes.join('')).toContain('authentication failed');
+    expect(child.auth.listenerCount('error')).toBe(0);
+  });
+
   it('closes a started headless goal with a failed terminal when the provider rejects the request', async () => {
     const workspace = await mkdtemp(join(tmpdir(), 'jarvis-headless-goal-'));
     tempDirs.push(workspace);
@@ -764,7 +813,7 @@ describe('jarvis root CLI', () => {
     ]));
     expect(events.some((event) => event.type === 'approval.required')).toBe(false);
     await expect(readFile(join(workspace, 'blocked.txt'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
-  }, 20_000);
+  }, spawnBudget(20_000));
 
   it('keeps root headless loop JSONL-only while an ask-gated bash call is observably denied', async () => {
     const workspace = await mkdtemp(join(tmpdir(), 'jarvis-headless-loop-deny-'));
@@ -856,7 +905,7 @@ describe('jarvis root CLI', () => {
     ]));
     expect(events.some((event) => event.type === 'approval.required')).toBe(false);
     await expect(readFile(join(workspace, 'blocked.txt'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
-  }, 20_000);
+  }, spawnBudget(20_000));
 
   it('keeps safe write approval-required in an unattended parallel worktree', async () => {
     const root = await mkdtemp(join(tmpdir(), 'jarvis-headless-loop-safe-parallel-'));
@@ -911,7 +960,7 @@ describe('jarvis root CLI', () => {
     ]));
     const worktreeFiles = await readdir(worktreeRoot, { recursive: true });
     expect(worktreeFiles.some((path) => /(^|[\\/])blocked\.txt$/u.test(path))).toBe(false);
-  }, 30_000);
+  }, spawnBudget(30_000));
 
   it.each([2, 3, 4, 5, 6, 7])('forwards child exit code %i unchanged', async (exitCode) => {
     const result = await forwardChildProcess(fixtureArgs('exit', String(exitCode)), repo, new EventEmitter());
@@ -965,7 +1014,7 @@ function runJarvis(
     execFile(
       process.execPath,
       ['--import', 'tsx', entry, ...args],
-      { cwd: repo, env, encoding: 'utf8', timeout: 15_000, windowsHide: true, maxBuffer: 4 * 1024 * 1024 },
+      { cwd: repo, env, encoding: 'utf8', timeout: spawnBudget(15_000), windowsHide: true, maxBuffer: 4 * 1024 * 1024 },
       (error, stdout, stderr) => {
         const rawCode: unknown = error === null ? 0 : (error as { code?: unknown }).code;
         const code = typeof rawCode === 'number' ? rawCode : null;

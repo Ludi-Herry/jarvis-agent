@@ -502,9 +502,12 @@ describe('loop finalize CLI smoke', () => {
         { t: 'merge-applied', loopId, index: 0, goalId: 'g0', worktreePath, at: 't3' },
       ]);
 
-      // Confirm both main cwd and worktree are clean before finalize.
+      // Confirm both main cwd and worktree are clean before finalize. Git sees a POSIX symlink as a file,
+      // so `/node_modules/` does not hide the bridge on Linux/macOS (a Windows junction stays ignored);
+      // nothing else may show up on either platform.
       expect((await runGitOutput(cwd, ['status', '--porcelain=v1', '--untracked-files=all'])).trim()).toBe('');
-      expect((await runGitOutput(worktreePath, ['status', '--porcelain=v1', '--untracked-files=all'])).trim()).toBe('');
+      expect((await runGitOutput(worktreePath, ['status', '--porcelain=v1', '--untracked-files=all'])).trim())
+        .toBe(process.platform === 'win32' ? '' : '?? node_modules');
 
       const result = await runFinalizeCli(
         ['--loop', loopId, '--worktree-root', worktreeRoot, '--cleanup'],
@@ -576,6 +579,26 @@ describe('loop finalize CLI smoke', () => {
       await rm(externalDependencies, { recursive: true, force: true });
     }
   }, 30_000);
+
+  it('keeps an audited worktree whose untracked node_modules entry is a plain file rather than a dependency link', async () => {
+    const fixture = await setupCleanWorktreeFixture('L-cleanup-node-modules-file', { audit: true });
+    try {
+      await writeFile(join(fixture.worktreePath, 'node_modules'), 'not a dependency link\n', 'utf8');
+
+      const result = await runFinalizeCli(
+        ['--loop', fixture.loopId, '--worktree-root', fixture.worktreeRoot, '--cleanup'],
+        fixture.cwd,
+        `cleanup ${fixture.loopId}\n`,
+      );
+
+      expect(result.code).toBe(0);
+      expect(result.stdout).toContain('dirty');
+      expect(result.stdout).toContain('Cleanup candidates: 0');
+      await expect(readFile(join(fixture.worktreePath, 'node_modules'), 'utf8')).resolves.toBe('not a dependency link\n');
+    } finally {
+      await fixture.cleanup();
+    }
+  });
 
   it('fails closed when a goal worktree path resolves back inside cwd', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'jarvis-finalize-cwd-'));

@@ -1,0 +1,148 @@
+# 门禁：每个 PR、每次推到 main 都在 GitHub 的干净机器上从零跑一遍全部检查。
+# 它是"独立裁判"：AI 自己本地跑的绿不算数，以这里的结果为准。
+name: 门禁
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gates:
+    name: 门禁 (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # Ludi 在 Windows 上开发，所以两边都跑；Windows 分钟数按 2 倍计费，跑稳后再决定是否保留。
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            src/surfaces/gui/app/package-lock.json
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 安装 GUI 依赖
+        run: npm ci --prefix src/surfaces/gui/app
+
+      - name: 类型检查
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: 测试
+        run: npx vitest run --maxWorkers=2
+        env:
+          # Windows 机器的默认临时目录是 8.3 短名（C:\Users\RUNNER~1\...），git 报的是长名，
+          # 两边路径对不上会让工作区相关测试误报。换成机器自带的长路径临时目录。
+          # 普通电脑的临时目录是长名，不受影响；Linux 读 TMPDIR，这两项对它无效。
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+
+      - name: 构建
+        run: npm run build
+
+      - name: GUI 构建
+        run: npm --prefix src/surfaces/gui/app run build
+
+  # 把结果写成 PR 里的一条中文评论（同一条反复更新）：
+  # Ludi 不用点进日志就知道哪一步没过；AI 也能直接读到出错前的日志去修（AI 的令牌读不到检查结果）。
+  report:
+    name: 门禁结果评论
+    needs: gates
+    if: ${{ !cancelled() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      pull-requests: write
+    steps:
+      - name: 汇总并评论
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/report.md"
+          gh api "repos/$REPO/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs" --paginate \
+            --jq '.jobs[] | select(.name | startswith("门禁 (")) | [(.id|tostring), .name, (.conclusion // "unknown"), ([.steps[] | select(.conclusion == "failure") | .name] | join("、") | if . == "" then "—" else . end), (if .started_at and .completed_at then (((.completed_at|fromdateiso8601) - (.started_at|fromdateiso8601)) / 60 | floor | tostring) else "?" end)] | @tsv' \
+            > "$RUNNER_TEMP/jobs.tsv"
+
+          sys() { case "$1" in *ubuntu*) echo Linux ;; *windows*) echo Windows ;; *) echo "$1" ;; esac; }
+          all_ok=true
+          { echo "<!-- ci-report -->"; echo "## 门禁结果（\`${SHA:0:7}\`）"; echo ""
+            echo "| 系统 | 结果 | 没过的步骤 | 用时 |"; echo "| --- | --- | --- | ---: |"; } > "$out"
+          while IFS=$'\t' read -r id name conclusion failed mins; do
+            case "$conclusion" in
+              success) mark="✅ 通过" ;;
+              failure) mark="❌ 没通过"; all_ok=false ;;
+              *) mark="⚠️ $conclusion"; all_ok=false ;;
+            esac
+            echo "| $(sys "$name") | $mark | ${failed:-—} | ${mins} 分钟 |" >> "$out"
+          done < "$RUNNER_TEMP/jobs.tsv"
+          echo "" >> "$out"
+          if $all_ok; then echo "两个系统都通过。" >> "$out"; else echo "运行记录：$RUN_URL" >> "$out"; fi
+
+          # 日志在任务结束后要过一会儿才能下载，最多等 1 分钟
+          # （tab 是空白分隔符，连续的 tab 会被合并，所以上面每列都保证非空）
+          fetch_log() {
+            for _ in 1 2 3 4 5 6; do
+              curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+                "$GITHUB_API_URL/repos/$REPO/actions/jobs/$1/logs" -o "$2" 2> "$2.err" && return 0
+              sleep 10
+            done
+            return 1
+          }
+
+          # 没过的系统：先列出失败的测试，再附第一个报错之前的 150 行（去掉时间戳和颜色码）
+          while IFS=$'\t' read -r id name conclusion failed mins; do
+            [ "$conclusion" = "failure" ] || continue
+            log="$RUNNER_TEMP/job-$id.log"
+            if ! fetch_log "$id" "$log"; then
+              { echo ""; echo "（$(sys "$name") 的日志没取到：$(head -c 300 "$log.err" | tr '\n' ' ')）"; } >> "$out"
+              continue
+            fi
+            sed -i -E 's/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z ?//; s/\x1b\[[0-9;]*[A-Za-z]//g; s/```/ʼʼʼ/g' "$log"
+            stop=$(grep -n -m1 '##\[error\]' "$log" | cut -d: -f1 || true)
+            [ -n "$stop" ] || stop=$(wc -l < "$log")
+            start=$(( stop > 150 ? stop - 149 : 1 ))
+            { echo ""; echo "<details><summary>$(sys "$name")：没过的测试和出错前的日志</summary>"; echo ""; echo '```text'
+              grep -E '^ *(FAIL|×|✗) ' "$log" | sort -u | head -n 40 | cut -c1-200 || true
+              echo "-----"
+              sed -n "${start},${stop}p" "$log" | cut -c1-200; echo '```'; echo ""; echo "</details>"; } >> "$out"
+          done < "$RUNNER_TEMP/jobs.tsv"
+
+          # 评论上限 65536 字符，留余量
+          if [ "$(wc -c < "$out")" -gt 60000 ]; then head -c 60000 "$out" > "$out.cut"; printf '\n```\n\n（太长，已截断）\n' >> "$out.cut"; mv "$out.cut" "$out"; fi
+
+          cat "$out" >> "$GITHUB_STEP_SUMMARY"
+          id=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
+            --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("<!-- ci-report -->"))) | .id' | tail -n 1)
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$id" -F body=@"$out" > /dev/null
+          else
+            gh api -X POST "repos/$REPO/issues/$PR/comments" -F body=@"$out" > /dev/null
+          fi

@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
+import { spawnBudget } from './spawn-budget.js';
 import { CLI_EXIT } from '../../src/surfaces/cli/exit-codes.js';
 
 const repo = process.cwd();
@@ -11,7 +12,7 @@ const tempDirs: string[] = [];
 
 // This file intentionally launches several real CLI subprocesses per test. Full-suite worker
 // contention can exceed Vitest's 5 s unit-test default even though each child has its own 20 s cap.
-vi.setConfig({ testTimeout: 15_000 });
+vi.setConfig({ testTimeout: spawnBudget(15_000) });
 afterAll(() => vi.resetConfig());
 
 afterEach(async () => {
@@ -37,7 +38,7 @@ describe('jarvis sessions list selection (filter/sort/page)', () => {
       expect(result.code, flags.join(' ')).toBe(CLI_EXIT.USAGE);
       expect(result.stderr).toContain(flags[0]);
     }
-  }, 20_000);
+  }, spawnBudget(20_000));
 
   it('keeps the default report free of any selection echo for backward compatibility', async () => {
     const workspace = await tempWorkspace('default ');
@@ -320,7 +321,7 @@ function runJarvis(
     const child = execFile(
       process.execPath,
       ['--import', 'tsx', entry, ...args],
-      { cwd: repo, env, encoding: 'utf8', timeout: 20_000, windowsHide: true, maxBuffer: 4 * 1024 * 1024 },
+      { cwd: repo, env, encoding: 'utf8', timeout: spawnBudget(20_000), windowsHide: true, maxBuffer: 4 * 1024 * 1024 },
       (error, stdout, stderr) => {
         const rawCode: unknown = error === null ? 0 : (error as { code?: unknown }).code;
         const code = typeof rawCode === 'number' ? rawCode : null;
