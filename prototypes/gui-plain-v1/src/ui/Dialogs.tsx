@@ -141,6 +141,7 @@ export const SHORTCUTS: { keys: string[]; label: string; note?: string }[] = [
   { keys: [MOD, "B"], label: "收起 / 展开左栏" },
   { keys: [MOD, "\\"], label: "打开 / 收起更改、预览、终端" },
   { keys: [MOD, ","], label: "设置" },
+  { keys: [MOD, "G"], label: "切换对话 / 画布", note: "画布里用方向键走上一步、下一步" },
   { keys: ["Enter"], label: "发送（可在设置里改成 " + MOD + " Enter）" },
   { keys: ["Shift", "Enter"], label: "换行" },
   { keys: ["Esc"], label: "停止正在做的任务" },

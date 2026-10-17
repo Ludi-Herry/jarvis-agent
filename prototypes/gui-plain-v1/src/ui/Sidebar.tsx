@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { buildFlow } from "../canvas/model";
 import { AnimatePresence, motion } from "motion/react";
 import { Archive, BookOpen, ChevronDown, ChevronRight, Copy, Folder, FolderOpen, FolderPlus, Globe, Keyboard, MoreHorizontal, PanelLeftClose, PencilLine, Plus, Search, Settings, SquarePen, Trash2, X, Monitor } from "lucide-react";
 import type { S } from "../store";
@@ -15,7 +16,7 @@ export type SettingsSection = "general" | "appearance" | "projects" | "usage" | 
 
 export function TaskStatus({ s, theme }: { s: S; theme: "light" | "dark" }) {
   switch (s.phase) {
-    case "running": return <span className="task-status"><Orb state="working" size={20} theme={theme} /></span>;
+    case "running": { const f = buildFlow(s); return <span className="task-status" title={`要做的事 ${f.done}/${f.total}`}><span className="ts-frac">{f.done}/{f.total}</span><Orb state="working" size={20} theme={theme} /></span>; }
     case "approval": return <span className="task-status tone-warning"><i className="dot" />等你确认</span>;
     case "failed": return <span className="task-status tone-danger"><i className="dot" />没通过</span>;
     case "interrupted": return <span className="task-status tone-warning"><i className="dot" />没做完</span>;

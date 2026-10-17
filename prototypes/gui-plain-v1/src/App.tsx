@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Archive, Copy, FolderOpen, Lightbulb, Menu, MoreHorizontal, PanelLeftOpen, PanelRight, PencilLine, SlidersHorizontal, Undo2, Bug, Type } from "lucide-react";
+import { Archive, Copy, FolderOpen, Lightbulb, Menu, MessageSquare, MoreHorizontal, PanelLeftOpen, PanelRight, PencilLine, SlidersHorizontal, Undo2, Bug, Type, Workflow } from "lucide-react";
 import { useDemo, type Act, type S, type Snapshot } from "./store";
 import { files, INTERJECT, PAST_TASKS, PROJECTS, TASK_PROMPT, type Attachment, type Item, type PastTask, type Project, type Step } from "./scenario";
 import { Sidebar, type LiveTask, type SettingsSection, type View } from "./ui/Sidebar";
@@ -14,6 +14,10 @@ import { Diffstat, IconBtn, Orb } from "./ui/Bits";
 import { Popover, PopoverClose, PopoverContent, PopoverTrigger } from "./arc/popover/popover";
 import { copyText, NotifyContext, useNotifier } from "./ui/feedback";
 import { MOD, usePrefs, useSystemDark } from "./prefs";
+import { Canvas, type MapMode } from "./canvas/canvas-view";
+import { buildFlow, buildPastFlow } from "./canvas/model";
+import { ExplainerDialog, type ExplainKind } from "./artifact/explainer";
+import "./canvas/canvas.css";
 
 const SUGGEST = [
   { icon: SlidersHorizontal, title: "调整组件样式", text: "把设置页的「保存」按钮改成主按钮样式，圆角跟输入框一致" },
@@ -80,6 +84,10 @@ export default function App() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [dockSignal, setDockSignal] = useState(0);
+  const [stage, setStage] = useState<"thread" | "canvas">("thread");
+  const [map, setMap] = useState<MapMode>("flow");
+  const [explain, setExplain] = useState<{ open: boolean; kind: ExplainKind }>({ open: false, kind: "layers" });
+  const openExplain = (kind: ExplainKind = "layers") => setExplain({ open: true, kind });
 
   const curName = curTitle ?? autoTitle(s);
   const visiblePast = past.filter(t => projects.some(p => p.id === t.project));
@@ -98,6 +106,9 @@ export default function App() {
     const c = q.get("compare") as CompareMode | null; if (c) setCompare(c);
     const h = q.get("past"); if (h) setView({ kind: "past", id: h });
     const pr = q.get("project"); if (pr) setCurProject(pr);
+    if (q.get("view") === "canvas") setStage("canvas");
+    const m = q.get("map") as MapMode | null; if (m === "flow" || m === "state" || m === "time") setMap(m);
+    const ex = q.get("explain") as ExplainKind | null; if (ex === "layers" || ex === "delta" || ex === "flow") setExplain({ open: true, kind: ex });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [act]);
   useEffect(() => { document.documentElement.dataset.theme = theme; }, [theme]);
@@ -220,6 +231,7 @@ export default function App() {
     if (mod && k === "b") { e.preventDefault(); setSidebar(v => !v); return; }
     if (mod && e.key === "\\") { e.preventDefault(); setPanel(v => !v); return; }
     if (mod && e.key === ",") { e.preventDefault(); openSettings(); return; }
+    if (mod && k === "g") { e.preventDefault(); if (hasTask) setStage(v => v === "canvas" ? "thread" : "canvas"); return; }
     if ((mod && k === "n") || (e.altKey && e.code === "KeyN")) { e.preventDefault(); startNew(); return; }
     if (e.key === "?" && !typing && !mod) { e.preventDefault(); setKeysOpen(true); }
   };
@@ -238,6 +250,9 @@ export default function App() {
   const showChanges = panelData.applied && !panelData.reverted && panelData.files.length > 0;
   const title = pastTask ? pastTask.title : curName;
   const hasTask = !!pastTask || s.phase !== "empty";
+  const flow = useMemo(() => pastTask ? buildPastFlow(pastTask, !!pastRev[pastTask.id]) : buildFlow(s), [pastTask, pastRev, s]);
+  const onCanvas = stage === "canvas" && hasTask;
+  const showFrac = !pastTask && (s.phase === "running" || s.phase === "approval");
   const hour = new Date().getHours();
   const hello = hour < 11 ? "早上好" : hour < 14 ? "中午好" : hour < 18 ? "下午好" : "晚上好";
 
@@ -281,6 +296,10 @@ export default function App() {
         <span className="grow" />
         <ReviewDock snap={snap} onSnap={pickSnap} mode={compare} setMode={setCompare} theme={theme} setTheme={t => patch({ theme: t })} onPlay={() => setPlaying(p => !p)} playing={playing} openSignal={dockSignal} />
         <span className="grow" />
+        {hasTask && <div className="stage-switch" role="group" aria-label="对话或画布">
+          <button type="button" className={stage === "thread" ? "is-on" : undefined} aria-pressed={stage === "thread"} onClick={() => setStage("thread")} title={`对话（${MOD} G 切换）`}><MessageSquare size={14} /><span>对话</span></button>
+          <button type="button" className={stage === "canvas" ? "is-on" : undefined} aria-pressed={stage === "canvas"} onClick={() => setStage("canvas")} title={`画布：整条链路和进度（${MOD} G 切换）`}><Workflow size={14} /><span>画布</span>{showFrac && <b className="ts-frac">{flow.done}/{flow.total}</b>}</button>
+        </div>}
         {showChanges && <button type="button" className="changes-pill" onClick={() => openPanel("changes")}><span>{panelData.files.length} 个文件</span><Diffstat add={pAdd} del={pDel} /></button>}
         {hasTask && <Popover>
           <PopoverTrigger asChild><button type="button" className="icon-btn" aria-label="这个任务的更多操作"><MoreHorizontal size={17} /></button></PopoverTrigger>
@@ -297,8 +316,9 @@ export default function App() {
       </header>
 
       {pastTask ? <>
-        <div className="scroll"><PastThread key={pastTask.id} t={pastTask} reverted={!!pastRev[pastTask.id]} onRevert={v => revertPast(pastTask.id, v)} follows={follows[pastTask.id] ?? []}
-          onOpenFile={openFile} onPanel={openPanel} onEdit={editText} onRestart={text => startNew(pastTask.project, text)} /></div>
+        {onCanvas ? <Canvas key={pastTask.id} flow={flow} theme={theme} map={map} setMap={setMap} budget={prefs.budget} phase={pastTask.outcome === "stopped" ? "stopped" : "complete"} onOpenFile={openFile} onPanel={openPanel} />
+        : <div className="scroll"><PastThread key={pastTask.id} t={pastTask} reverted={!!pastRev[pastTask.id]} onRevert={v => revertPast(pastTask.id, v)} follows={follows[pastTask.id] ?? []}
+          onOpenFile={openFile} onPanel={openPanel} onEdit={editText} onRestart={text => startNew(pastTask.project, text)} /></div>}
         <div className="dock-composer"><Composer {...common} phase="past" beam={false} cost={pastTask.cost} tokens={Math.round(pastTask.cost * 62000)} onSend={sendPast} onStop={() => {}} canStop={false} /></div>
       </> : s.phase === "empty" ? <div className="hero">
         <div className="hero-orb"><Orb state="breathing" size={64} theme={theme} /></div>
@@ -308,7 +328,8 @@ export default function App() {
         <div className="suggest">{SUGGEST.map(x => <button key={x.title} type="button" className="suggest-card" onClick={() => editText(x.text)}><x.icon size={16} className="muted-ico" /><span className="sg-title">{x.title}</span><span className="sg-text">{x.text}</span></button>)}</div>
         <p className="hero-tip"><Lightbulb size={13} />想先聊聊再动手？把输入框里的「改之前问我」切成「只讨论」。</p>
       </div> : <>
-        <div className="scroll"><Thread s={s} act={actUI} theme={theme} onOpenFile={openFile} onPanel={openPanel} onAdjust={() => setFocus(n => n + 1)} onEdit={editText} /></div>
+        {onCanvas ? <Canvas flow={flow} theme={theme} map={map} setMap={setMap} budget={prefs.budget} act={actUI} phase={s.phase} onOpenFile={openFile} onPanel={openPanel} onExplain={() => openExplain("layers")} />
+        : <div className="scroll"><Thread s={s} act={actUI} theme={theme} onOpenFile={openFile} onPanel={openPanel} onAdjust={() => setFocus(n => n + 1)} onEdit={editText} onExplain={openExplain} /></div>}
         <div className="dock-composer"><Composer {...common} phase={s.phase} beam={s.phase === "running"} cost={s.cost} tokens={s.tokens} onSend={sendCurrent} onStop={() => act({ type: "stop" })} canStop={busy} /></div>
       </>}
       {toastNode}
@@ -326,6 +347,7 @@ export default function App() {
       onAddProject={() => { setSettings(x => ({ ...x, open: false })); setAddOpen(true); }} onOpenDock={() => setDockSignal(n => n + 1)} />
     <AddProjectDialog open={addOpen} onOpenChange={setAddOpen} projects={projects} onAdd={addProject} />
     <ShortcutsDialog open={keysOpen} onOpenChange={setKeysOpen} />
+    <ExplainerDialog open={explain.open} onOpenChange={v => setExplain(x => ({ ...x, open: v }))} kind={explain.kind} setKind={k => setExplain(x => ({ ...x, kind: k }))} interjected={s.interjected} flow={pastTask ? undefined : flow} nFiles={files(s.interjected).length} />
     <AdvancedDialog open={advanced} onOpenChange={setAdvanced} project={viewProj} budget={prefs.budget} onEditPreview={() => { setAdvanced(false); openSettings("projects", viewProj.id); }} />
 
     <CompareOverlay mode={compare} snap={snap} x={cx} onX={setCx} />
