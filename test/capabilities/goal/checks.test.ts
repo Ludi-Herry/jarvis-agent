@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import {
   classifyWorktreeStatusChange,
   classifyTestDiff,
+  harnessGitEnv,
   runDeterministicChecks,
   snapshotWorktreeStatus,
 } from '../../../src/capabilities/goal/checks.js';
@@ -259,3 +260,49 @@ describe('runDeterministicChecks — held-out leg (secret hidden assertions)', (
     expect(r.heldOut).toBeUndefined();
   });
 });
+
+describe('harnessGitEnv — the isolated git environment verification and loop:finalize share', () => {
+  const shellPath = defaultShellPath();
+
+  it("carries over the user's effective line-ending settings and silences CRLF warnings", async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'jarvis-harness-git-env-'));
+    try {
+      const setup = await runCommand(shellPath, 'git init && git config core.autocrlf input && git config core.eol lf', dir, 10_000, 20_000);
+      expect(setup.code).toBe(0);
+
+      const env = await harnessGitEnv(shellPath, dir);
+
+      expect(env).toMatchObject({ GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_PAGER: 'cat' });
+      expect(gitConfigPairs(env)).toEqual(
+        expect.arrayContaining([
+          ['core.hooksPath', '/dev/null'],
+          ['core.autocrlf', 'input'],
+          ['core.eol', 'lf'],
+          ['core.safecrlf', 'false'],
+        ]),
+      );
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('drops line-ending values git would not accept instead of forwarding them', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'jarvis-harness-git-env-'));
+    try {
+      const setup = await runCommand(shellPath, "git init && git config core.autocrlf 'maybe; exit 1' && git config core.eol auto", dir, 10_000, 20_000);
+      expect(setup.code).toBe(0);
+
+      const keys = gitConfigPairs(await harnessGitEnv(shellPath, dir)).map(([key]) => key);
+
+      expect(keys).not.toContain('core.autocrlf');
+      expect(keys).not.toContain('core.eol');
+      expect(keys).toContain('core.safecrlf');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+function gitConfigPairs(env: Record<string, string>): Array<[string | undefined, string | undefined]> {
+  return Array.from({ length: Number(env.GIT_CONFIG_COUNT) }, (_, i) => [env[`GIT_CONFIG_KEY_${i}`], env[`GIT_CONFIG_VALUE_${i}`]]);
+}
