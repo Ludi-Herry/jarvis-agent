@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { open } from 'node:fs/promises';
-import { appendFile, lstat, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { appendFile, lstat, mkdir, readFile, readdir, realpath, rename, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import {
   buildDefaultRegistry, createBashTool, createProvider, DefaultContextManager, defaultShellPath,
@@ -10,7 +10,7 @@ import {
   type DoubaoConfig, type ModelProvider, type Message, type ThinkingEffort,
 } from '../../core/index.js';
 import { safeResolve } from '../../core/tools/safe-path.js';
-import { decide, defaultPolicy, isSensitivePath } from '../../runtime/permission/index.js';
+import { isSensitivePath } from '../../runtime/permission/index.js';
 import { redactSecrets } from '../../core/model/errors.js';
 import {
   buildConfigPermissionPolicy, createEmergencyStopSignal, createSessionComposition,
@@ -32,14 +32,9 @@ import { appendConfigPermissionBoundary, loadCliConfig } from '../cli/config.js'
 import { JARVIS_VERSION } from '../cli/package-info.js';
 import { resolveHooks, type HookRunner } from '../../capabilities/hooks/index.js';
 import { applyGuiEvent, updateGuiCapabilities, type GuiObservedEvent } from './live-projection.js';
-import {
-  captureWritePathsTree, decideModeGate, DEFAULT_GUI_PERMISSION_MODE, diffWritePaths, normalizeWritePath,
-  parsePermissionMode, restoreWritePaths, undoBlocker, type UndoGitDeps,
-} from './plain-controls.js';
-import { resolvePreviewSource } from './preview-policy.js';
 import type {
   GuiFileView, GuiGitStatus, GuiLiveOverview, GuiLiveOverviewSession, GuiLiveSnapshot, GuiMessage,
-  GuiModelsResponse, GuiTaskContract, GuiTaskFieldError, GuiTaskValidateResponse, GuiUndoPlan, GuiWorkspaceInfo,
+  GuiModelsResponse, GuiTaskContract, GuiTaskFieldError, GuiTaskValidateResponse, GuiWorkspaceInfo,
   GuiWorkspacePresets, GuiWorkspaceProbe, GuiWorkspaceTree,
 } from './live-types.js';
 
@@ -111,13 +106,6 @@ function inspectPresets(value: unknown, requireSavedAt: boolean): { ok: boolean;
   if (requireSavedAt && typeof input.savedAt !== 'string') {
     errors.push({ field: 'presets.savedAt', message: 'savedAt 必须是字符串' });
   }
-  // plain-v1 P3: optional auto-preview page; only a local dev server may open by itself.
-  let previewUrl: string | undefined;
-  if (input.previewUrl !== undefined && input.previewUrl !== '') {
-    const source = typeof input.previewUrl === 'string' ? resolvePreviewSource(input.previewUrl) : undefined;
-    if (source?.kind === 'loopback') previewUrl = source.normalized;
-    else errors.push({ field: 'presets.previewUrl', message: source?.kind === 'reject' ? source.reason : '自动预览只支持本机地址（localhost / 127.0.0.1）' });
-  }
   if (errors.length > 0) return { ok: false, errors };
   return {
     ok: true,
@@ -129,7 +117,6 @@ function inspectPresets(value: unknown, requireSavedAt: boolean): { ok: boolean;
       maxTurns: input.maxTurns as number,
       minutes: input.minutes as number,
       savedAt: typeof input.savedAt === 'string' ? input.savedAt : '',
-      ...(previewUrl ? { previewUrl } : {}),
     },
   };
 }
@@ -801,140 +788,12 @@ export class GuiSessionHost {
     await this.initialize();
     const task = this.requireTask(id);
     if (!task.run || task.abort.signal.aborted || task.approval?.requestId !== requestId) throw new GuiLiveError(409, '审批请求已失效或已处理');
-    // plain-v1 P2: allow-session = 「这个任务都允许」. DefaultPermissionGate already scopes it: the tool
-    // for the rest of this run (still inside contract.writePaths), or only this exact command.
-    if (decision !== 'allow-once' && decision !== 'allow-session' && decision !== 'deny') {
-      throw new GuiLiveError(400, 'decision must be allow-once, allow-session or deny');
-    }
+    if (decision !== 'allow-once' && decision !== 'deny') throw new GuiLiveError(400, 'decision must be allow-once or deny');
     if (decision === 'deny' && (!reason?.trim() || reason.length > 1000)) throw new GuiLiveError(400, '拒绝或调整需要 1–1000 字的理由');
     const pending = task.approval;
     task.approval = undefined; // consume exactly once before any await
-    pending.resolve(decision === 'deny' ? { decision: 'deny', reason: redactSecrets(reason!.trim()) } : decision as 'allow-once' | 'allow-session');
+    pending.resolve(decision === 'deny' ? { decision: 'deny', reason: redactSecrets(reason!.trim()) } : 'allow-once');
     return this.snapshot(id);
-  }
-
-  /** plain-v1 P2: the composer permission mode, journaled so reload/replay keep it. Takes effect
-   *  from the next tool call; a pending approval is left for the user to answer. */
-  async setPermissionMode(id: string, value: unknown): Promise<GuiLiveSnapshot> {
-    await this.initialize();
-    const task = this.requireTask(id);
-    const mode = parsePermissionMode(value);
-    if (!mode) throw new GuiLiveError(400, 'mode 必须是 discuss、ask 或 auto');
-    if ((task.snapshot.permissionMode ?? DEFAULT_GUI_PERMISSION_MODE) !== mode) {
-      await this.record(task, { type: 'gui_permission_mode', mode });
-    }
-    return this.snapshot(id);
-  }
-
-  /** plain-v1 P2: what 撤销 (or 恢复 after an undo) would change right now. Read-only. */
-  async undoPlan(id: string): Promise<GuiUndoPlan> {
-    await this.initialize();
-    const task = this.requireTask(id);
-    await task.queue;
-    const last = task.snapshot.undo;
-    const kind = last?.state === 'undone' ? 'redo' : 'undo';
-    const blocked = await this.undoBlockerFor(task);
-    if (blocked) return { kind, available: false, reason: blocked, files: [], token: null };
-    return this.withUndoGit<GuiUndoPlan>(task, async (git) => {
-      const current = await this.captureCurrentTree(task, git);
-      if (kind === 'redo') {
-        if (current !== last!.restoredTree) {
-          return { kind, available: false, reason: '撤销之后这些文件又被改过，不能再恢复；需要的话请重新运行任务', files: [], token: null };
-        }
-        const files = await diffWritePaths(git, current, last!.savedTree);
-        return files.length > 0 ? { kind, available: true, files, token: current } : { kind, available: false, reason: '没有可以恢复的改动', files, token: null };
-      }
-      const files = await diffWritePaths(git, task.started!.baseline.headSha, current);
-      return files.length > 0 ? { kind, available: true, files, token: current } : { kind, available: false, reason: '这个任务没有留下可以撤销的文件改动', files, token: null };
-    });
-  }
-
-  /** plain-v1 P2: 撤销 restores the contract write paths to the task-start baseline; 恢复 brings
-   *  back what the last undo replaced. `token` must be the plan token the user confirmed. */
-  async undo(id: string, kind: 'undo' | 'redo', token: string): Promise<GuiLiveSnapshot> {
-    await this.initialize();
-    const task = this.requireTask(id);
-    await task.queue;
-    const blocked = await this.undoBlockerFor(task);
-    if (blocked) throw new GuiLiveError(409, blocked);
-    const last = task.snapshot.undo;
-    if (kind === 'redo' && last?.state !== 'undone') throw new GuiLiveError(409, '没有可以恢复的撤销');
-    // Hold the launch flag so no start/resume in this workspace interleaves with the file restore.
-    this.launching = true;
-    try {
-      const outcome = await this.withUndoGit(task, async (git) => {
-        const current = await this.captureCurrentTree(task, git);
-        if (current !== token) throw new GuiLiveError(409, '文件在你确认之后又变了，请重新查看要撤销的内容');
-        const target = kind === 'undo' ? task.started!.baseline.headSha : last!.savedTree;
-        if (kind === 'redo' && current !== last!.restoredTree) throw new GuiLiveError(409, '撤销之后这些文件又被改过，不能再恢复');
-        const files = await diffWritePaths(git, kind === 'undo' ? target : current, kind === 'undo' ? current : target);
-        if (files.length === 0) throw new GuiLiveError(409, kind === 'undo' ? '没有可以撤销的改动' : '没有可以恢复的改动');
-        await restoreWritePaths({ ...git, tree: target, remove: (path) => this.removeWritePath(task, path) });
-        const after = await this.captureCurrentTree(task, git);
-        return { target, current, files, exact: after === target };
-      });
-      await this.record(task, { type: 'gui_undo', action: kind, restoredTree: outcome.target, savedTree: outcome.current, files: outcome.files });
-      if (!outcome.exact) {
-        await this.record(task, { type: 'gui_warning', message: '撤销后的文件和记录的版本不完全一致（可能是换行符或文件权限差异），请在「更改」里核对' });
-      }
-      await this.refreshDiff(task);
-      return this.snapshot(id);
-    } finally { this.launching = false; }
-  }
-
-  private async undoBlockerFor(task: LiveTask): Promise<string | undefined> {
-    const gate = task.started ? await this.launchGateSnapshot(task) : undefined;
-    return undoBlocker({
-      started: Boolean(task.started?.baseline.headSha),
-      running: Boolean(task.run),
-      resumable: task.snapshot.status === 'recoverable',
-      reviewing: Boolean(task.reviewing),
-      terminalRunning: Boolean(task.terminal),
-      workspaceBusy: this.launching || Boolean(gate?.runningKeys.includes(gate.targetKey)),
-    });
-  }
-
-  /** Run undo Git work against a throwaway index under dataDir; the user's index and the task's
-   *  baseline index are never read or written. */
-  private async withUndoGit<T>(task: LiveTask, work: (git: UndoGitDeps) => Promise<T>): Promise<T> {
-    const folder = join(this.options.dataDir, 'gui-undo');
-    await mkdir(folder, { recursive: true });
-    const indexFile = join(folder, `${task.created.id}-${randomUUID()}.index`);
-    const git: UndoGitDeps = {
-      quote: shellQuote,
-      paths: task.created.task.writePaths,
-      run: (command) => runCommand(defaultShellPath(), command, task.created.task.cwd, 30_000, 300_000, undefined,
-        { scrubGitEnv: true, extraEnv: { GIT_INDEX_FILE: indexFile.replaceAll('\\', '/') } }),
-    };
-    try {
-      return await work(git);
-    } catch (error) {
-      if (error instanceof GuiLiveError) throw error;
-      throw new GuiLiveError(409, redactSecrets(error instanceof Error ? error.message : String(error)));
-    } finally {
-      await rm(indexFile, { force: true }).catch(() => undefined);
-      await rm(`${indexFile}.lock`, { force: true }).catch(() => undefined);
-    }
-  }
-
-  private captureCurrentTree(task: LiveTask, git: UndoGitDeps): Promise<string> {
-    const cwd = task.created.task.cwd;
-    return captureWritePathsTree({ ...git, baseTree: task.started!.baseline.headSha, exists: (path) => existsSync(resolve(cwd, path)) });
-  }
-
-  /** Remove a write path the restore target does not contain (a file this task created). Confined
-   *  to the task cwd and to regular files/symlinks; a directory is never removed. */
-  private async removeWritePath(task: LiveTask, path: string): Promise<void> {
-    const cwd = resolve(task.created.task.cwd);
-    const normalized = normalizeWritePath(path);
-    if (!task.created.task.writePaths.map(normalizeWritePath).includes(normalized)) throw new Error(`不在本任务合同里的文件：${path}`);
-    const target = resolve(cwd, normalized);
-    const rel = relative(cwd, target);
-    if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) throw new Error(`文件不在任务目录内：${path}`);
-    const info = await lstat(target).catch(() => undefined);
-    if (!info) return;
-    if (!info.isFile() && !info.isSymbolicLink()) throw new Error(`不是普通文件，未删除：${path}`);
-    await rm(target, { force: true });
   }
 
   async control(id: string, action: 'pause' | 'continue' | 'stop' | 'resume', reason?: string): Promise<GuiLiveSnapshot> {
@@ -1450,17 +1309,12 @@ export class GuiSessionHost {
           // Install the abort handler before awaiting disk; avoid an unhandled rejection.
           void promise.catch(() => undefined);
           await this.record(task, { type: 'gui_approval', approval: { requestId, toolName: request.toolName,
-            capability: request.capability, reason: request.reason,
-            detail: request.capability === 'executes-code'
-              ? '允许只放行这一次；「这个任务都允许」只对这条完全相同的命令生效；拒绝理由会传回模型'
-              : '允许只放行这一次；「这个任务都允许」让本任务后续的同类写入不再询问（仍限合同内文件）；拒绝理由会传回模型',
-            sessionScope: request.capability === 'executes-code' ? 'command' : 'tool',
+            capability: request.capability, reason: request.reason, detail: '仅允许本次请求；拒绝理由会传回模型',
             arguments: JSON.stringify(request.args) } });
           return promise;
         },
       });
-      const effectivePolicy = this.policy ? buildConfigPermissionPolicy(this.policy) : defaultPolicy();
-      const existing = new DefaultPermissionGate({ approver, policy: effectivePolicy });
+      const existing = new DefaultPermissionGate({ approver, ...(this.policy ? { policy: buildConfigPermissionPolicy(this.policy) } : {}) });
       const gate: PermissionGate = { check: async (call, capability) => {
         signal.throwIfAborted();
         if (task.journalError) throw task.journalError;
@@ -1478,14 +1332,6 @@ export class GuiSessionHost {
         }
         if (capability === 'executes-code' && !contract.shellCommands?.includes(String(args.command))) {
           return { allowed: false, reason: '命令不在本次合同的固定命令中', source: 'rule' };
-        }
-        // plain-v1 P2: the composer mode is read per call, so a mid-run switch applies from the next
-        // tool call. It runs after the contract boundary and never reinterprets a hard deny.
-        if (capability !== undefined) {
-          const verdict = decideModeGate({ mode: task.snapshot.permissionMode, toolName: call.name, capability,
-            hardAction: decide({ toolName: call.name, capability, args }, effectivePolicy).action });
-          if (verdict.kind === 'deny') return { allowed: false, reason: verdict.reason, source: 'rule' };
-          if (verdict.kind === 'allow') return { allowed: true, reason: verdict.reason, source: 'rule' };
         }
         return existing.check(call, capability);
       } };
@@ -1666,9 +1512,7 @@ export class GuiSessionHost {
   private record(task: LiveTask, event: GuiObservedEvent): Promise<void> {
     // gui_task_started carries the frozen composition (system prompt/schemas); it is journaled
     // verbatim so resume compares the session header against the exact original, not a redacted copy.
-    // gui_undo carries only Git tree ids and contract write paths; it stays verbatim so redo can
-    // trust the saved tree id.
-    const safe = (event.type === 'gui_task_started' || event.type === 'gui_undo' ? { ...event } : redactValue({ ...event })) as GuiObservedEvent;
+    const safe = (event.type === 'gui_task_started' ? { ...event } : redactValue({ ...event })) as GuiObservedEvent;
     safe.at = safe.at ?? new Date().toISOString();
     const pending = task.queue.then(async () => {
       const record: EventRecord = { type: 'gui_event', sequence: task.snapshot.sequence + 1, event: safe, at: new Date().toISOString() };

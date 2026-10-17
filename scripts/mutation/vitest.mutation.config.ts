@@ -6,7 +6,6 @@ export default defineConfig({
     include: [
       'test/capabilities/goal/verdict*.test.ts',
       'test/runtime/permission/**/*.test.ts',
-      'test/surfaces/gui/gui-plain-controls*.test.ts',
     ],
     testTimeout: 20_000,
   },

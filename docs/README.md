@@ -46,7 +46,6 @@
 - [HANDOFF-gui-kimi-k3-max-2026-10-07.md](HANDOFF-gui-kimi-k3-max-2026-10-07.md)：GUI 迭代由 Codex 转 Mirasim Kimi K3 Max 的授权与边界。
 - [PROPOSAL-gui-conditional-items.md](PROPOSAL-gui-conditional-items.md)：条件项（worktree/多 pane/GUI 模型配置/Skill·MCP/受控浏览器）逐项立项书，待 Owner 裁决。
 - [PLAN-gui-real-task-window.md](PLAN-gui-real-task-window.md)：真实模型任务窗口的验收清单与操作脚本（备好待用，不消耗额度）。
-- [PLAN-gui-plain-v1.md](PLAN-gui-plain-v1.md)：给设计师用的简化方向：对照稿（待签收），权限三档 / 这个任务都允许 / 撤销与自动预览的后台配合（分支草稿，需本机验证）。
 - [handoff-gui-mvp-reboot.md](handoff-gui-mvp-reboot.md)：历史：GUI MVP 重启方向、前端选型（现出现于重启总计划并被取代）。
 - [TODO-v01-evidence.md](TODO-v01-evidence.md)：冻结的 v0.1 三任务 dogfood 合同与 NO-GO 证据；当前不继续执行。
 - [v03-gui-plan.md](v03-gui-plan.md)：已完成 G1-G4 的日期化历史工作单；G5 与未来路线已被 GUI MVP 重启交接取代。

@@ -11,7 +11,6 @@ export default {
     'src/runtime/permission/decide.ts',
     'src/runtime/permission/permission-gate.ts',
     'src/runtime/permission/command.ts',
-    'src/surfaces/gui/plain-controls.ts',
   ],
   coverageAnalysis: 'perTest',
   reporters: ['clear-text', 'progress', 'html', 'json'],
