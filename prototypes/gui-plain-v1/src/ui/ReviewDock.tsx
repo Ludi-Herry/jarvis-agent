@@ -61,7 +61,7 @@ export function CompareOverlay({ mode, snap, onX, x }: { mode: CompareMode; snap
 }
 
 export function ReviewDock({ snap, onSnap, mode, setMode, theme, setTheme, onPlay, playing, openSignal = 0 }: { snap: Snapshot; onSnap: (s: Snapshot) => void; mode: CompareMode; setMode: (m: CompareMode) => void; theme: "light" | "dark"; setTheme: (t: "light" | "dark") => void; onPlay: () => void; playing: boolean; openSignal?: number }) {
-  const [open, setOpen] = useState(() => new URLSearchParams(location.search).get("dock") !== "0" && window.innerWidth > 760);
+  const [open, setOpen] = useState(false);
   useEffect(() => { if (openSignal) setOpen(true); }, [openSignal]);
   const n = NOTES[snap];
   return <div className={`dock${open ? " is-open" : ""}`}>

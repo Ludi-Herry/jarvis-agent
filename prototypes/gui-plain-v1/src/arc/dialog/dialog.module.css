@@ -1,6 +1,6 @@
 .overlay { position: fixed; inset: 0; z-index: 50; background: oklch(10% 0 0 / .46); -webkit-backdrop-filter: blur(7px); backdrop-filter: blur(7px); }
 /* Centered with auto margins (like a native modal dialog) so transform stays free for the entrance spring. */
-.content { position: fixed; z-index: 51; inset: 0; width: min(calc(100vw - var(--space-8)), 440px); height: fit-content; max-height: calc(100vh - var(--space-8)); max-height: calc(100dvh - var(--space-8)); margin: auto; overflow: auto; border: 0; border-radius: var(--radius-surface); background: var(--surface-raised); color: var(--foreground); /* Jarvis: hairline ring instead of a border */ box-shadow: 0 0 0 var(--hairline, 1px) var(--ring, var(--border)), var(--shadow-floating); }
+.content { position: fixed; z-index: 51; inset: 0; width: min(calc(100vw - var(--space-8)), 440px); height: fit-content; max-height: calc(100vh - var(--space-8)); max-height: calc(100dvh - var(--space-8)); margin: auto; overflow: auto; border: var(--hairline) solid var(--ring); border-radius: var(--radius-surface); background: var(--surface-raised); color: var(--foreground); /* Real edge inside the clipping box; separate elevation. */ box-shadow: var(--shadow-floating); }
 /* Motion animates both layers. Keyframes only run when DialogContent sits under a bare Radix root. */
 .keyframes.overlay[data-state="open"] { animation: overlay-in var(--duration-standard) var(--ease-enter) both; }
 .keyframes.overlay[data-state="closed"] { animation: overlay-out var(--duration-fast) var(--ease-standard) both; }

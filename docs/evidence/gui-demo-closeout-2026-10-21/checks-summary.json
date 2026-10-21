@@ -1,0 +1,22 @@
+{
+  "typecheck": {
+    "exitCode": 0,
+    "summary": "\r\n> jarvis-agent@0.1.0 typecheck\r\n> tsc --noEmit\r\n\r\n"
+  },
+  "lint": {
+    "exitCode": 0,
+    "summary": "\r\n> jarvis-agent@0.1.0 lint\r\n> eslint src test\r\n\r\n"
+  },
+  "test": {
+    "exitCode": 0,
+    "summary": "> vitest run --maxWorkers=4\r\n\r\n\r\n RUN  v4.1.9 C:/Users/Administrator.DESKTOP-33TL0HO/.codex/worktrees/gui-plain-v1-exact-20261020/jarvis-agent\r\n\r\nfatal: Invalid symmetric difference expression ffffffffffffffffffffffffffffffffffffffff...543c22a55a0879220ac0ec5dd43ec14b4fc2b259\r\n\r\n Test Files  172 passed (172)\r\n      Tests  2178 passed | 2 skipped (2180)\r\n   Start at  10:19:06\r\n   Duration  148.85s (transform 8.59s, setup 0ms, import 30.41s, tests 536.44s, environment 12ms)\r\n\r\n"
+  },
+  "build": {
+    "exitCode": 0,
+    "summary": "\r\n> jarvis-agent@0.1.0 build\r\n> tsc -p tsconfig.build.json\r\n\r\n"
+  },
+  "demo-build": {
+    "exitCode": 0,
+    "summary": "vite v8.3.4 building client environment for production...\r\ntransforming...\r\n✓ 2453 modules transformed.\r\nrendering chunks...\r\n[plugin vite:singlefile] \r\n\r\n[plugin vite:singlefile] Inlining: index-DrnGgHD9.js\r\n[plugin vite:singlefile] Inlining: style-Ce7zC0Vi.css\r\ncomputing gzip size...\r\ndist/index.html  1,446.94 kB │ gzip: 633.89 kB\r\n\r\n✓ built in 930ms\r\n"
+  }
+}

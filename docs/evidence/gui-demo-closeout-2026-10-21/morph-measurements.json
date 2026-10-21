@@ -1,0 +1,729 @@
+{
+  "before": {
+    "summary": {
+      "count": 40,
+      "maxIconScale": 11.988516000600962,
+      "maxGap": 222.89999999999964
+    },
+    "longTasks": [
+      {
+        "start": 9655.600000023842,
+        "duration": 138
+      },
+      {
+        "start": 9804.5,
+        "duration": 121
+      },
+      {
+        "start": 10490.800000071526,
+        "duration": 97
+      }
+    ],
+    "frames": [
+      {
+        "ms": 99.96399992847364,
+        "slot": {
+          "height": 260.75,
+          "transform": "matrix(1, 0, 0, 11.9885, 0, 119.5)"
+        },
+        "iconsCount": 8,
+        "worstIcon": {
+          "cls": "lucide lucide-chevron-right",
+          "w": 13,
+          "h": 155.8507080078125,
+          "cssW": "13px",
+          "cssH": "13px",
+          "ratio": 11.988516000600962
+        }
+      },
+      {
+        "ms": 146.9999999284737,
+        "slot": {
+          "height": 140.4833984375,
+          "transform": "matrix(1, 0, 0, 6.45901, 0, 59.3667)"
+        },
+        "iconsCount": 8,
+        "worstIcon": {
+          "cls": "lucide lucide-file-code-corner lucide-file-code-2 muted-ico",
+          "w": 14.9781494140625,
+          "h": 96.7440185546875,
+          "cssW": "15px",
+          "cssH": "15px",
+          "ratio": 6.449601236979166
+        }
+      },
+      {
+        "ms": 272.4999999284737,
+        "slot": {
+          "height": 132.84332275390625,
+          "transform": "matrix(1, 0, 0, 6.10774, 0, 55.5467)"
+        },
+        "iconsCount": 8,
+        "worstIcon": {
+          "cls": "lucide lucide-file-code-corner lucide-file-code-2 muted-ico",
+          "w": 14.97015380859375,
+          "h": 91.4337158203125,
+          "cssW": "15px",
+          "cssH": "15px",
+          "ratio": 6.0955810546875
+        }
+      },
+      {
+        "ms": 390.7999999284748,
+        "slot": {
+          "height": 112.822998046875,
+          "transform": "matrix(1, 0, 0, 5.18726, 0, 45.5365)"
+        },
+        "iconsCount": 8,
+        "worstIcon": {
+          "cls": "lucide lucide-eye muted-ico",
+          "w": 14.926513671875,
+          "h": 77.427734375,
+          "cssW": "15px",
+          "cssH": "15px",
+          "ratio": 5.161848958333334
+        }
+      },
+      {
+        "ms": 397.89999992847515,
+        "slot": {
+          "height": 53.695770263671875,
+          "transform": "matrix(1, 0, 0, 2.46877, 0, 15.9729)"
+        },
+        "iconsCount": 1,
+        "worstIcon": {
+          "cls": "lucide lucide-check",
+          "w": 14,
+          "h": 14,
+          "cssW": "14px",
+          "cssH": "14px",
+          "ratio": 1
+        }
+      },
+      {
+        "ms": 404.6999999284744,
+        "slot": {
+          "height": 52.417205810546875,
+          "transform": "matrix(1, 0, 0, 2.40999, 0, 15.3336)"
+        },
+        "iconsCount": 1,
+        "worstIcon": {
+          "cls": "lucide lucide-check",
+          "w": 14,
+          "h": 14,
+          "cssW": "14px",
+          "cssH": "14px",
+          "ratio": 1
+        }
+      },
+      {
+        "ms": 627.5999999284741,
+        "slot": {
+          "height": 50.587646484375,
+          "transform": "matrix(1, 0, 0, 2.32587, 0, 14.4188)"
+        },
+        "iconsCount": 1,
+        "worstIcon": {
+          "cls": "lucide lucide-check",
+          "w": 14,
+          "h": 14,
+          "cssW": "14px",
+          "cssH": "14px",
+          "ratio": 1
+        }
+      },
+      {
+        "ms": 641.4999999284737,
+        "slot": {
+          "height": 24.401336669921875,
+          "transform": "matrix(1, 0, 0, 1.1219, 0, 1.32567)"
+        },
+        "iconsCount": 1,
+        "worstIcon": {
+          "cls": "lucide lucide-check",
+          "w": 14,
+          "h": 14,
+          "cssW": "14px",
+          "cssH": "14px",
+          "ratio": 1
+        }
+      },
+      {
+        "ms": 648.6999999284744,
+        "slot": {
+          "height": 24.089752197265625,
+          "transform": "matrix(1, 0, 0, 1.10757, 0, 1.16988)"
+        },
+        "iconsCount": 1,
+        "worstIcon": {
+          "cls": "lucide lucide-check",
+          "w": 14,
+          "h": 14.000015258789062,
+          "cssW": "14px",
+          "cssH": "14px",
+          "ratio": 1.0000010899135046
+        }
+      },
+      {
+        "ms": 690.2999999284748,
+        "slot": {
+          "height": 23.88592529296875,
+          "transform": "matrix(1, 0, 0, 1.0982, 0, 1.06796)"
+        },
+        "iconsCount": 1,
+        "worstIcon": {
+          "cls": "lucide lucide-check",
+          "w": 14,
+          "h": 14,
+          "cssW": "14px",
+          "cssH": "14px",
+          "ratio": 1
+        }
+      },
+      {
+        "ms": 704.1999999284744,
+        "slot": {
+          "height": 23.085113525390625,
+          "transform": "matrix(1, 0, 0, 1.06138, 0, 0.667561)"
+        },
+        "iconsCount": 1,
+        "worstIcon": {
+          "cls": "lucide lucide-check",
+          "w": 14,
+          "h": 13.999969482421875,
+          "cssW": "14px",
+          "cssH": "14px",
+          "ratio": 0.9999978201729911
+        }
+      },
+      {
+        "ms": 711.0999999284741,
+        "slot": {
+          "height": 22.860137939453125,
+          "transform": "matrix(1, 0, 0, 1.05104, 0, 0.555073)"
+        },
+        "iconsCount": 1,
+        "worstIcon": {
+          "cls": "lucide lucide-check",
+          "w": 14,
+          "h": 14,
+          "cssW": "14px",
+          "cssH": "14px",
+          "ratio": 1
+        }
+      },
+      {
+        "ms": 718.0999999284741,
+        "slot": {
+          "height": 22.7857666015625,
+          "transform": "matrix(1, 0, 0, 1.04762, 0, 0.517879)"
+        },
+        "iconsCount": 1,
+        "worstIcon": {
+          "cls": "lucide lucide-check",
+          "w": 14,
+          "h": 14,
+          "cssW": "14px",
+          "cssH": "14px",
+          "ratio": 1
+        }
+      },
+      {
+        "ms": 725.0999999284741,
+        "slot": {
+          "height": 22.716278076171875,
+          "transform": "matrix(1, 0, 0, 1.04443, 0, 0.483138)"
+        },
+        "iconsCount": 1,
+        "worstIcon": {
+          "cls": "lucide lucide-check",
+          "w": 14,
+          "h": 14,
+          "cssW": "14px",
+          "cssH": "14px",
+          "ratio": 1
+        }
+      },
+      {
+        "ms": 731.9999999284737,
+        "slot": {
+          "height": 22.6409912109375,
+          "transform": "matrix(1, 0, 0, 1.04096, 0, 0.445494)"
+        },
+        "iconsCount": 1,
+        "worstIcon": {
+          "cls": "lucide lucide-check",
+          "w": 14,
+          "h": 14,
+          "cssW": "14px",
+          "cssH": "14px",
+          "ratio": 1
+        }
+      },
+      {
+        "ms": 738.8999999284752,
+        "slot": {
+          "height": 22.561981201171875,
+          "transform": "matrix(1, 0, 0, 1.03733, 0, 0.405997)"
+        },
+        "iconsCount": 1,
+        "worstIcon": {
+          "cls": "lucide lucide-check",
+          "w": 14,
+          "h": 14,
+          "cssW": "14px",
+          "cssH": "14px",
+          "ratio": 1
+        }
+      },
+      {
+        "ms": 745.8999999284752,
+        "slot": {
+          "height": 22.498565673828125,
+          "transform": "matrix(1, 0, 0, 1.03442, 0, 0.374277)"
+        },
+        "iconsCount": 1,
+        "worstIcon": {
+          "cls": "lucide lucide-check",
+          "w": 14,
+          "h": 14,
+          "cssW": "14px",
+          "cssH": "14px",
+          "ratio": 1
+        }
+      },
+      {
+        "ms": 752.8999999284752,
+        "slot": {
+          "height": 22.448089599609375,
+          "transform": "matrix(1, 0, 0, 1.0321, 0, 0.349039)"
+        },
+        "iconsCount": 1,
+        "worstIcon": {
+          "cls": "lucide lucide-check",
+          "w": 14,
+          "h": 14,
+          "cssW": "14px",
+          "cssH": "14px",
+          "ratio": 1
+        }
+      },
+      {
+        "ms": 759.8999999284752,
+        "slot": {
+          "height": 22.393402099609375,
+          "transform": "matrix(1, 0, 0, 1.02958, 0, 0.321707)"
+        },
+        "iconsCount": 1,
+        "worstIcon": {
+          "cls": "lucide lucide-check",
+          "w": 14,
+          "h": 14,
+          "cssW": "14px",
+          "cssH": "14px",
+          "ratio": 1
+        }
+      },
+      {
+        "ms": 766.6999999284744,
+        "slot": {
+          "height": 22.336090087890625,
+          "transform": "matrix(1, 0, 0, 1.02695, 0, 0.293046)"
+        },
+        "iconsCount": 1,
+        "worstIcon": {
+          "cls": "lucide lucide-check",
+          "w": 14,
+          "h": 14,
+          "cssW": "14px",
+          "cssH": "14px",
+          "ratio": 1
+        }
+      },
+      {
+        "ms": 794.7999999284748,
+        "slot": {
+          "height": 22.296417236328125,
+          "transform": "matrix(1, 0, 0, 1.02512, 0, 0.273215)"
+        },
+        "iconsCount": 1,
+        "worstIcon": {
+          "cls": "lucide lucide-check",
+          "w": 14,
+          "h": 14,
+          "cssW": "14px",
+          "cssH": "14px",
+          "ratio": 1
+        }
+      },
+      {
+        "ms": 801.4999999284737,
+        "slot": {
+          "height": 22.139068603515625,
+          "transform": "matrix(1, 0, 0, 1.01789, 0, 0.194534)"
+        },
+        "iconsCount": 1,
+        "worstIcon": {
+          "cls": "lucide lucide-check",
+          "w": 14,
+          "h": 14,
+          "cssW": "14px",
+          "cssH": "14px",
+          "ratio": 1
+        }
+      },
+      {
+        "ms": 808.6999999284744,
+        "slot": {
+          "height": 22.112579345703125,
+          "transform": "matrix(1, 0, 0, 1.01667, 0, 0.181297)"
+        },
+        "iconsCount": 1,
+        "worstIcon": {
+          "cls": "lucide lucide-check",
+          "w": 14,
+          "h": 14,
+          "cssW": "14px",
+          "cssH": "14px",
+          "ratio": 1
+        }
+      },
+      {
+        "ms": 815.5999999284741,
+        "slot": {
+          "height": 22.083953857421875,
+          "transform": "matrix(1, 0, 0, 1.01535, 0, 0.166975)"
+        },
+        "iconsCount": 1,
+        "worstIcon": {
+          "cls": "lucide lucide-check",
+          "w": 14,
+          "h": 14,
+          "cssW": "14px",
+          "cssH": "14px",
+          "ratio": 1
+        }
+      },
+      {
+        "ms": 822.4999999284737,
+        "slot": {
+          "height": 22.05755615234375,
+          "transform": "matrix(1, 0, 0, 1.01414, 0, 0.15377)"
+        },
+        "iconsCount": 1,
+        "worstIcon": {
+          "cls": "lucide lucide-check",
+          "w": 14,
+          "h": 14,
+          "cssW": "14px",
+          "cssH": "14px",
+          "ratio": 1
+        }
+      },
+      {
+        "ms": 829.5999999284741,
+        "slot": {
+          "height": 22.033203125,
+          "transform": "matrix(1, 0, 0, 1.01302, 0, 0.141598)"
+        },
+        "iconsCount": 1,
+        "worstIcon": {
+          "cls": "lucide lucide-check",
+          "w": 14,
+          "h": 14,
+          "cssW": "14px",
+          "cssH": "14px",
+          "ratio": 1
+        }
+      },
+      {
+        "ms": 836.3999999284752,
+        "slot": {
+          "height": 21.831451416015625,
+          "transform": "matrix(1, 0, 0, 1.00374, 0, 0.0407228)"
+        },
+        "iconsCount": 1,
+        "worstIcon": {
+          "cls": "lucide lucide-check",
+          "w": 14,
+          "h": 14,
+          "cssW": "14px",
+          "cssH": "14px",
+          "ratio": 1
+        }
+      },
+      {
+        "ms": 933.8999999284752,
+        "slot": {
+          "height": 21.828582763671875,
+          "transform": "matrix(1, 0, 0, 1.00361, 0, 0.0392893)"
+        },
+        "iconsCount": 1,
+        "worstIcon": {
+          "cls": "lucide lucide-check",
+          "w": 14,
+          "h": 14,
+          "cssW": "14px",
+          "cssH": "14px",
+          "ratio": 1
+        }
+      },
+      {
+        "ms": 961.6999999284744,
+        "slot": {
+          "height": 21.806884765625,
+          "transform": "matrix(1, 0, 0, 1.00262, 0, 0.0284429)"
+        },
+        "iconsCount": 1,
+        "worstIcon": {
+          "cls": "lucide lucide-check",
+          "w": 14,
+          "h": 14,
+          "cssW": "14px",
+          "cssH": "14px",
+          "ratio": 1
+        }
+      },
+      {
+        "ms": 968.8999999284752,
+        "slot": {
+          "height": 21.8035888671875,
+          "transform": "matrix(1, 0, 0, 1.00246, 0, 0.0267886)"
+        },
+        "iconsCount": 1,
+        "worstIcon": {
+          "cls": "lucide lucide-check",
+          "w": 14,
+          "h": 14,
+          "cssW": "14px",
+          "cssH": "14px",
+          "ratio": 1
+        }
+      },
+      {
+        "ms": 1003.5999999284741,
+        "slot": {
+          "height": 21.798675537109375,
+          "transform": "matrix(1, 0, 0, 1.00224, 0, 0.0243379)"
+        },
+        "iconsCount": 1,
+        "worstIcon": {
+          "cls": "lucide lucide-check",
+          "w": 14,
+          "h": 14,
+          "cssW": "14px",
+          "cssH": "14px",
+          "ratio": 1
+        }
+      },
+      {
+        "ms": 1045.3999999284752,
+        "slot": {
+          "height": 21.75,
+          "transform": "none"
+        },
+        "iconsCount": 1,
+        "worstIcon": {
+          "cls": "lucide lucide-check",
+          "w": 14,
+          "h": 14,
+          "cssW": "14px",
+          "cssH": "14px",
+          "ratio": 1
+        }
+      },
+      {
+        "ms": 1052.2999999284748,
+        "slot": {
+          "height": 21.75,
+          "transform": "none"
+        },
+        "iconsCount": 1,
+        "worstIcon": {
+          "cls": "lucide lucide-check",
+          "w": 14,
+          "h": 14,
+          "cssW": "14px",
+          "cssH": "14px",
+          "ratio": 1
+        }
+      },
+      {
+        "ms": 1059.2999999284748,
+        "slot": {
+          "height": 21.75,
+          "transform": "none"
+        },
+        "iconsCount": 1,
+        "worstIcon": {
+          "cls": "lucide lucide-check",
+          "w": 14,
+          "h": 14,
+          "cssW": "14px",
+          "cssH": "14px",
+          "ratio": 1
+        }
+      },
+      {
+        "ms": 1066.099999928474,
+        "slot": {
+          "height": 21.75,
+          "transform": "none"
+        },
+        "iconsCount": 1,
+        "worstIcon": {
+          "cls": "lucide lucide-check",
+          "w": 14,
+          "h": 14,
+          "cssW": "14px",
+          "cssH": "14px",
+          "ratio": 1
+        }
+      },
+      {
+        "ms": 1073.2999999284748,
+        "slot": {
+          "height": 21.75,
+          "transform": "none"
+        },
+        "iconsCount": 1,
+        "worstIcon": {
+          "cls": "lucide lucide-check",
+          "w": 14,
+          "h": 14,
+          "cssW": "14px",
+          "cssH": "14px",
+          "ratio": 1
+        }
+      },
+      {
+        "ms": 1080.099999928474,
+        "slot": {
+          "height": 21.75,
+          "transform": "none"
+        },
+        "iconsCount": 1,
+        "worstIcon": {
+          "cls": "lucide lucide-check",
+          "w": 14,
+          "h": 14,
+          "cssW": "14px",
+          "cssH": "14px",
+          "ratio": 1
+        }
+      },
+      {
+        "ms": 1087.099999928474,
+        "slot": {
+          "height": 21.75,
+          "transform": "none"
+        },
+        "iconsCount": 1,
+        "worstIcon": {
+          "cls": "lucide lucide-check",
+          "w": 14,
+          "h": 14,
+          "cssW": "14px",
+          "cssH": "14px",
+          "ratio": 1
+        }
+      },
+      {
+        "ms": 1093.9999999284737,
+        "slot": {
+          "height": 21.75,
+          "transform": "none"
+        },
+        "iconsCount": 1,
+        "worstIcon": {
+          "cls": "lucide lucide-check",
+          "w": 14,
+          "h": 14,
+          "cssW": "14px",
+          "cssH": "14px",
+          "ratio": 1
+        }
+      },
+      {
+        "ms": 1100.9999999284737,
+        "slot": {
+          "height": 21.75,
+          "transform": "none"
+        },
+        "iconsCount": 1,
+        "worstIcon": {
+          "cls": "lucide lucide-check",
+          "w": 14,
+          "h": 14,
+          "cssW": "14px",
+          "cssH": "14px",
+          "ratio": 1
+        }
+      }
+    ]
+  },
+  "candidate": {
+    "allow": {
+      "count": 108,
+      "maxIconScale": 1.0000087193080358,
+      "maxGap": 104.39999999999964
+    },
+    "reviewComplete": {
+      "count": 120,
+      "maxIconScale": 11.846354166666666,
+      "maxGap": 72.70600000000013
+    }
+  },
+  "finalCases": [
+    {
+      "name": "approve",
+      "summary": {
+        "count": 97,
+        "maxIconScale": 1,
+        "maxGap": 159.34199999999987
+      }
+    },
+    {
+      "name": "review-complete",
+      "summary": {
+        "count": 121,
+        "maxIconScale": 1.0000050862630208,
+        "maxGap": 92.60799999999995
+      }
+    },
+    {
+      "name": "review-approval",
+      "summary": {
+        "count": 129,
+        "maxIconScale": 1.0000046950120192,
+        "maxGap": 80.07600000000002
+      }
+    },
+    {
+      "name": "deny-dark",
+      "summary": {
+        "count": 121,
+        "maxIconScale": 1.000002179827009,
+        "maxGap": 150.87400000000002
+      }
+    },
+    {
+      "name": "switch-history",
+      "summary": {
+        "count": 133,
+        "maxIconScale": 1.0011966411884015,
+        "maxGap": 75.67200000000003
+      }
+    }
+  ],
+  "narrow": {
+    "count": 124,
+    "maxIconScale": 1.0000043596540178,
+    "maxGap": 158.90200000000004
+  },
+  "rapid": {
+    "count": 89,
+    "maxIconScale": 1.000002179827009,
+    "maxGap": 181.19999999999982
+  }
+}

@@ -1,0 +1,117 @@
+[
+  {
+    "viewport": "1280x900x1",
+    "theme": "light",
+    "state": "approval",
+    "view": "canvas",
+    "map": "flow",
+    "info": {
+      "content": [
+        {
+          "type": "text",
+          "text": "Script ran on page and returned:\n```json\n{\"width\":1280,\"dpr\":1,\"theme\":\"light\"}\n```"
+        }
+      ]
+    },
+    "r": {
+      "content": [
+        {
+          "type": "text",
+          "text": "Script ran on page and returned:\n```json\n{\"ok\":true,\"cut\":0,\"hidden\":3,\"issues\":[{\"el\":\"div.canvas.is-still > div.cv-body > aside.cv-side.fade-y > section.cv-card.pp.is-waiting\",\"kind\":\"box-shadow\",\"side\":\"left\",\"level\":\"hidden\",\"cut\":4,\"gap\":0,\"by\":\"main.main > div.canvas.is-still > div.cv-body > aside.cv-side.fade-y\",\"why\":\"overflow:auto\"},{\"el\":\"div.canvas.is-still > div.cv-body > aside.cv-side.fade-y > section.cv-card.cv-todos\",\"kind\":\"box-shadow\",\"side\":\"left\",\"level\":\"hidden\",\"cut\":4,\"gap\":0,\"by\":\"main.main > div.canvas.is-still > div.cv-body > aside.cv-side.fade-y\",\"why\":\"overflow:auto\"},{\"el\":\"div.canvas.is-still > div.cv-body > aside.cv-side.fade-y > section.cv-card.cv-outputs\",\"kind\":\"box-shadow\",\"side\":\"left\",\"level\":\"hidden\",\"cut\":4,\"gap\":0,\"by\":\"main.main > div.canvas.is-still > div.cv-body > aside.cv-side.fade-y\",\"why\":\"overflow:auto\"}]}\n```"
+        }
+      ]
+    }
+  },
+  {
+    "viewport": "1281x900x1",
+    "theme": "dark",
+    "state": "complete",
+    "view": "canvas",
+    "map": "flow",
+    "info": {
+      "content": [
+        {
+          "type": "text",
+          "text": "Script ran on page and returned:\n```json\n{\"width\":1281,\"dpr\":1,\"theme\":\"dark\"}\n```"
+        }
+      ]
+    },
+    "r": {
+      "content": [
+        {
+          "type": "text",
+          "text": "Script ran on page and returned:\n```json\n{\"ok\":true,\"cut\":0,\"hidden\":3,\"issues\":[{\"el\":\"div.canvas.is-still > div.cv-body > aside.cv-side.fade-y > section.cv-card.pp.is-done\",\"kind\":\"box-shadow\",\"side\":\"left\",\"level\":\"hidden\",\"cut\":4,\"gap\":0,\"by\":\"main.main > div.canvas.is-still > div.cv-body > aside.cv-side.fade-y\",\"why\":\"overflow:auto\"},{\"el\":\"div.canvas.is-still > div.cv-body > aside.cv-side.fade-y > section.cv-card.cv-todos\",\"kind\":\"box-shadow\",\"side\":\"left\",\"level\":\"hidden\",\"cut\":4,\"gap\":0,\"by\":\"main.main > div.canvas.is-still > div.cv-body > aside.cv-side.fade-y\",\"why\":\"overflow:auto\"},{\"el\":\"div.canvas.is-still > div.cv-body > aside.cv-side.fade-y > section.cv-card.cv-outputs\",\"kind\":\"box-shadow\",\"side\":\"left\",\"level\":\"hidden\",\"cut\":4,\"gap\":0,\"by\":\"main.main > div.canvas.is-still > div.cv-body > aside.cv-side.fade-y\",\"why\":\"overflow:auto\"}]}\n```"
+        }
+      ]
+    }
+  },
+  {
+    "viewport": "390x844x2,mobile,touch",
+    "theme": "dark",
+    "state": "failed",
+    "view": "thread",
+    "map": "flow",
+    "info": {
+      "content": [
+        {
+          "type": "text",
+          "text": "Script ran on page and returned:\n```json\n{\"width\":390,\"dpr\":2,\"theme\":\"dark\"}\n```"
+        }
+      ]
+    },
+    "r": {
+      "content": [
+        {
+          "type": "text",
+          "text": "Script ran on page and returned:\n```json\n{\"ok\":true,\"cut\":0,\"hidden\":0,\"issues\":[]}\n```"
+        }
+      ]
+    }
+  },
+  {
+    "viewport": "390x844x2,mobile,touch",
+    "theme": "light",
+    "state": "complete",
+    "view": "canvas",
+    "map": "time",
+    "info": {
+      "content": [
+        {
+          "type": "text",
+          "text": "Script ran on page and returned:\n```json\n{\"width\":390,\"dpr\":2,\"theme\":\"light\"}\n```"
+        }
+      ]
+    },
+    "r": {
+      "content": [
+        {
+          "type": "text",
+          "text": "Script ran on page and returned:\n```json\n{\"ok\":true,\"cut\":0,\"hidden\":0,\"issues\":[]}\n```"
+        }
+      ]
+    }
+  },
+  {
+    "viewport": "1281x900x2",
+    "theme": "light",
+    "state": "empty",
+    "view": "thread",
+    "map": "flow",
+    "info": {
+      "content": [
+        {
+          "type": "text",
+          "text": "Script ran on page and returned:\n```json\n{\"width\":1281,\"dpr\":2,\"theme\":\"light\"}\n```"
+        }
+      ]
+    },
+    "r": {
+      "content": [
+        {
+          "type": "text",
+          "text": "Script ran on page and returned:\n```json\n{\"ok\":true,\"cut\":0,\"hidden\":0,\"issues\":[]}\n```"
+        }
+      ]
+    }
+  }
+]

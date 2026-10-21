@@ -37,16 +37,16 @@
   --shadow-raised: 0 6px 18px oklch(0% 0 0/.065), 0 1px 3px oklch(0% 0 0/.035);
   --shadow-floating: 0 20px 48px oklch(0% 0 0/.105), 0 3px 10px oklch(0% 0 0/.045);
   --card-outline: lch(0% 0 0 / .088);
-  --card-shadow: 0 0 0 .5px var(--card-outline), 0 3px 6px -2px lch(0% 0 0/.02), 0 1px 1px 0 lch(0% 0 0/.04);
-  --composer-shadow: 0 0 0 .5px var(--card-outline), 0 8px 24px -6px lch(0% 0 0/.08), 0 2px 4px -1px lch(0% 0 0/.04);
-  /* One closed edge per surface: a hairline ring drawn with box-shadow (no layout shift), plus soft elevation. */
+  --card-shadow: 0 3px 6px -2px lch(0% 0 0/.02), 0 1px 1px 0 lch(0% 0 0/.04);
+  --composer-shadow: 0 8px 24px -6px lch(0% 0 0/.08), 0 2px 4px -1px lch(0% 0 0/.04);
+  /* One closed edge per surface: a real border on the surface; these tokens hold elevation and inner highlights only. */
   --ring: lch(0% 0 0 / .1);
   --ring-strong: lch(0% 0 0 / .18);
   --ring-inset: 0 0 #0000;
-  --card-edge: 0 0 0 var(--hairline) var(--ring), 0 3px 6px -2px lch(0% 0 0/.03), 0 1px 1px 0 lch(0% 0 0/.04);
-  --composer-edge: 0 0 0 var(--hairline) var(--ring), 0 8px 24px -6px lch(0% 0 0/.08), 0 2px 4px -1px lch(0% 0 0/.04);
-  --composer-edge-hover: 0 0 0 var(--hairline) var(--ring-strong), 0 10px 28px -6px lch(0% 0 0/.1), 0 2px 4px -1px lch(0% 0 0/.05);
-  --composer-edge-focus: 0 0 0 1px var(--ring-strong), 0 12px 32px -8px lch(0% 0 0/.12), 0 2px 4px -1px lch(0% 0 0/.05);
+  --card-edge: 0 3px 6px -2px lch(0% 0 0/.03), 0 1px 1px 0 lch(0% 0 0/.04);
+  --composer-edge: 0 8px 24px -6px lch(0% 0 0/.08), 0 2px 4px -1px lch(0% 0 0/.04);
+  --composer-edge-hover: 0 10px 28px -6px lch(0% 0 0/.1), 0 2px 4px -1px lch(0% 0 0/.05);
+  --composer-edge-focus: 0 12px 32px -8px lch(0% 0 0/.12), 0 2px 4px -1px lch(0% 0 0/.05);
   --wght-400: 400; --wght-500: 500; --wght-550: 550; --wght-600: 600; --wght-650: 650; --wght-700: 700;
   --term-bg: oklch(18% 0 0);
   --term-fg: oklch(88% 0 0);
@@ -93,16 +93,16 @@
   --shadow-raised: 0 8px 22px oklch(0% 0 0/.22);
   --shadow-floating: 0 22px 55px oklch(0% 0 0/.34);
   --card-outline: lch(100% 0 0 / .088);
-  --card-shadow: 0 0 0 .5px var(--card-outline), 0 3px 6px -2px lch(0% 0 0/.2);
-  --composer-shadow: 0 0 0 .5px var(--card-outline), 0 10px 30px -8px lch(0% 0 0/.5);
+  --card-shadow: 0 3px 6px -2px lch(0% 0 0/.2);
+  --composer-shadow: 0 10px 30px -8px lch(0% 0 0/.5);
   --ring: lch(100% 0 0 / .1);
   --ring-strong: lch(100% 0 0 / .2);
   /* Dark surfaces get a faint inner chamfer instead of a hard light frame. */
   --ring-inset: inset 0 1px 0 lch(100% 0 0 / .045);
-  --card-edge: 0 0 0 var(--hairline) var(--ring), var(--ring-inset), 0 3px 6px -2px lch(0% 0 0/.2);
-  --composer-edge: 0 0 0 var(--hairline) var(--ring), var(--ring-inset), 0 10px 30px -8px lch(0% 0 0/.5);
-  --composer-edge-hover: 0 0 0 var(--hairline) var(--ring-strong), var(--ring-inset), 0 12px 34px -8px lch(0% 0 0/.55);
-  --composer-edge-focus: 0 0 0 1px var(--ring-strong), var(--ring-inset), 0 14px 38px -8px lch(0% 0 0/.6);
+  --card-edge: var(--ring-inset), 0 3px 6px -2px lch(0% 0 0/.2);
+  --composer-edge: var(--ring-inset), 0 10px 30px -8px lch(0% 0 0/.5);
+  --composer-edge-hover: var(--ring-inset), 0 12px 34px -8px lch(0% 0 0/.55);
+  --composer-edge-focus: var(--ring-inset), 0 14px 38px -8px lch(0% 0 0/.6);
   /* Light text on dark blooms; pull Latin and digit weights back a step (CJK fallback fonts snap to their own weights). */
   --wght-400: 380; --wght-500: 470; --wght-550: 520; --wght-600: 570; --wght-650: 615; --wght-700: 665;
   --term-bg: oklch(13% 0 0);

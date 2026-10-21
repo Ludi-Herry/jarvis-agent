@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { Check, ChevronRight, CircleAlert, CircleCheck, CornerDownRight, Eye, FileCode2, FileText, GitCompareArrows, ListChecks, MessageCircle, Pencil, PencilLine, RotateCcw, Search, SquareTerminal, Undo2, Wrench, X } from "lucide-react";
 import type { Act, S } from "../store";
@@ -102,11 +102,24 @@ export function StepsGroup({ steps, live, liveNode, onOpenFile }: { steps: Step[
 function ApprovalCard(props: { item: Extract<Item, { kind: "approval" }>; s: S; act: Act; onOpenFile: (p: string) => void; onAdjust: () => void; onPanel: (t: "changes" | "preview" | "terminal") => void }) {
   const { item } = props;
   const [mounted] = useState(() => !item.resolved); // only morph if we saw the card; old resolved lines just appear
-  return <motion.div layout="size" className="approval-slot" transition={motionTokens.spring.smooth as any}>
+  const face = useRef<HTMLDivElement>(null);
+  const [height, setHeight] = useState<number | "auto">("auto");
+  const reduced = useReducedMotion();
+  // Animate actual height, not scaleY: exiting content must retain its natural proportions.
+  useLayoutEffect(() => {
+    const el = face.current;
+    if (!el) return;
+    const measure = () => setHeight(el.offsetHeight);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [item.resolved]);
+  return <motion.div initial={false} animate={{ height }} className="approval-slot" transition={reduced ? { duration: 0 } : motionTokens.spring.smooth as any}>
     <AnimatePresence mode="popLayout" initial={false}>
       {item.resolved
-        ? <motion.div key="line" layout="position" {...(mounted ? { initial: { opacity: 0, y: -4 }, animate: { opacity: 1, y: 0 }, transition: { ...motionTokens.spring.smooth, delay: .06 } as any } : enter)}><ResolvedLine {...props} /></motion.div>
-        : <motion.div key="card" {...enter} exit={{ opacity: 0, scale: .985, filter: `blur(${motionTokens.blur.subtle}px)`, transition: { duration: motionTokens.duration.exit, ease: motionTokens.ease.exit as any } }}><ApprovalBody {...props} /></motion.div>}
+        ? <motion.div key="line" ref={face} {...(mounted ? { initial: { opacity: 0, y: -4 }, animate: { opacity: 1, y: 0 }, transition: { ...motionTokens.spring.smooth, delay: .06 } as any } : enter)}><ResolvedLine {...props} /></motion.div>
+        : <motion.div key="card" ref={face} {...enter} exit={{ opacity: 0, scale: .985, filter: `blur(${motionTokens.blur.subtle}px)`, transition: { duration: motionTokens.duration.exit, ease: motionTokens.ease.exit as any } }}><ApprovalBody {...props} /></motion.div>}
     </AnimatePresence>
   </motion.div>;
 }

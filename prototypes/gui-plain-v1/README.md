@@ -27,9 +27,21 @@
   - 新文件：`src/ui/{scroll-area.tsx,motion.ts,PanelResizer.tsx,drafts.ts,Lightbox.tsx,sortable.ts}`。
 - 来源：PastaUI 布局与输入框形态；Arc（uiarc.dev 免费组件，MIT；这轮新引入 `donut-chart`、`usage-meter`，改成中文文案、加金额前缀、配色改用 `--series-*`，文件头已注明）；`thinking-orbs`、`border-beam`（均 MIT）。画布的结构参考 archify（MIT：泳道、编号阶段带、图例计数、底部工具栏、步骤详情卡、生命周期图、「示意时长」瀑布图），讲解图按 diagram-design（MIT：爆炸等轴图的 2:1 投影、单一强调色、右侧标注列、编辑式排版）的规范手画；AI Elements（Apache-2.0）只参考了 Queue / Test Results / Context 的信息组织，没有拷代码；React Flow 评估过，没有引入（自己画的 SVG 够用，单文件更小）。
 
-## 未随提交的二进制文件
+## 构建资产
 
-推送工具只支持文本，下列文件没有入库，构建前需放回原路径（或直接用对话附件里的单文件 HTML，已内嵌）：
+2026-10-21 收尾将下列构建必需资产与字体许可一并纳入版本管理，干净检出后无需手工补回：
 
 - `src/assets/fonts/manrope-latin.woff2`：Manrope 可变字体拉丁子集（SIL OFL），取自 PastaUI showcase 资源；可用 `@fontsource-variable/manrope` 的 latin woff2 替代。
 - `src/assets/old/{empty,running,approval,complete,failed,recoverable}.webp`：现行 GUI 对应试件的截图（`?fixture=` 各状态，1440×900），用于「旧版 / 新稿」滑动对照。
+
+## 2026-10-21 描边整合
+
+容器边线统一使用真实 CSS border，--ring / --ring-strong 负责颜色，--hairline 负责宽度；--card-edge / --composer-edge 只负责投影和深色内高光。失败、警告、hover 与 focus 改 border-color，保留焦点光晕、拖入状态与 BorderBeam 动画。输入框边框仍挂在外层 .beam；底托保留 f0d1f4f 的 border-top:0，避免重边。
+
+整合 3438bc0 的阴影裁切修复：底部留出 44px、画布工具栏底部留出 30px，窄屏压缩阴影外扩。8cb3d69 与 f0d1f4f 是相同补丁，不重复合并。对应 Figma 使用 INSIDE stroke。历史第四轮描述保留为变更记录，以本节为当前实现。
+
+## 2026-10-21 动效与默认状态
+
+审批卡收起采用真实 height 过渡，由 ResizeObserver 测量当前内容，避免 layout=size 对退场图标造成约 12 倍纵向拉伸。保留淡入淡出与收起动效；减少动态效果时高度直接切换。走查台每次打开原型默认收起，点击顶部胶囊后展开。
+
+本轮收尾与验证见仓库 docs/GUI-DEMO-CLOSEOUT-2026-10-21.md。
