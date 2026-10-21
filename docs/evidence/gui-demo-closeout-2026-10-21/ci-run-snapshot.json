@@ -1,0 +1,230 @@
+{
+  "conclusion": "",
+  "headSha": "5f8e24053b6b5f267b4c6e7b37c7f5a20664ded6",
+  "jobs": [
+    {
+      "completedAt": "0001-01-01T00:00:00Z",
+      "conclusion": "",
+      "databaseId": 119372141496,
+      "name": "门禁 (windows-latest)",
+      "startedAt": "2026-10-21T17:22:58Z",
+      "status": "in_progress",
+      "steps": [
+        {
+          "completedAt": "2026-10-21T17:23:02Z",
+          "conclusion": "success",
+          "name": "Set up job",
+          "number": 1,
+          "startedAt": "2026-10-21T17:23:00Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-21T17:23:15Z",
+          "conclusion": "success",
+          "name": "Run actions/checkout@v7",
+          "number": 2,
+          "startedAt": "2026-10-21T17:23:02Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-21T17:23:34Z",
+          "conclusion": "success",
+          "name": "Run actions/setup-node@v7",
+          "number": 3,
+          "startedAt": "2026-10-21T17:23:16Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-21T17:23:52Z",
+          "conclusion": "success",
+          "name": "安装依赖",
+          "number": 4,
+          "startedAt": "2026-10-21T17:23:34Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-21T17:24:09Z",
+          "conclusion": "success",
+          "name": "安装 GUI 依赖",
+          "number": 5,
+          "startedAt": "2026-10-21T17:23:52Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-21T17:24:22Z",
+          "conclusion": "success",
+          "name": "类型检查",
+          "number": 6,
+          "startedAt": "2026-10-21T17:24:09Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-21T17:24:43Z",
+          "conclusion": "success",
+          "name": "Lint",
+          "number": 7,
+          "startedAt": "2026-10-21T17:24:22Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "0001-01-01T00:00:00Z",
+          "conclusion": "",
+          "name": "测试",
+          "number": 8,
+          "startedAt": "2026-10-21T17:24:43Z",
+          "status": "in_progress"
+        },
+        {
+          "completedAt": "0001-01-01T00:00:00Z",
+          "conclusion": "",
+          "name": "构建",
+          "number": 9,
+          "startedAt": "0001-01-01T00:00:00Z",
+          "status": "pending"
+        },
+        {
+          "completedAt": "0001-01-01T00:00:00Z",
+          "conclusion": "",
+          "name": "GUI 构建",
+          "number": 10,
+          "startedAt": "0001-01-01T00:00:00Z",
+          "status": "pending"
+        },
+        {
+          "completedAt": "0001-01-01T00:00:00Z",
+          "conclusion": "",
+          "name": "Post Run actions/setup-node@v7",
+          "number": 19,
+          "startedAt": "0001-01-01T00:00:00Z",
+          "status": "pending"
+        },
+        {
+          "completedAt": "0001-01-01T00:00:00Z",
+          "conclusion": "",
+          "name": "Post Run actions/checkout@v7",
+          "number": 20,
+          "startedAt": "0001-01-01T00:00:00Z",
+          "status": "pending"
+        }
+      ],
+      "url": "https://github.com/Ludi-Herry/jarvis-agent/actions/runs/39643276411/job/119372141496"
+    },
+    {
+      "completedAt": "2026-10-21T17:26:37Z",
+      "conclusion": "failure",
+      "databaseId": 119372142135,
+      "name": "门禁 (ubuntu-latest)",
+      "startedAt": "2026-10-21T17:22:58Z",
+      "status": "completed",
+      "steps": [
+        {
+          "completedAt": "2026-10-21T17:22:59Z",
+          "conclusion": "success",
+          "name": "Set up job",
+          "number": 1,
+          "startedAt": "2026-10-21T17:22:59Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-21T17:23:01Z",
+          "conclusion": "success",
+          "name": "Run actions/checkout@v7",
+          "number": 2,
+          "startedAt": "2026-10-21T17:22:59Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-21T17:23:10Z",
+          "conclusion": "success",
+          "name": "Run actions/setup-node@v7",
+          "number": 3,
+          "startedAt": "2026-10-21T17:23:01Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-21T17:23:13Z",
+          "conclusion": "success",
+          "name": "安装依赖",
+          "number": 4,
+          "startedAt": "2026-10-21T17:23:10Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-21T17:23:15Z",
+          "conclusion": "success",
+          "name": "安装 GUI 依赖",
+          "number": 5,
+          "startedAt": "2026-10-21T17:23:13Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-21T17:23:22Z",
+          "conclusion": "success",
+          "name": "类型检查",
+          "number": 6,
+          "startedAt": "2026-10-21T17:23:15Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-21T17:23:28Z",
+          "conclusion": "success",
+          "name": "Lint",
+          "number": 7,
+          "startedAt": "2026-10-21T17:23:22Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-21T17:26:33Z",
+          "conclusion": "failure",
+          "name": "测试",
+          "number": 8,
+          "startedAt": "2026-10-21T17:23:28Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-21T17:26:33Z",
+          "conclusion": "skipped",
+          "name": "构建",
+          "number": 9,
+          "startedAt": "2026-10-21T17:26:33Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-21T17:26:33Z",
+          "conclusion": "skipped",
+          "name": "GUI 构建",
+          "number": 10,
+          "startedAt": "2026-10-21T17:26:33Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-21T17:26:33Z",
+          "conclusion": "skipped",
+          "name": "Post Run actions/setup-node@v7",
+          "number": 19,
+          "startedAt": "2026-10-21T17:26:33Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-21T17:26:34Z",
+          "conclusion": "success",
+          "name": "Post Run actions/checkout@v7",
+          "number": 20,
+          "startedAt": "2026-10-21T17:26:33Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-21T17:26:34Z",
+          "conclusion": "success",
+          "name": "Complete job",
+          "number": 21,
+          "startedAt": "2026-10-21T17:26:34Z",
+          "status": "completed"
+        }
+      ],
+      "url": "https://github.com/Ludi-Herry/jarvis-agent/actions/runs/39643276411/job/119372142135"
+    }
+  ],
+  "status": "in_progress",
+  "url": "https://github.com/Ludi-Herry/jarvis-agent/actions/runs/39643276411"
+}

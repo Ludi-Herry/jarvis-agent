@@ -1,5 +1,7 @@
 # GUI Demo 最新版收尾（2026-10-21）
 
+远程门禁未通过，详情见 [CI 结果](GUI-DEMO-CI-RESULT-2026-10-21.md)。本轮 GUI 已提交推送，整体 CI 尚未签收。
+
 ## 交付范围
 
 源码与本地预览位于 codex/gui-demo-border-sync-20261021 分支，基线 f0d1f4f。Ludi 已接受描边、审批卡动效修复，并要求走查台默认收起后提交、记录经验并推送。本次不改 Runtime 映射或 Figma 文档。
